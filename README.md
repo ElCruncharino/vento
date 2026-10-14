@@ -72,6 +72,20 @@ git submodule update --init
 
 Backend plugins must be signed with the same key (enforced since the main app loads code from it) and built from the same version (the API isn't stable).
 
+The three C backends (libvncclient, TigerVNC, FreeRDP) also build on the Linux host, against the system libraries instead of the ports and vendored trees the phone needs, with a probe per backend that connects, prints every callback and writes the framebuffer out as a PPM. It needs cmake, ninja, pkg-config, a C/C++ compiler, and the development packages for openssl, gnutls, nettle (hogweed, gmp), libjpeg-turbo, pixman, zlib, FFmpeg (libavcodec, libavutil, libswscale), libpulse and alsa-lib. `backends/CMakeLists.txt` says what each switch does.
+
+```bash
+# build the host libraries and probes (-DSTRICT_WARNINGS=ON makes our warnings errors)
+cmake -S backends -B build/scratch/host -G Ninja
+cmake --build build/scratch/host
+
+# point them at the test desktops under scripts/ (each probe prints its usage without arguments)
+scripts/testvnc/run.sh && scripts/testrdp/run.sh
+build/scratch/host/libvnc/vento_libvnc_probe 127.0.0.1:1 --password vncpass --out $PWD/build/scratch/libvnc.ppm
+build/scratch/host/tigervnc/vento_tigervnc_probe 127.0.0.1:1 --password vncpass --click 500,300 --key 0x61 --clipboard hello --out $PWD/build/scratch/tigervnc.ppm
+build/scratch/host/freerdp/vento_freerdp_probe 127.0.0.1 --trust --user proto --password protopass --config-dir $PWD/build/scratch/freerdp-home --out $PWD/build/scratch/freerdp.ppm
+```
+
 When updating the third_party dependencies, you'll need to update the unpatched gitlink, regenerate the patches and generated code, and commit the result.
 
 ```bash

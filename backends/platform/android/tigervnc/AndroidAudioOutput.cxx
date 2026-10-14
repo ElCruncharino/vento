@@ -36,6 +36,10 @@ constexpr int32_t PREROLL_FRAMES = MIN_STREAM_DELAY_MS * FREQUENCY / 1000;
 
 } // namespace
 
+AudioOutput *vento_tigervnc_audio_output() {
+    return new AndroidAudioOutput();
+}
+
 AndroidAudioOutput::~AndroidAudioOutput() {
     // The session is ending, so whatever is still queued goes with it.
     close();

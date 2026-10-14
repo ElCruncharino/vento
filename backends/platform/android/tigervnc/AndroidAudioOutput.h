@@ -3,7 +3,9 @@
 
 // The far end's sound, played on the phone: the sink for TigerVNC's QEMU audio
 // extension, which is the protocol half of it in `common/` and a PulseAudio or
-// waveOut sink in their viewer. This is the third sink, on AAudio.
+// waveOut sink in their viewer. This is the third sink, on AAudio, behind the
+// shim's own `AudioOutput` — platform code that happens to speak TigerVNC's
+// interfaces, as `platform_android::mediacodec` speaks `common::video`'s.
 //
 // The policy is theirs, numbers included — at most a second of audio queued
 // ahead, and 20 ms of silence in front of every stream so that a packet arriving
@@ -31,24 +33,23 @@
 #include <stddef.h>
 #include <stdint.h>
 
-class AndroidAudioOutput {
+#include "AudioOutput.h"
+
+class AndroidAudioOutput : public AudioOutput {
 public:
     AndroidAudioOutput() = default;
 
-    ~AndroidAudioOutput();
+    ~AndroidAudioOutput() override;
 
     AndroidAudioOutput(const AndroidAudioOutput &) = delete;
 
     AndroidAudioOutput &operator=(const AndroidAudioOutput &) = delete;
 
-    /** The server has started sending: open if need be, start, pre-roll. */
-    void start();
+    void start() override;
 
-    /** The server has stopped: let what is queued play out, then stop. */
-    void stop();
+    void stop() override;
 
-    /** A chunk of samples in the agreed format, aligned to nothing at all. */
-    void play(const uint8_t *data, size_t length);
+    void play(const uint8_t *data, size_t length) override;
 
 private:
     bool open();

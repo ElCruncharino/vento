@@ -1,19 +1,41 @@
+# SPDX-FileCopyrightText: 2026 Patrick Gaskin
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Two builds from one file. Under Gradle this is a root, configured by the NDK
+# toolchain, and makes `libremotedesktop_libvnc.so`: the session and the JNI
+# file over the Android adapter, with the vendored libjpeg-turbo and the GnuTLS
+# port linked in, since a phone has neither. Under `backends/CMakeLists.txt`
+# it is a subdirectory on a Linux host and makes `vento_libvnc`, the session
+# alone, against the libjpeg-turbo and GnuTLS the host has, with a probe in
+# front of it. What is shared is the middle — how LibVNCServer itself is
+# configured — and the two halves around it are `if(ANDROID)` and `else()`,
+# so that the Android build is the same sequence of statements it was.
+
 cmake_minimum_required(VERSION 3.30)
 project(remotedesktop_libvnc C)
 
 get_filename_component(THIRD_PARTY "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../../third_party" ABSOLUTE)
+get_filename_component(VENTO_BACKENDS "${CMAKE_CURRENT_SOURCE_DIR}/../../../../.." ABSOLUTE)
 
 if(NOT EXISTS "${THIRD_PARTY}/libvncserver/CMakeLists.txt")
     message(FATAL_ERROR "third_party/libvncserver is empty — run `git submodule update --init`")
 endif()
 
-include("${CMAKE_CURRENT_SOURCE_DIR}/../../../../../cmake/reproducible.cmake")
-include("${CMAKE_CURRENT_SOURCE_DIR}/../../../../../cmake/warnings.cmake")
-include("${CMAKE_CURRENT_SOURCE_DIR}/../../../../../cmake/vento_jni.cmake")
+# What is baked into the phone's library is pinned so that a build elsewhere
+# matches; a host build is for running, and keeps its real paths for gdb.
+if(ANDROID)
+    include("${VENTO_BACKENDS}/cmake/reproducible.cmake")
+endif()
+include("${VENTO_BACKENDS}/cmake/warnings.cmake")
+if(ANDROID)
+    include("${VENTO_BACKENDS}/cmake/vento_jni.cmake")
+else()
+    include("${VENTO_BACKENDS}/cmake/vento_desktop.cmake")
+endif()
 
 # One shared library per protocol, as every other backend module does, so a
 # build that drops this protocol drops the whole of it. Everything below is
-# linked into it statically.
+# linked into it statically — and into the host's static library the same way.
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -25,46 +47,56 @@ endmacro()
 macro(export)
 endmacro()
 
-# AGP configures the debug variant at -O0, which for a JPEG and zlib decoder is
-# several times the CPU of a release one — and the hot-path measurements are
-# taken on debug builds. A trailing -O2 wins over the toolchain's earlier -O0.
-# -DNDEBUG goes with it deliberately: upstream's asserts are invariant checks
-# that abort the app, and a measurement build is not where they should fire.
-string(APPEND CMAKE_C_FLAGS_DEBUG " -O2 -DNDEBUG")
+if(ANDROID)
+    # AGP configures the debug variant at -O0, which for a JPEG and zlib decoder is
+    # several times the CPU of a release one — and the hot-path measurements are
+    # taken on debug builds. A trailing -O2 wins over the toolchain's earlier -O0.
+    # -DNDEBUG goes with it deliberately: upstream's asserts are invariant checks
+    # that abort the app, and a measurement build is not where they should fire.
+    string(APPEND CMAKE_C_FLAGS_DEBUG " -O2 -DNDEBUG")
 
-# Shims find_package(JPEG) onto the in-tree libjpeg-turbo below; prepended so it
-# wins over the copy CMake ships, which would probe the host.
-list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+    # Shims find_package(JPEG) and find_package(GnuTLS) onto the in-tree
+    # libjpeg-turbo and the port below; prepended so they win over the copies
+    # CMake ships, which would probe the host. Android only: on the host those
+    # copies finding the system libraries is the point.
+    list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
-# libjpeg-turbo, for Tight — the encoding this backend exists to have. The SIMD
-# path on x86 needs NASM, which is a host tool this build does not require; on
-# arm64, the one ABI a phone uses, it is Neon intrinsics the compiler builds.
-set(ENABLE_SHARED OFF CACHE BOOL "" FORCE)
-set(ENABLE_STATIC ON CACHE BOOL "" FORCE)
-set(WITH_TURBOJPEG OFF CACHE BOOL "" FORCE)
-set(WITH_FUZZ OFF CACHE BOOL "" FORCE)
-if(CMAKE_ANDROID_ARCH_ABI MATCHES "^x86")
-    set(WITH_SIMD OFF CACHE BOOL "" FORCE)
+    # libjpeg-turbo, for Tight — the encoding this backend exists to have. The SIMD
+    # path on x86 needs NASM, which is a host tool this build does not require; on
+    # arm64, the one ABI a phone uses, it is Neon intrinsics the compiler builds.
+    set(ENABLE_SHARED OFF CACHE BOOL "" FORCE)
+    set(ENABLE_STATIC ON CACHE BOOL "" FORCE)
+    set(WITH_TURBOJPEG OFF CACHE BOOL "" FORCE)
+    set(WITH_FUZZ OFF CACHE BOOL "" FORCE)
+    if(CMAKE_ANDROID_ARCH_ABI MATCHES "^x86")
+        set(WITH_SIMD OFF CACHE BOOL "" FORCE)
+    endif()
+    add_subdirectory("${THIRD_PARTY}/libjpeg-turbo" libjpeg-turbo EXCLUDE_FROM_ALL)
+
+    # jconfig.h and jconfigint.h are generated, so the headers are in two places;
+    # set before add_subdirectory so libvncserver's sources inherit both.
+    include_directories(
+            "${THIRD_PARTY}/libjpeg-turbo/src"
+            "${CMAKE_CURRENT_BINARY_DIR}/libjpeg-turbo")
+
+    # GnuTLS, which is one of the two libraries libvncclient reaches TLS through
+    # and the one TigerVNC's client requires — so the port is built once and used
+    # by both. `find_package(GnuTLS)` above finds the shim beside FindJPEG's.
+    add_subdirectory("${VENTO_BACKENDS}/ports/gnutls" gnutls)
 endif()
-add_subdirectory("${THIRD_PARTY}/libjpeg-turbo" libjpeg-turbo EXCLUDE_FROM_ALL)
 
-# jconfig.h and jconfigint.h are generated, so the headers are in two places;
-# set before add_subdirectory so libvncserver's sources inherit both.
-include_directories(
-        "${THIRD_PARTY}/libjpeg-turbo/src"
-        "${CMAKE_CURRENT_BINARY_DIR}/libjpeg-turbo")
-
-# GnuTLS, which is one of the two libraries libvncclient reaches TLS through
-# and the one TigerVNC's client requires — so the port is built once and used
-# by both. `find_package(GnuTLS)` above finds the shim beside FindJPEG's.
-add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../../../../ports/gnutls" gnutls)
-
-# LibVNCServer, of which we build the client half only.
+# LibVNCServer, of which we build the client half only. These are cache
+# variables, and under the host root the three vendored trees share one cache:
+# FreeRDP has a WITH_FFMPEG, a WITH_JPEG and a WITH_OPENSSL of its own, so each
+# tree's answers are forced here, immediately before the tree reads them, and
+# nothing is left to an `option()` default that a neighbour may have taken.
 set(WITH_LIBVNCSERVER OFF CACHE BOOL "" FORCE)
 set(WITH_LIBVNCCLIENT ON CACHE BOOL "" FORCE)
 set(WITH_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(WITH_TESTS OFF CACHE BOOL "" FORCE)
 set(LIBVNCSERVER_INSTALL OFF CACHE BOOL "" FORCE)
+set(WITH_ZLIB ON CACHE BOOL "" FORCE)
+set(WITH_JPEG ON CACHE BOOL "" FORCE)
 set(WITH_OPENSSL OFF CACHE BOOL "" FORCE)
 set(WITH_GNUTLS ON CACHE BOOL "" FORCE)
 set(WITH_GCRYPT OFF CACHE BOOL "" FORCE)
@@ -81,13 +113,33 @@ set(WITH_LIBSSHTUNNEL OFF CACHE BOOL "" FORCE)
 set(WITH_WEBSOCKETS OFF CACHE BOOL "" FORCE)
 set(WITH_TIGHTVNC_FILETRANSFER OFF CACHE BOOL "" FORCE)
 add_subdirectory("${THIRD_PARTY}/libvncserver" libvncserver EXCLUDE_FROM_ALL)
+remotedesktop_vendored_warnings("${THIRD_PARTY}/libvncserver")
 
-# Two halves: the session, which is the shim over libvncclient and names no
-# platform, and the JNI file, which is `LibVncNative`'s entry points over the
-# shared Android adapter `vento_jni` brings with it.
-add_library(remotedesktop_libvnc SHARED libvnc_session.c libvnc_jni.c)
-remotedesktop_warnings(remotedesktop_libvnc)
-target_include_directories(remotedesktop_libvnc SYSTEM PRIVATE
+# Their target carries no include directories of its own — their build puts
+# the tree on the path globally — so the two are named here, as SYSTEM.
+set(LIBVNC_INCLUDES
         "${THIRD_PARTY}/libvncserver/include"
         "${CMAKE_CURRENT_BINARY_DIR}/libvncserver/include")
-target_link_libraries(remotedesktop_libvnc PRIVATE vncclient vento_jni jnigraphics log)
+
+if(ANDROID)
+    # Two halves: the session, which is the shim over libvncclient and names no
+    # platform, and the JNI file, which is `LibVncNative`'s entry points over the
+    # shared Android adapter `vento_jni` brings with it.
+    add_library(remotedesktop_libvnc SHARED libvnc_session.c libvnc_jni.c)
+    remotedesktop_warnings(remotedesktop_libvnc)
+    target_include_directories(remotedesktop_libvnc SYSTEM PRIVATE ${LIBVNC_INCLUDES})
+    target_link_libraries(remotedesktop_libvnc PRIVATE vncclient vento_jni jnigraphics log)
+else()
+    # The session alone, for whatever desktop process links it: the neutral
+    # include directory is its interface, and `vento_log` is left to the
+    # platform, which the probe below gets from `vento_desktop`.
+    add_library(vento_libvnc STATIC libvnc_session.c)
+    remotedesktop_warnings(vento_libvnc)
+    target_include_directories(vento_libvnc PUBLIC "${VENTO_BACKENDS}/common/include")
+    target_include_directories(vento_libvnc SYSTEM PRIVATE ${LIBVNC_INCLUDES})
+    target_link_libraries(vento_libvnc PUBLIC vncclient)
+
+    add_executable(vento_libvnc_probe libvnc_probe.c)
+    remotedesktop_warnings(vento_libvnc_probe)
+    target_link_libraries(vento_libvnc_probe PRIVATE vento_libvnc vento_probe vento_desktop)
+endif()

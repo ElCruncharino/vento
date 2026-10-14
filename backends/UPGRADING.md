@@ -135,7 +135,18 @@ under the host locale (`export LC_ALL=C`).
   in `backends/common/include/vento/` and names no platform, and
   `<name>_jni.c`, which is the Java class's own entry points over the adapter
   in `backends/platform/android/jni`. An upstream change reaches the session
-  file; the JNI file changes only when `nativeCreate`'s parameters do.
+  file; the JNI file changes only when `nativeCreate`'s parameters do, and so
+  does `<name>_probe.c`, the host probe's `main` beside them. The module's
+  CMakeLists is one file for both builds, `if(ANDROID)` and `else()` around
+  a shared middle: a vendored tree's new option goes in the middle, a new
+  port or NDK library in the Android half, a new system library in the host
+  half (see `backends/CMakeLists.txt`).
+- TigerVNC's two media sinks are platform code under
+  `backends/platform/{android,desktop}/tigervnc`: the H.264 decoder context
+  (the phone's, selected by `H264_ANDROID`; the host uses upstream's libav
+  one under `HAVE_LIBAV`) and the audio sink behind the shim's own
+  `AudioOutput.h`. An upstream change to `H264DecoderContext` or to the QEMU
+  audio calls in `CConnection` reaches both.
 - Every comment of ours that names an upstream version or behaviour ("in
   3.19.1", "the assembly is GAS", "returns Some") is a claim to re-verify
   against the target and correct or remove. Grep for the old version string
@@ -177,6 +188,13 @@ Native modules:
     ./gradlew :backends:<module>:assembleRelease
     ./gradlew :backends:<module>:assembleRelease -PstrictWarnings
 
+The three C backends again on the host, against the system libraries, which
+is the one build that then runs — a probe per backend, against the test
+desktops under `scripts/` (README, Development):
+
+    cmake -S backends -B build/scratch/host -G Ninja -DSTRICT_WARNINGS=ON
+    cmake --build build/scratch/host
+
 Rust modules:
 
     cargo check --locked --workspace
@@ -189,9 +207,12 @@ change to a native surface. At the end of the round:
 `./gradlew :app:assembleDebug :plugins:realvnc:assembleDebug
 :plugins:rustdesk:assembleDebug`.
 
-Nothing here runs on a device or against a real server. Say so in the
-report rather than implying otherwise; the test harnesses under `scripts/`
-need VMs.
+Nothing in the Gradle or cargo steps runs on a device or against a real
+server. The host probes are the exception: they run against the Docker
+desktops under `scripts/` (`testvnc`, `testrdp`; `testh264` for TigerVNC's
+H.264, which needs a Wayland session and a GPU to nest in). Say in the
+report which were run and which were not, rather than implying otherwise;
+the other harnesses under `scripts/` need VMs.
 
 Build in the repository's own `target/` and `.cxx`. `/tmp` is a RAM-backed
 tmpfs: no cargo target directories, scratch workspaces, unpacks or clones
@@ -234,9 +255,10 @@ One commit per upstream, after review, by the lead:
   0.9.15.
 - **tigervnc** master dd416cbf, reporting 1.16.80; five patches (the PAM one
   dropped). The certificate check and known-hosts store are the shim's now,
-  ported from `vncviewer/CConn.cxx`; audio is an AAudio sink behind the
-  `Audio` row. Builds `common/` only, with `config.h` written by our CMake
-  and an empty `pthread` target for the link.
+  ported from `vncviewer/CConn.cxx`; audio is behind the `Audio` row, an
+  AAudio sink on the phone and an ALSA one on the host, both over the shim's
+  own `AudioOutput.h`. Builds `common/` only, with `config.h` written by our
+  CMake and, on Android, an empty `pthread` target for the link.
 - **freerdp** 3.32.0. No patches. `LegacyTls` row for TLS 1.0 at level 0;
   `remotedesktop_vendored_warnings` silences their tree.
 - **ironrdp** master 9b151c4c. No patches. A submodule rather than crates.io
