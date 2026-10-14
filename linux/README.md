@@ -28,18 +28,20 @@ backend without one.
   `spice` are the twins of each Rust crate's `bindings/mod.rs`; `c.rs` plus
   `c/{libvnc,tigervnc,freerdp,realvnc}.rs` are the four C backends over the
   vtable in `vento/backend.h`.
-- **`src/gui/`** — the window: `mod.rs` (the winit loop, the wgpu surface,
-  egui drawn into it), `session.rs` (a live session: the desktop, the input,
-  the toolbar, the prompts, the cursor), `desktop.rs` (the desktop as one
-  texture, updated a damaged rectangle at a time), `view.rs` (scale modes,
-  panning and the pointer's mapping, pure arithmetic with tests), `follow.rs`
-  (the desktop following the window's size: the phone's `WindowFollower`,
-  pure logic with tests), `keys.rs` (winit keys to X11 keysyms), `wayland.rs`
-  (the keyboard shortcuts inhibitor), `cursor.rs` (the far end's cursor as
-  the window's own, with tests), `hud.rs` (the debug overlay's box and
-  rates, with tests), `settings.rs` (the client's own settings and their
-  rows), `dialog.rs` (the connection dialog), `panel.rs` (the connection-info
-  panel, with the live controls), `prompts.rs` (the modal prompts).
+- **`src/gui/`** — the window: `mod.rs` (the winit loop, the wgpu surface, egui
+  drawn into it), `session.rs` (a live session: the desktop, the input, the
+  toolbar, the prompts, the cursor), `desktop.rs` (the desktop as one texture,
+  updated a damaged rectangle at a time), `view.rs` (scale modes, panning and
+  the pointer's mapping, pure arithmetic with tests), `follow.rs` (the desktop
+  following the window's size: the phone's `WindowFollower`, pure logic with
+  tests), `keys.rs` (winit keys to X11 keysyms), `platform.rs` (which display
+  server the window is on, and the per-server shortcuts and capture choice),
+  `wayland.rs` (the Wayland keyboard shortcuts inhibitor), `x11.rs` (the X11
+  keyboard grab that stands in for it), `cursor.rs` (the far end's cursor as
+  the window's own, with tests), `hud.rs` (the debug overlay's box and rates,
+  with tests), `settings.rs` (the client's own settings and their rows),
+  `dialog.rs` (the connection dialog), `panel.rs` (the connection-info panel,
+  with the live controls), `prompts.rs` (the modal prompts).
 - **`src/main.rs`** — the `vento` binary: the window, `--list`, and the
   headless probe.
 
@@ -89,6 +91,11 @@ cargo run -- tigervnc 127.0.0.1:5901 --password vncpass --connect
 cargo run -- rdp 127.0.0.1:3389 --user proto --password protopass --connect
 cargo run -- rustdesk 127.0.0.1 -o ConnectBy=address --password rustdeskpass --connect
 cargo run -- spice 127.0.0.1:5930 --password spicepass --connect
+
+# On a given display server rather than winit's choice (Wayland where
+# WAYLAND_DISPLAY is set, X11 otherwise).
+cargo run -- --x11 tigervnc 127.0.0.1:5901 --password vncpass --connect
+cargo run -- --wayland
 
 # The backends and their options.
 cargo run -- --list
@@ -205,7 +212,7 @@ loses focus. There is one local chord, **Ctrl+Alt+D** for the debug overlay
 (and Ctrl+Alt on its own in relative mode, below): the D stays here, and the
 chord's keys are let go of at the far end, as the escape does. Every other
 key is the far end's while a session has focus — including the compositor's
-own chords, see below.
+or window manager's own chords, see below.
 
 **The mouse** sends absolute desktop coordinates, mapped through the view and
 clamped to it, with an RFB button mask (left 1, middle 2, right 4) and the
@@ -228,12 +235,13 @@ resampled to the view's scale, nearest neighbour, and its hotspot with it;
 the log says the size and hotspot of each one set. `cursor.rs` says how this
 shares the window's cursor with egui-winit, which sets it from egui's icon.
 
-**Relative pointer mode** — the far end owning the cursor (QEMU's VNC, SPICE
-in server mode) — locks the local pointer to the window while it has focus,
-hides it, and sends raw motion as deltas; the far end draws its own cursor
-into the picture. **Hold Ctrl and Alt together to let go** of the pointer; a
-click on the desktop takes it back. Losing focus or disconnecting also lets
-go.
+**Relative pointer mode** — the far end owning the cursor (QEMU's VNC, SPICE in
+server mode) — locks (Wayland) or hides and centres (X11) the local pointer
+while the window has focus, and sends raw motion as deltas; the far end draws
+its own cursor into the picture. **Hold Ctrl and Alt together to let go** of
+the pointer; a click on the desktop takes it back. Losing focus or
+disconnecting also lets go.
+
 
 **The clipboard**: what the far end copies becomes the local clipboard
 (**Receive clipboard**); what was copied here while the window was away is
@@ -243,7 +251,7 @@ crossing either way is remembered and is never sent back where it came from,
 and what is read here is remembered whether or not it may be sent, so that
 turning sending on offers the next copy and not an old one. Proven against
 `scripts/testvnc` with `wl-copy`/`wl-paste` and the far end's `xclip`, both
-directions, both ways round.
+directions, both ways round, and on X11 with `xclip` at both ends.
 
 **The debug overlay** (the **Debug** button, or **Ctrl+Alt+D**) is the
 phone's `SessionHud`: a small monospace box in the bottom left of the
@@ -270,9 +278,27 @@ questions, RealVNC's security prompt with its identity and encryption states in
 words and its *remember server* box, and messages (OK, or confirm/cancel when
 the far end asks a question).
 
-### Wayland
+### Display servers
 
-Wayland first, through winit. What the window uses beyond `xdg_wm_base`:
+winit picks the display server: Wayland where `WAYLAND_DISPLAY` (or
+`WAYLAND_SOCKET`) is set, X11 where only `DISPLAY` is, with no falling back
+from one to the other. `--x11` and `--wayland` override that, and the log's
+`display server:` line says which the window got. What differs between the two
+is behind one `match` in `src/gui/platform.rs` rather than a cfg: the keyboard
+shortcuts, the pointer capture, and the native cursor's alpha.
+
+The dependency choice: winit, egui-winit and egui-wgpu are driven directly
+rather than through eframe, because eframe wraps away the things this window
+needs — the raw display and window handles for the inhibitor and the X11
+keyboard grab, device events for raw motion, keyboard events as winit delivers
+them with the layout's logical key, and the event loop's wake-up (the backend's
+mailbox wakes it through an event-loop proxy). It costs a page of surface
+setup.
+
+
+#### Wayland
+
+What the window uses beyond `xdg_wm_base`:
 
 - `zwp_keyboard_shortcuts_inhibit_manager_v1` — while the window has focus
   and a session is connected, the compositor's own shortcuts are inhibited so
@@ -287,36 +313,116 @@ Wayland first, through winit. What the window uses beyond `xdg_wm_base`:
 - `zwp_pointer_constraints_v1` and `zwp_relative_pointer_manager_v1` — the
   pointer lock and raw motion of relative mode, through winit's
   `CursorGrabMode::Locked` and `DeviceEvent::MouseMotion`.
-- The clipboard goes through arboard (egui-winit's clipboard on Linux).
+- The clipboard goes through smithay-clipboard over winit's own connection:
+  egui-winit makes both of its clipboards on Linux and uses smithay's where
+  the display handle is Wayland, arboard's otherwise.
 - The native cursor goes through winit's `CustomCursor`, which on Wayland is
   a `wl_shm` buffer in the pointer surface. winit takes straight alpha and
   premultiplies it (the shapes arrive straight, which is what the phone's
-  `Bitmap.setPixels` takes too, and TigerVNC's library makes of
-  `CursorWithAlpha`'s premultiplied pixels), refuses anything over 2048 pixels a side, and copies
-  the pixels into a fresh buffer on *every* `set_cursor`, even of the same
-  cursor — which is why the window's cursor is set on a change and never
-  once a frame. The buffer is in device pixels: with `wp_viewporter` winit
-  sets its destination to the buffer's size over the window's scale factor,
-  and without it sets the buffer scale to the output's integer scale, so a
-  shape resampled to device pixels per desktop pixel is the size of the
-  desktop pixels under it on any scale (tried on niri at scale 1; the
-  fractional case rests on the viewporter path). winit re-applies the
-  cursor on every pointer enter, so one set lasts. `grim` leaves the
-  cursor out of a screenshot unless asked (`-c`).
+  `Bitmap.setPixels` takes too, and what TigerVNC's library makes of
+  `CursorWithAlpha`'s premultiplied pixels), refuses anything over 2048
+  pixels a side, and copies the pixels into a fresh buffer on *every*
+  `set_cursor`, even of the same cursor — which is why the window's cursor
+  is set on a change and never once a frame. The buffer is in device pixels:
+  with `wp_viewporter` winit sets its destination to the buffer's size over
+  the window's scale factor, and without it sets the buffer scale to the
+  output's integer scale, so a shape resampled to device pixels per desktop
+  pixel is the size of the desktop pixels under it on any scale (tried on
+  niri at scale 1; the fractional case rests on the viewporter path). winit
+  re-applies the cursor on every pointer enter, so one set lasts. `grim`
+  leaves the cursor out of a screenshot unless asked (`-c`).
 
-The dependency choice: winit, egui-winit and egui-wgpu are driven directly
-rather than through eframe, because eframe wraps away the things this window
-needs — the raw display and surface handles for the inhibitor, device events
-for raw motion, keyboard events as winit delivers them with the layout's
-logical key, and the event loop's wake-up (the backend's mailbox wakes it
-through an event-loop proxy). It costs a page of surface setup.
+#### X11
 
-### X11
+Proven on `scripts/testx11` — Xvfb and Openbox, a plain X server and a real
+window manager with global keybindings of its own, and the client on the
+host as an ordinary X client of it — against `scripts/testvnc` and
+`scripts/testqemu`. Xvfb has no DRI3, so wgpu takes llvmpipe there; on an X
+server with a GPU it takes the hardware's Vulkan or GL through the Xlib
+handles.
 
-Untested and not a priority. winit's X11 backend is compiled in, so the
-window should open there; the shortcuts inhibitor is Wayland-only (there is
-no X11 equivalent short of grabbing the keyboard), and the pointer lock goes
-through winit's X11 confinement, which has not been tried.
+- **The keyboard is grabbed** in place of the inhibitor: an active
+  `GrabKeyboard` on the window while it has focus and a session is connected,
+  released on focus loss and on disconnect (`src/gui/x11.rs`). It goes over
+  winit's own connection — the Xlib display from the raw handle, as XCB through
+  x11rb — because X reports a grabbed key only to the client that grabbed it;
+  winit keeps receiving every key. On the rig, Super+Return, Ctrl+Alt+T and
+  Alt+Tab all reached the far end (whose own Openbox switched windows) while
+  the window manager's witness log stayed empty and the active window did not
+  change; with an xterm focused, Super+Return reached Openbox. Every chord
+  goes, Alt+F4 included, so **the way out is the mouse**: a click on another
+  window has the window manager move the focus, which ends the grab. Not every
+  mouse binding survives the grab: Openbox's Alt+drag did not move the window
+  while it was held (it did with another window focused). The log says `X11
+  keyboard grabbed` and `released`, and the overlay's inhibitor line says
+  `grabbed`.
+- **A refused grab is retried** every 250 ms while the window has focus and
+  a session is connected, with the loop woken for it; the overlay says why
+  meanwhile (`refused (already grabbed)`). Tried with Openbox's Alt+Tab
+  switcher holding the keyboard, and with another client's grab: the grab
+  was taken 9 ms after the other one ended.
+- **The grab's own focus events are filtered.** A grab and an ungrab make
+  the server send focus-out and focus-in events of their own, which winit
+  reports as the focus moving; with the focus PointerRoot (no window
+  manager) that is an endless ungrab/grab loop. A focus-out while the grab
+  is held is checked against the server's focus (the window, or PointerRoot
+  with the pointer inside it) and dropped if it is still ours, and a repeated
+  focus event is dropped too. On a bare Xvfb with PointerRoot focus and
+  another client's passive grab firing, one focus-out was filtered and keys
+  kept arriving. Without a window manager the grab then holds until
+  disconnect even when the pointer leaves the window, since the server sends
+  a grabbing client no focus-out for that — not a supported setup.
+- **Relative mode captures without a pointer grab.** winit's X11 `Locked` is
+  unsupported, and `Confined` (an active pointer grab) has the server deliver
+  every XI2 raw motion twice, once for the grab and once for the root
+  window's selection, which would be double speed. So the cursor is hidden,
+  raw motion is sent as before, and the pointer is warped back to the
+  window's centre whenever it moves; a warp makes no raw motion, and the
+  window swallows the motion events it causes. Letting go puts the pointer
+  back where it was before the capture. The overlay's mouse line shows the
+  raw motion sent (`Δ x,y`): ten moves of 20 read 200,0 over VNC (`rfb`)
+  and over SPICE, and the guest's cursor moved. A single report of 900
+  pixels, more than half the window, was warped straight back. Raw values
+  from an absolute device (a VM's tablet, xdotool's absolute `mousemove`)
+  are positions rather than deltas, which relative mode cannot use — as on
+  Wayland. XI2 raw events stay selected whatever the focus, since winit
+  deselects them on every focus-out, the filtered ones included.
+- **The native cursor is an Xcursor, premultiplied.** winit copies the
+  pixels it is given into a Render cursor as they are, which wants them
+  premultiplied, so `cursor.rs` premultiplies them for X11 (Wayland's side
+  does that itself). Read back through XFixes (`scripts/testx11/cursor.py`),
+  each shape had the size and hotspot the log said, and no pixel had a
+  colour above its alpha. There is no buffer scale: the cursor is in device
+  pixels, so the resampling is right at any scale factor (×2 at
+  `WINIT_X11_SCALE_FACTOR=2` in a fill mode, ×1 at 1:1).
+- **The clipboard is arboard's**, which serves `CLIPBOARD` from a thread of
+  its own over a connection of its own. Proven both ways with `xclip`. On
+  exit it hands the text to a clipboard manager if one runs; without one,
+  what the far end copied is gone when the window closes, as with any X
+  client (on the rig, `xclip -o` then found no owner). arboard waits up to
+  four seconds for an unresponsive selection owner, and the clipboard is
+  read on focus-in, so a hung owner stalls that one frame.
+- **Fullscreen** is `_NET_WM_STATE_FULLSCREEN`, which needs an EWMH window
+  manager; under Openbox the window became the screen's 1600×1000, and
+  with follow window size on the far end followed it there and back.
+- **The scale factor** is `WINIT_X11_SCALE_FACTOR` if set (a number, or
+  `randr`), otherwise `Xft.dpi` over 96 from XSETTINGS or the resources,
+  otherwise RandR's idea of the monitor's DPI (1 on Xvfb, which reports a
+  0 mm screen).
+
+**Xwayland** — `--x11` on a Wayland session — is for testing, and the
+Wayland backend is the one to use there; the log says so when the X server is
+Xwayland. Tried on niri through xwayland-satellite 0.8.2 (Xwayland 24.1,
+rootless): the window opens on the hardware's Vulkan, connects, draws the far
+end, and takes its keyboard grab, and in relative mode the capture engages
+and Xwayland puts its pointer at the window's centre. What is *unverified*,
+because it needs hands on the real keyboard and mouse and no input was
+injected into the live session: whether that grab holds off niri's own
+shortcuts (that is the compositor's decision; niri does not offer ordinary
+clients the Xwayland keyboard grab protocol, and its shortcuts sit behind
+satellite), whether the real pointer stays in the window while captured
+(Xwayland honours a warp through pointer-constraint emulation that depends
+on its compositor), and absolute pointing and the native cursor there.
 
 ## RealVNC
 
