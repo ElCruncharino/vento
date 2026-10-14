@@ -1,13 +1,15 @@
-# What a backend's JNI half needs of Android and no protocol owns: the locked
-# bitmap, the calls back into Java, the logger, and the one string helper
-# every entry point uses.
+# What a backend's native half needs of Android and no protocol owns: the
+# locked bitmap, the calls back into Java, the logger, the one string helper
+# every entry point uses — and MediaCodec, which is the phone's video decoder
+# and is reached through the NDK rather than through Java.
 #
 # This is the only crate in the workspace with `jni` in it. A protocol crate
 # depends on it under a target cfg and nowhere else, which keeps the host
-# build — tests, examples, a desktop client one day — free of anything that
-# knows a phone exists; and `remotedesktop-common` does not depend on it at
-# all, because the layering runs the other way: this crate implements
-# `common::Events` for Java, and `common` never hears about Java.
+# build — tests, examples, `remotedesktop-platform-desktop` — free of anything
+# that knows a phone exists; and `remotedesktop-common` does not depend on it
+# at all, because the layering runs the other way: this crate implements
+# `common::Events` for Java and `common::video::Decoders` for MediaCodec, and
+# `common` never hears about either.
 #
 # On a host target the crate is empty rather than absent. It is a workspace
 # member, so `cargo test --workspace` builds it; what it builds there is a

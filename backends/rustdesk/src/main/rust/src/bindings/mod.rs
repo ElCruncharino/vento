@@ -7,9 +7,9 @@
 //! `libremotedesktop_rustdesk.so` is this crate, and this module is everything
 //! in it that is not the protocol — it is compiled for Android and nowhere
 //! else. What it needs of Android rather than of RustDesk — a locked bitmap,
-//! the callbacks into Java, the logger — is `platform_android`; the session,
-//! the thread and the place to wait for a person are `common`'s and the same
-//! for every protocol.
+//! the callbacks into Java, the logger, the phone's video decoder — is
+//! `platform_android`; the session, the thread and the place to wait for a
+//! person are `common`'s and the same for every protocol.
 
 use crate::client::{Client, Config, PreferredCodec, Quality, Reach};
 use common::{Bridge, Credentials, Session as CommonSession};
@@ -18,6 +18,7 @@ use jni::errors::LogErrorAndDefault;
 use jni::objects::{JClass, JIntArray, JLongArray, JObject, JObjectArray, JString};
 use jni::sys::{jboolean, jint, jintArray, jlong, jlongArray, jobjectArray, jstring};
 use platform_android::callbacks::Callbacks;
+use platform_android::mediacodec::MediaCodec;
 use platform_android::{bitmap, string};
 use std::sync::Arc;
 use std::time::Duration;
@@ -100,7 +101,8 @@ pub extern "system" fn Java_net_pgaskin_remotedesktop_backend_rustdesk_RustDeskN
             config.quality,
             config.fps
         );
-        let session = Session::start(Arc::new(Client::new()), config, Bridge::new(callbacks));
+        let client = Client::new(Arc::new(MediaCodec));
+        let session = Session::start(Arc::new(client), config, Bridge::new(callbacks));
         Ok(Box::into_raw(Box::new(session)) as jlong)
     })
     .resolve::<LogErrorAndDefault>()

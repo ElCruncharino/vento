@@ -1,15 +1,23 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The phone's own decoder, through the NDK's C API.
+//! The phone's own decoder, through the NDK's C API: [`MediaCodec`] is this
+//! platform's `common::video::Decoders`.
+//!
+//! The decode is the phone's hardware, which is what keeps a backend that
+//! receives video from being a codec project: nothing here implements VP9,
+//! and MediaCodec is a C API, so this reaches it with an `extern "C"` block
+//! and no JNI, no Java and no thread of its own. Everything after the decode —
+//! what moved, and the conversion of only that — is `common::video::Output`,
+//! the same as libavcodec's on a desktop.
 //!
 //! Declared here rather than taken from a crate: it is a dozen functions with a
 //! stable ABI, and `#[link]` on the extern block is the whole of the build
-//! configuration — the same argument `platform_android::bitmap` makes for
+//! configuration — the same argument [`bitmap`](crate::bitmap) makes for
 //! `jnigraphics`.
 //!
 //! Three things are not obvious and each cost a measurement to find, two of
-//! them in [49](../../../../../notes/49-h264.md)'s H.264 path before this
+//! them in [49](../../../../notes/49-h264.md)'s H.264 path before this
 //! existed:
 //!
 //! - **No surface.** The pixels have to come back to the CPU, because what the
@@ -23,10 +31,10 @@
 //!   Flexible reports Flexible and nothing more.
 
 use std::ffi::{CString, c_char, c_void};
+use std::sync::OnceLock;
 
-use super::convert::{Layout, Plane};
-use super::diff::{Changes, Previous};
-use super::{Codec, convert};
+use common::video::convert::{Frame, Plane};
+use common::video::{Changes, Codec, Decoders, Output};
 
 #[repr(C)]
 struct AMediaCodec {
@@ -143,11 +151,44 @@ const MEDIA_IMAGE_TYPE_YUV: u32 = 1;
 const FIRST_FRAME_TIMEOUT_US: i64 = 200_000;
 const FRAME_TIMEOUT_US: i64 = 30_000;
 
+/// The phone's decoders, as a session is handed them.
+pub struct MediaCodec;
+
+impl Decoders for MediaCodec {
+    /// Asked once and remembered, because the answer is the device's and
+    /// cannot change under a running app.
+    fn decodable(&self, codec: Codec) -> bool {
+        static PROBED: OnceLock<[bool; Codec::ALL.len()]> = OnceLock::new();
+        let probed = PROBED.get_or_init(|| Codec::ALL.map(can_decode));
+        probed[Codec::ALL.iter().position(|c| *c == codec).unwrap()]
+    }
+
+    fn decoder(
+        &self,
+        codec: Codec,
+        width: usize,
+        height: usize,
+    ) -> Option<Box<dyn common::video::Decoder>> {
+        Decoder::new(codec, width, height).map(|d| Box::new(d) as Box<dyn common::video::Decoder>)
+    }
+}
+
+/// What MediaCodec calls a codec, which is a MIME type.
+fn mime(codec: Codec) -> &'static str {
+    match codec {
+        Codec::Vp9 => "video/x-vnd.on2.vp9",
+        Codec::Vp8 => "video/x-vnd.on2.vp8",
+        Codec::Av1 => "video/av01",
+        Codec::H264 => "video/avc",
+        Codec::H265 => "video/hevc",
+    }
+}
+
 /// Whether the platform has a decoder for this codec, without configuring one:
 /// a codec that exists here may still refuse a particular size, which is
 /// [`Decoder::new`]'s answer rather than this one.
-pub fn can_decode(codec: Codec) -> bool {
-    let Ok(mime) = CString::new(codec.mime()) else {
+fn can_decode(codec: Codec) -> bool {
+    let Ok(mime) = CString::new(mime(codec)) else {
         return false;
     };
     let handle = unsafe { AMediaCodec_createDecoderByType(mime.as_ptr()) };
@@ -169,12 +210,9 @@ pub struct Decoder {
     frame_height: i32,
     bt709: bool,
     full_range: bool,
-    /// The layout the vectorised conversion was last checked against, and what
-    /// it said. Checked once per layout rather than per frame.
-    checked: Option<(Layout, bool)>,
-    /// The last frame's planes, which is what says how much of this one is
-    /// worth converting.
-    previous: Previous,
+    /// The last frame's planes and the vectorised conversion's verdict, which
+    /// between them are how little of this one is converted.
+    output: Output,
     /// Buffers released without being converted, because a newer whole picture
     /// was already waiting behind them.
     pub skipped: u64,
@@ -182,7 +220,7 @@ pub struct Decoder {
 
 impl Decoder {
     pub fn new(codec: Codec, width: usize, height: usize) -> Option<Decoder> {
-        let mime = CString::new(codec.mime()).ok()?;
+        let mime = CString::new(mime(codec)).ok()?;
         let handle = unsafe { AMediaCodec_createDecoderByType(mime.as_ptr()) };
         if handle.is_null() {
             log::warn!("no {} decoder on this device", codec.name());
@@ -222,8 +260,7 @@ impl Decoder {
             frame_height: height as i32,
             bt709: true,
             full_range: false,
-            checked: None,
-            previous: Previous::new(),
+            output: Output::new(),
             skipped: 0,
         })
     }
@@ -408,73 +445,24 @@ impl Decoder {
         height: usize,
         changed: &mut Changes,
     ) {
-        let w = width.min(self.frame_width.max(0) as usize);
-        let h = height.min(self.frame_height.max(0) as usize);
-        if !self.have_layout || w == 0 || h == 0 {
+        if !self.have_layout {
             return;
         }
-        // Every read below is inside the buffer if the last one of each plane
-        // is, and a decoder that has just changed resolution is where that
-        // matters.
-        for plane in &self.planes {
-            let last = plane.offset
-                + ((h - 1) / plane.vert_subsampling) * plane.row_inc
-                + ((w - 1) / plane.horiz_subsampling) * plane.col_inc;
-            if last >= base.len() {
-                log::warn!("a {w}x{h} frame does not fit {} bytes", base.len());
-                return;
-            }
-        }
-
-        let c = convert::coefficients(self.bt709, self.full_range);
-        let layout = Layout {
-            y_col_inc: self.planes[0].col_inc,
-            uv_col_inc: self.planes[1].col_inc,
-            horiz_subsampling: self.planes[1].horiz_subsampling,
-        };
-        let vectorise = match self.checked {
-            Some((checked, ok)) if checked == layout => ok,
-            _ => {
-                let ok = convert::vectorised_agrees(
-                    base,
-                    self.planes[0].offset,
-                    self.planes[1].offset,
-                    self.planes[2].offset,
-                    &layout,
-                    w,
-                    &c,
-                );
-                log::info!(
-                    "the vectorised conversion is {} for this decoder's layout",
-                    if ok { "in use" } else { "off" }
-                );
-                self.checked = Some((layout, ok));
-                ok
-            }
-        };
-
-        self.previous.compare(base, &self.planes, w, h, changed);
-
-        for row in 0..h {
-            if !changed.row(row) {
-                continue;
-            }
-            let y_at = self.planes[0].offset + row * self.planes[0].row_inc;
-            let u_at = self.planes[1].offset
-                + (row / self.planes[1].vert_subsampling) * self.planes[1].row_inc;
-            let v_at = self.planes[2].offset
-                + (row / self.planes[2].vert_subsampling) * self.planes[2].row_inc;
-            let line = &mut out[row * width..row * width + w];
-            let mut col = 0;
-            if vectorise {
-                col = convert::row_vectorised(base, y_at, u_at, v_at, &layout, line, w, &c);
-            }
-            convert::row_scalar(base, y_at, u_at, v_at, &layout, line, col, w, &c);
-        }
+        // One buffer with all three planes in it, which is the shape the
+        // descriptor describes.
+        let frame = Frame::one(
+            base,
+            self.planes,
+            self.frame_width.max(0) as usize,
+            self.frame_height.max(0) as usize,
+            self.bt709,
+            self.full_range,
+        );
+        self.output.write(&frame, out, width, height, changed);
     }
 }
 
-impl super::Decoder for Decoder {
+impl common::video::Decoder for Decoder {
     fn decode(
         &mut self,
         data: &[u8],

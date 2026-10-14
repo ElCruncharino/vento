@@ -1,0 +1,35 @@
+# What a backend needs of a desktop and no protocol owns. Today that is one
+# thing: a video decoder, which on a phone is the hardware's and here is
+# libavcodec's, so that a protocol whose picture is video — RustDesk's — can be
+# run, probed and tested on the machine it is developed on with the picture in.
+#
+# The mirror of `remotedesktop-platform-android`, cfg for cfg: on Android the
+# crate is empty and has no dependencies, which is what keeps FFmpeg out of
+# every APK and out of the licence page generated from the Android graph. A
+# protocol crate reaches it only as a dev-dependency under
+# `cfg(not(target_os = "android"))`, for its probe.
+#
+# Building it needs FFmpeg's development files where pkg-config can find them
+# (libavcodec and libavutil; written against FFmpeg 8) and a libclang for
+# bindgen.
+[package]
+name = "remotedesktop-platform-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+name = "platform_desktop"
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+log.workspace = true
+remotedesktop-common.workspace = true
+# The C API and nothing over it: the dozen calls a decoder makes are wrapped in
+# `src/ffmpeg.rs` the way `platform_android::mediacodec` wraps MediaCodec's,
+# and `ffmpeg-next`'s safe layer would be a second wrapper around those same
+# calls with its own idea of a frame. Linked against whatever FFmpeg the host
+# has, with bindings generated from its own headers, so a libavcodec major
+# version is a rebuild rather than a port. Only `avcodec` (which brings
+# `avutil`): there is nothing to demux, filter or scale.
+ffmpeg-sys-next = { version = "9.0", default-features = false, features = ["avcodec"] }

@@ -1,7 +1,8 @@
 # The RustDesk backend's native half. The protocol is plain Rust and
 # `src/bindings` is Android-only, so `cargo test` and
-# `cargo run --example rustdesk-probe` exercise it on the host — bar the
-# picture, which is the phone's own decoder and is stubbed off Android.
+# `cargo run --example rustdesk-probe` exercise it on the host. The picture is
+# decoded by whatever `common::video::Decoders` the client is handed: the
+# phone's MediaCodec from `src/bindings`, libavcodec in the probe.
 [package]
 name = "remotedesktop-rustdesk"
 version.workspace = true
@@ -37,11 +38,17 @@ sha2 = "0.11"
 zstd = "0.13"
 
 # The only part of this crate that knows a phone exists: the JNI entry points
-# in `src/bindings`, the platform crate they stand on, and the MediaCodec
-# decoder in `src/video`, which reaches the NDK directly.
+# in `src/bindings` and the platform crate they stand on, which is where the
+# MediaCodec decoder they hand the client lives.
 [target.'cfg(target_os = "android")'.dependencies]
 jni.workspace = true
 remotedesktop-platform-android.workspace = true
+
+# The probe decodes what it receives, and on a host that is libavcodec. A
+# dev-dependency under the opposite cfg, so neither the library the app loads
+# nor its licence page has FFmpeg anywhere in its graph.
+[target.'cfg(not(target_os = "android"))'.dev-dependencies]
+remotedesktop-platform-desktop.workspace = true
 
 [build-dependencies]
 protobuf-codegen = "3.7"

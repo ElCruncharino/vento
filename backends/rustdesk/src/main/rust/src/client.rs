@@ -47,9 +47,9 @@ use crate::protos::message::{
     message, misc, option_message::BoolOption, supported_decoding::PreferCodec, video_frame,
 };
 use crate::rendezvous;
-use crate::video::{self, Codec};
 use crate::wire::{self, Traffic};
 use common::Handler;
+use common::video::{self, Codec, Decoders};
 
 /// Their default direct-access port, which is `RENDEZVOUS_PORT + 2`.
 pub const DIRECT_PORT: u16 = 21118;
@@ -179,7 +179,7 @@ impl PreferredCodec {
     }
 
     /// The codec this asks for, or `None` for [`Auto`](Self::Auto). What it is
-    /// for is the check before it is sent: asking for one this phone cannot
+    /// for is the check before it is sent: asking for one this end cannot
     /// decode is a session with no picture, and the far end has no way to know.
     fn codec(self) -> Option<Codec> {
         match self {
@@ -272,6 +272,11 @@ const WHEEL_NOTCH: i32 = 1;
 
 pub struct Client {
     framebuffer: RwLock<Framebuffer>,
+    /// Whoever decodes the picture, which is the platform's to say and is not
+    /// known here: what the far end is told this end can take is asked of it
+    /// whenever the options go out, and a decoder is made from it whenever the
+    /// codec or the size changes.
+    decoders: Arc<dyn Decoders>,
     traffic: Arc<Traffic>,
     /// Serialized messages on their way to the writer thread. Input is encoded
     /// on whichever thread produced it and written on a thread of its own, so a
@@ -329,9 +334,16 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new() -> Client {
+    /// A client that decodes its picture with `decoders`.
+    ///
+    /// Given here rather than in the [`Config`] because the question it answers
+    /// is asked outside [`run`](Client::run): a live option change on whichever
+    /// thread made it re-sends what this end can decode, and only the client is
+    /// shared with that thread.
+    pub fn new(decoders: Arc<dyn Decoders>) -> Client {
         Client {
             framebuffer: RwLock::new(Framebuffer::new()),
+            decoders,
             traffic: Arc::new(Traffic::default()),
             out: Mutex::new(None),
             closer: Mutex::new(None),
@@ -1017,7 +1029,7 @@ impl Client {
             .as_ref()
             .is_none_or(|(had, size, _)| *had != codec || *size != (w, h))
         {
-            match video::decoder(codec, w, h) {
+            match self.decoders.decoder(codec, w, h) {
                 Some(new) => {
                     self.info.lock().unwrap().encoding = codec.name().into();
                     *decoder = Some((codec, (w, h), new));
@@ -1151,24 +1163,25 @@ impl Client {
 
     /// What this end can decode, and which of those it would rather have.
     ///
-    /// The abilities are the **phone's**, probed rather than declared: their
-    /// peer sends whatever a client says it can take, and a claim this device
-    /// cannot honour is a session with a cursor and no picture. VP9 is the one
-    /// every build of theirs can encode, so it is what a peer with nothing else
-    /// falls back to and what an empty ability list would leave.
+    /// The abilities are the **platform's**, asked of its [`Decoders`] rather
+    /// than declared: their peer sends whatever a client says it can take, and
+    /// a claim this end cannot honour is a session with a cursor and no
+    /// picture. VP9 is the one every build of theirs can encode, so it is what
+    /// a peer with nothing else falls back to and what an empty ability list
+    /// would leave.
     fn decoding(&self, prefer: PreferredCodec) -> SupportedDecoding {
         let mut decoding = SupportedDecoding::new();
-        decoding.ability_vp9 = video::decodable(Codec::Vp9) as i32;
-        decoding.ability_vp8 = video::decodable(Codec::Vp8) as i32;
-        decoding.ability_av1 = video::decodable(Codec::Av1) as i32;
-        decoding.ability_h264 = video::decodable(Codec::H264) as i32;
-        decoding.ability_h265 = video::decodable(Codec::H265) as i32;
-        // A preference this phone cannot decode is not passed on: the far end
+        decoding.ability_vp9 = self.decoders.decodable(Codec::Vp9) as i32;
+        decoding.ability_vp8 = self.decoders.decodable(Codec::Vp8) as i32;
+        decoding.ability_av1 = self.decoders.decodable(Codec::Av1) as i32;
+        decoding.ability_h264 = self.decoders.decodable(Codec::H264) as i32;
+        decoding.ability_h265 = self.decoders.decodable(Codec::H265) as i32;
+        // A preference this end cannot decode is not passed on: the far end
         // would honour it exactly, and nothing over there could tell that the
         // picture never arrived.
         let prefer = match prefer.codec() {
-            Some(codec) if !video::decodable(codec) => {
-                log::warn!("this device cannot decode {}, leaving the codec to the peer", codec.name());
+            Some(codec) if !self.decoders.decodable(codec) => {
+                log::warn!("this end cannot decode {}, leaving the codec to the peer", codec.name());
                 PreferredCodec::Auto
             }
             _ => prefer,
@@ -1479,12 +1492,6 @@ impl common::Client for Client {
     }
 }
 
-impl Default for Client {
-    fn default() -> Client {
-        Client::new()
-    }
-}
-
 /// The thread behind [`Client::keep_alive`], stopped by hand rather than by
 /// being dropped: it is stopped at a point where the answer has arrived and the
 /// next thing to happen is the login, and a `Drop` that joins a sleeping thread
@@ -1694,7 +1701,7 @@ mod tests {
             }
         }
 
-        let client = Client::new();
+        let client = Client::new(Arc::new(video::NoDecoders));
         let (out, sent) = channel();
         *client.out.lock().unwrap() = Some(out);
         let events = || -> Vec<MouseEvent> {

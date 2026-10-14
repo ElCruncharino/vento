@@ -12,6 +12,7 @@
 //! scripts/testrustdesk/run.sh
 //! cargo run --example rustdesk-probe -- direct 10.33.0.208 --password PASSword1 --out /tmp/rig.ivf
 //! cargo run --example rustdesk-probe -- id 3936346 --password PASSword1 --seconds 30
+//! cargo run --example rustdesk-probe -- direct 10.33.0.208 --password PASSword1 --ppm /tmp/rig.ppm
 //! ffprobe /tmp/rig.ivf                       # that it is VP9 of the right size
 //! ffmpeg -i /tmp/rig.ivf -frames:v 1 f.png   # that it is the far end's screen
 //! ```
@@ -23,13 +24,19 @@
 //! the parts a backend has no use for — a session on one thread, every message
 //! counted by arm, and the frames written out as a file to feed a decoder.
 //!
+//! `--ppm` is the other half of that: the frames through the decoder a session
+//! on this machine would use — libavcodec, as `platform_desktop` wraps it, into
+//! the same diff and conversion the phone's MediaCodec feeds — and the first
+//! picture that comes out written as a PPM. Where the IVF says what the far end
+//! sent, this says what this code makes of it.
+//!
 //! `--after-login` selects which of the three messages a client sends once
 //! `PeerInfo` arrives: `sid` answers a Windows peer's session choice, `capture`
 //! names the display to capture, `refresh` asks for a key frame. All three by
 //! default; the flag exists because which of them the picture depends on is a
 //! measurement rather than a reading.
 
-use remotedesktop_rustdesk::{crypto, protos, rendezvous, wire};
+use remotedesktop_rustdesk::{Codec, crypto, protos, rendezvous, wire};
 
 use std::io::Write;
 use std::sync::Arc;
@@ -86,6 +93,7 @@ struct Args {
     frames: usize,
     seconds: u64,
     out: Option<String>,
+    ppm: Option<String>,
     after_login: String,
 }
 
@@ -98,6 +106,7 @@ fn run() -> Result<(), String> {
             "usage:\n  rustdesk-probe direct <host[:port]> [options]\n  \
              rustdesk-probe id <peer-id> [options]\n\
              options: --password P --server HOST --key BASE64 --frames N --seconds N --out FILE\n\
+             --ppm FILE (the first decoded picture)\n\
              --after-login sid,capture,refresh (what the picture needs)"
         ));
     }
@@ -109,6 +118,7 @@ fn run() -> Result<(), String> {
         frames: 30,
         seconds: 20,
         out: None,
+        ppm: None,
         after_login: "sid,capture,refresh".into(),
     };
     while let Some(flag) = a.next() {
@@ -120,6 +130,7 @@ fn run() -> Result<(), String> {
             "--frames" => args.frames = v.parse().map_err(|_| "--frames wants a number")?,
             "--seconds" => args.seconds = v.parse().map_err(|_| "--seconds wants a number")?,
             "--out" => args.out = Some(v),
+            "--ppm" => args.ppm = Some(v),
             "--after-login" => args.after_login = v,
             _ => return Err(format!("unknown option {flag}")),
         }
@@ -539,6 +550,10 @@ fn session(s: &mut Stream, args: &Args) -> Result<(), String> {
         video.write_ivf(path)?;
         println!("== wrote {path}");
     }
+    if let Some(path) = &args.ppm {
+        let index = video.write_ppm(path)?;
+        println!("== wrote {path}, which is frame {index} decoded");
+    }
     Ok(())
 }
 
@@ -598,6 +613,47 @@ impl Video {
             f.write_all(data).map_err(|e| e.to_string())?;
         }
         Ok(())
+    }
+}
+
+impl Video {
+    /// The first frame that decodes to a picture, as a binary PPM, and which
+    /// frame that was: a stream joined mid-way has nothing to show before its
+    /// next key frame.
+    #[cfg(not(target_os = "android"))]
+    fn write_ppm(&self, path: &str) -> Result<usize, String> {
+        use common::video::{Changes, Decoders};
+
+        let codec = Codec::ALL
+            .into_iter()
+            .find(|c| c.name().replace('.', "") == self.codec)
+            .ok_or_else(|| format!("{} is not a codec this decodes", self.codec))?;
+        let (w, h) = (self.width as usize, self.height as usize);
+        let mut decoder = platform_desktop::ffmpeg::FFmpeg
+            .decoder(codec, w, h)
+            .ok_or_else(|| format!("no {} decoder in this libavcodec", codec.name()))?;
+        let mut out = vec![0u32; w * h];
+        let mut changed = Changes::new();
+        for (index, (data, _)) in self.frames.iter().enumerate() {
+            changed.reset(h);
+            // A first picture is a whole one: there is nothing it could be
+            // compared with, so every row is written.
+            if !decoder.decode(data, &mut out, w, h, &mut changed) {
+                continue;
+            }
+            let mut ppm = format!("P6\n{w} {h}\n255\n").into_bytes();
+            for word in &out {
+                ppm.extend_from_slice(&word.to_le_bytes()[..3]); // R, G, B in memory
+            }
+            std::fs::write(path, ppm).map_err(|e| e.to_string())?;
+            return Ok(index);
+        }
+        Err(format!("none of the {} frames decoded to a picture", self.frames.len()))
+    }
+
+    #[cfg(target_os = "android")]
+    fn write_ppm(&self, _path: &str) -> Result<usize, String> {
+        Err("the probe decodes with libavcodec, which is not on this target".into())
     }
 }
 
