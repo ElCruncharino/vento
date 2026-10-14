@@ -11,8 +11,8 @@
 //! where the cursor is is the guest's business in server mouse mode and this
 //! end's in client mode, and neither of them is this channel's.
 
-use crate::client::Handler;
 use crate::error::Result;
+use common::Handler;
 use shakenfist_spice_protocol::constants::cursor_server;
 use shakenfist_spice_protocol::messages::{CursorInit, CursorSet, SpiceCursorHeader};
 use std::collections::HashMap;
@@ -32,8 +32,8 @@ pub struct Cursors {
 }
 
 struct Shape {
-    width: i32,
-    height: i32,
+    width: usize,
+    height: usize,
     hot_x: i32,
     hot_y: i32,
     /// The framebuffer's own word order, which is what the callback into Java
@@ -87,8 +87,8 @@ impl Cursors {
             return;
         };
         let shape = Shape {
-            width: header.width as i32,
-            height: header.height as i32,
+            width: header.width as usize,
+            height: header.height as usize,
             hot_x: header.hot_spot_x as i32,
             hot_y: header.hot_spot_y as i32,
             pixels,

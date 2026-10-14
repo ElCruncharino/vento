@@ -5,7 +5,7 @@
 //!
 //! Declared here rather than taken from a crate: it is a dozen functions with a
 //! stable ABI, and `#[link]` on the extern block is the whole of the build
-//! configuration — the same argument `common::android::bitmap` makes for
+//! configuration — the same argument `platform_android::bitmap` makes for
 //! `jnigraphics`.
 //!
 //! Three things are not obvious and each cost a measurement to find, two of

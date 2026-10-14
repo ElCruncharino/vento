@@ -13,6 +13,7 @@ use crate::error::{Error, Result, describe};
 use crate::framebuffer::Framebuffer;
 use crate::keymap::{self, Key};
 use crate::tls;
+use common::{Credentials, Handler};
 
 use ironrdp_blocking::{Framed, connect_begin, connect_finalize, mark_as_upgraded};
 use ironrdp_cliprdr::CliprdrClient;
@@ -181,39 +182,6 @@ pub fn compression(value: Option<&str>) -> Option<CompressionType> {
         Some("8k") => Some(CompressionType::K8),
         _ => None,
     }
-}
-
-/// What a person answered a credentials prompt with.
-#[derive(Clone, Default)]
-pub struct Credentials {
-    pub user: String,
-    pub domain: String,
-    pub password: String,
-}
-
-/// Everything the session tells the app. Every method arrives on the protocol
-/// thread and must be cheap; [`Handler::credentials`] and [`Handler::trust`] are
-/// the exceptions and are allowed to take as long as a person does.
-pub trait Handler {
-    fn connected(&mut self, width: usize, height: usize);
-    fn desktop_size(&mut self, width: usize, height: usize);
-    fn damaged(&mut self, x: usize, y: usize, width: usize, height: usize);
-    fn frame_end(&mut self);
-    /// `pixels` is `width × height`, laid out as `R, G, B, A`. A zero size
-    /// means the server has hidden the pointer.
-    fn cursor(&mut self, pixels: &[u32], width: usize, height: usize, hot_x: i32, hot_y: i32);
-    fn bell(&mut self);
-    fn clipboard(&mut self, text: &str);
-    /// The connection needs credentials and the config had none. `None` gives
-    /// up on the connection.
-    ///
-    /// Unlike RFB, this is asked **before** anything is connected: RDP carries
-    /// the user name and password in the connection sequence rather than being
-    /// asked for them by the server, so there is nothing to wait for.
-    fn credentials(&mut self, needs_user: bool) -> Option<Credentials>;
-    /// The server's certificate, by fingerprint, after the handshake and before
-    /// anything secret is sent. `false` ends the connection.
-    fn trust(&mut self, fingerprint: &str) -> bool;
 }
 
 /// What the connection panel can be told, as strings, because that is what it
@@ -1532,6 +1500,23 @@ fn connect(host: &str, port: u16, timeout: Duration) -> Result<TcpStream> {
             format!("no address for {host}"),
         )
     })))
+}
+
+/// The shape `common::Session` runs: the inherent `run` and `close` are the
+/// implementation, and this is them written down for a session that does not
+/// know which protocol it has.
+impl common::Client for Client {
+    type Config = Config;
+    type Error = Error;
+    const NAME: &'static str = "rdp";
+
+    fn run(&self, config: &Config, handler: &mut dyn Handler) -> Result<()> {
+        self.run(config, handler)
+    }
+
+    fn close(&self) {
+        self.close();
+    }
 }
 
 impl Default for Client {

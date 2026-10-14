@@ -75,6 +75,7 @@ impl Handler for Probe {
         println!("credentials asked for (user name: {needs_user})");
         Some(Credentials {
             user: self.user.clone(),
+            domain: String::new(),
             password: self.password.clone()?,
         })
     }

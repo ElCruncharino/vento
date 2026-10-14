@@ -6,6 +6,7 @@
 use crate::error::{Error, Result};
 use crate::proto::{Reader, Writer, latin1, to_latin1};
 use crate::transport::Wire;
+use common::Credentials;
 use cipher::{BlockCipherEncrypt, KeyInit};
 use std::io::{Read, Write};
 
@@ -49,12 +50,6 @@ pub enum Security {
     /// Never TLS — for a link that is already private, or a server whose
     /// certificate is more trouble than the LAN it is on.
     Plain,
-}
-
-/// The answer to "who are you", for the schemes that ask.
-pub struct Credentials {
-    pub user: String,
-    pub password: String,
 }
 
 /// `RFB 003.00x`, as a pair, because three of them behave differently.

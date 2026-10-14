@@ -36,8 +36,8 @@
 /// that proves the whole native path.
 pub const PROTOCOL_VERSION: &str = "RFB 3.8";
 
-// The JNI half: the entry points the Java in this module declares, and the
-// session behind them. Android only — everything above is the protocol, and it
+// The JNI half: the entry points the Java in this module declares, in front of
+// a `common::Session`. Android only — everything above is the protocol, and it
 // builds, tests and runs an example on the host with none of this compiled.
 #[cfg(target_os = "android")]
 mod bindings;
@@ -52,9 +52,10 @@ mod security;
 mod transport;
 mod zlib;
 
-pub use client::{Client, Config, Handler, Info};
+pub use client::{Client, Config, Info};
+pub use common::{Credentials, Handler};
 pub use decode::{ENC_HEXTILE, ENC_RAW, ENC_RRE, ENC_ZRLE, encoding_name};
 pub use error::{Error, Result};
 pub use framebuffer::Framebuffer;
 pub use pixel::PixelFormat;
-pub use security::{Credentials, Security};
+pub use security::Security;

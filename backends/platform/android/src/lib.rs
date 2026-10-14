@@ -1,16 +1,17 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The parts of a backend's JNI half that are about Android rather than about a
-//! protocol: [`bitmap`], which writes pixels straight into a Java `Bitmap`,
-//! [`callbacks`], which is a session's Java side resolved once, and [`slot`],
-//! where a protocol thread waits for a person.
+//! The parts of a backend's JNI half that are about Android rather than about
+//! a protocol: [`bitmap`], which writes pixels straight into a Java `Bitmap`,
+//! [`callbacks`], which is a session's Java side resolved once and speaking
+//! `common::Events`, and [`log`], which points the `log` crate at logcat.
 //!
-//! It was one crate with the RFB bindings in it, then one crate with both, and
-//! the splits changed only where the seams are. Everything a second protocol
-//! wanted unchanged is here, and what is
-//! left in a protocol's own `bindings` module is that protocol's entry points
-//! and its session.
+//! It was one crate with the RFB bindings in it, then one crate with both,
+//! then a module of `remotedesktop-common`, and the splits changed only where
+//! the seams are. What is left in a protocol's own `bindings` module is that
+//! protocol's entry points and nothing else: the session they stand in front
+//! of is `common::Session`, which is the same for every protocol and for every
+//! platform.
 //!
 //! Two threads reach a session, as they do in the RealVNC backend and for the
 //! same reasons: the protocol thread, which owns the connection and delivers
@@ -23,9 +24,13 @@
 //! backend follows — the difference being that here the join in `destroy` can
 //! prove the callbacks are finished, because both ends of the boundary are ours.
 
+// Empty on any other target, so that the workspace builds on the host with
+// this crate in it and nothing of `jni` behind it.
+#![cfg(target_os = "android")]
+
 pub mod bitmap;
 pub mod callbacks;
-pub mod slot;
+pub mod log;
 
 use jni::objects::JString;
 

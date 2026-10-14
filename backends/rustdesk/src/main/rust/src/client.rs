@@ -49,6 +49,7 @@ use crate::protos::message::{
 use crate::rendezvous;
 use crate::video::{self, Codec};
 use crate::wire::{self, Traffic};
+use common::Handler;
 
 /// Their default direct-access port, which is `RENDEZVOUS_PORT + 2`.
 pub const DIRECT_PORT: u16 = 21118;
@@ -222,38 +223,6 @@ enum Verified {
     /// Something did not check out, in these words, and the session is in the
     /// clear — which the app has still to agree to.
     Clear(String),
-}
-
-/// What the protocol thread tells the app. Everything here arrives on that
-/// thread; what the app does about it is the app's business.
-pub trait Handler {
-    fn connected(&mut self, width: usize, height: usize);
-
-    fn desktop_size(&mut self, width: usize, height: usize);
-
-    fn damaged(&mut self, x: usize, y: usize, width: usize, height: usize);
-
-    fn frame_end(&mut self);
-
-    fn cursor(&mut self, pixels: &[u32], width: usize, height: usize, hot_x: i32, hot_y: i32);
-
-    fn clipboard(&mut self, text: &str);
-
-    /// The peer wants a password, and the session is stopped here until one
-    /// arrives. `None` cancels, which ends it.
-    fn password(&mut self) -> Option<String>;
-
-    /// The peer's long-term key, by fingerprint, before this end tells it
-    /// anything. `false` gives up the connection.
-    ///
-    /// Only the id path asks: direct access asserts no identity, so there would
-    /// be nothing to put the question about.
-    fn trust(&mut self, fingerprint: &str) -> bool;
-
-    /// The peer could not be verified at all, in the words of why. `true` goes
-    /// on with the session in the clear, which is what their own client does
-    /// without asking anybody; `false` ends it.
-    fn unverified(&mut self, why: &str) -> bool;
 }
 
 /// Everything the connection panel can be told.
@@ -493,7 +462,7 @@ impl Client {
 
     /// Connect, log in, and run until the far end or this end stops it. The
     /// calling thread is the protocol thread and every callback arrives on it.
-    pub fn run(&self, config: &Config, handler: &mut impl Handler) -> Result<()> {
+    pub fn run(&self, config: &Config, handler: &mut dyn Handler) -> Result<()> {
         self.quality.store(config.quality.ordinal(), Ordering::Relaxed);
         self.fps.store(config.fps, Ordering::Relaxed);
         self.codec.store(config.codec.ordinal(), Ordering::Relaxed);
@@ -725,7 +694,7 @@ impl Client {
         reader: &mut wire::Reader,
         config: &Config,
         verified: Option<Verified>,
-        handler: &mut impl Handler,
+        handler: &mut dyn Handler,
     ) -> Result<()> {
         // Their server opens with `Hash` before anything is asked of it.
         let hash = loop {
@@ -789,7 +758,7 @@ impl Client {
                         if why == "Wrong Password" || why == "Empty Password" =>
                     {
                         log::info!("the peer wants a password ({why})");
-                        match handler.password() {
+                        match handler.credentials(false).map(|c| c.password) {
                             Some(answer) => {
                                 password = answer;
                                 self.send_login(config, &hash, &password);
@@ -871,7 +840,7 @@ impl Client {
     fn arrived(
         &self,
         peer: &PeerInfo,
-        handler: &mut impl Handler,
+        handler: &mut dyn Handler,
         back: &mut Back,
     ) -> Result<()> {
         let current = peer.current_display.max(0) as usize;
@@ -952,7 +921,7 @@ impl Client {
     fn switched(
         &self,
         switch: &SwitchDisplay,
-        handler: &mut impl Handler,
+        handler: &mut dyn Handler,
         back: &mut Back,
     ) {
         let (width, height) = (switch.width, switch.height);
@@ -1018,7 +987,7 @@ impl Client {
         frame: VideoFrame,
         decoder: &mut Option<(Codec, (usize, usize), Box<dyn video::Decoder>)>,
         back: &mut Back,
-        handler: &mut impl Handler,
+        handler: &mut dyn Handler,
     ) {
         let Some(union) = frame.union else { return };
         let (codec, frames) = match union {
@@ -1092,7 +1061,7 @@ impl Client {
         handler.frame_end();
     }
 
-    fn clipboard_arrived(&self, clip: Clipboard, handler: &mut impl Handler) {
+    fn clipboard_arrived(&self, clip: Clipboard, handler: &mut dyn Handler) {
         if clip.format.enum_value_or_default() != ClipboardFormat::Text {
             return;
         }
@@ -1489,6 +1458,27 @@ impl Client {
     }
 }
 
+/// The shape `common::Session` runs: the inherent `run` and `close` are the
+/// implementation, and this is them written down for a session that does not
+/// know which protocol it has.
+impl common::Client for Client {
+    type Config = Config;
+    type Error = Error;
+    const NAME: &'static str = "rustdesk";
+
+    fn run(&self, config: &Config, handler: &mut dyn Handler) -> Result<()> {
+        self.run(config, handler)
+    }
+
+    fn close(&self) {
+        self.close();
+    }
+
+    fn closed_on_request(error: &Error) -> bool {
+        matches!(error, Error::Closed)
+    }
+}
+
 impl Default for Client {
     fn default() -> Client {
         Client::new()
@@ -1597,7 +1587,7 @@ impl Cursor {
         })
     }
 
-    fn deliver(&self, handler: &mut impl Handler) {
+    fn deliver(&self, handler: &mut dyn Handler) {
         handler.cursor(&self.pixels, self.width, self.height, self.hot_x, self.hot_y);
     }
 }
@@ -1696,13 +1686,10 @@ mod tests {
             fn frame_end(&mut self) {}
             fn cursor(&mut self, _p: &[u32], _w: usize, _h: usize, _hx: i32, _hy: i32) {}
             fn clipboard(&mut self, _text: &str) {}
-            fn password(&mut self) -> Option<String> {
+            fn credentials(&mut self, _needs_user: bool) -> Option<common::Credentials> {
                 None
             }
             fn trust(&mut self, _fingerprint: &str) -> bool {
-                false
-            }
-            fn unverified(&mut self, _why: &str) -> bool {
                 false
             }
         }

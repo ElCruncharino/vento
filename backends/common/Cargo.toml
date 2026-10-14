@@ -1,6 +1,14 @@
-# What a JNI half needs of Android and no protocol owns. Everything that is
-# about TLS rather than about a phone is `remotedesktop-tls`, and why the two
-# are separate crates is in that one's manifest.
+# What every client here speaks to and no protocol owns: the `Handler` a
+# protocol thread calls, the `Events` a platform answers it with, the `Session`
+# that runs one on a thread of its own — and the address parser, which is the
+# one thing every client does before any of that.
+#
+# Nothing in here knows what a phone is. The Android half of a backend is
+# `remotedesktop-platform-android`, which depends on this crate and not the
+# other way round, so a desktop client can be built on this layer without a
+# `jni` anywhere in its graph. Everything that is about TLS rather than about a
+# session is `remotedesktop-tls`, and why the two are separate crates is in
+# that one's manifest.
 [package]
 name = "remotedesktop-common"
 version.workspace = true
@@ -13,7 +21,3 @@ name = "common"
 
 [dependencies]
 log.workspace = true
-
-# The `android` module is not compiled off Android, and this is all it needs.
-[target.'cfg(target_os = "android")'.dependencies]
-jni.workspace = true

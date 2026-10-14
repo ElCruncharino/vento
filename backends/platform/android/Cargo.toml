@@ -1,0 +1,29 @@
+# What a backend's JNI half needs of Android and no protocol owns: the locked
+# bitmap, the calls back into Java, the logger, and the one string helper
+# every entry point uses.
+#
+# This is the only crate in the workspace with `jni` in it. A protocol crate
+# depends on it under a target cfg and nowhere else, which keeps the host
+# build — tests, examples, a desktop client one day — free of anything that
+# knows a phone exists; and `remotedesktop-common` does not depend on it at
+# all, because the layering runs the other way: this crate implements
+# `common::Events` for Java, and `common` never hears about Java.
+#
+# On a host target the crate is empty rather than absent. It is a workspace
+# member, so `cargo test --workspace` builds it; what it builds there is a
+# library with nothing in it and no dependencies to fetch.
+[package]
+name = "remotedesktop-platform-android"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+name = "platform_android"
+
+[target.'cfg(target_os = "android")'.dependencies]
+log.workspace = true
+remotedesktop-common.workspace = true
+jni.workspace = true
+android_logger.workspace = true

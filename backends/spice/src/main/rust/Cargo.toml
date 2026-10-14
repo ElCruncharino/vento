@@ -68,7 +68,8 @@ flate2 = { version = "1", default-features = false, features = ["rust_backend"] 
 # is no logcat to put them in.
 log.workspace = true
 
-# The only part of this crate that knows a phone exists.
+# The only part of this crate that knows a phone exists: the JNI entry points
+# in `src/bindings`, and the platform crate they stand on.
 [target.'cfg(target_os = "android")'.dependencies]
 jni.workspace = true
-android_logger.workspace = true
+remotedesktop-platform-android.workspace = true
