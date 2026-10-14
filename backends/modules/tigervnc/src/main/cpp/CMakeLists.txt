@@ -12,6 +12,7 @@ endforeach()
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../../../../cmake/reproducible.cmake")
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../../../../cmake/warnings.cmake")
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../../../../cmake/vento_jni.cmake")
 
 # One shared library per protocol, as every other backend module does, so a
 # build that drops this protocol drops the whole of it. Everything below is
@@ -135,10 +136,15 @@ macro(libtool_create_control_file)
 endmacro()
 add_subdirectory("${THIRD_PARTY}/tigervnc/common" tigervnc-common EXCLUDE_FROM_ALL)
 
-add_library(remotedesktop_tigervnc SHARED tigervnc_jni.cxx H264AndroidDecoderContext.cxx
-        AndroidAudioOutput.cxx)
+# Two halves and the two media sinks: the session, which is the shim over
+# TigerVNC's client and names no platform but those sinks; the JNI file, which
+# is `TigerVncNative`'s entry points over the shared Android adapter
+# `vento_jni` brings with it; and the H.264 context and audio output the
+# phone's own decoders stand behind.
+add_library(remotedesktop_tigervnc SHARED tigervnc_session.cxx tigervnc_jni.cxx
+        H264AndroidDecoderContext.cxx AndroidAudioOutput.cxx)
 remotedesktop_warnings(remotedesktop_tigervnc)
 # gnutls by name as well as through theirs: the certificate check is the
 # shim's now, and it calls the known-hosts functions itself.
 target_link_libraries(remotedesktop_tigervnc PRIVATE rfbclient rfb network rdr core gnutls
-        jnigraphics log mediandk aaudio)
+        vento_jni jnigraphics log mediandk aaudio)

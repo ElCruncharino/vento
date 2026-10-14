@@ -7,7 +7,10 @@ plugins {
 
 // Both halves of the libvncclient backend: `src/main/java` implements `Backend`
 // on `src/main/cpp`, which is a shim over LibVNCServer's client, and the AAR
-// carries the library CMake compiles them to.
+// carries the library CMake compiles them to. The shim is itself two files:
+// `libvnc_session.c`, which drives the library and names no platform, and
+// `libvnc_jni.c`, the JNI entry points over the adapter shared with the other
+// C backends in `backends/platform/android/jni`.
 //
 // The one structural difference from the other protocol modules is that the
 // native half is not in this directory: it is `third_party/libvncserver`, a

@@ -130,6 +130,12 @@ under the host locale (`export LC_ALL=C`).
 
 ## Adapting the shim
 
+- A C backend's shim is two files under `src/main/cpp`: `<name>_session.c`
+  (`.cxx` for TigerVNC), which drives the library against the neutral C API
+  in `backends/common/include/vento/` and names no platform, and
+  `<name>_jni.c`, which is the Java class's own entry points over the adapter
+  in `backends/platform/android/jni`. An upstream change reaches the session
+  file; the JNI file changes only when `nativeCreate`'s parameters do.
 - Every comment of ours that names an upstream version or behaviour ("in
   3.19.1", "the assembly is GAS", "returns Some") is a claim to re-verify
   against the target and correct or remove. Grep for the old version string

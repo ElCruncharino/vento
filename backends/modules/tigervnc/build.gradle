@@ -7,7 +7,11 @@ plugins {
 
 // Both halves of the TigerVNC backend: `src/main/java` implements `Backend` on
 // `src/main/cpp`, which is a shim over TigerVNC's own client code, and the AAR
-// carries the library CMake compiles them to.
+// carries the library CMake compiles them to. The shim is itself two files:
+// `tigervnc_session.cxx`, which drives the library and names no platform but
+// the two media sinks beside it, and `tigervnc_jni.cxx`, the JNI entry points
+// over the adapter shared with the other C backends in
+// `backends/platform/android/jni`.
 //
 // As with libvncclient, the native half is not in this directory: it is
 // `third_party/tigervnc`, a submodule at the repository root, pinned by its

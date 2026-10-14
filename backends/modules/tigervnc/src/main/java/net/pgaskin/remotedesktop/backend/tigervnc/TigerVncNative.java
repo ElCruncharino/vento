@@ -162,9 +162,9 @@ final class TigerVncNative {
 
     static native void nativePointer(long handle, int x, int y, int buttonMask);
 
-    static native void nativeKeyDown(long handle, int keysym, int keyId);
+    static native void nativeKeyDown(long handle, int keysym, long keyId);
 
-    static native void nativeKeyUp(long handle, int keyId);
+    static native void nativeKeyUp(long handle, long keyId);
 
     /** Let go of every key still held — a screen going away mid-chord. */
     static native void nativeReleaseAllKeys(long handle);
