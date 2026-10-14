@@ -132,14 +132,11 @@ if(ANDROID)
 else()
     # The session alone, for whatever desktop process links it: the neutral
     # include directory is its interface, and `vento_log` is left to the
-    # platform, which the probe below gets from `vento_desktop`.
-    add_library(vento_libvnc STATIC libvnc_session.c)
-    remotedesktop_warnings(vento_libvnc)
-    target_include_directories(vento_libvnc PUBLIC "${VENTO_BACKENDS}/common/include")
+    # platform — the probe's `vento_desktop`, or the library's own copy of it
+    # under VENTO_SHARED (vento_desktop.cmake).
+    vento_backend_library(vento_libvnc libvnc_session.c)
     target_include_directories(vento_libvnc SYSTEM PRIVATE ${LIBVNC_INCLUDES})
-    target_link_libraries(vento_libvnc PUBLIC vncclient)
+    target_link_libraries(vento_libvnc ${VENTO_BACKEND_LINK} vncclient)
 
-    add_executable(vento_libvnc_probe libvnc_probe.c)
-    remotedesktop_warnings(vento_libvnc_probe)
-    target_link_libraries(vento_libvnc_probe PRIVATE vento_libvnc vento_probe vento_desktop)
+    vento_backend_probe(vento_libvnc libvnc_probe.c)
 endif()

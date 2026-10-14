@@ -1,0 +1,188 @@
+// SPDX-FileCopyrightText: 2026 Patrick Gaskin
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+//! The eight backends, each as a [`Kind`]: what the picker and `--list` show,
+//! the options it takes, and how to start a session on it.
+//!
+//! Four are the Rust protocol crates, each adapted in a file of its own that
+//! is the twin of that crate's `bindings/mod.rs` — the same config built from
+//! the same option values, over a `common::Session` fed into a mailbox
+//! instead of into Java. Four are C or C++ libraries behind the vtable in
+//! `vento/backend.h`, and `c.rs` is the one adapter over all of them, with
+//! the per-backend part being the config and the live options. The order is
+//! `BackendProvider.order()`'s, which is the picker's.
+
+pub mod c;
+pub mod ironrdp;
+pub mod rfb;
+pub mod rustdesk;
+pub mod spice;
+
+use crate::backend::{Backend, Credentials};
+use crate::events::Mailbox;
+use crate::options::{Options, Spec};
+use std::path::PathBuf;
+use std::sync::Arc;
+
+/// Where this client keeps things on disk, with the XDG defaults.
+#[derive(Clone, Debug)]
+pub struct Dirs {
+    /// What a session leaves behind that is not a setting: TigerVNC's
+    /// known-hosts file, FreeRDP's certificate store, RealVNC's key,
+    /// identities and logs, each under a directory of its own backend.
+    pub state: PathBuf,
+    /// Where `libvncviewer.so` and `libc++_shared.so` out of the RealVNC
+    /// viewer's APK are, for the one backend whose library is not in any
+    /// build of this.
+    pub realvnc_libs: PathBuf,
+}
+
+impl Default for Dirs {
+    fn default() -> Dirs {
+        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+        let xdg = |var: &str, under: &str| {
+            std::env::var_os(var)
+                .filter(|v| !v.is_empty())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| home.join(under))
+                .join("vento")
+        };
+        Dirs {
+            state: xdg("XDG_STATE_HOME", ".local/state"),
+            realvnc_libs: xdg("XDG_DATA_HOME", ".local/share").join("realvnc"),
+        }
+    }
+}
+
+/// What a session is started with.
+pub struct Connect<'a> {
+    pub address: &'a str,
+    /// Empty for none. For the RDP backends, `DOMAIN\user` and `user@domain`
+    /// are split here as the Java backends split them, unless `domain` says
+    /// otherwise.
+    pub user: &'a str,
+    pub domain: &'a str,
+    /// `None` prompts; an empty password is not a password, for the reason
+    /// the RealVNC backend found first — something that looks like a stored
+    /// secret and is not one fails the connection instead of asking for the
+    /// real one — and callers pass `None` for it.
+    pub password: Option<&'a str>,
+    pub options: &'a Options,
+    pub mailbox: Arc<Mailbox>,
+    pub dirs: &'a Dirs,
+    /// The size of the screen this session will be drawn on, where there is
+    /// one, which is what the RDP backends' `DesktopSize=device` asks for.
+    pub screen: Option<(u32, u32)>,
+}
+
+impl Connect<'_> {
+    /// `DOMAIN\user`, `user@domain` or a bare name, as `(domain, user)`,
+    /// with an explicit domain winning over one in the name.
+    pub fn domain_and_user(&self) -> (String, String) {
+        if !self.domain.is_empty() {
+            return (self.domain.to_string(), self.user.to_string());
+        }
+        split_domain(self.user)
+    }
+}
+
+/// `DOMAIN\user`, `user@domain` or a bare name, as `(domain, user)`. Both
+/// forms, because both are typed: the backslash is what Windows shows and
+/// the `@` is what a UPN looks like.
+pub fn split_domain(value: &str) -> (String, String) {
+    let name = value.trim();
+    if let Some((domain, user)) = name.split_once('\\') {
+        return (domain.to_string(), user.to_string());
+    }
+    if let Some((user, domain)) = name.split_once('@')
+        && !user.is_empty()
+    {
+        return (domain.to_string(), user.to_string());
+    }
+    (String::new(), name.to_string())
+}
+
+/// Credentials as the Java prompts deliver them: an empty user name means
+/// the one the session was created with.
+pub fn fill_user(mut credentials: Credentials, user: &str) -> Credentials {
+    if credentials.user.is_empty() {
+        credentials.user = user.to_string();
+    }
+    credentials
+}
+
+/// What the far end lists this machine as, where a phone says its model.
+pub fn client_name() -> String {
+    std::fs::read_to_string("/etc/hostname")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "vento".to_string())
+}
+
+/// Twenty seconds, as every Java backend has it: long enough for a server
+/// to finish a handshake, short enough that a mistyped address is not a
+/// spinner that never stops.
+pub const CONNECT_TIMEOUT_MS: i32 = 20_000;
+
+/// One backend, described.
+pub struct Kind {
+    /// `BackendProvider.id()`: what the command line names it by.
+    pub id: &'static str,
+    pub name: &'static str,
+    pub short_name: &'static str,
+    pub description: &'static str,
+    pub options: &'static [Spec],
+    /// The one call that proves the whole path: what the library says it is.
+    pub version: fn() -> String,
+    pub create: fn(&Connect) -> Result<Arc<dyn Backend>, String>,
+}
+
+/// Every backend this binary has, in the picker's order. RealVNC is here
+/// only when `build.rs` found clang to build its hosting layer with.
+pub fn all() -> Vec<&'static Kind> {
+    let mut kinds = vec![
+        &rfb::KIND,
+        &c::libvnc::KIND,
+        &c::tigervnc::KIND,
+        &c::freerdp::KIND,
+        &ironrdp::KIND,
+    ];
+    #[cfg(realvnc)]
+    kinds.push(&c::realvnc::KIND);
+    kinds.push(&spice::KIND);
+    kinds.push(&rustdesk::KIND);
+    kinds
+}
+
+pub fn find(id: &str) -> Option<&'static Kind> {
+    all().into_iter().find(|k| k.id == id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_domain_is_split_either_way_it_is_typed() {
+        assert_eq!(split_domain("CORP\\alice"), ("CORP".into(), "alice".into()));
+        assert_eq!(split_domain("alice@corp.example"), ("corp.example".into(), "alice".into()));
+        assert_eq!(split_domain(" alice "), ("".into(), "alice".into()));
+        assert_eq!(split_domain("@odd"), ("".into(), "@odd".into()));
+    }
+
+    #[test]
+    fn every_kind_has_a_distinct_id_and_defaults_that_pass_its_own_checks() {
+        let ids: Vec<&str> = all().iter().map(|k| k.id).collect();
+        let mut unique = ids.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(ids.len(), unique.len());
+        for kind in all() {
+            let options = Options::defaults(kind.options);
+            for spec in kind.options {
+                assert!(spec.check(options.get(spec.key)).is_ok(), "{}/{}", kind.id, spec.key);
+            }
+        }
+    }
+}

@@ -224,16 +224,13 @@ if(ANDROID)
 else()
     # The session and the desktop's audio sink, for whatever desktop process
     # links them: the neutral include directory is the interface, and
-    # `vento_log` is left to the platform, which the probe below gets from
-    # `vento_desktop`. The H.264 context is theirs and inside `rfbclient`.
-    add_library(vento_tigervnc STATIC tigervnc_session.cxx
+    # `vento_log` is left to the platform — the probe's `vento_desktop`, or
+    # the library's own copy of it under VENTO_SHARED (vento_desktop.cmake).
+    # The H.264 context is theirs and inside `rfbclient`.
+    vento_backend_library(vento_tigervnc tigervnc_session.cxx
             "${VENTO_BACKENDS}/platform/desktop/tigervnc/AlsaAudioOutput.cxx")
-    remotedesktop_warnings(vento_tigervnc)
-    target_include_directories(vento_tigervnc PUBLIC "${VENTO_BACKENDS}/common/include")
-    target_link_libraries(vento_tigervnc PUBLIC rfbclient rfb network rdr core
+    target_link_libraries(vento_tigervnc ${VENTO_BACKEND_LINK} rfbclient rfb network rdr core
             ${GNUTLS_LIBRARIES} ALSA::ALSA)
 
-    add_executable(vento_tigervnc_probe tigervnc_probe.cxx)
-    remotedesktop_warnings(vento_tigervnc_probe)
-    target_link_libraries(vento_tigervnc_probe PRIVATE vento_tigervnc vento_probe vento_desktop)
+    vento_backend_probe(vento_tigervnc tigervnc_probe.cxx)
 endif()

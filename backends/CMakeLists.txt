@@ -26,7 +26,10 @@
 # wants to watch and a probe with no line numbers is not either;
 # -DVENTO_REALVNC=OFF leaves the RealVNC module out, which it is anyway under
 # a compiler other than clang — libc-shim, which the hosting layer stands on,
-# does not build under GCC — with a message saying so rather than an error.
+# does not build under GCC — with a message saying so rather than an error;
+# -DVENTO_SHARED=ON makes each `vento_<name>` a shared library under `lib/`
+# carrying its dependencies and the logger, which is how the Rust client under
+# `linux/` links them (its build.rs runs this file with that switch on).
 #
 # Needs, as development packages: openssl, gnutls, nettle (with hogweed and
 # gmp), libjpeg-turbo, pixman, zlib, FFmpeg's libavcodec, libavutil and

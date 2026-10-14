@@ -53,7 +53,7 @@ pub mod protos;
 pub mod rendezvous;
 pub mod wire;
 
-pub use client::{Client, Config, Info, Quality, Reach, VERSION};
+pub use client::{Client, Config, Info, PreferredCodec, Quality, Reach, VERSION};
 pub use common::video::Codec;
 pub use common::{Credentials, Handler};
 pub use error::{Error, Result};

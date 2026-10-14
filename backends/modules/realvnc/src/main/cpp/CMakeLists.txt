@@ -55,6 +55,11 @@ else()
     # a session otherwise.
     option(VENTO_REALVNC_TRACE "Trace every JNI call the RealVNC core makes" OFF)
 
+    # Position-independent, as the other three modules ask of their trees: the
+    # four below are static archives, and under VENTO_SHARED they are linked
+    # into a shared library.
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
     foreach(sub logger libc-shim mcpelauncher-linker libjnivm)
         if(NOT EXISTS "${THIRD_PARTY}/${sub}/CMakeLists.txt")
             message(FATAL_ERROR "third_party/${sub} is empty — run `git submodule update --init --recursive`")
@@ -114,23 +119,21 @@ else()
 
     # The session and the hosting layer, for whatever desktop process links
     # them: the neutral include directory is the interface, and `vento_log` is
-    # left to the platform, which the probe below gets from `vento_desktop`.
-    # The hosting layer's headers are its own and not on the interface.
+    # left to the platform — the probe's `vento_desktop`, or the library's own
+    # copy of it under VENTO_SHARED (vento_desktop.cmake). The hosting layer's
+    # headers are its own and not on the interface.
     set(DESKTOP "${VENTO_BACKENDS}/platform/desktop/realvnc")
-    add_library(vento_realvnc STATIC realvnc_session.cxx
+    vento_backend_library(vento_realvnc realvnc_session.cxx
             "${DESKTOP}/DesktopCore.cxx" "${DESKTOP}/Loader.cxx" "${DESKTOP}/Looper.cxx"
             "${DESKTOP}/Classes.cxx" "${DESKTOP}/Files.cxx")
-    remotedesktop_warnings(vento_realvnc)
     target_compile_features(vento_realvnc PRIVATE cxx_std_17)
-    target_include_directories(vento_realvnc PUBLIC "${VENTO_BACKENDS}/common/include")
     target_include_directories(vento_realvnc PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${DESKTOP}"
             "${CMAKE_CURRENT_BINARY_DIR}/gen")
     target_include_directories(vento_realvnc SYSTEM PRIVATE
             "${THIRD_PARTY}/libjnivm/include" "${THIRD_PARTY}/libc-shim/include"
             "${THIRD_PARTY}/mcpelauncher-linker/public_include")
-    target_link_libraries(vento_realvnc PUBLIC linker libc-shim logger jnivm ${CMAKE_DL_LIBS} pthread)
+    target_link_libraries(vento_realvnc ${VENTO_BACKEND_LINK} linker libc-shim logger jnivm
+            ${CMAKE_DL_LIBS} pthread)
 
-    add_executable(vento_realvnc_probe realvnc_probe.cxx)
-    remotedesktop_warnings(vento_realvnc_probe)
-    target_link_libraries(vento_realvnc_probe PRIVATE vento_realvnc vento_probe vento_desktop)
+    vento_backend_probe(vento_realvnc realvnc_probe.cxx)
 endif()

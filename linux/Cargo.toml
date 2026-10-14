@@ -1,0 +1,54 @@
+# The Linux client: one process that can hold a session on any of the eight
+# backends, written against the neutral layer and nothing of a phone's.
+#
+# The four Rust protocols come in as crates and run on `common::Session` with
+# an `Events` of this crate's that feeds a channel; the four C ones come in as
+# the shared libraries `build.rs` has CMake make out of `backends/`, reached
+# through the vtable in `vento/backend.h`. What this crate adds on top is one
+# `Backend` trait both halves fit, the option descriptions a dialog or a `-o`
+# flag needs, and — so far — a headless probe. The window comes next and is
+# meant to be a second mode of the same binary.
+#
+# Everything a session needs is under `cfg(not(target_os = "android"))`, the
+# way `remotedesktop-platform-desktop` is empty on a phone: this is a workspace
+# member, so `cargo ndk … check --workspace` compiles it for Android, and what
+# it compiles there is a binary with an empty `main` and no dependencies to
+# resolve — which is also what keeps FFmpeg, cmake and bindgen out of the
+# Android graph the licence pages are generated from. The two build
+# dependencies are host tools and run only for a host target (`build.rs`
+# returns at once for Android).
+[package]
+name = "vento"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+build = "build.rs"
+
+[[bin]]
+name = "vento"
+path = "src/main.rs"
+
+[dependencies]
+log.workspace = true
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+remotedesktop-common.workspace = true
+# libavcodec, for RustDesk's picture: the one protocol here whose frames are
+# video, and the one dependency that makes this crate's build need FFmpeg's
+# development files.
+remotedesktop-platform-desktop.workspace = true
+remotedesktop-rfb = { path = "../backends/modules/rfb/src/main/rust" }
+remotedesktop-ironrdp = { path = "../backends/modules/ironrdp/src/main/rust" }
+remotedesktop-rustdesk = { path = "../backends/modules/rustdesk/src/main/rust" }
+remotedesktop-spice = { path = "../backends/modules/spice/src/main/rust" }
+
+[build-dependencies]
+# Runs `backends/CMakeLists.txt` with VENTO_SHARED on, which is the whole of
+# how the C backends get here; `build.rs` says where the libraries land.
+cmake = "0.1"
+# The declarations in `vento/backend.h` and the four headers beside it, read
+# rather than retyped: the vtable's member order is the ABI, and a hand-written
+# copy would be a second place it is written down. Already in the workspace's
+# graph through `ffmpeg-sys-next`, so it costs nothing new.
+bindgen = "0.73"

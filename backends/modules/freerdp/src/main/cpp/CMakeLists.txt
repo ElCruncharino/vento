@@ -191,16 +191,13 @@ if(ANDROID)
 else()
     # The session alone, for whatever desktop process links it: the neutral
     # include directory is its interface, and `vento_log` is left to the
-    # platform, which the probe below gets from `vento_desktop`. OpenSSL's
-    # headers are the ones their configure found, for the same constants.
-    add_library(vento_freerdp STATIC freerdp_session.c)
-    remotedesktop_warnings(vento_freerdp)
-    target_include_directories(vento_freerdp PUBLIC "${VENTO_BACKENDS}/common/include")
+    # platform — the probe's `vento_desktop`, or the library's own copy of it
+    # under VENTO_SHARED (vento_desktop.cmake). OpenSSL's headers are the ones
+    # their configure found, for the same constants.
+    vento_backend_library(vento_freerdp freerdp_session.c)
     target_include_directories(vento_freerdp SYSTEM PRIVATE ${FREERDP_INCLUDES}
             ${OPENSSL_INCLUDE_DIR})
-    target_link_libraries(vento_freerdp PUBLIC freerdp-client freerdp winpr)
+    target_link_libraries(vento_freerdp ${VENTO_BACKEND_LINK} freerdp-client freerdp winpr)
 
-    add_executable(vento_freerdp_probe freerdp_probe.c)
-    remotedesktop_warnings(vento_freerdp_probe)
-    target_link_libraries(vento_freerdp_probe PRIVATE vento_freerdp vento_probe vento_desktop)
+    vento_backend_probe(vento_freerdp freerdp_probe.c)
 endif()

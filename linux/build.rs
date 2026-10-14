@@ -1,0 +1,164 @@
+// SPDX-FileCopyrightText: 2026 Patrick Gaskin
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+//! The C backends, for the Rust binary: `backends/CMakeLists.txt` run with
+//! `VENTO_SHARED` on, and the declarations of `vento/backend.h` read into
+//! Rust.
+//!
+//! The host build already existed — it is what the C probes are built on —
+//! and this runs the same file through the `cmake` crate rather than
+//! describing it again, with the one switch that makes each `vento_<name>` a
+//! shared library carrying its vendored static dependencies and the stderr
+//! `vento_log`. The four `.so` files land under `lib/` in the build tree, the
+//! binary links them by name and nothing else of theirs, and an rpath to that
+//! directory is baked in so that `cargo run` finds them from the target
+//! directory without being told.
+//!
+//! RealVNC's hosting layer builds only under clang, so where `clang` is on the
+//! path both compilers are set to it for the whole tree — the three open
+//! backends build under either — and where it is not, the CMake root skips
+//! that module with a message rather than an error. Whether the library then
+//! exists is what the `realvnc` cfg says, so the Rust side can leave the
+//! backend out of its list rather than fail to link.
+//!
+//! Bindings are generated from our own headers, every item named `vento_` or
+//! `VENTO_`. The alternative — `#[repr(C)]` declarations written by hand with
+//! a layout check compiled from C — would be a second copy of a vtable whose
+//! member order is the ABI, kept in step by a test; the headers are ours,
+//! small and C, and bindgen is already in this workspace's graph through
+//! `ffmpeg-sys-next`, so generating is the cheaper way to be right.
+//!
+//! On Android there is nothing to do: the crate is a binary with an empty
+//! `main` there, and the cmake build would need a toolchain nobody has asked
+//! for.
+
+use std::env;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+fn main() {
+    // Known to rustc whether or not it is set, so that `cfg(realvnc)` in the
+    // sources is never an unexpected-cfg warning.
+    println!("cargo:rustc-check-cfg=cfg(realvnc)");
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android") {
+        return;
+    }
+
+    let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    let backends = manifest
+        .join("../backends")
+        .canonicalize()
+        .expect("backends/ beside linux/");
+    let out = PathBuf::from(env::var("OUT_DIR").unwrap());
+
+    // What the C build is made of, as far as cargo is asked to watch: the
+    // build files, the neutral headers, each module's host half and the
+    // desktop platform sources. The vendored trees are not watched — they
+    // are submodules, and a change there is a rebuild somebody asks for.
+    for path in [
+        "CMakeLists.txt",
+        "cmake",
+        "common/include",
+        "platform/desktop/c",
+        "platform/desktop/realvnc",
+        "platform/desktop/tigervnc",
+        "modules/libvnc/src/main/cpp",
+        "modules/tigervnc/src/main/cpp",
+        "modules/freerdp/src/main/cpp",
+        "modules/realvnc/src/main/cpp",
+    ] {
+        println!("cargo:rerun-if-changed={}", backends.join(path).display());
+    }
+
+    let lib = build_c_backends(&backends, &out);
+    println!("cargo:rustc-link-search=native={}", lib.display());
+    // The rpath, so that the binary and the tests run from where cargo puts
+    // them. Absolute, which is right for a development tree; a packaged
+    // binary would carry the libraries beside it and `$ORIGIN` instead.
+    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib.display());
+    for name in ["libvnc", "tigervnc", "freerdp"] {
+        let path = lib.join(format!("libvento_{name}.so"));
+        assert!(path.is_file(), "the C build did not produce {}", path.display());
+        println!("cargo:rustc-link-lib=dylib=vento_{name}");
+    }
+    if lib.join("libvento_realvnc.so").is_file() {
+        println!("cargo:rustc-link-lib=dylib=vento_realvnc");
+        println!("cargo:rustc-cfg=realvnc");
+        println!("cargo:warning=RealVNC backend: in (built with clang)");
+    } else {
+        println!("cargo:warning=RealVNC backend: left out (needs clang on the path)");
+    }
+
+    generate_bindings(&backends, &out);
+}
+
+/// Runs the host CMake build with the shared switch on and returns the
+/// directory the libraries were written to.
+fn build_c_backends(backends: &Path, out: &Path) -> PathBuf {
+    let clang = on_path("clang") && on_path("clang++");
+    let mut cfg = cmake::Config::new(backends);
+    cfg.define("VENTO_SHARED", "ON")
+        // The CMake root's own default: a probe at -O0 is not what anybody
+        // wants to watch, and neither is a decoder.
+        .profile("RelWithDebInfo")
+        // The `cmake` crate would otherwise hand over the `cc` crate's idea
+        // of flags; the tree has its own, and FreeRDP bakes CMAKE_C_FLAGS
+        // into a build string, so the host build is kept the same as a plain
+        // `cmake -S backends`.
+        .define("CMAKE_C_FLAGS", "")
+        .define("CMAKE_CXX_FLAGS", "")
+        // Everything, not an install: the tree neuters `install()` for the
+        // vendored projects, and the libraries are found where they are built.
+        .build_target("all")
+        // The configure step of three vendored trees is slow, and ninja
+        // re-runs it on its own when a CMake file changes.
+        .always_configure(false);
+    if on_path("ninja") {
+        cfg.generator("Ninja");
+    }
+    if clang {
+        cfg.define("CMAKE_C_COMPILER", "clang")
+            .define("CMAKE_CXX_COMPILER", "clang++");
+    }
+    let dst = cfg.build();
+    // `build()` returns the install prefix; the build tree is `build/` under
+    // it, and `lib/` is where vento_desktop.cmake sends the libraries.
+    let _ = out;
+    dst.join("build").join("lib")
+}
+
+fn on_path(program: &str) -> bool {
+    Command::new(program)
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// `vento/backend.h` and the four backend headers, as Rust.
+fn generate_bindings(backends: &Path, out: &Path) {
+    let include = backends.join("common/include");
+    let bindings = bindgen::Builder::default()
+        .header_contents(
+            "vento.h",
+            "#include <vento/backend.h>\n\
+             #include <vento/libvnc.h>\n\
+             #include <vento/tigervnc.h>\n\
+             #include <vento/freerdp.h>\n\
+             #include <vento/realvnc.h>\n",
+        )
+        .clang_arg(format!("-I{}", include.display()))
+        .allowlist_item("vento_.*")
+        .allowlist_item("VENTO_.*")
+        // The inline wrappers call through the vtable, which the Rust side
+        // does itself; `vento_strings_free` is `free` on each item, done
+        // here too, with libc's `free` so the allocator matches.
+        .generate_inline_functions(false)
+        .derive_default(true)
+        .layout_tests(false)
+        .generate()
+        .expect("bindgen over vento/backend.h");
+    bindings
+        .write_to_file(out.join("bindings.rs"))
+        .expect("writing bindings.rs");
+}

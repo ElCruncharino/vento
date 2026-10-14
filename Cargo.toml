@@ -7,7 +7,13 @@
 # neutral layer every client speaks to, the protocol crates are written against
 # it and know nothing of a phone, and `backends/platform/*` is where one
 # platform's glue lives — Android's JNI and MediaCodec in `android`, libavcodec
-# in `desktop`. What a platform supplies, it supplies by implementing a trait of
+# in `desktop`. The one client that is not a phone's is `linux/`: a desktop
+# binary that holds a session on any of the eight backends, over the Rust
+# protocols directly and the C ones through the shared libraries its build.rs
+# has CMake make. It is a workspace member so the Android check builds it, and
+# empty there under a target cfg the way `platform/desktop` is, so nothing of
+# it — FFmpeg, cmake, bindgen — reaches a phone's graph or its licence page.
+# What a platform supplies, it supplies by implementing a trait of
 # `common`'s (`Events`, `video::Decoders`) and handing it to the session, so no
 # protocol crate says which platform it is on. A protocol crate depends on a
 # platform crate only under a target cfg — `android` for the library the app
@@ -19,6 +25,7 @@ members = [
     "backends/tls",
     "backends/platform/*",
     "backends/modules/*/src/main/rust",
+    "linux",
 ]
 exclude = ["third_party"]
 
