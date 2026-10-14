@@ -33,7 +33,7 @@ what makes a comparison between them a comparison rather than an analogy. It is
 one package (`qemu-system-modules-spice`, which Debian splits out of
 `qemu-system-x86` — without it `-spice` is not an option group at all) and two
 more ports; `scripts/measure/spice-probe` drives the crates and
-`backends/spice`'s own example drives the backend.
+`backends/modules/spice`'s own example drives the backend.
 
 **TLS is a second port rather than a negotiation**, so it is one here too: 5931,
 with a certificate and a throwaway CA made when the image is *built*. Built
