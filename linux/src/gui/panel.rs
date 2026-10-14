@@ -11,8 +11,9 @@
 //! name; then the two that are not options — the desktop's size, where the
 //! far end takes one, and which of its displays it is sending, where it
 //! sends one at a time — which are facts about the connection in front of
-//! you rather than descriptions of the backend; and whether the desktop
-//! should follow this window's size.
+//! you rather than descriptions of the backend; whether the desktop should
+//! follow this window's size; and the client's own settings (`settings.rs`),
+//! which a session runs with a copy of and takes a change to at once.
 //!
 //! Then the desktop's name on top of what the backend has to say about the
 //! connection in its own words, with the rows only worth reading when
@@ -28,6 +29,7 @@
 //! comes back as [`Action`]s for the session to apply, which is what keeps
 //! the panel a drawing of state rather than an owner of any.
 
+use super::settings::Settings;
 use crate::backend::{ConnectionFact, Facts, Field, Monitor, Traffic};
 use crate::options::{self, Kind, Options, Spec};
 use egui::{Align2, CollapsingHeader, ComboBox, Grid, RichText, ScrollArea, TextEdit, Ui, vec2};
@@ -67,6 +69,8 @@ pub struct Controls<'a> {
     /// This window's size in desktop pixels, offered as a size.
     pub window: Option<(u32, u32)>,
     pub follow: bool,
+    /// What the session is running with.
+    pub settings: Settings,
 }
 
 /// Something changed on the panel, to be done to the session.
@@ -76,6 +80,8 @@ pub enum Action {
     DesktopSize(u32, u32),
     Display(i32),
     Follow(bool),
+    /// The settings as they are now wanted, one of them changed.
+    Settings(Settings),
 }
 
 /// The panel's own state between frames.
@@ -216,6 +222,11 @@ impl Panel {
                 actions.push(Action::Follow(follow));
             }
             ui.end_row();
+
+            let mut settings = controls.settings;
+            if settings.rows(ui, true) {
+                actions.push(Action::Settings(settings));
+            }
         });
         ui.add_space(8.0);
         ui.separator();

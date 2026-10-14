@@ -19,13 +19,16 @@
 //! connecting and asked questions that return at once, and everything it
 //! has to say arrives through the mailbox between frames.
 
+mod cursor;
 mod desktop;
 mod dialog;
 mod follow;
+mod hud;
 mod keys;
 mod panel;
 mod prompts;
 mod session;
+mod settings;
 mod view;
 mod wayland;
 
@@ -33,6 +36,7 @@ use crate::backends::{Dirs, Kind};
 use crate::options::Options;
 use dialog::Dialog;
 use session::Session;
+pub use settings::Settings;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use wayland::Shortcuts;
@@ -59,6 +63,8 @@ pub struct Launch {
     pub request: Option<Request>,
     pub connect: bool,
     pub dirs: Dirs,
+    /// The client's own settings, from their flags.
+    pub settings: Settings,
 }
 
 /// Something happened on another thread; repaint.
@@ -68,7 +74,10 @@ struct Wake;
 pub struct Host<'a> {
     pub window: &'a Window,
     pub winit: &'a mut egui_winit::State,
+    pub event_loop: &'a ActiveEventLoop,
     pub focused: bool,
+    /// Where the keyboard shortcuts inhibitor is, for the debug overlay.
+    pub inhibitor: &'static str,
 }
 
 /// Runs the window until it is closed; the process's exit status.
@@ -85,6 +94,7 @@ pub fn run(launch: Launch) -> i32 {
     let mut app = App {
         launch: Some(launch),
         dirs: Dirs::default(),
+        settings: Settings::default(),
         proxy,
         window: None,
         gpu: None,
@@ -119,6 +129,9 @@ enum Screen {
 struct App {
     launch: Option<Launch>,
     dirs: Dirs,
+    /// The settings a session starts with, and what the dialog edits; a
+    /// session that changed them hands them back when it ends.
+    settings: Settings,
     proxy: EventLoopProxy<Wake>,
     window: Option<Arc<Window>>,
     gpu: Option<Gpu>,
@@ -188,6 +201,7 @@ impl App {
 
         if let Some(launch) = self.launch.take() {
             self.dirs = launch.dirs;
+            self.settings = launch.settings;
             if let Some(request) = launch.request {
                 if launch.connect {
                     self.connect(request);
@@ -209,7 +223,13 @@ impl App {
         let wake: Box<dyn Fn() + Send + Sync> = Box::new(move || {
             let _ = proxy.send_event(Wake);
         });
-        match Session::start(request.clone(), &self.dirs, (size.width, size.height), wake) {
+        match Session::start(
+            request.clone(),
+            &self.dirs,
+            self.settings,
+            (size.width, size.height),
+            wake,
+        ) {
             Ok(session) => {
                 self.screen = Screen::Session(Box::new(session));
             }
@@ -243,7 +263,13 @@ impl App {
         }
     }
 
-    fn draw(&mut self) {
+    /// The inhibitor's state in a word, for the session's overlay.
+    fn inhibitor(&self) -> &'static str {
+        self.shortcuts.as_ref().map(Shortcuts::state).unwrap_or("none")
+    }
+
+    fn draw(&mut self, event_loop: &ActiveEventLoop) {
+        let inhibitor = self.inhibitor();
         let (Some(window), Some(gpu), Some(state)) = (self.window.clone(), self.gpu.as_mut(), self.winit.as_mut())
         else {
             return;
@@ -259,12 +285,15 @@ impl App {
         let mut host = Host {
             window: &window,
             winit: state,
+            event_loop,
             focused: self.focused,
+            inhibitor,
         };
         let egui = self.egui.clone();
+        let settings = &mut self.settings;
         let mut output = egui.run_ui(raw_input, |ui| match &mut self.screen {
             Screen::Dialog(dialog) => {
-                next = dialog.ui(ui);
+                next = dialog.ui(ui, settings);
             }
             Screen::Session(session) => {
                 session.frame(ui, &mut host);
@@ -273,7 +302,17 @@ impl App {
                 }
             }
         });
+        // The window's cursor: egui-winit's icon, and the far end's shape
+        // over it where the session wants that — put back before, applied
+        // after, so the two never fight (see `cursor.rs`).
+        let icon = output.platform_output.cursor_icon;
+        if let Screen::Session(session) = &mut self.screen {
+            session.cursor_before(&mut host);
+        }
         host.winit.handle_platform_output(&window, output.platform_output);
+        if let Screen::Session(session) = &mut self.screen {
+            session.cursor_after(&mut host, icon);
+        }
 
         let pixels_per_point = output.pixels_per_point;
         let paint_jobs = egui.tessellate(output.shapes, pixels_per_point);
@@ -333,7 +372,7 @@ impl App {
 
         // After the frame, so that the session's last picture was drawn.
         if let Some(detail) = ended {
-            self.end_session(&detail);
+            self.end_session(&detail, event_loop);
         }
         if let Some(request) = next {
             self.connect(request);
@@ -343,7 +382,8 @@ impl App {
 
     /// Back to the dialog, filled in with what was connected to, and told
     /// why it ended where there is a why.
-    fn end_session(&mut self, detail: &str) {
+    fn end_session(&mut self, detail: &str, event_loop: &ActiveEventLoop) {
+        let inhibitor = self.inhibitor();
         let (Some(window), Some(state)) = (self.window.clone(), self.winit.as_mut()) else {
             return;
         };
@@ -356,8 +396,11 @@ impl App {
             let mut host = Host {
                 window: &window,
                 winit: state,
+                event_loop,
                 focused: self.focused,
+                inhibitor,
             };
+            self.settings = session.settings;
             session.shutdown(&self.egui, &mut host);
             self.screen = Screen::Dialog(dialog);
         }
@@ -367,13 +410,16 @@ impl App {
     }
 
     fn close(&mut self, event_loop: &ActiveEventLoop) {
+        let inhibitor = self.inhibitor();
         if let (Some(window), Some(state)) = (self.window.clone(), self.winit.as_mut()) {
             let screen = std::mem::replace(&mut self.screen, Screen::Dialog(Dialog::new()));
             if let Screen::Session(session) = screen {
                 let mut host = Host {
                     window: &window,
                     winit: state,
+                    event_loop,
                     focused: self.focused,
+                    inhibitor,
                 };
                 session.shutdown(&self.egui, &mut host);
             }
@@ -414,7 +460,7 @@ impl ApplicationHandler<Wake> for App {
                 return;
             }
             WindowEvent::RedrawRequested => {
-                self.draw();
+                self.draw(event_loop);
                 return;
             }
             WindowEvent::Resized(size) => {
@@ -432,10 +478,13 @@ impl ApplicationHandler<Wake> for App {
             }
             WindowEvent::Focused(focused) => {
                 self.focused = *focused;
+                let inhibitor = self.shortcuts.as_ref().map(Shortcuts::state).unwrap_or("none");
                 let mut host = Host {
                     window: &window,
                     winit: state,
+                    event_loop,
                     focused: *focused,
+                    inhibitor,
                 };
                 if let Screen::Session(session) = &mut self.screen {
                     session.focus(*focused, &mut host);

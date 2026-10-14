@@ -7,9 +7,13 @@
 //! A backend to pick, the four fields every backend takes, and under them
 //! that backend's options drawn from the registry in `options.rs` — the
 //! same rows `-o` checks against, rendered by their kind and nothing else,
-//! so the dialog knows no option by name. Nothing is saved: there are no
-//! connections to keep and no file to keep them in, which is the brief.
+//! so the dialog knows no option by name. Under those, the client's own
+//! settings (`settings.rs`), which are not the connection's: they are one
+//! answer for every connection, so they are drawn once, apart, and not
+//! filled in from a request. Nothing is saved: there are no connections to
+//! keep and no file to keep them in, which is the brief.
 
+use super::settings::Settings;
 use super::Request;
 use crate::backends::{self, Kind};
 use crate::options::{self, Kind as OptionKind, Options, Spec};
@@ -68,9 +72,10 @@ impl Dialog {
         dialog
     }
 
-    /// Draws the dialog; a request on the frame "Connect" is pressed with
-    /// something that passes the checks.
-    pub fn ui(&mut self, root: &mut Ui) -> Option<Request> {
+    /// Draws the dialog, with the client's `settings` as its own section;
+    /// a request on the frame "Connect" is pressed with something that
+    /// passes the checks.
+    pub fn ui(&mut self, root: &mut Ui, settings: &mut Settings) -> Option<Request> {
         let mut connect = false;
         egui::CentralPanel::default().show(root, |ui| {
             ui.vertical_centered(|ui| {
@@ -83,7 +88,7 @@ impl Dialog {
                     ui.add_space(8.0);
                 }
                 ScrollArea::vertical().show(ui, |ui| {
-                    connect = self.form(ui);
+                    connect = self.form(ui, settings);
                 });
             });
         });
@@ -103,7 +108,7 @@ impl Dialog {
         }
     }
 
-    fn form(&mut self, ui: &mut Ui) -> bool {
+    fn form(&mut self, ui: &mut Ui, settings: &mut Settings) -> bool {
         let mut connect = false;
         Grid::new("connection").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
             ui.label("Backend");
@@ -175,6 +180,17 @@ impl Dialog {
                     option_row(ui, spec, values);
                 }
             });
+
+        // Not the connection's: every connection's.
+        ui.add_space(12.0);
+        ui.separator();
+        ui.add_space(4.0);
+        ui.label(RichText::new("Settings").strong())
+            .on_hover_text("This client's own, for every connection; nothing is saved.");
+        ui.add_space(4.0);
+        Grid::new("settings").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+            settings.rows(ui, false);
+        });
 
         ui.add_space(12.0);
         if let Some(error) = &self.error {

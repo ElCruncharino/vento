@@ -77,6 +77,12 @@ usage: vento                                   the connection dialog
                          answered with a cancel
   -o KEY=VALUE           a backend option (repeatable); --list shows each
   --connect              connect at once instead of showing the dialog
+  --no-clipboard-out     do not send locally copied text to the far end
+  --no-clipboard-in      do not take what the far end copies onto the local
+                         clipboard
+  --native-cursor        make the far end's cursor shape the window's own
+                         pointer, where this end owns the pointer, instead
+                         of drawing it (the dialog's Settings have all three)
   --library-dir DIR      where RealVNC's two libraries are (XDG data dir)
   --state-dir DIR        where backends keep per-host state (XDG state dir)
   --verbose              let the backends' debug lines through
@@ -159,6 +165,7 @@ headless, any of which selects the probe instead of the window:
         let mut out = None;
         let mut thumb_step = 8usize;
         let mut dirs = Dirs::default();
+        let mut settings = gui::Settings::default();
         // Any of the probe's own flags asks for the probe; without one, the
         // window.
         let mut headless = false;
@@ -176,6 +183,9 @@ headless, any of which selects the probe instead of the window:
                 "--password" => password = Some(value(&mut it, "--password")?),
                 "-o" => assignments.push(value(&mut it, "-o")?),
                 "--connect" => connect = true,
+                "--no-clipboard-out" => settings.clipboard_out = false,
+                "--no-clipboard-in" => settings.clipboard_in = false,
+                "--native-cursor" => settings.native_cursor = true,
                 "--probe" => {
                     headless = true;
                     seconds = number::<u64>(&value(&mut it, "--probe")?, "--probe")?;
@@ -227,6 +237,7 @@ headless, any of which selects the probe instead of the window:
                 request: None,
                 connect: false,
                 dirs,
+                settings,
             })));
         }
         // The dialog can be filled in from a backend alone; a session needs
@@ -257,6 +268,7 @@ headless, any of which selects the probe instead of the window:
                 }),
                 connect,
                 dirs,
+                settings,
             })));
         }
 

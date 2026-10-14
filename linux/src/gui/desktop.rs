@@ -25,6 +25,11 @@ pub struct Desktop {
     width: usize,
     height: usize,
     options: TextureOptions,
+    /// What has gone through `read_region` into the texture, for the
+    /// debug overlay: rectangles, bytes, and the last one.
+    uploads: u64,
+    bytes: u64,
+    last: Option<Rect>,
 }
 
 impl Desktop {
@@ -41,6 +46,9 @@ impl Desktop {
             width,
             height,
             options,
+            uploads: 0,
+            bytes: 0,
+            last: None,
         }
     }
 
@@ -50,6 +58,12 @@ impl Desktop {
 
     pub fn size(&self) -> (usize, usize) {
         (self.width, self.height)
+    }
+
+    /// How many rectangles have been read into the texture, how many bytes
+    /// that was, and the last of them.
+    pub fn stats(&self) -> (u64, u64, Option<Rect>) {
+        (self.uploads, self.bytes, self.last)
     }
 
     /// Read `rects` out of the backend and into the texture. A rectangle
@@ -76,6 +90,14 @@ impl Desktop {
             ctx.tex_manager()
                 .write()
                 .set(self.id, egui::epaint::ImageDelta::partial([x, y], image, self.options));
+            self.uploads += 1;
+            self.bytes += (w * h * 4) as u64;
+            self.last = Some(Rect {
+                x,
+                y,
+                width: w,
+                height: h,
+            });
         }
     }
 

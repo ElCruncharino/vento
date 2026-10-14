@@ -35,9 +35,11 @@ backend without one.
   panning and the pointer's mapping, pure arithmetic with tests), `follow.rs`
   (the desktop following the window's size: the phone's `WindowFollower`,
   pure logic with tests), `keys.rs` (winit keys to X11 keysyms), `wayland.rs`
-  (the keyboard shortcuts inhibitor), `dialog.rs` (the connection dialog),
-  `panel.rs` (the connection-info panel, with the live controls), `prompts.rs`
-  (the modal prompts).
+  (the keyboard shortcuts inhibitor), `cursor.rs` (the far end's cursor as
+  the window's own, with tests), `hud.rs` (the debug overlay's box and
+  rates, with tests), `settings.rs` (the client's own settings and their
+  rows), `dialog.rs` (the connection dialog), `panel.rs` (the connection-info
+  panel, with the live controls), `prompts.rs` (the modal prompts).
 - **`src/main.rs`** — the `vento` binary: the window, `--list`, and the
   headless probe.
 
@@ -73,6 +75,13 @@ cargo run
 # connect to, which a typo would otherwise be.
 cargo run -- tigervnc 127.0.0.1:5901 --password vncpass
 cargo run -- rdp
+
+# The client's own settings, which are every connection's rather than this
+# one's: the clipboard in each direction (both on unless told otherwise) and
+# the far end's cursor as the window's own (off unless told). The dialog's
+# "Settings" section has the same three.
+cargo run -- tigervnc 127.0.0.1:5901 --no-clipboard-out --no-clipboard-in
+cargo run -- tigervnc 127.0.0.1:5901 --native-cursor
 
 # Straight into a session, with --connect. Without --password the credentials
 # prompt asks.
@@ -132,6 +141,7 @@ that it is seen once). On it:
 - **View only** stops the mouse, the keyboard and the clipboard going to the
   far end, and tells the backend so.
 - **Info** opens the connection panel, below.
+- **Debug** toggles the debug overlay, below; so does **Ctrl+Alt+D**.
 - **Fullscreen** fills the screen (winit's borderless fullscreen on the
   current monitor); the toolbar still slides in at the top edge, and the same
   button, or disconnecting, leaves it.
@@ -152,7 +162,8 @@ usual sizes, and asking `request_desktop_size` for the one picked — what
 arrives is what the far end granted, and the dropdown shows that rather than
 what was asked; and **Display**, where the far end sends one of several
 screens at a time (RustDesk), asking `request_display`. And **Follow window
-size**, below.
+size**, below, and the three **settings**, below, which a running session
+takes a change to at once.
 
 Under them, the desktop's name, the facts the backend reports in its own words
 (the diagnostic ones folded away), the bytes transferred, the desktop size and
@@ -174,14 +185,27 @@ re-activation after the resize does not yet take the compressed FontMap PDU
 xrdp sends under RDP 6.1 compression, and the session ends) and QEMU with the
 SPICE agent.
 
+**Settings** are the client's own, one answer for every connection, as the
+phone's `AppSettings` has them: **Send clipboard** and **Receive clipboard**
+(both on by default; `--no-clipboard-out`, `--no-clipboard-in`), and **Native
+cursor** (off by default; `--native-cursor`), below. They are a section of
+the connection dialog, apart from the backend's options because they are not
+the connection's, and rows of the connection panel, where a session shows
+what it is running with and takes a change at once. Nothing is saved: a
+session hands them back to the dialog when it ends, and the process forgets
+them when it does.
+
 **Keys** go to the far end as X11 keysyms, from winit's *logical* key — what
 the layout says the key means — as Latin-1 keysyms where there are such, the
 Unicode keysym (`0x01000000 | codepoint`) otherwise, and a table for the named
 keys; the number pad sends `KP_*`, and modifiers are told apart by side. Each
 physical key gets a stable id so a release finds its press whatever the
 modifiers did meanwhile; every key still down is released when the window
-loses focus. There are no local shortcuts: while a session has focus, every key
-is the far end's — including the compositor's own chords, see below.
+loses focus. There is one local chord, **Ctrl+Alt+D** for the debug overlay
+(and Ctrl+Alt on its own in relative mode, below): the D stays here, and the
+chord's keys are let go of at the far end, as the escape does. Every other
+key is the far end's while a session has focus — including the compositor's
+own chords, see below.
 
 **The mouse** sends absolute desktop coordinates, mapped through the view and
 clamped to it, with an RFB button mask (left 1, middle 2, right 4) and the
@@ -190,6 +214,20 @@ scrolling is turned into notches of fifty points. The far end's cursor shape,
 where the protocol sends one, is drawn under the local pointer with the OS
 cursor hidden over the desktop, as the Android app does.
 
+**Native cursor** (a setting, off by default) makes that shape the window's
+own pointer instead — winit's custom cursor, created through the event loop
+from the shape's pixels and hotspot and set on the window — so the
+compositor moves it, and it is as sharp as the compositor's own. It is used
+only where this end owns the pointer: in relative mode the far end draws its
+cursor into the picture and the local one is locked and hidden. A shape is
+uploaded once (cached by its pixels and hotspot) and set only when what the
+cursor should be changes: a new shape, the pointer arriving on the desktop
+or leaving it for the toolbar, the default when the far end hides its cursor
+or has sent none. Where the desktop is not drawn one to one the shape is
+resampled to the view's scale, nearest neighbour, and its hotspot with it;
+the log says the size and hotspot of each one set. `cursor.rs` says how this
+shares the window's cursor with egui-winit, which sets it from egui's icon.
+
 **Relative pointer mode** — the far end owning the cursor (QEMU's VNC, SPICE
 in server mode) — locks the local pointer to the window while it has focus,
 hides it, and sends raw motion as deltas; the far end draws its own cursor
@@ -197,9 +235,32 @@ into the picture. **Hold Ctrl and Alt together to let go** of the pointer; a
 click on the desktop takes it back. Losing focus or disconnecting also lets
 go.
 
-**The clipboard**: what the far end copies becomes the local clipboard; what
-was copied here while the window was away is offered to the far end when the
-window regains focus, once per change.
+**The clipboard**: what the far end copies becomes the local clipboard
+(**Receive clipboard**); what was copied here while the window was away is
+offered to the far end when the window regains focus, once per change (**Send
+clipboard**). The rule is the phone's `SessionClipboard`: the last text seen
+crossing either way is remembered and is never sent back where it came from,
+and what is read here is remembered whether or not it may be sent, so that
+turning sending on offers the next copy and not an old one. Proven against
+`scripts/testvnc` with `wl-copy`/`wl-paste` and the far end's `xclip`, both
+directions, both ways round.
+
+**The debug overlay** (the **Debug** button, or **Ctrl+Alt+D**) is the
+phone's `SessionHud`: a small monospace box in the bottom left of the
+desktop, with its lines in its order where they apply here, and sampled
+rates over a one-second window. The state, the desktop's size, frames a
+second, damage rectangles in all and a second, the pixel path (texture
+updates this frame, bytes a second through `read_region`, the last
+rectangle), and the clipboard's length as the far end would be given it;
+the cursor's desktop position (or *theirs* in relative mode), the buttons
+held, the scale mode and scale in device pixels per desktop pixel, the
+desktop's origin and size on screen; whether the mouse is captured or
+hovering, the buttons, how many keys are held at the far end, and VIEW ONLY
+when it is; the shortcuts inhibitor's state, the follower's (off, waiting
+for the far end, or the size it asked for), the cursor shape (drawn or
+native, its size and hotspot) and the two clipboard switches. The counters
+are kept whether or not it is on, and the box is a few labels a frame while
+it is.
 
 **Prompts** are modal dialogs over the session, which is blocked until one is
 answered — so Escape, or clicking outside, is a no: credentials (the user name
@@ -227,6 +288,20 @@ Wayland first, through winit. What the window uses beyond `xdg_wm_base`:
   pointer lock and raw motion of relative mode, through winit's
   `CursorGrabMode::Locked` and `DeviceEvent::MouseMotion`.
 - The clipboard goes through arboard (egui-winit's clipboard on Linux).
+- The native cursor goes through winit's `CustomCursor`, which on Wayland is
+  a `wl_shm` buffer in the pointer surface. winit takes straight alpha and
+  premultiplies it (the shapes here arrive premultiplied, so `cursor.rs`
+  undoes that first), refuses anything over 2048 pixels a side, and copies
+  the pixels into a fresh buffer on *every* `set_cursor`, even of the same
+  cursor — which is why the window's cursor is set on a change and never
+  once a frame. The buffer is in device pixels: with `wp_viewporter` winit
+  sets its destination to the buffer's size over the window's scale factor,
+  and without it sets the buffer scale to the output's integer scale, so a
+  shape resampled to device pixels per desktop pixel is the size of the
+  desktop pixels under it on any scale (tried on niri at scale 1; the
+  fractional case rests on the viewporter path). winit re-applies the
+  cursor on every pointer enter, so one set lasts. `grim` leaves the
+  cursor out of a screenshot unless asked (`-c`).
 
 The dependency choice: winit, egui-winit and egui-wgpu are driven directly
 rather than through eframe, because eframe wraps away the things this window

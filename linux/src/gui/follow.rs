@@ -44,6 +44,11 @@ impl Follower {
         self.enabled
     }
 
+    /// The size last asked for, for the debug overlay.
+    pub fn followed(&self) -> Option<(u32, u32)> {
+        self.followed
+    }
+
     /// Turning it on forgets what was asked for before, so that it takes
     /// effect where it was turned on — the desktop may have been given a
     /// size by hand meanwhile, and the window is then a new question.

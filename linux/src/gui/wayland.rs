@@ -30,11 +30,13 @@ use wayland_protocols::wp::keyboard_shortcuts_inhibit::zv1::client::{
 };
 use winit::window::Window;
 
-/// What the registry has said so far.
+/// What the registry has said so far, and what the inhibitor has.
 #[derive(Default)]
 struct Globals {
     manager: Option<manager::ZwpKeyboardShortcutsInhibitManagerV1>,
     seat: Option<wl_seat::WlSeat>,
+    /// The compositor's last word on the inhibitor: granted or not.
+    active: bool,
 }
 
 pub struct Shortcuts {
@@ -116,11 +118,21 @@ impl Shortcuts {
         self.wanted = false;
         if let Some(inhibitor) = self.inhibitor.take() {
             inhibitor.destroy();
+            self.globals.active = false;
             let _ = self.queue.flush();
             log::info!("keyboard shortcuts inhibitor released");
         }
     }
 
+    /// Where the inhibitor is, in a word, for the debug overlay.
+    pub fn state(&self) -> &'static str {
+        match (&self.inhibitor, self.wanted, self.globals.active) {
+            (Some(_), _, true) => "active",
+            (Some(_), _, false) => "inactive",
+            (None, true, _) => "waiting",
+            (None, false, _) => "released",
+        }
+    }
 }
 
 impl Drop for Shortcuts {
@@ -168,10 +180,15 @@ impl Dispatch<inhibitor::ZwpKeyboardShortcutsInhibitorV1, ()> for Globals {
         _: &Connection,
         _: &QueueHandle<Globals>,
     ) {
-        let _ = state;
         match event {
-            inhibitor::Event::Active => log::info!("keyboard shortcuts inhibitor active"),
-            inhibitor::Event::Inactive => log::info!("keyboard shortcuts inhibitor inactive"),
+            inhibitor::Event::Active => {
+                state.active = true;
+                log::info!("keyboard shortcuts inhibitor active");
+            }
+            inhibitor::Event::Inactive => {
+                state.active = false;
+                log::info!("keyboard shortcuts inhibitor inactive");
+            }
             _ => {}
         }
     }
