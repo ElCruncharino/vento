@@ -12,6 +12,7 @@
 use super::{wayland, x11};
 use raw_window_handle::{HasDisplayHandle, RawDisplayHandle};
 use std::time::Instant;
+use winit::dpi::PhysicalPosition;
 use winit::window::Window;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -38,6 +39,12 @@ impl Platform {
             Platform::Other => "other",
         }
     }
+}
+
+/// Where the pointer is held while captured on X11: the window's centre.
+pub fn centre(window: &Window) -> PhysicalPosition<i32> {
+    let s = window.inner_size();
+    PhysicalPosition::new((s.width / 2) as i32, (s.height / 2) as i32)
 }
 
 /// The compositor's or the X server's own shortcuts, held off while the

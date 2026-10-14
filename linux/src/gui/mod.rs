@@ -44,6 +44,7 @@ pub use settings::Settings;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use winit::application::ApplicationHandler;
+use winit::dpi::PhysicalPosition;
 use winit::event::{DeviceEvent, DeviceId, StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, DeviceEvents, EventLoop, EventLoopProxy};
 use winit::window::{Window, WindowId};
@@ -86,6 +87,9 @@ pub struct Host<'a> {
     pub inhibitor: &'static str,
     /// Which display server the window is on.
     pub platform: Platform,
+    /// Where the pointer last was in the window, as the window saw it
+    /// (not while the session holds it at the centre).
+    pub pointer: Option<PhysicalPosition<f64>>,
 }
 
 /// Runs the window until it is closed; the process's exit status.
@@ -122,6 +126,7 @@ pub fn run(launch: Launch) -> i32 {
         screen: Screen::Dialog(Dialog::new()),
         shortcuts: None,
         platform: Platform::Other,
+        pointer: None,
         focused: false,
         repaint_at: Arc::new(Mutex::new(None)),
         exit_code: 0,
@@ -161,6 +166,8 @@ struct App {
     shortcuts: Option<Shortcuts>,
     /// Which display server the window is on, once it is open.
     platform: Platform,
+    /// The last pointer position that was not swallowed (see `centred`).
+    pointer: Option<PhysicalPosition<f64>>,
     focused: bool,
     /// When egui last asked to be repainted by.
     repaint_at: Arc<Mutex<Option<Instant>>>,
@@ -330,6 +337,7 @@ impl App {
             focused: self.focused,
             inhibitor,
             platform: self.platform,
+            pointer: self.pointer,
         };
         let egui = self.egui.clone();
         let settings = &mut self.settings;
@@ -442,6 +450,7 @@ impl App {
                 focused: self.focused,
                 inhibitor,
                 platform: self.platform,
+                pointer: self.pointer,
             };
             self.settings = session.settings;
             session.shutdown(&self.egui, &mut host);
@@ -464,6 +473,7 @@ impl App {
                     focused: self.focused,
                     inhibitor,
                     platform: self.platform,
+                    pointer: self.pointer,
                 };
                 session.shutdown(&self.egui, &mut host);
             }
@@ -541,6 +551,7 @@ impl ApplicationHandler<Wake> for App {
                     focused: *focused,
                     inhibitor,
                     platform: self.platform,
+                    pointer: self.pointer,
                 };
                 if let Screen::Session(session) = &mut self.screen {
                     session.focus(*focused, &mut host);
@@ -560,6 +571,27 @@ impl ApplicationHandler<Wake> for App {
                     window.request_redraw();
                     return;
                 }
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                // X11's capture: the pointer is hidden and held at the
+                // centre, and every move away from it is undone. The far
+                // end gets raw motion, which a warp does not make.
+                if let Screen::Session(s) = &self.screen
+                    && s.centred()
+                {
+                    let c = platform::centre(&window);
+                    if position.x.round() as i32 != c.x || position.y.round() as i32 != c.y {
+                        let _ = window.set_cursor_position(c);
+                    }
+                    return;
+                }
+                self.pointer = Some(*position);
+            }
+            WindowEvent::CursorLeft { .. } | WindowEvent::CursorEntered { .. }
+                if matches!(&self.screen, Screen::Session(s) if s.centred()) =>
+            {
+                let _ = window.set_cursor_position(platform::centre(&window));
+                return;
             }
             WindowEvent::MouseInput { state: pressed, button, .. } => {
                 if let Screen::Session(session) = &mut self.screen

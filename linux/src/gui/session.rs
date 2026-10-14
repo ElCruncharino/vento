@@ -28,9 +28,11 @@
 //! Android app does — or, with the native cursor setting, makes it the
 //! window's own pointer (`cursor.rs`). In relative mode the far end draws
 //! its own cursor into the picture and owns the motion, so the local
-//! pointer is locked and hidden while the window has focus and its raw
+//! pointer is captured and hidden while the window has focus and its raw
 //! motion is sent as deltas; Ctrl+Alt held together lets it go, and a click
-//! on the desktop takes it back.
+//! on the desktop takes it back. On Wayland the capture is a pointer lock;
+//! on X11, which has none, the pointer is hidden and warped back to the
+//! window's centre whenever it moves (see `sync_capture`).
 //!
 //! The clipboard crosses in both directions under the two settings the
 //! phone has (`settings.rs`), with its rule: the last text seen crossing
@@ -46,6 +48,7 @@ use super::hud::{self, Hud};
 
 use super::keys::{self, KeyIds};
 use super::panel::{Action, Controls, Panel, Snapshot};
+use super::platform::{self, Platform};
 use super::prompts::{self, Answer, Form, Prompt};
 use super::settings::Settings;
 use super::view::{Layout, View};
@@ -61,6 +64,7 @@ use egui::{
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta};
 use winit::keyboard::{Key as LogicalKey, PhysicalKey};
 use winit::window::{CursorGrabMode, Fullscreen};
@@ -85,6 +89,15 @@ const TOOLBAR_REVEAL: Duration = Duration::from_secs(3);
 const BELL: Duration = Duration::from_millis(600);
 /// How long a disconnect is given before the session is closed regardless.
 const DISCONNECT_PATIENCE: Duration = Duration::from_secs(10);
+
+/// How the local pointer is held in relative mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Capture {
+    /// Wayland: the compositor's pointer lock.
+    Locked,
+    /// X11: hidden, no grab, and warped back to the window's centre.
+    Centred,
+}
 
 /// The far end's cursor, uploaded once per shape, and kept as it arrived
 /// for the native cursor, which resamples it to the view's scale.
@@ -130,8 +143,14 @@ pub struct Session {
     native_key: Option<Key>,
     /// What the far end said about who owns the pointer.
     relative: bool,
-    /// Whether the local pointer is locked to the window right now.
-    captured: bool,
+    /// How the local pointer is held right now, if it is.
+    capture: Option<Capture>,
+    /// X11: where the pointer was before it was captured, put back when it
+    /// is let go.
+    restore: Option<PhysicalPosition<f64>>,
+    /// Raw motion sent while captured, in all: the overlay's `Δ`, which is
+    /// how doubled motion would show.
+    motion_sent: (i64, i64),
     /// The escape chord was used; a click on the desktop ends it.
     escaped: bool,
     key_ids: KeyIds,
@@ -216,7 +235,9 @@ impl Session {
             native: Native::default(),
             native_key: None,
             relative: false,
-            captured: false,
+            capture: None,
+            restore: None,
+            motion_sent: (0, 0),
             escaped: false,
             key_ids: KeyIds::default(),
             held: HashMap::new(),
@@ -253,9 +274,19 @@ impl Session {
     }
 
     /// Whether mouse events from winit go to the far end as raw input,
-    /// which is only while the pointer is locked.
+    /// which is only while the pointer is captured.
     pub fn takes_raw_mouse(&self) -> bool {
-        self.captured && self.accepts_input()
+        self.captured() && self.accepts_input()
+    }
+
+    fn captured(&self) -> bool {
+        self.capture.is_some()
+    }
+
+    /// Whether the pointer is being held at the window's centre (X11's
+    /// capture), so the window swallows its motion and warps it back.
+    pub fn centred(&self) -> bool {
+        self.capture == Some(Capture::Centred) && self.accepts_input()
     }
 
     /// What the window is called: the desktop's name once known, with the
@@ -476,32 +507,59 @@ impl Session {
         }
     }
 
-    /// Lock or free the pointer to match what the mode, the focus and the
-    /// escape chord say.
+    /// Capture or free the pointer to match what the mode, the focus and
+    /// the escape chord say.
     fn sync_capture(&mut self, host: &mut Host) {
         let want = self.relative && host.focused && !self.escaped && self.accepts_input();
-        if want == self.captured {
+        if want == self.captured() {
             return;
         }
         if want {
-            match host.window.set_cursor_grab(CursorGrabMode::Locked) {
-                Ok(()) => {
+            match host.platform {
+                Platform::X11 => {
+                    // winit's X11 `Locked` is unsupported, and `Confined` (an
+                    // active pointer grab) makes the X server deliver every
+                    // raw motion twice, once for the grab and once for the
+                    // root window's selection. So: no grab, the cursor
+                    // hidden, raw XI2 deltas, and the pointer warped back to
+                    // the centre whenever it moves (the window swallows
+                    // those motions; a warp makes no raw motion).
+                    self.restore = host.pointer;
                     host.window.set_cursor_visible(false);
-                    self.captured = true;
+                    let _ = host.window.set_cursor_position(platform::centre(host.window));
+                    self.capture = Some(Capture::Centred);
                     self.motion_rest = (0.0, 0.0);
-                    log::info!("pointer locked (Ctrl+Alt releases it)");
+                    log::info!("pointer captured: hidden and held at the centre (Ctrl+Alt releases it)");
                 }
-                Err(e) => log::warn!("pointer lock refused: {e}"),
+                _ => match host.window.set_cursor_grab(CursorGrabMode::Locked) {
+                    Ok(()) => {
+                        host.window.set_cursor_visible(false);
+                        self.capture = Some(Capture::Locked);
+                        self.motion_rest = (0.0, 0.0);
+                        log::info!("pointer locked (Ctrl+Alt releases it)");
+                    }
+                    Err(e) => log::warn!("pointer lock refused: {e}"),
+                },
             }
         } else {
-            let _ = host.window.set_cursor_grab(CursorGrabMode::None);
-            host.window.set_cursor_visible(true);
-            self.captured = false;
+            self.let_go(host);
             if self.captured_mask != 0 {
                 self.captured_mask = 0;
                 self.backend.pointer_relative(0, 0, 0);
             }
             log::info!("pointer released");
+        }
+    }
+
+    /// The pointer as it was before the capture: unlocked, shown, and on
+    /// X11 back where it was.
+    fn let_go(&mut self, host: &mut Host) {
+        if self.capture.take() == Some(Capture::Locked) {
+            let _ = host.window.set_cursor_grab(CursorGrabMode::None);
+        }
+        host.window.set_cursor_visible(true);
+        if let Some(at) = self.restore.take() {
+            let _ = host.window.set_cursor_position(at);
         }
     }
 
@@ -531,7 +589,7 @@ impl Session {
                     log::debug!("key down {keysym:#x} ({:?}) as {id}", event.logical_key);
                     self.backend.key_down(keysym, id);
                 }
-                if self.captured && chord(&self.held) {
+                if self.captured() && chord(&self.held) {
                     // Let go of the lock, and of the chord's keys at the far
                     // end, which otherwise stay down there.
                     self.escaped = true;
@@ -557,6 +615,8 @@ impl Session {
         let (ix, iy) = (x.trunc(), y.trunc());
         self.motion_rest = (x - ix, y - iy);
         if ix != 0.0 || iy != 0.0 {
+            self.motion_sent.0 += ix as i64;
+            self.motion_sent.1 += iy as i64;
             self.backend.pointer_relative(ix as i32, iy as i32, self.captured_mask);
         }
     }
@@ -810,16 +870,22 @@ impl Session {
         };
         let second = format!("cursor {cursor}  btn {}  {view}", hud::buttons_name(mask));
 
-        let mouse = if self.captured {
-            "captured"
-        } else if self.hovered {
-            "hover"
+        let mouse = match self.capture {
+            Some(Capture::Locked) => "captured (locked)",
+            Some(Capture::Centred) => "captured (centred)",
+            None if self.hovered => "hover",
+            None => "-",
+        };
+        // Every whole pixel of raw motion sent so far in relative mode, so
+        // that motion counted twice shows as twice the distance.
+        let sent = if self.relative {
+            format!("  Δ {},{}", self.motion_sent.0, self.motion_sent.1)
         } else {
-            "-"
+            String::new()
         };
         let third = format!(
-            "mouse {mouse}  btn {}  keys {} held{}",
-            hud::buttons_name(if self.captured { self.captured_mask } else { mask }),
+            "mouse {mouse}{sent}  btn {}  keys {} held{}",
+            hud::buttons_name(if self.captured() { self.captured_mask } else { mask }),
             self.held.len(),
             if self.view_only { "   VIEW ONLY" } else { "" }
         );
@@ -931,7 +997,7 @@ impl Session {
         let over = response.hovered() || response.dragged() || response.is_pointer_button_down_on();
         let pos = ctx.input(|i| i.pointer.latest_pos());
 
-        if over && !self.captured && let Some(pos) = pos {
+        if over && !self.captured() && let Some(pos) = pos {
             let velocity = layout.edge_velocity(pos);
             if velocity != Vec2::ZERO {
                 self.view.pan += velocity * dt;
@@ -1197,9 +1263,8 @@ impl Session {
     pub fn shutdown(mut self, ctx: &egui::Context, host: &mut Host) {
         self.release_keys();
         self.native.reset(host.window);
-        if self.captured {
-            let _ = host.window.set_cursor_grab(CursorGrabMode::None);
-            host.window.set_cursor_visible(true);
+        if self.captured() {
+            self.let_go(host);
         }
         // The screen was the session's; the dialog gets a window.
         if host.window.fullscreen().is_some() {
