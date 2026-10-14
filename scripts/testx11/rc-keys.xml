@@ -1,0 +1,8 @@
+    <!-- The rig's witnesses: chords the WM owns, which write to a log when the
+         WM (and not the focused client) gets them. -->
+    <keybind key="W-Return">
+      <action name="Execute"><command>sh -c 'echo "$(date +%s.%N) W-Return" >> /rig/out/wm-keys.log'</command></action>
+    </keybind>
+    <keybind key="C-A-t">
+      <action name="Execute"><command>sh -c 'echo "$(date +%s.%N) C-A-t" >> /rig/out/wm-keys.log'</command></action>
+    </keybind>
