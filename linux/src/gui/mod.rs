@@ -26,6 +26,7 @@ mod follow;
 mod hud;
 mod keys;
 mod panel;
+mod platform;
 mod prompts;
 mod session;
 mod settings;
@@ -35,6 +36,7 @@ mod wayland;
 use crate::backends::{Dirs, Kind};
 use crate::options::Options;
 use dialog::Dialog;
+pub use platform::Platform;
 use session::Session;
 pub use settings::Settings;
 use std::sync::{Arc, Mutex};
@@ -65,6 +67,9 @@ pub struct Launch {
     pub dirs: Dirs,
     /// The client's own settings, from their flags.
     pub settings: Settings,
+    /// The display server to open the window on, where the command line
+    /// named one; `None` is winit's choice.
+    pub platform: Option<Platform>,
 }
 
 /// Something happened on another thread; repaint.
@@ -78,11 +83,24 @@ pub struct Host<'a> {
     pub focused: bool,
     /// Where the keyboard shortcuts inhibitor is, for the debug overlay.
     pub inhibitor: &'static str,
+    /// Which display server the window is on.
+    pub platform: Platform,
 }
 
 /// Runs the window until it is closed; the process's exit status.
 pub fn run(launch: Launch) -> i32 {
-    let event_loop = match EventLoop::<Wake>::with_user_event().build() {
+    let mut builder = EventLoop::<Wake>::with_user_event();
+    // Fully qualified: both traits have a `with_any_thread` too.
+    match launch.platform {
+        Some(Platform::X11) => {
+            winit::platform::x11::EventLoopBuilderExtX11::with_x11(&mut builder);
+        }
+        Some(Platform::Wayland) => {
+            winit::platform::wayland::EventLoopBuilderExtWayland::with_wayland(&mut builder);
+        }
+        _ => {}
+    }
+    let event_loop = match builder.build() {
         Ok(event_loop) => event_loop,
         Err(e) => {
             eprintln!("cannot open a window: {e}");
@@ -102,6 +120,7 @@ pub fn run(launch: Launch) -> i32 {
         winit: None,
         screen: Screen::Dialog(Dialog::new()),
         shortcuts: None,
+        platform: Platform::Other,
         focused: false,
         repaint_at: Arc::new(Mutex::new(None)),
         exit_code: 0,
@@ -139,6 +158,8 @@ struct App {
     winit: Option<egui_winit::State>,
     screen: Screen,
     shortcuts: Option<Shortcuts>,
+    /// Which display server the window is on, once it is open.
+    platform: Platform,
     focused: bool,
     /// When egui last asked to be repainted by.
     repaint_at: Arc<Mutex<Option<Instant>>>,
@@ -190,10 +211,12 @@ impl App {
                 let _ = proxy.send_event(Wake);
             });
         }
+        self.platform = Platform::of(&window);
+        log::info!("display server: {}", self.platform.name());
         self.shortcuts = Shortcuts::new(&window);
         match &self.shortcuts {
             Some(_) => log::info!("Wayland: looking for the keyboard shortcuts inhibitor"),
-            None => log::info!("not a Wayland window: no keyboard shortcuts inhibitor"),
+            None => log::info!("no shortcuts inhibitor on this display server"),
         }
         self.window = Some(window);
         self.gpu = Some(gpu);
@@ -288,6 +311,7 @@ impl App {
             event_loop,
             focused: self.focused,
             inhibitor,
+            platform: self.platform,
         };
         let egui = self.egui.clone();
         let settings = &mut self.settings;
@@ -399,6 +423,7 @@ impl App {
                 event_loop,
                 focused: self.focused,
                 inhibitor,
+                platform: self.platform,
             };
             self.settings = session.settings;
             session.shutdown(&self.egui, &mut host);
@@ -420,6 +445,7 @@ impl App {
                     event_loop,
                     focused: self.focused,
                     inhibitor,
+                    platform: self.platform,
                 };
                 session.shutdown(&self.egui, &mut host);
             }
@@ -485,6 +511,7 @@ impl ApplicationHandler<Wake> for App {
                     event_loop,
                     focused: *focused,
                     inhibitor,
+                    platform: self.platform,
                 };
                 if let Screen::Session(session) = &mut self.screen {
                     session.focus(*focused, &mut host);

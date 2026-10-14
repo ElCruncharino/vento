@@ -83,6 +83,8 @@ usage: vento                                   the connection dialog
   --native-cursor        make the far end's cursor shape the window's own
                          pointer, where this end owns the pointer, instead
                          of drawing it (the dialog's Settings have all three)
+  --x11, --wayland       open the window on that display server (default:
+                         Wayland where WAYLAND_DISPLAY is set, X11 otherwise)
   --library-dir DIR      where RealVNC's two libraries are (XDG data dir)
   --state-dir DIR        where backends keep per-host state (XDG state dir)
   --verbose              let the backends' debug lines through
@@ -170,6 +172,9 @@ headless, any of which selects the probe instead of the window:
         // window.
         let mut headless = false;
         let mut connect = false;
+        // The window's display server, if named; the probe has no window and
+        // takes either without a word.
+        let mut platform = None;
 
         let mut it = args.into_iter().peekable();
         let value = |it: &mut std::iter::Peekable<std::vec::IntoIter<String>>, flag: &str| {
@@ -186,6 +191,13 @@ headless, any of which selects the probe instead of the window:
                 "--no-clipboard-out" => settings.clipboard_out = false,
                 "--no-clipboard-in" => settings.clipboard_in = false,
                 "--native-cursor" => settings.native_cursor = true,
+                "--x11" | "--wayland" => {
+                    let named = if arg == "--x11" { gui::Platform::X11 } else { gui::Platform::Wayland };
+                    if platform.is_some_and(|p| p != named) {
+                        return Err("--x11 and --wayland are each other's opposite".into());
+                    }
+                    platform = Some(named);
+                }
                 "--probe" => {
                     headless = true;
                     seconds = number::<u64>(&value(&mut it, "--probe")?, "--probe")?;
@@ -238,6 +250,7 @@ headless, any of which selects the probe instead of the window:
                 connect: false,
                 dirs,
                 settings,
+                platform,
             })));
         }
         // The dialog can be filled in from a backend alone; a session needs
@@ -269,6 +282,7 @@ headless, any of which selects the probe instead of the window:
                 connect,
                 dirs,
                 settings,
+                platform,
             })));
         }
 
