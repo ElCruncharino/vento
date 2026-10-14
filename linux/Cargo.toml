@@ -5,23 +5,24 @@
 # an `Events` of this crate's that feeds a channel; the four C ones come in as
 # the shared libraries `build.rs` has CMake make out of `backends/`, reached
 # through the vtable in `vento/backend.h`. What this crate adds on top is one
-# `Backend` trait both halves fit, the option descriptions a dialog or a `-o`
-# flag needs, and — so far — a headless probe. The window comes next and is
-# meant to be a second mode of the same binary.
+# `Backend` trait both halves fit, the option descriptions the dialog and the
+# `-o` flag share, the window (`src/gui/`), and a headless probe.
 #
-# Everything a session needs is under `cfg(not(target_os = "android"))`, the
-# way `remotedesktop-platform-desktop` is empty on a phone: this is a workspace
-# member, so `cargo ndk … check --workspace` compiles it for Android, and what
-# it compiles there is a binary with an empty `main` and no dependencies to
-# resolve — which is also what keeps FFmpeg, cmake and bindgen out of the
-# Android graph the licence pages are generated from. The two build
-# dependencies are host tools and run only for a host target (`build.rs`
-# returns at once for Android).
+# A workspace of its own rather than a member of the repository's, and the
+# root `Cargo.toml` says why at length: Cargo unifies features across a
+# workspace for every platform at once, so the GUI stack here switched on
+# optional features of crates the phone shares and their proc-macro crates
+# appeared in the app's licence page. With its own lock file nothing of this
+# crate's graph reaches the phone's, so there is nothing to gate on a target
+# cfg either: this builds for the host and for nothing else. The protocol and
+# platform crates are reached by path, the same sources the root builds.
+[workspace]
+
 [package]
 name = "vento"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
+version = "0.0.1"
+edition = "2024"
+license = "GPL-3.0-or-later"
 publish = false
 build = "build.rs"
 
@@ -30,18 +31,35 @@ name = "vento"
 path = "src/main.rs"
 
 [dependencies]
-log.workspace = true
-
-[target.'cfg(not(target_os = "android"))'.dependencies]
-remotedesktop-common.workspace = true
+log = "0.4"
+remotedesktop-common = { path = "../backends/common" }
 # libavcodec, for RustDesk's picture: the one protocol here whose frames are
 # video, and the one dependency that makes this crate's build need FFmpeg's
 # development files.
-remotedesktop-platform-desktop.workspace = true
+remotedesktop-platform-desktop = { path = "../backends/platform/desktop" }
 remotedesktop-rfb = { path = "../backends/modules/rfb/src/main/rust" }
 remotedesktop-ironrdp = { path = "../backends/modules/ironrdp/src/main/rust" }
 remotedesktop-rustdesk = { path = "../backends/modules/rustdesk/src/main/rust" }
 remotedesktop-spice = { path = "../backends/modules/spice/src/main/rust" }
+# The window. winit owns the event loop and the Wayland connection, egui
+# draws into it through egui-winit and egui-wgpu, and the three wayland
+# crates are for the one protocol winit does not speak — the keyboard
+# shortcuts inhibitor — reached over winit's own connection through the
+# window's raw handles (see `gui/wayland.rs`).
+egui = "0.36"
+egui-winit = { version = "0.36", default-features = false, features = ["clipboard", "wayland", "x11"] }
+egui-wgpu = { version = "0.36", features = ["winit"] }
+wgpu = "30"
+winit = "0.30"
+pollster = "0.4"
+raw-window-handle = "0.6"
+wayland-client = "0.31"
+wayland-backend = { version = "0.3", features = ["client_system"] }
+wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
+# The X11 keysym table and the Unicode mapping, so a key goes to the far end
+# as the keysym every protocol here takes.
+xkeysym = "0.2"
+bytemuck = "1"
 
 [build-dependencies]
 # Runs `backends/CMakeLists.txt` with VENTO_SHARED on, which is the whole of

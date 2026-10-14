@@ -10,9 +10,13 @@
 # in `desktop`. The one client that is not a phone's is `linux/`: a desktop
 # binary that holds a session on any of the eight backends, over the Rust
 # protocols directly and the C ones through the shared libraries its build.rs
-# has CMake make. It is a workspace member so the Android check builds it, and
-# empty there under a target cfg the way `platform/desktop` is, so nothing of
-# it — FFmpeg, cmake, bindgen — reaches a phone's graph or its licence page.
+# has CMake make. It is a workspace of its own, excluded here, and not for
+# want of trying it as a member: Cargo unifies features across a workspace
+# for every platform at once, so the window's GUI stack switched on optional
+# features of crates the phone shares (`bytemuck/derive`, `zerocopy/derive`)
+# and their proc-macro crates appeared in the app's licence page — `cargo
+# metadata --filter-platform` filters packages, not features. Its own lock
+# file keeps all of that out of this graph; it reaches these crates by path.
 # What a platform supplies, it supplies by implementing a trait of
 # `common`'s (`Events`, `video::Decoders`) and handing it to the session, so no
 # protocol crate says which platform it is on. A protocol crate depends on a
@@ -25,9 +29,8 @@ members = [
     "backends/tls",
     "backends/platform/*",
     "backends/modules/*/src/main/rust",
-    "linux",
 ]
-exclude = ["third_party"]
+exclude = ["third_party", "linux"]
 
 [workspace.package]
 version = "0.0.1"

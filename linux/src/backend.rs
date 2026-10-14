@@ -98,6 +98,12 @@ impl Facts {
     };
 }
 
+impl Default for Facts {
+    fn default() -> Facts {
+        Facts::NONE
+    }
+}
+
 /// What a row of the connection panel *is*, independently of what a backend
 /// calls it: `ConnectionFact.Field` in Java.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

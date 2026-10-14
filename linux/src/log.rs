@@ -13,9 +13,18 @@ use std::io::Write;
 
 struct Stderr;
 
+/// The crates under the window whose debug output is about the window
+/// rather than a session: tens of thousands of lines a minute from winit's
+/// tracing spans and naga's shader passes, which `--verbose` is not for.
+const CHATTER: &[&str] = &["tracing", "winit", "wgpu", "naga", "sctk", "calloop", "egui", "smithay"];
+
 impl Log for Stderr {
     fn enabled(&self, metadata: &Metadata) -> bool {
-        metadata.level() <= log::max_level()
+        if metadata.level() > log::max_level() {
+            return false;
+        }
+        let tag = metadata.target().split("::").next().unwrap_or("");
+        metadata.level() < Level::Debug || !CHATTER.iter().any(|c| tag.starts_with(c))
     }
 
     fn log(&self, record: &Record) {

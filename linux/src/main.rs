@@ -3,27 +3,21 @@
 
 //! `vento`: one process that holds a session on any of the eight backends.
 //!
-//! Headless so far — the spirit of `backends/platform/desktop/c/probe.c`,
-//! which is what proved each C session through the neutral API — and
-//! structured so the window is a small addition: [`main`] parses the command
-//! line into a [`Mode`] and dispatches, and a `Mode::Gui` is one arm and one
-//! module away. `--list` prints the backends and their options; everything
-//! else connects, prints every event, answers the prompts from the flags,
-//! writes the framebuffer and a thumbnail, prints the facts, and leaves with
-//! a status that is zero only if it connected and everything asked for
-//! happened.
+//! [`main`] parses the command line into a [`Mode`] and dispatches. The
+//! window is the default: nothing on the command line opens the connection
+//! dialog, and a backend and an address open straight into a session.
+//! `--list` prints the backends and their options. Any of the probe's flags
+//! (`--probe`, `--out`, `--click`, …) selects the headless mode instead — the
+//! spirit of `backends/platform/desktop/c/probe.c`, which is what proved
+//! each C session through the neutral API — which connects, prints every
+//! event, answers the prompts from the flags, writes the framebuffer and a
+//! thumbnail, prints the facts, and leaves with a status that is zero only
+//! if it connected and everything asked for happened.
 
-// Empty on Android: the crate is a workspace member there, and nothing of a
-// session is built for a phone (see `lib.rs`).
-#[cfg(target_os = "android")]
-fn main() {}
-
-#[cfg(not(target_os = "android"))]
 fn main() {
     std::process::exit(host::run(std::env::args().skip(1).collect()));
 }
 
-#[cfg(not(target_os = "android"))]
 mod host {
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -31,6 +25,7 @@ mod host {
     use vento::backend::{Backend, Credentials, thumbnail_step};
     use vento::backends::{self, Connect, Dirs, Kind};
     use vento::events::{Event, Mailbox, State};
+    use vento::gui;
     use vento::options::{self, Options};
     use vento::ppm;
 
@@ -40,6 +35,8 @@ mod host {
         List,
         /// A headless session, as the probe.
         Probe(Box<Probe>),
+        /// The window: a session, or the dialog to make one.
+        Gui(Box<gui::Launch>),
     }
 
     /// A probe's command line, parsed and checked.
@@ -63,7 +60,9 @@ mod host {
     }
 
     const USAGE: &str = "\
-usage: vento <backend> <address> [options]
+usage: vento                                   the connection dialog
+       vento <backend> <address> [options]     a session in a window
+       vento <backend> <address> --probe N ... a headless probe
        vento --list
 
   <backend>              one of the ids --list prints
@@ -74,6 +73,11 @@ usage: vento <backend> <address> [options]
   --password TEXT        the password; without one the credentials prompt is
                          answered with a cancel
   -o KEY=VALUE           a backend option (repeatable); --list shows each
+  --library-dir DIR      where RealVNC's two libraries are (XDG data dir)
+  --state-dir DIR        where backends keep per-host state (XDG state dir)
+  --verbose              let the backends' debug lines through
+
+headless, any of which selects the probe instead of the window:
   --probe SECONDS        how long to watch after connecting (5)
   --connect-timeout N    how long to wait for the connection (30)
   --out FILE.ppm         write the framebuffer there, and FILE-thumb.ppm
@@ -81,10 +85,7 @@ usage: vento <backend> <address> [options]
   --trust                answer yes to every trust, security and message prompt
   --click X,Y            left-click there once connected
   --key KEYSYM           press and release this X keysym (0x61 is 'a')
-  --clipboard TEXT       send this as the clipboard a second after connecting
-  --library-dir DIR      where RealVNC's two libraries are (XDG data dir)
-  --state-dir DIR        where backends keep per-host state (XDG state dir)
-  --verbose              let the backends' debug lines through";
+  --clipboard TEXT       send this as the clipboard a second after connecting";
 
     pub fn run(args: Vec<String>) -> i32 {
         vento::log::init(args.iter().any(|a| a == "--verbose"));
@@ -94,6 +95,7 @@ usage: vento <backend> <address> [options]
                 0
             }
             Ok(Mode::Probe(probe)) => probe.run(),
+            Ok(Mode::Gui(launch)) => gui::run(*launch),
             Err(message) => {
                 eprintln!("{message}\n\n{USAGE}");
                 2
@@ -153,6 +155,9 @@ usage: vento <backend> <address> [options]
         let mut out = None;
         let mut thumb_step = 8usize;
         let mut dirs = Dirs::default();
+        // Any of the probe's own flags asks for the probe; without one, the
+        // window.
+        let mut headless = false;
 
         let mut it = args.into_iter().peekable();
         let value = |it: &mut std::iter::Peekable<std::vec::IntoIter<String>>, flag: &str| {
@@ -165,16 +170,28 @@ usage: vento <backend> <address> [options]
                 "--domain" => domain = value(&mut it, "--domain")?,
                 "--password" => password = Some(value(&mut it, "--password")?),
                 "-o" => assignments.push(value(&mut it, "-o")?),
-                "--probe" => seconds = number::<u64>(&value(&mut it, "--probe")?, "--probe")?,
+                "--probe" => {
+                    headless = true;
+                    seconds = number::<u64>(&value(&mut it, "--probe")?, "--probe")?;
+                }
                 "--connect-timeout" => {
+                    headless = true;
                     connect_timeout = number::<u64>(&value(&mut it, "--connect-timeout")?, "--connect-timeout")?
                 }
-                "--out" => out = Some(PathBuf::from(value(&mut it, "--out")?)),
+                "--out" => {
+                    headless = true;
+                    out = Some(PathBuf::from(value(&mut it, "--out")?));
+                }
                 "--thumb-step" => {
+                    headless = true;
                     thumb_step = number::<usize>(&value(&mut it, "--thumb-step")?, "--thumb-step")?.max(1)
                 }
-                "--trust" => trust = true,
+                "--trust" => {
+                    headless = true;
+                    trust = true;
+                }
                 "--click" => {
+                    headless = true;
                     let v = value(&mut it, "--click")?;
                     let (x, y) = v.split_once(',').ok_or("--click: not X,Y")?;
                     click = Some((
@@ -182,8 +199,14 @@ usage: vento <backend> <address> [options]
                         number::<i32>(y.trim(), "--click")?,
                     ));
                 }
-                "--key" => key = Some(keysym(&value(&mut it, "--key")?)?),
-                "--clipboard" => clipboard = Some(value(&mut it, "--clipboard")?),
+                "--key" => {
+                    headless = true;
+                    key = Some(keysym(&value(&mut it, "--key")?)?);
+                }
+                "--clipboard" => {
+                    headless = true;
+                    clipboard = Some(value(&mut it, "--clipboard")?);
+                }
                 "--library-dir" => dirs.realvnc_libs = PathBuf::from(value(&mut it, "--library-dir")?),
                 "--state-dir" => dirs.state = PathBuf::from(value(&mut it, "--state-dir")?),
                 other if other.starts_with('-') && other != "-" => {
@@ -193,6 +216,9 @@ usage: vento <backend> <address> [options]
             }
         }
 
+        if positional.is_empty() && !headless && assignments.is_empty() {
+            return Ok(Mode::Gui(Box::new(gui::Launch { request: None, dirs })));
+        }
         if positional.len() != 2 {
             return Err("give a backend and an address".into());
         }
@@ -204,6 +230,20 @@ usage: vento <backend> <address> [options]
             let (k, v) = options::parse_assignment(assignment)?;
             options::find(kind.options, k)?.check(v)?;
             options.set(k, v);
+        }
+
+        if !headless {
+            return Ok(Mode::Gui(Box::new(gui::Launch {
+                request: Some(gui::Request {
+                    kind,
+                    address: positional.remove(1),
+                    user,
+                    domain,
+                    password: password.filter(|p| !p.is_empty()),
+                    options,
+                }),
+                dirs,
+            })));
         }
 
         Ok(Mode::Probe(Box::new(Probe {

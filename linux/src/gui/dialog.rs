@@ -1,0 +1,268 @@
+// SPDX-FileCopyrightText: 2026 Patrick Gaskin
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+//! The connection dialog: what `vento` opens with when it is given nothing
+//! on the command line, and what a session returns to when it ends.
+//!
+//! A backend to pick, the four fields every backend takes, and under them
+//! that backend's options drawn from the registry in `options.rs` — the
+//! same rows `-o` checks against, rendered by their kind and nothing else,
+//! so the dialog knows no option by name. Nothing is saved: there are no
+//! connections to keep and no file to keep them in, which is the brief.
+
+use super::Request;
+use crate::backends::{self, Kind};
+use crate::options::{self, Kind as OptionKind, Options, Spec};
+use egui::{Align, ComboBox, Grid, Layout, RichText, ScrollArea, TextEdit, Ui};
+use std::collections::BTreeMap;
+
+pub struct Dialog {
+    kinds: Vec<&'static Kind>,
+    selected: usize,
+    address: String,
+    user: String,
+    domain: String,
+    password: String,
+    /// Each backend's values, kept per backend so that switching the picker
+    /// and back loses nothing.
+    values: Vec<BTreeMap<&'static str, String>>,
+    /// Why the last session ended, shown until the next attempt.
+    pub notice: Option<String>,
+    /// What was wrong with the last attempt to connect from here.
+    error: Option<String>,
+}
+
+impl Dialog {
+    pub fn new() -> Dialog {
+        let kinds = backends::all();
+        let values = kinds.iter().map(|k| defaults(k.options)).collect();
+        Dialog {
+            kinds,
+            selected: 0,
+            address: String::new(),
+            user: String::new(),
+            domain: String::new(),
+            password: String::new(),
+            values,
+            notice: None,
+            error: None,
+        }
+    }
+
+    /// Filled in from a request, so that a session that ended can be
+    /// started again with a click.
+    pub fn from_request(request: &Request) -> Dialog {
+        let mut dialog = Dialog::new();
+        if let Some(i) = dialog.kinds.iter().position(|k| k.id == request.kind.id) {
+            dialog.selected = i;
+            for (key, value) in request.options.iter() {
+                if let Some(spec) = request.kind.options.iter().find(|s| s.key == key) {
+                    dialog.values[i].insert(spec.key, value.to_string());
+                }
+            }
+        }
+        dialog.address = request.address.clone();
+        dialog.user = request.user.clone();
+        dialog.domain = request.domain.clone();
+        dialog.password = request.password.clone().unwrap_or_default();
+        dialog
+    }
+
+    /// Draws the dialog; a request on the frame "Connect" is pressed with
+    /// something that passes the checks.
+    pub fn ui(&mut self, root: &mut Ui) -> Option<Request> {
+        let mut connect = false;
+        egui::CentralPanel::default().show(root, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.set_max_width(520.0);
+                ui.add_space(12.0);
+                ui.heading("Connect to a desktop");
+                ui.add_space(8.0);
+                if let Some(notice) = &self.notice {
+                    ui.label(RichText::new(notice).color(ui.visuals().warn_fg_color));
+                    ui.add_space(8.0);
+                }
+                ScrollArea::vertical().show(ui, |ui| {
+                    connect = self.form(ui);
+                });
+            });
+        });
+        if !connect {
+            return None;
+        }
+        match self.request() {
+            Ok(request) => {
+                self.error = None;
+                self.notice = None;
+                Some(request)
+            }
+            Err(e) => {
+                self.error = Some(e);
+                None
+            }
+        }
+    }
+
+    fn form(&mut self, ui: &mut Ui) -> bool {
+        let mut connect = false;
+        Grid::new("connection").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+            ui.label("Backend");
+            let kind = self.kinds[self.selected];
+            ComboBox::from_id_salt("backend")
+                .selected_text(kind.name)
+                .width(ui.available_width())
+                .show_ui(ui, |ui| {
+                    for (i, k) in self.kinds.iter().enumerate() {
+                        ui.selectable_value(&mut self.selected, i, k.name)
+                            .on_hover_text(k.description);
+                    }
+                });
+            ui.end_row();
+
+            ui.label("Address");
+            let address = ui.add(
+                TextEdit::singleline(&mut self.address)
+                    .hint_text("host, host:port, host:display")
+                    .desired_width(f32::INFINITY),
+            );
+            if address.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                connect = true;
+            }
+            ui.end_row();
+
+            ui.label("User");
+            ui.add(TextEdit::singleline(&mut self.user).desired_width(f32::INFINITY));
+            ui.end_row();
+
+            ui.label("Password");
+            let password = ui.add(
+                TextEdit::singleline(&mut self.password)
+                    .password(true)
+                    .hint_text("asked for when needed")
+                    .desired_width(f32::INFINITY),
+            );
+            if password.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                connect = true;
+            }
+            ui.end_row();
+
+            ui.label("Domain");
+            ui.add(
+                TextEdit::singleline(&mut self.domain)
+                    .hint_text("RDP only; or DOMAIN\\user above")
+                    .desired_width(f32::INFINITY),
+            );
+            ui.end_row();
+        });
+
+        let kind = self.kinds[self.selected];
+        ui.add_space(12.0);
+        ui.separator();
+        ui.add_space(4.0);
+        ui.label(RichText::new(format!("{} options", kind.name)).strong());
+        ui.add_space(4.0);
+        let values = &mut self.values[self.selected];
+        Grid::new(("options", kind.id))
+            .num_columns(2)
+            .spacing([12.0, 8.0])
+            .show(ui, |ui| {
+                for spec in kind.options {
+                    if let Some(gate) = spec.gate
+                        && !gate.open(values.get(gate.key).map(String::as_str).unwrap_or(""))
+                    {
+                        continue;
+                    }
+                    option_row(ui, spec, values);
+                }
+            });
+
+        ui.add_space(12.0);
+        if let Some(error) = &self.error {
+            ui.label(RichText::new(error).color(ui.visuals().error_fg_color));
+            ui.add_space(4.0);
+        }
+        ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+            if ui.button("Connect").clicked() {
+                connect = true;
+            }
+        });
+        ui.add_space(12.0);
+        connect
+    }
+
+    /// The fields as a request, with every option checked against its spec
+    /// and only the ones that differ from the default counted as set.
+    fn request(&self) -> Result<Request, String> {
+        let kind = self.kinds[self.selected];
+        if self.address.trim().is_empty() {
+            return Err("An address is needed.".to_string());
+        }
+        let mut options = Options::defaults(kind.options);
+        for spec in kind.options {
+            let value = self.values[self.selected]
+                .get(spec.key)
+                .map(String::as_str)
+                .unwrap_or(spec.default);
+            if value != spec.default {
+                spec.check(value)?;
+                options.set(spec.key, value);
+            }
+        }
+        Ok(Request {
+            kind,
+            address: self.address.trim().to_string(),
+            user: self.user.trim().to_string(),
+            domain: self.domain.trim().to_string(),
+            password: (!self.password.is_empty()).then(|| self.password.clone()),
+            options,
+        })
+    }
+}
+
+fn defaults(specs: &[Spec]) -> BTreeMap<&'static str, String> {
+    specs.iter().map(|s| (s.key, s.default.to_string())).collect()
+}
+
+/// One option as the control its kind calls for.
+fn option_row(ui: &mut Ui, spec: &'static Spec, values: &mut BTreeMap<&'static str, String>) {
+    let label = ui.label(spec.label);
+    if let Some(summary) = spec.summary {
+        label.on_hover_text(summary);
+    }
+    let value = values.entry(spec.key).or_insert_with(|| spec.default.to_string());
+    match spec.kind {
+        OptionKind::Bool => {
+            let mut on = value == "true";
+            if ui.checkbox(&mut on, "").changed() {
+                *value = if on { "true" } else { "false" }.to_string();
+            }
+        }
+        OptionKind::Choice => {
+            // A choice whose switch is off is not offered at all.
+            let offered: Vec<&options::Choice> = spec
+                .choices
+                .iter()
+                .filter(|c| {
+                    c.requires
+                        .is_none_or(|key| values.get(key).map(String::as_str) == Some("true"))
+                })
+                .collect();
+            let value = values.entry(spec.key).or_insert_with(|| spec.default.to_string());
+            ComboBox::from_id_salt(spec.key)
+                .selected_text(spec.label_for(value).to_string())
+                .width(ui.available_width())
+                .show_ui(ui, |ui| {
+                    for choice in offered {
+                        let row = ui.selectable_value(value, choice.value.to_string(), choice.label);
+                        if let Some(summary) = choice.summary {
+                            row.on_hover_text(summary);
+                        }
+                    }
+                });
+        }
+        OptionKind::Int | OptionKind::Text => {
+            ui.add(TextEdit::singleline(value).desired_width(f32::INFINITY));
+        }
+    }
+    ui.end_row();
+}

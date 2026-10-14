@@ -236,8 +236,6 @@ dependencies = [
  "bitflags 2.13.1",
  "cexpr",
  "clang-sys",
- "log",
- "prettyplease",
  "proc-macro2",
  "quote",
  "regex",
@@ -2289,16 +2287,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "prettyplease"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2bfe0f4c752e450fc2faf62654f1c134747922825d5b04ca717b8874f41a40c0"
-dependencies = [
- "proc-macro2",
- "syn 3.0.3",
-]
-
-[[package]]
 name = "primefield"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3550,21 +3538,6 @@ name = "vcpkg"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
-
-[[package]]
-name = "vento"
-version = "0.0.1"
-dependencies = [
- "bindgen",
- "cmake",
- "log",
- "remotedesktop-common",
- "remotedesktop-ironrdp",
- "remotedesktop-platform-desktop",
- "remotedesktop-rfb",
- "remotedesktop-rustdesk",
- "remotedesktop-spice",
-]
 
 [[package]]
 name = "version_check"

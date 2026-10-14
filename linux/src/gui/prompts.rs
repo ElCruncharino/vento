@@ -1,0 +1,327 @@
+// SPDX-FileCopyrightText: 2026 Patrick Gaskin
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+//! The questions a connection stops and asks, as modal dialogs over the
+//! session that has stopped for them: `PromptDialogs.java`, in egui.
+//!
+//! Every one of them owes an answer — the backend's thread is blocked until
+//! it gets one — so closing a dialog by any route is a no, and the session
+//! queues what arrives while one is already up. Nothing is persisted from
+//! here: a trusted fingerprint is trusted for this session, and the one
+//! "remember" there is (RealVNC's) is handed to the backend, whose state
+//! directory is where it keeps such things.
+
+use crate::backend::Credentials;
+use crate::events::{Encryption, Event, Identity, Severity};
+use egui::{Align, Id, Key, Layout, Modal, RichText, TextEdit, Ui};
+
+/// A prompt event, held until it is answered.
+#[derive(Clone, Debug)]
+pub enum Prompt {
+    Credentials {
+        needs_user: bool,
+    },
+    Trust {
+        fingerprint: String,
+    },
+    Unverified {
+        why: String,
+    },
+    Question {
+        title: String,
+        text: String,
+    },
+    Security {
+        identity: Identity,
+        encryption: Encryption,
+        signature: String,
+        catchphrase: String,
+        matching_address: String,
+    },
+    Message {
+        text: String,
+        severity: Severity,
+        question: bool,
+        confirm_label: String,
+    },
+}
+
+impl Prompt {
+    pub fn from_event(event: &Event) -> Option<Prompt> {
+        Some(match event {
+            Event::CredentialsNeeded { needs_user } => Prompt::Credentials {
+                needs_user: *needs_user,
+            },
+            Event::TrustNeeded { fingerprint } => Prompt::Trust {
+                fingerprint: fingerprint.clone(),
+            },
+            Event::Unverified { why } => Prompt::Unverified { why: why.clone() },
+            Event::Question { title, text } => Prompt::Question {
+                title: title.clone(),
+                text: text.clone(),
+            },
+            Event::SecurityNeeded {
+                identity,
+                encryption,
+                signature,
+                catchphrase,
+                matching_address,
+            } => Prompt::Security {
+                identity: *identity,
+                encryption: *encryption,
+                signature: signature.clone(),
+                catchphrase: catchphrase.clone(),
+                matching_address: matching_address.clone(),
+            },
+            Event::Message {
+                text,
+                severity,
+                question,
+                confirm_label,
+            } => Prompt::Message {
+                text: text.clone(),
+                severity: *severity,
+                question: *question,
+                confirm_label: confirm_label.clone(),
+            },
+            _ => return None,
+        })
+    }
+}
+
+/// What a dialog answered with, to be handed to the backend.
+#[derive(Clone)]
+pub enum Answer {
+    Credentials(Option<Credentials>),
+    Trust(bool),
+    Security { accept: bool, remember: bool },
+}
+
+/// What is typed into a dialog, kept across frames and reset per prompt.
+#[derive(Default)]
+pub struct Form {
+    pub user: String,
+    pub password: String,
+    pub remember: bool,
+    /// Whether the fields have been set up for the prompt on screen.
+    ready: bool,
+    /// Whether the first field has been given focus, done once per prompt
+    /// so that a click elsewhere in the dialog is not undone.
+    focused: bool,
+}
+
+impl Form {
+    /// Fresh fields for a new prompt.
+    pub fn reset(&mut self) {
+        *self = Form::default();
+    }
+
+    fn prepare(&mut self, prompt: &Prompt, user: &str) {
+        if self.ready {
+            return;
+        }
+        self.ready = true;
+        match prompt {
+            Prompt::Credentials { .. } => self.user = user.to_string(),
+            Prompt::Security { identity, .. } => self.remember = *identity != Identity::Changed,
+            _ => {}
+        }
+    }
+}
+
+/// Draws `prompt` as a modal and returns its answer on the frame it is
+/// given. `address` titles the dialogs that are about the far end; `user`
+/// is what the credentials form starts with.
+pub fn show(ctx: &egui::Context, prompt: &Prompt, form: &mut Form, address: &str, user: &str) -> Option<Answer> {
+    form.prepare(prompt, user);
+    let modal = Modal::new(Id::new("prompt")).show(ctx, |ui| {
+        ui.set_width(380.0);
+        match prompt {
+            Prompt::Credentials { needs_user } => credentials(ui, form, address, *needs_user),
+            Prompt::Trust { fingerprint } => {
+                heading(ui, "Connect anyway?", address);
+                ui.label("This server's certificate is not signed by anyone this client trusts.");
+                ui.add_space(6.0);
+                ui.label("SHA-256 fingerprint:");
+                ui.monospace(fingerprint);
+                yes_no(ui, "Continue", "Cancel").map(Answer::Trust)
+            }
+            Prompt::Unverified { why } => {
+                heading(ui, "Connect anyway?", address);
+                ui.label("This server could not be verified.");
+                ui.add_space(6.0);
+                ui.label(why);
+                yes_no(ui, "Continue", "Cancel").map(Answer::Trust)
+            }
+            Prompt::Question { title, text } => {
+                heading(ui, if title.is_empty() { "Question" } else { title }, address);
+                ui.label(text);
+                yes_no(ui, "Continue", "Cancel").map(Answer::Trust)
+            }
+            Prompt::Security {
+                identity,
+                encryption,
+                signature,
+                catchphrase,
+                matching_address,
+            } => {
+                heading(ui, "Connect anyway?", address);
+                // OK, PRESHARED and ARD say nothing: this prompt is up
+                // because something else about the connection is worth
+                // asking about.
+                let why = match identity {
+                    Identity::Changed => {
+                        "This server's identity has changed since you last connected. It may not be the same machine."
+                            .to_string()
+                    }
+                    Identity::MatchesAnother => format!(
+                        "This server's identity belongs to {}, which you have connected to before.",
+                        if matching_address.is_empty() {
+                            "a different address"
+                        } else {
+                            matching_address
+                        }
+                    ),
+                    Identity::New => "You have not connected to this server before.".to_string(),
+                    Identity::Missing => "This server does not have a verifiable identity.".to_string(),
+                    Identity::Ok | Identity::Preshared | Identity::Ard => String::new(),
+                };
+                if !why.is_empty() {
+                    ui.label(why);
+                    ui.add_space(6.0);
+                }
+                if *encryption == Encryption::UnencryptedWarn {
+                    ui.label("The connection is not encrypted.");
+                    ui.add_space(6.0);
+                }
+                if !catchphrase.is_empty() {
+                    ui.label(format!("Catchphrase: {catchphrase}"));
+                }
+                if !signature.is_empty() {
+                    ui.label(format!("Signature: {signature}"));
+                }
+                ui.add_space(6.0);
+                ui.checkbox(&mut form.remember, "Remember server");
+                yes_no(ui, "Continue", "Cancel").map(|accept| Answer::Security {
+                    accept,
+                    remember: form.remember,
+                })
+            }
+            Prompt::Message {
+                text,
+                severity,
+                question,
+                confirm_label,
+            } => {
+                let title = match severity {
+                    Severity::Information => "Message",
+                    Severity::Question => "Question",
+                    Severity::Warning => "Warning",
+                    Severity::Error => "Error",
+                };
+                heading(ui, title, address);
+                ui.label(text);
+                let confirm = if confirm_label.is_empty() {
+                    "OK"
+                } else {
+                    confirm_label
+                };
+                if *question {
+                    yes_no(ui, confirm, "Cancel").map(Answer::Trust)
+                } else {
+                    ui.add_space(12.0);
+                    let mut answer = None;
+                    ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                        if ui.button(confirm).clicked() || ui.input(|i| i.key_pressed(Key::Enter)) {
+                            answer = Some(Answer::Trust(true));
+                        }
+                    });
+                    answer
+                }
+            }
+        }
+    });
+    let dismissed = modal.should_close();
+    let answer = modal.inner;
+    if answer.is_some() {
+        form.reset();
+        return answer;
+    }
+    // Escape or a click outside is a no: the backend is waiting on one.
+    if dismissed {
+        form.reset();
+        return Some(match prompt {
+            Prompt::Credentials { .. } => Answer::Credentials(None),
+            Prompt::Security { .. } => Answer::Security {
+                accept: false,
+                remember: false,
+            },
+            _ => Answer::Trust(false),
+        });
+    }
+    None
+}
+
+fn heading(ui: &mut Ui, title: &str, address: &str) {
+    ui.heading(title);
+    if !address.is_empty() {
+        ui.label(RichText::new(address).weak());
+    }
+    ui.add_space(8.0);
+}
+
+/// Only the fields the scheme actually has: a scheme with no user name gets
+/// no box for one, since it is a question nobody can answer.
+fn credentials(ui: &mut Ui, form: &mut Form, address: &str, needs_user: bool) -> Option<Answer> {
+    heading(ui, "Authentication", address);
+    let mut submit = false;
+    if needs_user {
+        ui.label("Username");
+        let user = ui.add(TextEdit::singleline(&mut form.user).desired_width(f32::INFINITY));
+        if user.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+            submit = true;
+        }
+        ui.add_space(6.0);
+    }
+    ui.label("Password");
+    let password = ui.add(
+        TextEdit::singleline(&mut form.password)
+            .password(true)
+            .desired_width(f32::INFINITY),
+    );
+    if !form.focused {
+        form.focused = true;
+        password.request_focus();
+    }
+    if password.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+        submit = true;
+    }
+    match yes_no(ui, "Connect", "Cancel") {
+        Some(true) => submit = true,
+        Some(false) => return Some(Answer::Credentials(None)),
+        None => {}
+    }
+    submit.then(|| {
+        Answer::Credentials(Some(Credentials {
+            user: if needs_user { form.user.clone() } else { String::new() },
+            domain: String::new(),
+            password: form.password.clone(),
+        }))
+    })
+}
+
+/// Two buttons, right-aligned; what was pressed, if anything. Enter is the
+/// first and Escape is left to the modal.
+fn yes_no(ui: &mut Ui, yes: &str, no: &str) -> Option<bool> {
+    ui.add_space(12.0);
+    let mut answer = None;
+    ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+        if ui.button(yes).clicked() {
+            answer = Some(true);
+        }
+        if ui.button(no).clicked() {
+            answer = Some(false);
+        }
+    });
+    answer
+}

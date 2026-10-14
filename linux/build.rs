@@ -25,12 +25,8 @@
 //! `VENTO_`. The alternative — `#[repr(C)]` declarations written by hand with
 //! a layout check compiled from C — would be a second copy of a vtable whose
 //! member order is the ABI, kept in step by a test; the headers are ours,
-//! small and C, and bindgen is already in this workspace's graph through
+//! small and C, and bindgen is already in this crate's graph through
 //! `ffmpeg-sys-next`, so generating is the cheaper way to be right.
-//!
-//! On Android there is nothing to do: the crate is a binary with an empty
-//! `main` there, and the cmake build would need a toolchain nobody has asked
-//! for.
 
 use std::env;
 use std::path::{Path, PathBuf};
@@ -40,9 +36,6 @@ fn main() {
     // Known to rustc whether or not it is set, so that `cfg(realvnc)` in the
     // sources is never an unexpected-cfg warning.
     println!("cargo:rustc-check-cfg=cfg(realvnc)");
-    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android") {
-        return;
-    }
 
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let backends = manifest
