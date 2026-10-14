@@ -5270,6 +5270,8 @@ dependencies = [
  "wayland-protocols",
  "wgpu",
  "winit",
+ "x11-dl",
+ "x11rb",
  "xkeysym",
 ]
 

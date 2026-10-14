@@ -7,8 +7,8 @@
 //! winit, egui-winit and egui-wgpu are driven directly rather than through
 //! eframe. eframe is less code for an ordinary application, but this one
 //! needs what eframe wraps away: the window's raw handles for the shortcuts
-//! inhibitor (`wayland.rs`), device events for the raw motion a locked
-//! pointer sends, focus and keyboard events as winit delivers them (with
+//! inhibitor (`wayland.rs`) and the X11 keyboard grab (`x11.rs`), device
+//! events for the raw motion a captured pointer sends, focus and keyboard events as winit delivers them (with
 //! the layout's logical key, which egui's events drop), and a say in when
 //! the loop wakes — the backend's mailbox wakes it through an event-loop
 //! proxy, and egui's own repaint requests set a deadline it waits for. That
@@ -32,19 +32,20 @@ mod session;
 mod settings;
 mod view;
 mod wayland;
+mod x11;
 
 use crate::backends::{Dirs, Kind};
 use crate::options::Options;
 use dialog::Dialog;
 pub use platform::Platform;
+use platform::Shortcuts;
 use session::Session;
 pub use settings::Settings;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use wayland::Shortcuts;
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, DeviceId, StartCause, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, DeviceEvents, EventLoop, EventLoopProxy};
 use winit::window::{Window, WindowId};
 
 /// A connection to open, as the command line or the dialog describes one.
@@ -213,9 +214,18 @@ impl App {
         }
         self.platform = Platform::of(&window);
         log::info!("display server: {}", self.platform.name());
+        if self.platform == Platform::X11 {
+            // winit turns XI2's raw events off on every focus-out, and that
+            // includes the ones our own keyboard grab causes, which are
+            // filtered out below as not a focus change at all; relative
+            // mode needs them back. The session drops motion it is not
+            // capturing, so having them unfocused costs nothing.
+            event_loop.listen_device_events(DeviceEvents::Always);
+        }
         self.shortcuts = Shortcuts::new(&window);
         match &self.shortcuts {
-            Some(_) => log::info!("Wayland: looking for the keyboard shortcuts inhibitor"),
+            Some(Shortcuts::Wayland(_)) => log::info!("Wayland: looking for the keyboard shortcuts inhibitor"),
+            Some(Shortcuts::X11(_)) => log::info!("X11: the keyboard is grabbed while a session has focus"),
             None => log::info!("no shortcuts inhibitor on this display server"),
         }
         self.window = Some(window);
@@ -280,6 +290,14 @@ impl App {
             shortcuts.pump();
             if self.focused && connected {
                 shortcuts.inhibit();
+                // A refused X grab is asked for again when due, without
+                // waiting for input to wake the loop.
+                if let Some(at) = shortcuts.retry_at() {
+                    let mut slot = self.repaint_at.lock().unwrap();
+                    if slot.is_none_or(|t| at < t) {
+                        *slot = Some(at);
+                    }
+                }
             } else {
                 shortcuts.release();
             }
@@ -503,6 +521,17 @@ impl ApplicationHandler<Wake> for App {
                 }
             }
             WindowEvent::Focused(focused) => {
+                // On X11 the keyboard grab makes focus events of its own,
+                // which are not the focus moving (see `x11.rs`): neither
+                // the session nor egui hears of them.
+                if !*focused && self.shortcuts.as_ref().is_some_and(|s| s.focus_still_ours(&window)) {
+                    log::debug!("X11: a focus-out from our own keyboard grab; still focused");
+                    return;
+                }
+                if *focused == self.focused {
+                    // winit repeats itself around a grab.
+                    return;
+                }
                 self.focused = *focused;
                 let inhibitor = self.shortcuts.as_ref().map(Shortcuts::state).unwrap_or("none");
                 let mut host = Host {

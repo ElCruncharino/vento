@@ -56,6 +56,12 @@ raw-window-handle = "0.6"
 wayland-client = "0.31"
 wayland-backend = { version = "0.3", features = ["client_system"] }
 wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
+# X11's one piece winit does not do for us: the keyboard grab that stands in
+# for Wayland's shortcuts inhibitor, sent over winit's own connection (see
+# `gui/x11.rs`). Both are already in the graph through winit, with these
+# features, so they add nothing to the build.
+x11rb = { version = "0.13", features = ["allow-unsafe-code", "dl-libxcb"] }
+x11-dl = "2.21"
 # The X11 keysym table and the Unicode mapping, so a key goes to the far end
 # as the keysym every protocol here takes.
 xkeysym = "0.2"

@@ -20,6 +20,9 @@
 //! The pointer lock for relative mode needs none of this: winit's
 //! `CursorGrabMode::Locked` is `zwp_pointer_constraints_v1` already, and its
 //! raw motion is `zwp_relative_pointer_v1` as `DeviceEvent::MouseMotion`.
+//!
+//! X11 has no such protocol; its stand-in is a keyboard grab, in `x11.rs`,
+//! and `platform.rs` puts the two behind one `Shortcuts`.
 
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
 use wayland_client::backend::{Backend, ObjectId};

@@ -9,7 +9,9 @@
 //! other. `--x11` and `--wayland` override that, and the window's raw
 //! display handle says afterwards which it got.
 
+use super::{wayland, x11};
 use raw_window_handle::{HasDisplayHandle, RawDisplayHandle};
+use std::time::Instant;
 use winit::window::Window;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,6 +36,70 @@ impl Platform {
             Platform::Wayland => "Wayland",
             Platform::X11 => "X11",
             Platform::Other => "other",
+        }
+    }
+}
+
+/// The compositor's or the X server's own shortcuts, held off while the
+/// window has focus and a session is connected: Wayland's inhibitor
+/// protocol (`wayland.rs`), or an X keyboard grab (`x11.rs`).
+pub enum Shortcuts {
+    Wayland(wayland::Shortcuts),
+    X11(x11::Keyboard),
+}
+
+impl Shortcuts {
+    /// `None` on a display server with neither.
+    pub fn new(window: &Window) -> Option<Shortcuts> {
+        match Platform::of(window) {
+            Platform::Wayland => wayland::Shortcuts::new(window).map(Shortcuts::Wayland),
+            Platform::X11 => x11::Keyboard::new(window).map(Shortcuts::X11),
+            Platform::Other => None,
+        }
+    }
+
+    /// Wayland: dispatch what the compositor said. X11: retry a refused
+    /// grab once it is due.
+    pub fn pump(&mut self) {
+        match self {
+            Shortcuts::Wayland(s) => s.pump(),
+            Shortcuts::X11(k) => k.pump(),
+        }
+    }
+
+    pub fn inhibit(&mut self) {
+        match self {
+            Shortcuts::Wayland(s) => s.inhibit(),
+            Shortcuts::X11(k) => k.inhibit(),
+        }
+    }
+
+    pub fn release(&mut self) {
+        match self {
+            Shortcuts::Wayland(s) => s.release(),
+            Shortcuts::X11(k) => k.release(),
+        }
+    }
+
+    /// Where it is, in a word or three, for the debug overlay.
+    pub fn state(&self) -> &'static str {
+        match self {
+            Shortcuts::Wayland(s) => s.state(),
+            Shortcuts::X11(k) => k.state(),
+        }
+    }
+
+    /// X11 only: a `Focused(false)` that our own grab caused, while the
+    /// focus is really still ours (see `x11.rs`). Always false on Wayland.
+    pub fn focus_still_ours(&self, window: &Window) -> bool {
+        matches!(self, Shortcuts::X11(k) if k.focus_still_ours(window.inner_size()))
+    }
+
+    /// X11 only: when a refused grab is to be asked for again.
+    pub fn retry_at(&self) -> Option<Instant> {
+        match self {
+            Shortcuts::Wayland(_) => None,
+            Shortcuts::X11(k) => k.retry_at(),
         }
     }
 }

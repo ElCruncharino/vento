@@ -846,7 +846,8 @@ impl Session {
             }
         };
         let fourth = format!(
-            "inhibitor {}  follow {follow}  shape {shape}  clipboard out {} in {}",
+            "{} inhibitor {}  follow {follow}  shape {shape}  clipboard out {} in {}",
+            host.platform.name(),
             host.inhibitor,
             on_off(self.settings.clipboard_out),
             on_off(self.settings.clipboard_in)
