@@ -74,8 +74,15 @@ pub struct Launch {
     pub platform: Option<Platform>,
 }
 
-/// Something happened on another thread; repaint.
-struct Wake;
+/// Why the loop was woken from another thread or from egui.
+enum Wake {
+    /// Something happened (the backend's mailbox, or egui wanting a frame
+    /// at once): repaint.
+    Now,
+    /// egui wants a frame later: only the deadline is looked at again, in
+    /// `about_to_wait`, in case the loop was waiting without one.
+    Later,
+}
 
 /// What the session needs of the window, for a frame.
 pub struct Host<'a> {
@@ -207,7 +214,12 @@ impl App {
         );
         {
             // egui's repaint requests become a deadline the loop waits for;
-            // the proxy wakes it in case it is already waiting.
+            // the proxy wakes it in case it is already waiting. A request
+            // for later must not draw at once: one made from inside a frame
+            // (the panel's once-a-second poll is one) would otherwise draw
+            // the next frame straight away, and that one ask again — a loop
+            // that a Wayland compositor's frame callbacks slow to the
+            // refresh rate and X11 does not slow at all.
             let repaint_at = Arc::clone(&self.repaint_at);
             let proxy = self.proxy.clone();
             self.egui.set_request_repaint_callback(move |info| {
@@ -216,7 +228,7 @@ impl App {
                 if slot.is_none_or(|t| at < t) {
                     *slot = Some(at);
                 }
-                let _ = proxy.send_event(Wake);
+                let _ = proxy.send_event(if info.delay.is_zero() { Wake::Now } else { Wake::Later });
             });
         }
         self.platform = Platform::of(&window);
@@ -261,7 +273,7 @@ impl App {
         let size = window.inner_size();
         let proxy = self.proxy.clone();
         let wake: Box<dyn Fn() + Send + Sync> = Box::new(move || {
-            let _ = proxy.send_event(Wake);
+            let _ = proxy.send_event(Wake::Now);
         });
         match Session::start(
             request.clone(),
@@ -490,8 +502,10 @@ impl ApplicationHandler<Wake> for App {
         }
     }
 
-    fn user_event(&mut self, _: &ActiveEventLoop, _: Wake) {
-        if let Some(window) = &self.window {
+    fn user_event(&mut self, _: &ActiveEventLoop, wake: Wake) {
+        if let Wake::Now = wake
+            && let Some(window) = &self.window
+        {
             window.request_redraw();
         }
     }
