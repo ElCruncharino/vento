@@ -10,7 +10,10 @@
 //! hook asks for the repaint), pixels come out through `read_region`, which
 //! never queues behind the protocol, and every call into the backend is one
 //! that returns at once. The facts and the connection info are asked for
-//! once a second, which is what names the window and fills the panel.
+//! once a second, which is what names the window and fills the panel; the
+//! same tick is what the follower (`follow.rs`) is asked on. What is changed
+//! on the panel comes back as actions and is applied here, so the session
+//! is the one owner of what an option is set to.
 //!
 //! Input goes to the far end only while there is somewhere for it to go:
 //! connected, not view-only, no prompt on screen, and no egui widget asking
@@ -29,14 +32,16 @@
 //! back.
 
 use super::desktop::Desktop;
+use super::follow::Follower;
 use super::keys::{self, KeyIds};
-use super::panel::{self, Snapshot};
+use super::panel::{Action, Controls, Panel, Snapshot};
 use super::prompts::{self, Answer, Form, Prompt};
 use super::view::{Layout, View};
 use super::{Host, Request};
 use crate::backend::Backend;
 use crate::backends::{Connect, Dirs};
 use crate::events::{Cursor, Event, Mailbox, State};
+use crate::options::Options;
 use egui::{
     Align2, Color32, CursorIcon, Frame, Id, LayerId, Order, PointerButton, Pos2, Rect, Response, Sense,
     TextureHandle, TextureOptions, Vec2, pos2, vec2,
@@ -46,8 +51,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta};
 use winit::keyboard::PhysicalKey;
+use winit::window::{CursorGrabMode, Fullscreen};
 use xkeysym::Keysym;
-use winit::window::CursorGrabMode;
 
 /// RFB's button bits, which every backend takes.
 const LEFT: i32 = 1;
@@ -90,7 +95,12 @@ pub struct Session {
     monitor: Option<usize>,
     toolbar_height: f32,
     toolbar_hovered: bool,
-    panel_open: bool,
+    panel: Panel,
+    /// Every option's value as the session has it: what it connected with,
+    /// then whatever has been set since, which is what the panel's controls
+    /// show.
+    live: Options,
+    follower: Follower,
     prompts: VecDeque<Prompt>,
     form: Form,
     cursor: Option<CursorShape>,
@@ -146,6 +156,7 @@ impl Session {
         };
         let backend = (request.kind.create)(&connect)?;
         let title = request.address.clone();
+        let live = request.options.clone();
         Ok(Session {
             request,
             backend,
@@ -158,7 +169,9 @@ impl Session {
             monitor: None,
             toolbar_height: 40.0,
             toolbar_hovered: false,
-            panel_open: false,
+            panel: Panel::default(),
+            live,
+            follower: Follower::default(),
             prompts: VecDeque::new(),
             form: Form::default(),
             cursor: None,
@@ -218,6 +231,9 @@ impl Session {
         while let Some(event) = self.mailbox.take() {
             match event {
                 Event::Connected { width, height } | Event::DesktopSize { width, height } => {
+                    if let Event::DesktopSize { .. } = event {
+                        log::info!("desktop size now {width}×{height}");
+                    }
                     if let Some(old) = self.desktop.take() {
                         old.free(ctx);
                     }
@@ -290,7 +306,7 @@ impl Session {
 
     /// The facts and the info, once a second: the window's title and the
     /// panel come from here, and so does the monitor list.
-    fn poll(&mut self, ctx: &egui::Context) {
+    fn poll(&mut self, ctx: &egui::Context, host: &mut Host) {
         if !self.connected() {
             return;
         }
@@ -308,6 +324,66 @@ impl Session {
             traffic: self.backend.traffic(),
         };
         ctx.request_repaint_after(Duration::from_secs(1));
+        self.follow_tick(host);
+    }
+
+    // ---- the window's size, followed -----------------------------------------
+
+    /// The window changed shape; the follower is asked `DEBOUNCE` later.
+    pub fn resized(&mut self) {
+        self.follower.resized(Instant::now());
+    }
+
+    /// The window's size in desktop pixels: its device pixels, which is
+    /// what a desktop of that size is one to one with at 1:1. The toolbar
+    /// floats over the desktop rather than taking a strip of it, so the
+    /// whole window is the rectangle the desktop is drawn in.
+    fn window_size(host: &Host) -> Option<(u32, u32)> {
+        let size = host.window.inner_size();
+        (size.width > 0 && size.height > 0).then_some((size.width, size.height))
+    }
+
+    /// One tick of the follower: on the poll, and after the debounce.
+    fn follow_tick(&mut self, host: &mut Host) {
+        if !self.connected() {
+            return;
+        }
+        let Some(window) = Self::window_size(host) else {
+            return;
+        };
+        if let Some((width, height)) = self.follower.tick(window, self.snapshot.facts.can_resize) {
+            log::info!("asking for a {width}×{height} desktop, this window's size");
+            self.backend.request_desktop_size(width, height);
+        }
+    }
+
+    fn set_follow(&mut self, follow: bool, host: &mut Host) {
+        self.follower.set_enabled(follow);
+        log::info!("follow window size: {}", if follow { "on" } else { "off" });
+        if follow {
+            // Asked at the next tick, which is brought forward: turning it
+            // on takes effect where it was turned on.
+            self.follower.resized(Instant::now());
+            self.follow_tick(host);
+        }
+    }
+
+    /// One option changed on the running session, from the panel or the
+    /// toolbar: remembered as the value the controls show, and handed to
+    /// the backend. View-only is the one the window has a say in too.
+    fn set_option(&mut self, key: &str, value: &str) {
+        self.live.set(key, value);
+        log::info!("option {key} = {value:?}");
+        if key == "ViewOnly" {
+            let view_only = self.live.bool(key);
+            self.view_only = view_only;
+            self.backend.set_view_only(view_only);
+            if view_only {
+                self.release_keys();
+            }
+        } else {
+            self.backend.set_option(key, value);
+        }
     }
 
     // ---- focus, capture and the clipboard ----------------------------------
@@ -482,7 +558,15 @@ impl Session {
     pub fn frame(&mut self, root: &mut egui::Ui, host: &mut Host) {
         let ctx = &root.ctx().clone();
         self.drain(ctx, host);
-        self.poll(ctx);
+        self.poll(ctx, host);
+        if let Some(due) = self.follower.due() {
+            let now = Instant::now();
+            if due <= now {
+                self.follow_tick(host);
+            } else {
+                ctx.request_repaint_after(due - now);
+            }
+        }
         if let Some(since) = self.disconnecting
             && self.closed.is_none()
             && since.elapsed() > DISCONNECT_PATIENCE
@@ -525,11 +609,29 @@ impl Session {
             self.draw_cursor(ctx, &response);
         }
 
-        self.toolbar(ctx);
-        if self.panel_open {
+        self.toolbar(ctx, host);
+        if self.panel.open {
             let state = self.state_line();
             let title = self.request.address.clone();
-            panel::show(ctx, &mut self.panel_open, &self.snapshot, &title, &state);
+            let controls = Controls {
+                specs: self.request.kind.options,
+                values: &self.live,
+                connected: self.connected(),
+                window: Self::window_size(host),
+                follow: self.follower.enabled(),
+            };
+            let actions = self.panel.show(ctx, &self.snapshot, &controls, &title, &state);
+            for action in actions {
+                match action {
+                    Action::SetOption(key, value) => self.set_option(key, &value),
+                    Action::DesktopSize(width, height) => {
+                        log::info!("asking for a {width}×{height} desktop");
+                        self.backend.request_desktop_size(width, height);
+                    }
+                    Action::Display(index) => self.backend.request_display(index),
+                    Action::Follow(follow) => self.set_follow(follow, host),
+                }
+            }
         }
         self.prompt(ctx);
     }
@@ -718,7 +820,7 @@ impl Session {
 
     /// Slid in from the top edge while the pointer is there or on it, and
     /// away otherwise.
-    fn toolbar(&mut self, ctx: &egui::Context) {
+    fn toolbar(&mut self, ctx: &egui::Context, host: &mut Host) {
         let pointer = ctx.input(|i| i.pointer.latest_pos());
         let screen = ctx.content_rect();
         let at_edge = pointer.is_some_and(|p| screen.contains(p) && p.y <= screen.min.y + 2.0);
@@ -739,14 +841,14 @@ impl Session {
             .interactable(true)
             .show(ctx, |ui| {
                 Frame::popup(ui.style()).show(ui, |ui| {
-                    ui.horizontal(|ui| self.toolbar_items(ui));
+                    ui.horizontal(|ui| self.toolbar_items(ui, host));
                 });
             });
         self.toolbar_height = area.response.rect.height();
         self.toolbar_hovered = area.response.contains_pointer();
     }
 
-    fn toolbar_items(&mut self, ui: &mut egui::Ui) {
+    fn toolbar_items(&mut self, ui: &mut egui::Ui, host: &mut Host) {
         let connected = self.connected();
         let scale = ui.add_enabled(connected, egui::Button::new(format!("Scale: {}", self.view.mode.label())));
         if scale
@@ -789,28 +891,37 @@ impl Session {
             }
         }
 
-        let mut view_only = self.view_only;
+        let view_only = self.view_only;
         if ui
             .add_enabled(connected, egui::Button::new(if view_only { "View only: on" } else { "View only: off" }))
             .on_hover_text("Watch without sending the mouse, the keyboard or the clipboard")
             .clicked()
         {
-            view_only = !view_only;
-        }
-        if view_only != self.view_only {
-            self.view_only = view_only;
-            self.backend.set_view_only(view_only);
-            if view_only {
-                self.release_keys();
-            }
+            self.set_option("ViewOnly", if view_only { "false" } else { "true" });
         }
 
         if ui
             .add_enabled(connected, egui::Button::new("Info"))
-            .on_hover_text("The connection's facts")
+            .on_hover_text("The connection's facts, and the settings it can still be told")
             .clicked()
         {
-            self.panel_open = !self.panel_open;
+            self.panel.open = !self.panel.open;
+        }
+
+        let fullscreen = host.window.fullscreen().is_some();
+        if ui
+            .button(if fullscreen { "Leave fullscreen" } else { "Fullscreen" })
+            .on_hover_text(if fullscreen {
+                "Back to a window"
+            } else {
+                "Fill the screen. The toolbar still slides in at the top edge; its button, or \
+                 disconnecting, leaves fullscreen."
+            })
+            .clicked()
+        {
+            log::info!("{}", if fullscreen { "leaving fullscreen" } else { "fullscreen" });
+            host.window
+                .set_fullscreen((!fullscreen).then_some(Fullscreen::Borderless(None)));
         }
 
         if ui
@@ -859,6 +970,10 @@ impl Session {
         if self.captured {
             let _ = host.window.set_cursor_grab(CursorGrabMode::None);
             host.window.set_cursor_visible(true);
+        }
+        // The screen was the session's; the dialog gets a window.
+        if host.window.fullscreen().is_some() {
+            host.window.set_fullscreen(None);
         }
         if let Some(desktop) = self.desktop.take() {
             desktop.free(ctx);

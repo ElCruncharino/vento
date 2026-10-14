@@ -21,6 +21,7 @@
 
 mod desktop;
 mod dialog;
+mod follow;
 mod keys;
 mod panel;
 mod prompts;
@@ -53,8 +54,10 @@ pub struct Request {
 
 /// What the window opens with.
 pub struct Launch {
-    /// A session to open at once, or the dialog.
+    /// What the command line described, if anything: the dialog is filled
+    /// in from it, or — with `connect` — a session is opened on it at once.
     pub request: Option<Request>,
+    pub connect: bool,
     pub dirs: Dirs,
 }
 
@@ -186,7 +189,11 @@ impl App {
         if let Some(launch) = self.launch.take() {
             self.dirs = launch.dirs;
             if let Some(request) = launch.request {
-                self.connect(request);
+                if launch.connect {
+                    self.connect(request);
+                } else {
+                    self.screen = Screen::Dialog(Dialog::from_request(&request));
+                }
             }
         }
         self.window.as_ref().unwrap().request_redraw();
@@ -418,6 +425,9 @@ impl ApplicationHandler<Wake> for App {
                     gpu.config.width = size.width;
                     gpu.config.height = size.height;
                     gpu.surface.configure(&gpu.device, &gpu.config);
+                }
+                if let Screen::Session(session) = &mut self.screen {
+                    session.resized();
                 }
             }
             WindowEvent::Focused(focused) => {

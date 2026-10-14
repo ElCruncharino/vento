@@ -32,10 +32,12 @@ backend without one.
   egui drawn into it), `session.rs` (a live session: the desktop, the input,
   the toolbar, the prompts, the cursor), `desktop.rs` (the desktop as one
   texture, updated a damaged rectangle at a time), `view.rs` (scale modes,
-  panning and the pointer's mapping, pure arithmetic with tests), `keys.rs`
-  (winit keys to X11 keysyms), `wayland.rs` (the keyboard shortcuts
-  inhibitor), `dialog.rs` (the connection dialog), `panel.rs` (the
-  connection-info panel), `prompts.rs` (the modal prompts).
+  panning and the pointer's mapping, pure arithmetic with tests), `follow.rs`
+  (the desktop following the window's size: the phone's `WindowFollower`,
+  pure logic with tests), `keys.rs` (winit keys to X11 keysyms), `wayland.rs`
+  (the keyboard shortcuts inhibitor), `dialog.rs` (the connection dialog),
+  `panel.rs` (the connection-info panel, with the live controls), `prompts.rs`
+  (the modal prompts).
 - **`src/main.rs`** — the `vento` binary: the window, `--list`, and the
   headless probe.
 
@@ -65,11 +67,19 @@ cd linux
 # domain and that backend's options, and connect. Nothing is saved.
 cargo run
 
-# Straight into a session. Without --password the credentials prompt asks.
+# The same dialog, filled in from the command line — a backend on its own, or
+# with an address, a user, a password and options. Nothing connects until
+# "Connect" is pressed: a machine on the command line is not a machine to
+# connect to, which a typo would otherwise be.
 cargo run -- tigervnc 127.0.0.1:5901 --password vncpass
-cargo run -- rdp 127.0.0.1:3389 --user proto --password protopass
-cargo run -- rustdesk 127.0.0.1 -o ConnectBy=address --password rustdeskpass
-cargo run -- spice 127.0.0.1:5930 --password spicepass
+cargo run -- rdp
+
+# Straight into a session, with --connect. Without --password the credentials
+# prompt asks.
+cargo run -- tigervnc 127.0.0.1:5901 --password vncpass --connect
+cargo run -- rdp 127.0.0.1:3389 --user proto --password protopass --connect
+cargo run -- rustdesk 127.0.0.1 -o ConnectBy=address --password rustdeskpass --connect
+cargo run -- spice 127.0.0.1:5930 --password spicepass --connect
 
 # The backends and their options.
 cargo run -- --list
@@ -99,9 +109,10 @@ stack's, which would be tens of thousands a minute).
 
 One window, which is either the connection dialog or a session. A session
 that ends goes back to the dialog, filled in with what it was connected to and,
-unless the disconnect was asked for, told why it ended. The window's title is
-the desktop's name once the protocol has said it, and rings the bell by
-putting one in the title for a moment.
+unless the disconnect was asked for, told why it ended — and to a window, if
+the session had gone fullscreen. The window's title is the desktop's name once
+the protocol has said it, and rings the bell by putting one in the title for a
+moment.
 
 **The toolbar** floats at the top edge and stays out of the way: it slides off
 the top of the window when the pointer is elsewhere and slides back when the
@@ -120,11 +131,48 @@ that it is seen once). On it:
   button asks the far end for the next one.
 - **View only** stops the mouse, the keyboard and the clipboard going to the
   far end, and tells the backend so.
-- **Info** opens the connection panel: the desktop's name, the facts the
-  backend reports in its own words (the diagnostic ones folded away), the
-  bytes transferred, the desktop size and its monitors, refreshed every second
-  while open.
+- **Info** opens the connection panel, below.
+- **Fullscreen** fills the screen (winit's borderless fullscreen on the
+  current monitor); the toolbar still slides in at the top edge, and the same
+  button, or disconnecting, leaves it.
 - **Disconnect**.
+
+**The connection panel** is the phone's `ConnectionPanel`: controls above
+facts. The controls are the backend's *live* options from the registry — the
+ones `set_option` acts on mid-session, such as the VNC encodings' quality and
+compression, SPICE's image compression, RustDesk's codec and frame rate — as
+a control per kind (a dropdown for a choice, a box for a switch, a field for a
+number or text), showing what the session connected with and then whatever has
+been set since, with the dialog's rules for a gated option and a choice that
+requires a switch. Then the two that are not options, because whether they
+can be offered is a fact about the live connection: **Desktop size**, where the
+far end takes one (`can_resize`), offering this window's size in desktop
+pixels first, the size the desktop has, the far end's own screens and the
+usual sizes, and asking `request_desktop_size` for the one picked — what
+arrives is what the far end granted, and the dropdown shows that rather than
+what was asked; and **Display**, where the far end sends one of several
+screens at a time (RustDesk), asking `request_display`. And **Follow window
+size**, below.
+
+Under them, the desktop's name, the facts the backend reports in its own words
+(the diagnostic ones folded away), the bytes transferred, the desktop size and
+its monitors. Everything is refreshed once a second while the panel is open,
+without disturbing a control being used: an open dropdown stays open, and a
+field being typed in keeps its text until it is left, which is when its value
+is sent.
+
+**Follow window size** (off by default, per session) asks the far end for a
+desktop the size of this window in pixels whenever the window changes shape —
+the phone's `WindowFollower`, in `follow.rs`: asked on a tick (the panel's
+one-second poll, brought forward to 600 ms after a resize) once the window has
+settled for two ticks, never twice for the same size, and only once the far
+end says it takes sizes, which a VNC server says some time after connecting.
+Turning it on asks at once. With fullscreen it makes the desktop the screen's
+size. Granted against the test rigs by TigerVNC's Xvnc (through all three VNC
+backends), xrdp (FreeRDP; and IronRDP with `-o Compression=false`, since its
+re-activation after the resize does not yet take the compressed FontMap PDU
+xrdp sends under RDP 6.1 compression, and the session ends) and QEMU with the
+SPICE agent.
 
 **Keys** go to the far end as X11 keysyms, from winit's *logical* key — what
 the layout says the key means — as Latin-1 keysyms where there are such, the

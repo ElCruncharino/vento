@@ -5,8 +5,10 @@
 //!
 //! [`main`] parses the command line into a [`Mode`] and dispatches. The
 //! window is the default: nothing on the command line opens the connection
-//! dialog, and a backend and an address open straight into a session.
-//! `--list` prints the backends and their options. Any of the probe's flags
+//! dialog empty, a backend and an address open it filled in — connecting to
+//! somebody else's machine is a click, not a side effect of a typo — and
+//! `--connect` opens straight into the session. `--list` prints the
+//! backends and their options. Any of the probe's flags
 //! (`--probe`, `--out`, `--click`, …) selects the headless mode instead — the
 //! spirit of `backends/platform/desktop/c/probe.c`, which is what proved
 //! each C session through the neutral API — which connects, prints every
@@ -61,7 +63,8 @@ mod host {
 
     const USAGE: &str = "\
 usage: vento                                   the connection dialog
-       vento <backend> <address> [options]     a session in a window
+       vento [<backend> [<address>]] [options] the dialog, filled in
+       vento <backend> <address> --connect ... a session in a window
        vento <backend> <address> --probe N ... a headless probe
        vento --list
 
@@ -73,6 +76,7 @@ usage: vento                                   the connection dialog
   --password TEXT        the password; without one the credentials prompt is
                          answered with a cancel
   -o KEY=VALUE           a backend option (repeatable); --list shows each
+  --connect              connect at once instead of showing the dialog
   --library-dir DIR      where RealVNC's two libraries are (XDG data dir)
   --state-dir DIR        where backends keep per-host state (XDG state dir)
   --verbose              let the backends' debug lines through
@@ -158,6 +162,7 @@ headless, any of which selects the probe instead of the window:
         // Any of the probe's own flags asks for the probe; without one, the
         // window.
         let mut headless = false;
+        let mut connect = false;
 
         let mut it = args.into_iter().peekable();
         let value = |it: &mut std::iter::Peekable<std::vec::IntoIter<String>>, flag: &str| {
@@ -170,6 +175,7 @@ headless, any of which selects the probe instead of the window:
                 "--domain" => domain = value(&mut it, "--domain")?,
                 "--password" => password = Some(value(&mut it, "--password")?),
                 "-o" => assignments.push(value(&mut it, "-o")?),
+                "--connect" => connect = true,
                 "--probe" => {
                     headless = true;
                     seconds = number::<u64>(&value(&mut it, "--probe")?, "--probe")?;
@@ -216,10 +222,17 @@ headless, any of which selects the probe instead of the window:
             }
         }
 
-        if positional.is_empty() && !headless && assignments.is_empty() {
-            return Ok(Mode::Gui(Box::new(gui::Launch { request: None, dirs })));
+        if positional.is_empty() && !headless && !connect && assignments.is_empty() {
+            return Ok(Mode::Gui(Box::new(gui::Launch {
+                request: None,
+                connect: false,
+                dirs,
+            })));
         }
-        if positional.len() != 2 {
+        // The dialog can be filled in from a backend alone; a session needs
+        // somewhere to go.
+        let whole = headless || connect;
+        if positional.is_empty() || positional.len() > 2 || (whole && positional.len() != 2) {
             return Err("give a backend and an address".into());
         }
         let kind = backends::find(&positional[0])
@@ -236,12 +249,13 @@ headless, any of which selects the probe instead of the window:
             return Ok(Mode::Gui(Box::new(gui::Launch {
                 request: Some(gui::Request {
                     kind,
-                    address: positional.remove(1),
+                    address: positional.get(1).cloned().unwrap_or_default(),
                     user,
                     domain,
                     password: password.filter(|p| !p.is_empty()),
                     options,
                 }),
+                connect,
                 dirs,
             })));
         }
