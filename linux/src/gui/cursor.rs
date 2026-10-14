@@ -6,8 +6,9 @@
 //! shape drawn under the local pointer.
 //!
 //! A shape is uploaded once. winit makes a `CustomCursor` through the event
-//! loop and, on Wayland, copies its pixels into a shared-memory buffer every
-//! time it is *set*, so the window's cursor is set only when what it should
+//! loop — on Wayland a set of pixels it copies into a shared-memory buffer
+//! every time the cursor is *set*, on X11 an Xcursor made once and set with
+//! one request — so the window's cursor is set only when what it should
 //! be changes — a new shape, a new scale, the pointer arriving on or leaving
 //! the desktop — and never once a frame. The cache is keyed by the shape's
 //! pixels and hotspot, so a cursor that flickers between two shapes (an
@@ -19,7 +20,14 @@
 //! resampled to the view's scale, nearest neighbour, and the hotspot with
 //! it: a cursor drawn at the wrong size is a cursor whose hotspot is in the
 //! wrong place. winit hands the compositor the buffer at the window's scale
-//! factor, so a device pixel here is a device pixel there.
+//! factor, so a device pixel here is a device pixel there; an X cursor has
+//! no scale and is in device pixels already.
+//!
+//! The alpha differs by display server ([`Alpha`]): winit's Wayland side
+//! takes straight alpha, which is what the shapes arrive as, and
+//! premultiplies it itself; its X11 side copies the pixels as given into a
+//! Render cursor, which wants them premultiplied, so they are premultiplied
+//! here.
 //!
 //! egui-winit sets the window's cursor too, from egui's cursor icon, and
 //! only when that icon changes; this runs after it each frame and re-applies
@@ -27,6 +35,7 @@
 //! When the shape is no longer wanted the default is put back *before*
 //! egui-winit's turn, so that whatever icon egui then asks for lands on top.
 
+use super::platform::Platform;
 use crate::events::Cursor;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -71,6 +80,28 @@ pub fn shape_hash(cursor: &Cursor) -> u64 {
     h.finish()
 }
 
+/// What winit is to be handed, from the straight alpha the shapes arrive
+/// with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Alpha {
+    /// Wayland: winit premultiplies what it is given, so it is given
+    /// straight alpha.
+    Straight,
+    /// X11: winit copies the pixels into an Xcursor as they are, and a
+    /// Render cursor's colour must not exceed its alpha.
+    Premultiplied,
+}
+
+impl Alpha {
+    pub fn for_platform(platform: Platform) -> Alpha {
+        if platform == Platform::X11 {
+            Alpha::Premultiplied
+        } else {
+            Alpha::Straight
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct Native {
     cache: HashMap<Key, CustomCursor>,
@@ -97,6 +128,7 @@ impl Native {
         event_loop: &ActiveEventLoop,
         wanted: Option<(Key, &Cursor)>,
         icon: egui::CursorIcon,
+        alpha: Alpha,
     ) {
         let icon_changed = self.icon != Some(icon);
         self.icon = Some(icon);
@@ -109,7 +141,7 @@ impl Native {
         let custom = match self.cache.get(&key) {
             Some(custom) => custom.clone(),
             None => {
-                let Some(source) = scaled(cursor, key.factor()) else {
+                let Some(source) = scaled(cursor, key.factor(), alpha) else {
                     return;
                 };
                 if self.cache.len() >= CACHE {
@@ -157,10 +189,10 @@ fn scaled_geometry(cursor: &Cursor, factor: f32) -> (u16, u16, u16, u16) {
     (w, h, x, y)
 }
 
-/// The shape resampled to `factor`, as winit takes it: straight alpha,
-/// which is what the shapes arrive as, and no bigger than winit's limit,
-/// which is far past any cursor a desktop sends.
-fn scaled(cursor: &Cursor, factor: f32) -> Option<winit::window::CustomCursorSource> {
+/// The shape's pixels resampled to `factor`, nearest neighbour, with its
+/// size and hotspot: straight alpha as they arrived, or premultiplied for
+/// [`Alpha::Premultiplied`].
+fn resample(cursor: &Cursor, factor: f32, alpha: Alpha) -> Option<(Vec<u8>, u16, u16, u16, u16)> {
     if cursor.width == 0 || cursor.height == 0 || factor <= 0.0 {
         return None;
     }
@@ -170,9 +202,23 @@ fn scaled(cursor: &Cursor, factor: f32) -> Option<winit::window::CustomCursorSou
         let sy = ((oy as f32 / factor) as usize).min(cursor.height - 1);
         for ox in 0..w as usize {
             let sx = ((ox as f32 / factor) as usize).min(cursor.width - 1);
-            rgba.extend_from_slice(&cursor.rgba[(sy * cursor.width + sx) * 4..][..4]);
+            let p = &cursor.rgba[(sy * cursor.width + sx) * 4..][..4];
+            let a = p[3] as u32;
+            if alpha == Alpha::Straight || a == 255 {
+                rgba.extend_from_slice(p);
+            } else {
+                let times = |c: u8| ((c as u32 * a + 127) / 255) as u8;
+                rgba.extend_from_slice(&[times(p[0]), times(p[1]), times(p[2]), p[3]]);
+            }
         }
     }
+    Some((rgba, w, h, x, y))
+}
+
+/// The shape as winit takes it, no bigger than winit's limit, which is far
+/// past any cursor a desktop sends.
+fn scaled(cursor: &Cursor, factor: f32, alpha: Alpha) -> Option<winit::window::CustomCursorSource> {
+    let (rgba, w, h, x, y) = resample(cursor, factor, alpha)?;
     match CustomCursor::from_rgba(rgba, w, h, x, y) {
         Ok(source) => Some(source),
         Err(e) => {
@@ -224,7 +270,23 @@ mod tests {
             rgba: vec![0; 32 * 32 * 4],
         };
         assert_eq!(scaled_geometry(&big, 0.5), (16, 16, 15, 8));
-        assert!(scaled(&shape(), 2.0).is_some());
-        assert!(scaled(&shape(), 0.0).is_none());
+        assert!(scaled(&shape(), 2.0, Alpha::Straight).is_some());
+        assert!(scaled(&shape(), 0.0, Alpha::Straight).is_none());
+    }
+
+    #[test]
+    fn x11_gets_the_pixels_premultiplied() {
+        let (straight, ..) = resample(&shape(), 1.0, Alpha::Straight).unwrap();
+        let (premultiplied, ..) = resample(&shape(), 1.0, Alpha::Premultiplied).unwrap();
+        // The half-covered green: as it arrived for winit's Wayland side,
+        // which premultiplies it itself, and premultiplied for X11's.
+        assert_eq!(straight[8..12], [0, 128, 0, 128]);
+        assert_eq!(premultiplied[8..12], [0, 64, 0, 128]);
+        // Opaque and clear pixels are the same either way.
+        for i in [0..4, 4..8, 12..16] {
+            assert_eq!(straight[i.clone()], premultiplied[i]);
+        }
+        assert_eq!(Alpha::for_platform(Platform::X11), Alpha::Premultiplied);
+        assert_eq!(Alpha::for_platform(Platform::Wayland), Alpha::Straight);
     }
 }

@@ -814,7 +814,8 @@ impl Session {
             (Some(key), Some(shape)) => Some((key, &shape.source)),
             _ => None,
         };
-        self.native.after(host.window, host.event_loop, wanted, icon);
+        let alpha = native::Alpha::for_platform(host.platform);
+        self.native.after(host.window, host.event_loop, wanted, icon, alpha);
     }
 
     // ---- the debug overlay -------------------------------------------------
