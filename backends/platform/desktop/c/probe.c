@@ -187,6 +187,40 @@ static void cbQuestion(void *user, const char *title, const char *text) {
     answerTrust(p, what);
 }
 
+static void cbSecurityNeeded(void *user, int identity, int encryption, const char *signature,
+                             const char *catchphrase, const char *matchingAddress) {
+    Probe *p = user;
+    static const char *const identities[] = {"ok", "new", "matches another", "changed",
+                                             "missing", "preshared", "ard"};
+    static const char *const encryptions[] = {"encrypted", "unencrypted (warn)",
+                                              "unencrypted (quiet)"};
+    char what[1024];
+    snprintf(what, sizeof(what), "security_needed identity %s, %s, signature \"%s\" (%s)%s%s",
+             identity >= 0 && identity <= VENTO_IDENTITY_ARD ? identities[identity] : "?",
+             encryption >= 0 && encryption <= VENTO_UNENCRYPTED_QUIET ? encryptions[encryption]
+                                                                      : "?",
+             signature, catchphrase, matchingAddress[0] ? ", known as " : "", matchingAddress);
+    answerTrust(p, what);
+}
+
+static void cbMessage(void *user, const char *text, int severity, bool question,
+                      const char *confirmLabel) {
+    Probe *p = user;
+    static const char *const severities[] = {"information", "question", "warning", "error"};
+    vento_session *s = sessionForAnswer(p);
+    if (!s) {
+        return;
+    }
+    const char *kind = severity >= 0 && severity <= VENTO_SEVERITY_ERROR ? severities[severity]
+                                                                         : "?";
+    /* A box with one button has one answer; a question gets --trust's. */
+    const bool yes = question ? p->opts->trust : true;
+    say(p, "message (%s) \"%s\"%s%s%s -> %s", kind, text, confirmLabel[0] ? " [" : "",
+        confirmLabel, confirmLabel[0] ? "]" : "",
+        question ? (yes ? "yes (--trust)" : "no (no --trust)") : "ok");
+    vento_session_answer_trust(s, yes);
+}
+
 static void cbClosed(void *user, const char *detail) {
     Probe *p = user;
     say(p, "closed%s%s", detail[0] ? ": " : "", detail);
@@ -212,7 +246,8 @@ void vento_probe_init(vento_probe *p) {
 const char vento_probe_usage[] =
         "  --seconds N          how long to watch after connecting (5)\n"
         "  --connect-timeout N  how long to wait for the connection (30)\n"
-        "  --trust              answer yes to trust_needed, question and unverified\n"
+        "  --trust              answer yes to trust_needed, unverified, question,\n"
+        "                       security_needed and a message that is a question\n"
         "  --user NAME          the answer to credentials_needed, with\n"
         "  --domain NAME          --domain for RDP and\n"
         "  --password TEXT        --password; without one the answer is a cancel\n"
@@ -429,6 +464,8 @@ int vento_probe_run(const vento_probe *o, vento_probe_create create, void *confi
             .trust_needed = cbTrustNeeded,
             .unverified = cbUnverified,
             .question = cbQuestion,
+            .security_needed = cbSecurityNeeded,
+            .message = cbMessage,
             .closed = cbClosed,
     };
 

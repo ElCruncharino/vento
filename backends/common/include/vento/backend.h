@@ -37,13 +37,14 @@
 // Every callback arrives on the protocol thread — the one that owns the
 // connection — and must not block on anything that thread is waiting for: a
 // callback that calls back into the session is fine, a callback that waits
-// for a frame is a deadlock. The four questions (`credentials_needed`,
-// `trust_needed`, `question`, `unverified`) are the exception in spirit only:
-// the protocol thread parks after asking, and the answer arrives later,
-// through `answer_credentials` or `answer_trust`, from whatever thread has
-// it. `closed` is the last callback a session makes, and `destroy` returns
-// only after the protocol thread has ended, so when it returns the callbacks
-// are provably finished and whatever `user` pointed at may be freed.
+// for a frame is a deadlock. The six questions (`credentials_needed`,
+// `trust_needed`, `question`, `unverified`, `security_needed`, `message`)
+// are the exception in spirit only: the protocol thread parks after asking,
+// and the answer arrives later, through `answer_credentials` or
+// `answer_trust`, from whatever thread has it. `closed` is the last callback
+// a session makes, and `destroy` returns only after the protocol thread has
+// ended, so when it returns the callbacks are provably finished and whatever
+// `user` pointed at may be freed.
 //
 // ## Strings
 //
@@ -83,6 +84,33 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* The states RealVNC's security prompt carries, which are `Prompt.Trust`'s
+   two enums in Java said again in C, in the same order. `security_needed`
+   below is the one caller. */
+enum {
+    VENTO_IDENTITY_OK = 0,              /* known, and matches */
+    VENTO_IDENTITY_NEW = 1,             /* never seen before */
+    VENTO_IDENTITY_MATCHES_ANOTHER = 2, /* seen, but under a different address */
+    VENTO_IDENTITY_CHANGED = 3,         /* seen under this address, and different now */
+    VENTO_IDENTITY_MISSING = 4,         /* the server offered none */
+    VENTO_IDENTITY_PRESHARED = 5,       /* configured out of band */
+    VENTO_IDENTITY_ARD = 6,             /* Apple Remote Desktop, which has none of this kind */
+};
+
+enum {
+    VENTO_ENCRYPTED = 0,
+    VENTO_UNENCRYPTED_WARN = 1,  /* plain text, and the person should be told */
+    VENTO_UNENCRYPTED_QUIET = 2, /* plain text, deliberately: a local or tunnelled link */
+};
+
+/* How a `message` should look, which is `Prompt.Message.Severity` in C. */
+enum {
+    VENTO_SEVERITY_INFORMATION = 0,
+    VENTO_SEVERITY_QUESTION = 1,
+    VENTO_SEVERITY_WARNING = 2,
+    VENTO_SEVERITY_ERROR = 3,
+};
 
 /* What a session tells the platform. Every member is required: a platform
    implements the whole interface or none of it, as the Rust `Events` trait and
@@ -125,14 +153,42 @@ typedef struct vento_callbacks {
        same things to the protocol thread and only one of these questions can
        be outstanding. */
     void (*unverified)(void *user, const char *why);
-    /* The one extension over `common::Events`, and only TigerVNC calls it: its
-       certificate check and known-hosts file are its own viewer's, ported
-       whole, so what crosses here is the question that viewer decided to ask
-       — a title and a text, in its words — rather than a fingerprint for the
-       platform to decide about. Answered through `answer_trust` like the
-       other two, because it is the same question at the protocol thread's
-       end. A platform without a dialog answers no. */
+    /* The first of three extensions over `common::Events`, and only TigerVNC
+       calls it: its certificate check and known-hosts file are its own
+       viewer's, ported whole, so what crosses here is the question that
+       viewer decided to ask — a title and a text, in its words — rather than
+       a fingerprint for the platform to decide about. Answered through
+       `answer_trust` like the other two, because it is the same question at
+       the protocol thread's end. A platform without a dialog answers no. */
     void (*question)(void *user, const char *title, const char *text);
+    /* The second extension, and only RealVNC calls it: its core's security
+       prompt, which is `trust_needed` and `unverified` asked as one question
+       with both answers spelled out — `identity` is a `VENTO_IDENTITY_*` and
+       `encryption` a `VENTO_UNENCRYPTED_*` or `VENTO_ENCRYPTED` — because
+       that core keeps its own store of identities and decides for itself
+       whether a server is new, known or changed, and all this end can add is
+       a yes or a no. `signature` is the identity in the core's own form (a
+       short hex string, nothing a certificate pin could be compared with),
+       `catchphrase` is its human-readable form, and `matching_address` is
+       the address the identity is already known under, for
+       `VENTO_IDENTITY_MATCHES_ANOTHER`; any of the three may be empty.
+       Answered through `answer_trust` like the other three — a yes that
+       should also be remembered goes through that backend's own
+       `vento_realvnc_answer_security`, since no other backend has a
+       remember to carry — and a platform without a dialog answers no. */
+    void (*security_needed)(void *user, int identity, int encryption, const char *signature,
+                            const char *catchphrase, const char *matching_address);
+    /* The third, and RealVNC's as well: a message its core wants shown, with
+       a `VENTO_SEVERITY_*` and whether it is a yes-or-no `question` or an OK
+       — most of what goes wrong short of losing the session arrives this way,
+       in the core's words, and a refused connection is one of these followed
+       by `closed`. `confirm_label` is the affirmative button's own text where
+       the core supplied one, and empty otherwise. Answered through
+       `answer_trust`, whose yes is the OK or the yes and whose no is the
+       cancel or the no; a platform without a dialog answers no, which for a
+       plain OK box is the same answer as any other. */
+    void (*message)(void *user, const char *text, int severity, bool question,
+                    const char *confirm_label);
     /* Terminal, and the last callback this session makes. `detail` is empty
        for an ending nobody needs telling about — the one that was asked for —
        and otherwise says why, in the words the library chose. */
@@ -231,8 +287,9 @@ typedef struct vento_session_ops {
        RDP's and the RFB backends ignore it. */
     void (*answer_credentials)(vento_session *s, const char *user, const char *domain,
                                const char *password);
-    /* The answer to `trust_needed`, `unverified` and `question`. A no ends the
-       session. */
+    /* The answer to `trust_needed`, `unverified`, `question`, `security_needed`
+       and `message`. A no ends the session, except to a `message` that was not
+       a question, where it is the only answer there is. */
     void (*answer_trust)(vento_session *s, bool accept);
     /* Ends the session without waiting for it. Idempotent. */
     void (*disconnect)(vento_session *s);

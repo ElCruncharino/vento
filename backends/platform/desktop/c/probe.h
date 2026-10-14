@@ -30,7 +30,7 @@ extern "C" {
 typedef struct vento_probe {
     int seconds;              /* --seconds N: how long to watch after `connected` */
     int connect_timeout_s;    /* --connect-timeout N: how long to wait for it */
-    bool trust;               /* --trust: yes to trust_needed, question and unverified */
+    bool trust;               /* --trust: yes to every identity question */
     const char *user;         /* --user, --domain, --password: the answer to */
     const char *domain;       /*   credentials_needed; without a password the */
     const char *password;     /*   answer is a cancel */

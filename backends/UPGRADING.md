@@ -188,11 +188,15 @@ Native modules:
     ./gradlew :backends:<module>:assembleRelease
     ./gradlew :backends:<module>:assembleRelease -PstrictWarnings
 
-The three C backends again on the host, against the system libraries, which
-is the one build that then runs — a probe per backend, against the test
-desktops under `scripts/` (README, Development):
+The C backends again on the host, which is the one build that then runs — a
+probe per backend, against the test desktops under `scripts/` (README,
+Development). The three open ones build against the system libraries; the
+RealVNC one builds under clang only and runs their pinned library out of
+the viewer APK, so a change to `realvnc/.../Library.java`'s pins, to
+`realvnc_traffic.h`'s walk or to the four host-only submodules is proven
+here and nowhere else:
 
-    cmake -S backends -B build/scratch/host -G Ninja -DSTRICT_WARNINGS=ON
+    CC=clang CXX=clang++ cmake -S backends -B build/scratch/host -G Ninja -DSTRICT_WARNINGS=ON
     cmake --build build/scratch/host
 
 Rust modules:
@@ -275,3 +279,9 @@ One commit per upstream, after review, by the lead:
 - **ryll** develop 3ba0f24; four patches, none merged upstream. No tag since
   v0.1.7. Only the protocol and compression crates are consumed; `client` is
   deliberately not (bundled root store).
+- **logger**, **libc-shim**, **mcpelauncher-linker** (branch `ng`, with its
+  nested `bionic` and `core`) and **libjnivm** (October 2026): the host-only
+  stack under `backends/platform/desktop/realvnc`, pinned at the commits
+  that stack was proven with and in no APK. No patches. Moving any of them
+  is proven by the RealVNC probe alone; the libc-shim gaps the hosting
+  layer closes from glibc (`Loader.cxx`) are the things to re-check.
