@@ -158,8 +158,8 @@ fn scaled_geometry(cursor: &Cursor, factor: f32) -> (u16, u16, u16, u16) {
 }
 
 /// The shape resampled to `factor`, as winit takes it: straight alpha,
-/// where the protocols' shapes arrive premultiplied, and no bigger than
-/// winit's limit, which is far past any cursor a desktop sends.
+/// which is what the shapes arrive as, and no bigger than winit's limit,
+/// which is far past any cursor a desktop sends.
 fn scaled(cursor: &Cursor, factor: f32) -> Option<winit::window::CustomCursorSource> {
     if cursor.width == 0 || cursor.height == 0 || factor <= 0.0 {
         return None;
@@ -170,18 +170,7 @@ fn scaled(cursor: &Cursor, factor: f32) -> Option<winit::window::CustomCursorSou
         let sy = ((oy as f32 / factor) as usize).min(cursor.height - 1);
         for ox in 0..w as usize {
             let sx = ((ox as f32 / factor) as usize).min(cursor.width - 1);
-            let p = &cursor.rgba[(sy * cursor.width + sx) * 4..][..4];
-            let a = p[3] as u32;
-            if a == 0 || a == 255 {
-                rgba.extend_from_slice(p);
-            } else {
-                rgba.extend_from_slice(&[
-                    ((p[0] as u32 * 255) / a).min(255) as u8,
-                    ((p[1] as u32 * 255) / a).min(255) as u8,
-                    ((p[2] as u32 * 255) / a).min(255) as u8,
-                    p[3],
-                ]);
-            }
+            rgba.extend_from_slice(&cursor.rgba[(sy * cursor.width + sx) * 4..][..4]);
         }
     }
     match CustomCursor::from_rgba(rgba, w, h, x, y) {
@@ -198,7 +187,7 @@ mod tests {
     use super::*;
 
     fn shape() -> Cursor {
-        // 2×2: opaque red, clear, half-covered green (premultiplied), white.
+        // 2×2: opaque red, clear, half-covered green, white.
         Cursor {
             width: 2,
             height: 2,

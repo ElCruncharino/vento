@@ -290,8 +290,9 @@ Wayland first, through winit. What the window uses beyond `xdg_wm_base`:
 - The clipboard goes through arboard (egui-winit's clipboard on Linux).
 - The native cursor goes through winit's `CustomCursor`, which on Wayland is
   a `wl_shm` buffer in the pointer surface. winit takes straight alpha and
-  premultiplies it (the shapes here arrive premultiplied, so `cursor.rs`
-  undoes that first), refuses anything over 2048 pixels a side, and copies
+  premultiplies it (the shapes arrive straight, which is what the phone's
+  `Bitmap.setPixels` takes too, and TigerVNC's library makes of
+  `CursorWithAlpha`'s premultiplied pixels), refuses anything over 2048 pixels a side, and copies
   the pixels into a fresh buffer on *every* `set_cursor`, even of the same
   cursor — which is why the window's cursor is set on a change and never
   once a frame. The buffer is in device pixels: with `wp_viewporter` winit

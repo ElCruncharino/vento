@@ -132,6 +132,12 @@ impl Severity {
 
 /// The remote cursor's shape, `R, G, B, A` bytes with alpha from the
 /// protocol's mask, and the hotspot as a positive offset into it.
+///
+/// The alpha is straight, not premultiplied: the phone hands these pixels
+/// to `Bitmap.setPixels`, which takes it that way, and where a protocol's
+/// alpha is more than a mask the library under it says so — TigerVNC takes
+/// `CursorWithAlpha`'s premultiplied pixels off the wire and divides the
+/// alpha back out before the session sees them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Cursor {
     pub width: usize,

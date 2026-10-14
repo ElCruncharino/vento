@@ -377,7 +377,8 @@ impl Session {
 
     fn set_cursor(&mut self, ctx: &egui::Context, shape: Option<Cursor>) {
         self.cursor = shape.map(|c| {
-            let image = egui::ColorImage::from_rgba_premultiplied([c.width, c.height], &c.rgba);
+            // Straight alpha, as the seam has it (see `events::Cursor`).
+            let image = egui::ColorImage::from_rgba_unmultiplied([c.width, c.height], &c.rgba);
             CursorShape {
                 texture: ctx.load_texture("cursor", image, TextureOptions::NEAREST),
                 hot: vec2(c.hot_x as f32, c.hot_y as f32),
