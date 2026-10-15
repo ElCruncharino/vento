@@ -34,7 +34,6 @@
 use super::view::Layout;
 use crate::backend::Backend;
 use crate::events::Rect;
-use egui::emath::GuiRounding;
 use egui::{Color32, ColorImage, ImageData, Mesh, Shape, TextureId, TextureOptions, pos2, vec2};
 use std::sync::Arc;
 
@@ -226,11 +225,10 @@ impl Desktop {
     }
 
     /// Draw the layout's `source` where it lands: each tile's share of it.
-    pub fn paint(&self, painter: &egui::Painter, layout: &Layout, pixels_per_point: f32) {
-        // On device pixels, as egui puts an image's rectangle, so that at 1:1
-        // a desktop pixel is a device pixel and nearest is exact.
-        let onto = layout.rect.round_to_pixels(pixels_per_point);
-        for (tile, rect, uv) in pieces(&self.tiles, layout.source, onto) {
+    /// The layout's rectangle is on device pixels already, so that at 1:1 a
+    /// desktop pixel is a device pixel and nearest is exact.
+    pub fn paint(&self, painter: &egui::Painter, layout: &Layout) {
+        for (tile, rect, uv) in pieces(&self.tiles, layout.source, layout.rect) {
             let mut mesh = Mesh::with_texture(self.tiles[tile].id);
             mesh.add_rect_with_uv(rect, uv, Color32::WHITE);
             painter.add(Shape::mesh(mesh));

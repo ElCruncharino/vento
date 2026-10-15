@@ -10,9 +10,11 @@
 //! of it, or one monitor) and the area it may use — and gets back a
 //! [`Layout`] it draws from and asks questions of. The unit is the egui point
 //! rather than the device pixel, so the arithmetic is the same whatever the
-//! scale factor; the one place pixels matter is `Original`, which asks for a
-//! desktop pixel per *device* pixel, since a 1:1 mode drawn at a fraction of
-//! a pixel is neither sharp nor 1:1.
+//! scale factor. Pixels matter in two places. `Original` asks for a desktop
+//! pixel per *device* pixel, since a 1:1 mode drawn at a fraction of a pixel
+//! is neither sharp nor 1:1; and the rectangle the desktop lands in is put
+//! on device pixels, here, once, so that what is drawn and what the pointer
+//! is mapped through are the same rectangle.
 
 use egui::{Pos2, Rect, Vec2, vec2};
 
@@ -94,7 +96,8 @@ pub struct Layout {
     pub scale: f32,
     /// The desktop pixels being shown, in desktop coordinates.
     pub source: Rect,
-    /// Where `source` lands, in points; may extend past `window`.
+    /// Where `source` lands, in points; may extend past `window`. Its edges
+    /// are on device pixels.
     pub rect: Rect,
     /// The area the desktop may use.
     pub window: Rect,
@@ -104,6 +107,8 @@ pub struct Layout {
     /// The pan, clamped: between zero and `overflow`, and exactly one of
     /// them at a limit.
     pub pan: Vec2,
+    /// Device pixels per point, which `rect` was put on.
+    pub pixels_per_point: f32,
 }
 
 /// How close to an edge, in points, the pointer starts the desktop moving.
@@ -123,13 +128,26 @@ impl View {
         // Centred in an axis where it fits, panned in one where it does not.
         let slack = (window.size() - scaled).max(Vec2::ZERO) / 2.0;
         let origin = window.min + slack - self.pan;
+        // On device pixels. Half the slack of an odd window, or a pan that
+        // has moved a fraction of a pixel (the edge pan moves by whatever
+        // the frame's time makes it), put the desktop between pixels: the
+        // GPU, sampling at each pixel's centre, then showed some columns
+        // twice and skipped others at 1:1, and the pointer, mapped from the
+        // unrounded corner, named the pixel beside the one drawn under it.
+        // The pan itself keeps its fraction, so that a slow one still moves.
+        // The size is rounded on its own rather than the far edge with the
+        // near one, which at a half split differently and made a 1:1
+        // desktop a pixel wider than itself.
+        let round = |v: Vec2| (v * pixels_per_point).round() / pixels_per_point;
+        let rect = Rect::from_min_size(round(origin.to_vec2()).to_pos2(), round(scaled));
         Layout {
             scale,
             source,
-            rect: Rect::from_min_size(origin, scaled),
+            rect,
             window,
             overflow,
             pan: self.pan,
+            pixels_per_point,
         }
     }
 
@@ -142,10 +160,12 @@ impl View {
 
 impl Layout {
     /// The desktop pixel under a point, clamped into the source so that a
-    /// pointer dragged past the edge keeps pressing the edge.
+    /// pointer dragged past the edge keeps pressing the edge. Through `rect`
+    /// as drawn, which is the scale give or take its rounding.
     pub fn desktop_at(&self, pos: Pos2) -> (i32, i32) {
-        let x = self.source.min.x + (pos.x - self.rect.min.x) / self.scale;
-        let y = self.source.min.y + (pos.y - self.rect.min.y) / self.scale;
+        let per_point = self.source.size() / self.rect.size().max(Vec2::splat(f32::MIN_POSITIVE));
+        let x = self.source.min.x + (pos.x - self.rect.min.x) * per_point.x;
+        let y = self.source.min.y + (pos.y - self.rect.min.y) * per_point.y;
         let max_x = (self.source.max.x - 1.0).max(self.source.min.x);
         let max_y = (self.source.max.y - 1.0).max(self.source.min.y);
         (
@@ -218,6 +238,37 @@ mod tests {
         assert_eq!(view.pan, vec2(920.0, 10.0));
         assert_eq!(layout.overflow, vec2(920.0, 200.0));
         assert_eq!(layout.rect.min, pos2(-920.0, -10.0));
+    }
+
+    #[test]
+    fn the_desktop_lands_on_device_pixels_and_the_pointer_agrees() {
+        let mut view = View {
+            mode: ScaleMode::Original,
+            ..View::default()
+        };
+        // An odd window leaves half a pixel of slack: rounded, not kept.
+        let desktop = rect(0.0, 0.0, 1024.0, 768.0);
+        let layout = view.layout(desktop, rect(0.0, 0.0, 1201.0, 901.0), 1.0);
+        assert_eq!(layout.rect, rect(89.0, 67.0, 1024.0, 768.0));
+        assert_eq!(layout.desktop_at(pos2(89.0, 67.0)), (0, 0));
+        assert_eq!(layout.desktop_at(pos2(500.0, 400.0)), (411, 333));
+        // A pan of a fraction: the pixel under the pointer is the one drawn
+        // there, which is where the rounded rectangle puts it.
+        view.pan = vec2(14.6, 0.0);
+        let layout = view.layout(desktop, rect(0.0, 0.0, 800.0, 600.0), 1.0);
+        assert_eq!(layout.rect.min, pos2(-15.0, 0.0));
+        assert_eq!(view.pan, vec2(14.6, 0.0));
+        assert_eq!(layout.desktop_at(pos2(400.0, 300.0)), (415, 300));
+        // At 1.25 the rectangle is on device pixels, not on points: half a
+        // pixel of slack goes one way or the other, but to a whole pixel.
+        let ppp = 1.25;
+        view.pan = Vec2::ZERO;
+        let layout = view.layout(desktop, rect(0.0, 0.0, 1251.0 / ppp, 1000.0 / ppp), ppp);
+        let min = layout.rect.min * ppp;
+        let size = layout.rect.size() * ppp;
+        let whole = |v: f32| (v - v.round()).abs() < 1e-3;
+        assert!(whole(min.x) && (min.x - 113.5).abs() <= 0.5 && (min.y - 116.0).abs() < 1e-3, "{min:?}");
+        assert!((size.x - 1024.0).abs() < 1e-3 && (size.y - 768.0).abs() < 1e-3, "{size:?}");
     }
 
     #[test]
