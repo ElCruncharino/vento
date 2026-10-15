@@ -264,7 +264,7 @@ One commit per upstream, after review, by the lead:
   port sets it itself.
 - **libvncserver** at upstream master; five patches. No releases since
   0.9.15.
-- **tigervnc** master dd416cbf, reporting 1.16.80; six patches (the PAM one
+- **tigervnc** master dd416cbf, reporting 1.16.80; seven patches (the PAM one
   dropped). The certificate check is the shim's now: what cannot be excused is
   refused and the rest goes to `trust_needed`, their viewer's known-hosts store
   not used at all; the RSA-AES key question is ported from
