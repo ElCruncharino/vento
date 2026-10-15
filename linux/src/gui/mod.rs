@@ -247,6 +247,14 @@ impl App {
                 return;
             }
         };
+        // The toolbar's icons, Material Symbols, as a font family of their
+        // own. egui_material_icons would also make the font a fallback of
+        // the proportional family, where any character egui's own fonts
+        // lack would come out in it; the rest of the window keeps the fonts
+        // it had.
+        let mut icons = egui_material_icons::font_insert();
+        icons.families.retain(|f| f.family != egui::FontFamily::Proportional);
+        self.egui.add_font(icons);
         let state = egui_winit::State::new(
             self.egui.clone(),
             egui::ViewportId::ROOT,

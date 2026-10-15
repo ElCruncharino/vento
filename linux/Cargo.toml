@@ -49,6 +49,12 @@ remotedesktop-spice = { path = "../backends/modules/spice/src/main/rust" }
 egui = "0.36"
 egui-winit = { version = "0.36", default-features = false, features = ["clipboard", "wayland", "x11"] }
 egui-wgpu = { version = "0.36", features = ["winit"] }
+# The toolbar's icons: Google's Material Symbols (Rounded, filled), the font
+# this crate embeds and registers with egui. Its 0.8 is the one made for egui
+# 0.36. The crate is MIT, the font Apache-2.0; both end up in this binary and
+# nowhere else (the phone has neither), and the README's licence note names
+# them.
+egui_material_icons = "0.8"
 wgpu = "30"
 winit = "0.30"
 pollster = "0.4"

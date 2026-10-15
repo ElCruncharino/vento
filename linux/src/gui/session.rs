@@ -62,8 +62,13 @@ use crate::events::{Cursor, Event, Identity, Mailbox, State};
 use crate::known_hosts::{self, KnownHosts, Store, Verdict};
 use crate::options::Options;
 use egui::{
-    Color32, CursorIcon, Frame, Id, LayerId, Margin, Order, PointerButton, Pos2, Rect, Response, Sense,
+    Color32, CursorIcon, Frame, Id, LayerId, Margin, Order, PointerButton, Pos2, Rect, Response, RichText, Sense,
     TextureHandle, TextureOptions, Vec2, pos2, vec2,
+};
+use egui_material_icons::MaterialIcon;
+use egui_material_icons::icons::{
+    ICON_ASPECT_RATIO, ICON_BUG_REPORT, ICON_DESKTOP_WINDOWS, ICON_DRAG_INDICATOR, ICON_FULLSCREEN,
+    ICON_FULLSCREEN_EXIT, ICON_INFO, ICON_LINK_OFF, ICON_MONITOR, ICON_VISIBILITY,
 };
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -91,6 +96,9 @@ const NOTCH_POINTS: f32 = 50.0;
 const TOOLBAR_REVEAL: Duration = Duration::from_secs(3);
 /// The toolbar's buttons' height, in points.
 const TOOLBAR_BUTTON: f32 = 28.0;
+/// The size of the toolbar's icons, in points: Material Symbols are drawn
+/// for 24, and read well down to 18.
+const TOOLBAR_ICON: f32 = 20.0;
 /// How long the bell rings in the title.
 const BELL: Duration = Duration::from_millis(600);
 /// How long a disconnect is given before the session is closed regardless.
@@ -1319,8 +1327,17 @@ impl Session {
                     // A little taller than egui's buttons, which were made
                     // for a menu rather than for a bar at a screen's edge.
                     ui.spacing_mut().interact_size.y = TOOLBAR_BUTTON;
-                    ui.horizontal(|ui| self.toolbar_items(ui, host));
-                });
+                    ui.horizontal(|ui| {
+                        // Where to take hold of it, though any part of it
+                        // will do: a label that senses nothing (not even
+                        // text selection), so a press there is the area's.
+                        ui.add(egui::Label::new(icon(ICON_DRAG_INDICATOR).weak()).selectable(false))
+                            .on_hover_text("Drag to move the toolbar along the edge");
+                        ui.horizontal(|ui| self.toolbar_items(ui, host)).response.rect
+                    })
+                    .inner
+                })
+                .inner
             });
         let response = &area.response;
         if response.drag_started() {
@@ -1334,8 +1351,9 @@ impl Session {
                 self.placement.move_to(screen, width, from + moved);
                 ctx.set_cursor_icon(CursorIcon::Grabbing);
             }
-        } else if response.hovered() {
-            // The bare background, between and around the buttons.
+        } else if response.hovered() && !pointer.is_some_and(|p| area.inner.contains(p)) {
+            // The grip and the margins, but not the buttons, which are
+            // pressed before they are dragged.
             ctx.set_cursor_icon(CursorIcon::Grab);
         }
         self.toolbar_size = response.rect.size();
@@ -1344,12 +1362,16 @@ impl Session {
         self.toolbar_hovered = response.contains_pointer() || self.drag_from.is_some();
     }
 
+    /// The toolbar's buttons: Material Symbols, each with its name in its
+    /// tooltip, and a word beside the icon where the button has a state to
+    /// show — the scale mode, the monitor, view only — rather than a
+    /// highlight, which says on or off but not which of five.
     fn toolbar_items(&mut self, ui: &mut egui::Ui, host: &mut Host) {
         let connected = self.connected();
-        let scale = ui.add_enabled(connected, egui::Button::new(format!("Scale: {}", self.view.mode.label())));
+        let scale = ui.add_enabled(connected, labelled(ICON_ASPECT_RATIO, self.view.mode.label()));
         if scale
             .on_hover_text(
-                "Cycles fit width, fit height, fill width, fill height and 1:1.\n\
+                "Scale: cycles fit width, fit height, fill width, fill height and 1:1.\n\
                  Where the desktop overflows the window, the pointer near an edge pans it.",
             )
             .clicked()
@@ -1360,12 +1382,12 @@ impl Session {
         let facts = &self.snapshot.facts;
         if facts.monitors.len() > 1 {
             let label = match self.monitor {
-                None => "Monitor: all".to_string(),
-                Some(i) => format!("Monitor: {}", i + 1),
+                None => "All".to_string(),
+                Some(i) => format!("{}", i + 1),
             };
             if ui
-                .add_enabled(connected, egui::Button::new(label))
-                .on_hover_text("Show the whole desktop, or one of its monitors")
+                .add_enabled(connected, labelled(ICON_MONITOR, label))
+                .on_hover_text("Monitor: show the whole desktop, or one of its monitors")
                 .clicked()
             {
                 self.monitor = match self.monitor {
@@ -1376,10 +1398,10 @@ impl Session {
                 self.view.pan = Vec2::ZERO;
             }
         } else if facts.displays.len() > 1 {
-            let label = format!("Display: {} of {}", facts.display + 1, facts.displays.len());
+            let label = format!("{} of {}", facts.display + 1, facts.displays.len());
             if ui
-                .add_enabled(connected, egui::Button::new(label))
-                .on_hover_text("Ask the far end for its next display")
+                .add_enabled(connected, labelled(ICON_DESKTOP_WINDOWS, label))
+                .on_hover_text("Display: ask the far end for its next display")
                 .clicked()
             {
                 let next = (facts.display + 1).rem_euclid(facts.displays.len() as i32);
@@ -1388,27 +1410,30 @@ impl Session {
         }
 
         let view_only = self.view_only;
+        let label = if view_only { "View only: on" } else { "View only: off" };
         if ui
-            .add_enabled(connected, egui::Button::new(if view_only { "View only: on" } else { "View only: off" }))
-            .on_hover_text("Watch without sending the mouse, the keyboard or the clipboard")
+            .add_enabled(connected, labelled(ICON_VISIBILITY, label).selected(view_only))
+            .on_hover_text("View only: watch without sending the mouse, the keyboard or the clipboard")
             .clicked()
         {
             self.set_option("ViewOnly", if view_only { "false" } else { "true" });
         }
 
         if ui
-            .add_enabled(connected, egui::Button::new("Info"))
-            .on_hover_text("The connection's facts, and the settings it can still be told")
+            .add_enabled(connected, icon_only(ICON_INFO).selected(self.panel.open))
+            .on_hover_text("Info: the connection's facts, and the settings it can still be told")
             .clicked()
         {
             self.panel.open = !self.panel.open;
         }
 
         if ui
-            .button(if self.hud.on { "Debug: on" } else { "Debug" })
-            .on_hover_text(
-                "The debug overlay: the state, the pixel path, the cursor, the view and the input, in a                  corner. Ctrl+Alt+D toggles it too.",
-            )
+            .add(icon_only(ICON_BUG_REPORT).selected(self.hud.on))
+            .on_hover_text(format!(
+                "Debug overlay ({}): the state, the pixel path, the cursor, the view and the input, in a \
+                 corner. Ctrl+Alt+D toggles it too.",
+                on_off(self.hud.on)
+            ))
             .clicked()
         {
             self.toggle_hud();
@@ -1416,12 +1441,12 @@ impl Session {
 
         let fullscreen = host.window.fullscreen().is_some();
         if ui
-            .button(if fullscreen { "Leave fullscreen" } else { "Fullscreen" })
+            .add(icon_only(if fullscreen { ICON_FULLSCREEN_EXIT } else { ICON_FULLSCREEN }))
             .on_hover_text(if fullscreen {
-                "Back to a window"
+                "Leave fullscreen: back to a window"
             } else {
-                "Fill the screen. The toolbar still slides in at the top edge; its button, or \
-                 disconnecting, leaves fullscreen."
+                "Fullscreen: fill the screen. The toolbar still slides in at the top edge; its button, \
+                 or disconnecting, leaves fullscreen."
             })
             .clicked()
         {
@@ -1431,11 +1456,11 @@ impl Session {
         }
 
         if ui
-            .add_enabled(self.disconnecting.is_none() && self.closed.is_none(), egui::Button::new("Disconnect"))
+            .add_enabled(self.disconnecting.is_none() && self.closed.is_none(), icon_only(ICON_LINK_OFF))
             .on_hover_text(if self.relative {
-                "End the session. Ctrl+Alt held together frees the locked pointer."
+                "Disconnect: end the session. Ctrl+Alt held together frees the locked pointer."
             } else {
-                "End the session"
+                "Disconnect: end the session"
             })
             .clicked()
         {
@@ -1610,6 +1635,21 @@ fn chord(keys: &HashMap<PhysicalKey, u32>) -> bool {
 /// The D of Ctrl+Alt+D: the layout's, as every key is.
 fn is_d(event: &KeyEvent) -> bool {
     matches!(&event.logical_key, LogicalKey::Character(c) if c.eq_ignore_ascii_case("d"))
+}
+
+/// A toolbar icon, at the toolbar's size.
+fn icon(icon: MaterialIcon) -> RichText {
+    icon.rich_text().size(TOOLBAR_ICON)
+}
+
+/// A toolbar button of an icon alone, square.
+fn icon_only(symbol: MaterialIcon) -> egui::Button<'static> {
+    egui::Button::new(icon(symbol)).min_size(Vec2::splat(TOOLBAR_BUTTON))
+}
+
+/// A toolbar button of an icon and a word.
+fn labelled(symbol: MaterialIcon, label: impl Into<String>) -> egui::Button<'static> {
+    egui::Button::new((icon(symbol), label.into())).min_size(Vec2::splat(TOOLBAR_BUTTON))
 }
 
 fn on_off(on: bool) -> &'static str {

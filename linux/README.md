@@ -76,6 +76,13 @@ the tag of the release `Cargo.lock` names, which `Cargo.toml`'s
 it live in `patches/winit/` like every other submodule's. Unpatched, it builds
 and is exactly crates.io's winit, with the defects the patches fix.
 
+Licences: the client is GPL-3.0-or-later like the rest of the repository, and
+what it takes from crates.io keeps each crate's own licence, as `Cargo.lock`
+lists them. One is not code and is built into the binary as it is: the
+toolbar's icons are Google's Material Symbols font (Rounded, filled; Apache
+License 2.0), embedded by the `egui_material_icons` crate (MIT). Nothing of
+this crate's graph reaches the Android app or its licence page.
+
 ```sh
 cd linux
 
@@ -202,8 +209,11 @@ included — a drag never presses the button it started on — and stops at the
 window's sides; where it is left is kept as a fraction of the room either side
 of it, so that a resize keeps it centred, or against the edge it was put
 against, and the next session's toolbar starts there, for as long as the
-process runs (it is not saved). The strip that brings it out follows it. On
-it:
+process runs (it is not saved). The strip that brings it out follows it.
+Its buttons are Material Symbols icons, each named in its tooltip, with a word
+beside the icon where there is a state to read (the scale mode, the monitor,
+view only on or off); Info and Debug are highlighted while the panel or the
+overlay is up, and a grip at the left end shows where to take hold. On it:
 
 - **Scale** cycles fit width → fit height → fill width → fill height → 1:1.
   *Fit* never enlarges the desktop past a device pixel per desktop pixel;
