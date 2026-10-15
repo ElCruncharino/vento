@@ -101,6 +101,9 @@ pub struct Layout {
     /// How much of `rect` is past `window` in each axis, zero where the
     /// desktop fits — which is what says whether a pan means anything.
     pub overflow: Vec2,
+    /// The pan, clamped: between zero and `overflow`, and exactly one of
+    /// them at a limit.
+    pub pan: Vec2,
 }
 
 /// How close to an edge, in points, the pointer starts the desktop moving.
@@ -126,6 +129,7 @@ impl View {
             rect: Rect::from_min_size(origin, scaled),
             window,
             overflow,
+            pan: self.pan,
         }
     }
 
@@ -152,23 +156,24 @@ impl Layout {
 
     /// The pan velocity a pointer at `pointer` asks for, in points per
     /// second: zero away from the edges, and towards an edge faster the
-    /// nearer it is, in each axis where there is anything to pan to.
+    /// nearer it is, in each direction the pan can still go. A pan already
+    /// at its limit asks for nothing, since a velocity is also a request for
+    /// the next frame, and a pointer resting by an edge (on its way to the
+    /// toolbar, say) would otherwise redraw the window as fast as it can for
+    /// a picture that does not move.
     pub fn edge_velocity(&self, pointer: Pos2) -> Vec2 {
-        let axis = |p: f32, min: f32, max: f32, overflow: f32| -> f32 {
-            if overflow <= 0.0 {
-                return 0.0;
-            }
-            if p < min + EDGE {
+        let axis = |p: f32, min: f32, max: f32, pan: f32, overflow: f32| -> f32 {
+            if p < min + EDGE && pan > 0.0 {
                 -EDGE_SPEED * (1.0 - ((p - min) / EDGE).clamp(0.0, 1.0))
-            } else if p > max - EDGE {
+            } else if p > max - EDGE && pan < overflow {
                 EDGE_SPEED * (1.0 - ((max - p) / EDGE).clamp(0.0, 1.0))
             } else {
                 0.0
             }
         };
         vec2(
-            axis(pointer.x, self.window.min.x, self.window.max.x, self.overflow.x),
-            axis(pointer.y, self.window.min.y, self.window.max.y, self.overflow.y),
+            axis(pointer.x, self.window.min.x, self.window.max.x, self.pan.x, self.overflow.x),
+            axis(pointer.y, self.window.min.y, self.window.max.y, self.pan.y, self.overflow.y),
         )
     }
 
@@ -249,6 +254,7 @@ mod tests {
             mode: ScaleMode::Original,
             ..View::default()
         };
+        view.pan = vec2(400.0, 0.0);
         let layout = view.layout(rect(0.0, 0.0, 1920.0, 500.0), rect(0.0, 0.0, 1000.0, 1000.0), 1.0);
         assert_eq!(layout.edge_velocity(pos2(500.0, 500.0)), Vec2::ZERO);
         // Vertical overflow is nil, so a pointer at the top asks for nothing.
@@ -257,5 +263,33 @@ mod tests {
         assert_eq!(layout.edge_velocity(pos2(1000.0, 500.0)), vec2(EDGE_SPEED, 0.0));
         let half = layout.edge_velocity(pos2(EDGE / 2.0, 500.0));
         assert!((half.x + EDGE_SPEED / 2.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn the_edge_asks_for_nothing_where_the_pan_is_at_its_limit() {
+        let mut view = View {
+            mode: ScaleMode::FitWidth,
+            ..View::default()
+        };
+        // Fit width in a window shorter than the desktop: overflow in y.
+        let desktop = rect(0.0, 0.0, 1920.0, 1200.0);
+        let window = rect(0.0, 0.0, 1280.0, 700.0);
+        let layout = view.layout(desktop, window, 1.0);
+        assert_eq!(layout.overflow, vec2(0.0, 100.0));
+        // At the top already: the top band, where the pointer passes on its
+        // way to the toolbar, asks for nothing; the bottom one still pans.
+        assert_eq!(layout.edge_velocity(pos2(640.0, 0.0)), Vec2::ZERO);
+        assert_eq!(layout.edge_velocity(pos2(640.0, 700.0)), vec2(0.0, EDGE_SPEED));
+        // Panned past the bottom, and clamped there: the other way round.
+        view.pan = vec2(0.0, 1e6);
+        let layout = view.layout(desktop, window, 1.0);
+        assert_eq!(layout.pan, vec2(0.0, 100.0));
+        assert_eq!(layout.edge_velocity(pos2(640.0, 700.0)), Vec2::ZERO);
+        assert_eq!(layout.edge_velocity(pos2(640.0, 0.0)), vec2(0.0, -EDGE_SPEED));
+        // Halfway, both bands pan; and a corner pans only the axis that can.
+        view.pan = vec2(0.0, 50.0);
+        let layout = view.layout(desktop, window, 1.0);
+        assert_eq!(layout.edge_velocity(pos2(640.0, 0.0)), vec2(0.0, -EDGE_SPEED));
+        assert_eq!(layout.edge_velocity(pos2(0.0, 700.0)), vec2(0.0, EDGE_SPEED));
     }
 }
