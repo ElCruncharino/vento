@@ -132,7 +132,10 @@ the C probes are unaffected (`cmake -S backends -B … ` without the option).
 The probe answers the first credentials prompt with `--password` and a second
 with a cancel, since a second prompt is the far end refusing the first answer
 (SPICE and RustDesk ask again for every refused password); it then says the
-authentication failed and leaves with 1. The probe's exit status is zero only
+authentication failed and leaves with 1. The clipboard settings hold in the
+probe too: under `--no-clipboard-in` what the far end copies is printed as its
+size alone, and `--clipboard` with `--no-clipboard-out` is refused as a
+contradiction (status 2). The probe's exit status is zero only
 if it connected and everything asked for happened. `--verbose` lets the backends' debug lines through (and not the GUI
 stack's, which would be tens of thousands a minute).
 

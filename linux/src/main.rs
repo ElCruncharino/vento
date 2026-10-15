@@ -58,6 +58,9 @@ mod host {
         click: Option<(i32, i32)>,
         key: Option<u32>,
         clipboard: Option<String>,
+        /// `--no-clipboard-in`'s opposite: whether what the far end copies is
+        /// shown, which is the probe's way of taking it.
+        clipboard_in: bool,
         out: Option<PathBuf>,
         thumb_step: usize,
         verbose: bool,
@@ -301,6 +304,12 @@ headless, any of which selects the probe instead of the window:
             })));
         }
 
+        // The window's clipboard settings mean the same here: what the far
+        // end copies is not shown under --no-clipboard-in, and --clipboard is
+        // text to send, which --no-clipboard-out says not to.
+        if clipboard.is_some() && !settings.clipboard_out {
+            return Err("--clipboard sends text to the far end, which --no-clipboard-out says not to".into());
+        }
         Ok(Mode::Probe(Box::new(Probe {
             kind,
             address: positional.remove(1),
@@ -315,6 +324,7 @@ headless, any of which selects the probe instead of the window:
             click,
             key,
             clipboard,
+            clipboard_in: settings.clipboard_in,
             out,
             thumb_step,
             verbose: false,
@@ -491,6 +501,9 @@ headless, any of which selects the probe instead of the window:
                     say(&format!("pointer_mode {}", if *relative { "relative" } else { "absolute" }))
                 }
                 Event::Bell => say("bell"),
+                Event::Clipboard(text) if !self.clipboard_in => {
+                    say(&format!("clipboard {} bytes, not taken (--no-clipboard-in)", text.len()))
+                }
                 Event::Clipboard(text) => say(&format!(
                     "clipboard {} bytes: {:?}{}",
                     text.len(),
