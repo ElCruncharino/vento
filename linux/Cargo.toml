@@ -76,3 +76,11 @@ cmake = "0.1"
 # copy would be a second place it is written down. Already in the workspace's
 # graph through `ffmpeg-sys-next`, so it costs nothing new.
 bindgen = "0.73"
+
+# winit from the submodule, at the tag of the release crates.io has, with
+# `patches/winit/` applied by `./patch.sh`: the same source plus our fixes to
+# it, each written to go upstream. One so far, X11's wheel buttons giving two
+# notches for one (see the patch). `dpi` comes along as winit's path
+# dependency, from the same tag.
+[patch.crates-io]
+winit = { path = "../third_party/winit" }

@@ -74,3 +74,12 @@
 	url = https://github.com/ChristopherHX/libjnivm.git
 	shallow = true
 	ignore = all
+# The Linux client's only (linux/, a workspace of its own, through its
+# [patch.crates-io]): winit, at the tag of the release linux/Cargo.lock
+# would otherwise take from crates.io, so that a fix of ours to it can be a
+# patch here like every other. Nothing of it is in an APK.
+[submodule "third_party/winit"]
+	path = third_party/winit
+	url = https://github.com/rust-windowing/winit.git
+	shallow = true
+	ignore = all

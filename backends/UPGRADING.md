@@ -39,6 +39,13 @@ Nothing runs in parallel: every step needs a clean tree to commit from.
    `backends/ports/{nettle,gnutls}/gen.sh`
 5. libvncserver, tigervnc, freerdp, ironrdp, hbb_common, ryll
 
+`third_party/winit` is not a backend's and not in this round: it is the
+Linux client's winit, pinned at the tag of the release `linux/Cargo.lock`
+names and taken in through `linux/Cargo.toml`'s `[patch.crates-io]`. It moves
+when that crate's winit does (a `cargo update` there, its own job): the pin to
+the new release's tag, `patches/winit/` rebased onto it, and any patch
+upstream has taken dropped.
+
 A shared library can be blocked by a consumer: nettle 4 could not move until
 TigerVNC had upstream's nettle-4 compatibility. When an evaluation says "stay"
 because of a consumer, note it and come back after that consumer moves.

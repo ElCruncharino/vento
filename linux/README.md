@@ -67,7 +67,12 @@ libswscale), libpulse, alsa-lib, plus libclang. The window needs a Vulkan (or
 GLES) driver wgpu can use and a Wayland or X11 session.
 
 The submodules must be initialised (`git submodule update --init --recursive`;
-RealVNC's four host-only submodules need `--recursive`).
+RealVNC's four host-only submodules need `--recursive`) and patched
+(`./patch.sh -n` at the root). One of them is this crate's alone: winit, at
+the tag of the release `Cargo.lock` names, which `Cargo.toml`'s
+`[patch.crates-io]` takes in place of the crates.io one so that our fixes to
+it live in `patches/winit/` like every other submodule's. Unpatched, it builds
+and is exactly crates.io's winit, with the defects the patches fix.
 
 ```sh
 cd linux
@@ -479,6 +484,16 @@ handles.
   are positions rather than deltas, which relative mode cannot use — as on
   Wayland. XI2 raw events stay selected whatever the focus, since winit
   deselects them on every focus-out, the filtered ones included.
+- **A wheel notch is one notch.** A wheel without smooth-scroll valuators
+  comes as a press and a release of buttons 4–7 per notch, and winit 0.30
+  made a wheel event of both, so each notch went to the far end twice; it
+  makes one of the press only with `patches/winit/0001`, as winit's next
+  X11 backend does. A real wheel under libinput was not affected (its
+  buttons are flagged emulated and dropped, the valuators read instead);
+  XTEST's were, and those of an X server that is itself a remote session
+  (Xvnc, xrdp). On the rig, `xdotool click 5` three times and `click 4`
+  once over a TigerVNC session gave the far end 6 and 2 presses before,
+  3 and 1 after.
 - **The native cursor is an Xcursor, premultiplied.** winit copies the
   pixels it is given into a Render cursor as they are, which wants them
   premultiplied, so `cursor.rs` premultiplies them for X11 (Wayland's side
