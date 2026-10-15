@@ -42,6 +42,8 @@ backend without one.
   with tests), `settings.rs` (the client's own settings and their rows),
   `dialog.rs` (the connection dialog), `panel.rs` (the connection-info panel,
   with the live controls), `prompts.rs` (the modal prompts).
+- **`src/known_hosts.rs`** — the pin store (`KnownHosts.java`) and RealVNC's
+  identities, as files under `$XDG_CONFIG_HOME/vento`, with tests.
 - **`src/main.rs`** — the `vento` binary: the window, `--list`, and the
   headless probe.
 
@@ -103,7 +105,9 @@ cargo run -- --list
 # A session, headless: connect, print every event, answer the prompts from the
 # flags, write the framebuffer and a thumbnail, print the facts, and leave.
 # Any of the probe's flags (--probe, --out, --click, --key, --clipboard,
-# --trust, …) selects this instead of the window.
+# --trust, …) selects this instead of the window. A certificate the known
+# hosts match is accepted without --trust; --trust accepts any other for this
+# run and pins nothing.
 cargo run -- tigervnc 127.0.0.1:5901 --password vncpass \
     --out /tmp/shot.ppm --click 500,300 --key 0x61 --clipboard hello
 cargo run -- rdp 127.0.0.1:3389 --user proto --password protopass \
@@ -273,11 +277,64 @@ it is.
 **Prompts** are modal dialogs over the session, which is blocked until one is
 answered — so Escape, or clicking outside, is a no: credentials (the user name
 field only where the scheme has one; for RDP a name typed without a domain
-keeps the session's, and `.\user` is a local account), a certificate's fingerprint to trust for
-this session (nothing is persisted), an unverifiable server, TigerVNC's own
-questions, RealVNC's security prompt with its identity and encryption states in
+keeps the session's, and `.\user` is a local account), a certificate the
+[known hosts](#known-hosts) do not match, an unverifiable server (asked every
+time, and never remembered), TigerVNC's question about an RSA-AES server key
+(likewise), RealVNC's security prompt with its identity and encryption states in
 words and its *remember server* box, and messages (OK, or confirm/cancel when
 the far end asks a question).
+
+### Known hosts
+
+A server's certificate is one it made for itself, so — as on the phone, and as
+over SSH — its identity is the key: the first time a certificate is accepted
+with **Remember server** ticked, its fingerprint is pinned against the address,
+and from then on a connection whose certificate matches asks nothing, and one
+whose certificate does not asks loudly. The prompt says which it is: *you have
+not connected to this server before*, *this server's identity belongs to
+`<address>`, which you have connected to before* (the same certificate pinned
+under another address — one machine by name and by number), or *this server's
+identity has changed since you last connected*, where the box starts unticked.
+Cancel, or Continue with the box unticked, pins nothing. A certificate that a
+certificate authority would vouch for is asked about like any other: the
+question is whether this is the machine it was last time.
+
+The pins are in **`$XDG_CONFIG_HOME/vento/known_hosts`** (by default
+`~/.config/vento/known_hosts`), one line per address: `<address> <fingerprint>`.
+The address is the one typed, folded for case and nothing else, so
+`host` and `host:3389` are two entries; the fingerprint is SHA-256, as the
+backend printed it, and compared as its hex digits whatever their case or
+separators. RustDesk pins the peer's key under `<id>@<rendezvous server>` and
+takes a first one without asking, since the rendezvous server has signed it;
+only a changed one is a question. The file is replaced whole (written beside
+itself and renamed over) with mode 0600; a line that does not parse is ignored
+and kept, a missing file is an empty one, and one that cannot be read is
+treated as empty and left alone. To forget a server, delete its line.
+
+Only the window writes it. The probe reads it — a pinned host connects
+headless without `--trust` — and never writes it: `--trust` says yes for that
+run and nothing else.
+
+No backend keeps a store of certificates of its own: FreeRDP is told to read
+and write none, TigerVNC is told to hand its certificates over rather than keep
+its viewer's `x509_known_hosts`, and libvnc and the four Rust clients never
+had one. What the backends do still keep is RealVNC's, under the state
+directory (`--state-dir`, by default `$XDG_STATE_HOME/vento`):
+
+| Backend | What | Where |
+|---------|------|-------|
+| RealVNC | the core's private key, its own record of identities accepted with *remember server*, its config and logs | `<state>/realvnc/net.pgaskin.remotedesktop/.vnc/` (`rsaKeys`, `identities`, `config.d/`), `<state>/realvnc/vnclog/` |
+| RealVNC | the identity the core asks to have remembered, handed back as `Identity` next time — kept by this client, as `RealVncBackend` keeps it | `$XDG_CONFIG_HOME/vento/realvnc_identities` |
+| FreeRDP | nothing; the directory exists because the library will not connect without a path for a store it is never allowed to use | `<state>/freerdp/` |
+
+RealVNC's identity is the core's opaque blob rather than a fingerprint, and
+only the core can compare one, so it is not a pin and the phone does not make
+it one: the core asks its own security question, and the phone and this client
+both leave the core's store where it is. One thing is not this client's to
+judge: TigerVNC's library accepts a certificate that verifies against the
+system's certificate authorities (or TigerVNC's own
+`~/.config/tigervnc/x509_ca.pem`) and matches the name, without handing it
+over, so such a server is not asked about and not pinned.
 
 ### Display servers
 
@@ -444,5 +501,5 @@ cargo run -- realvnc 127.0.0.1::5901 --password vncpass
 
 `--library-dir` defaults to `$XDG_DATA_HOME/vento/realvnc` and `--state-dir`
 (where the core keeps its key, identities and logs — as plain files where the
-phone has encrypted ones, and where the other backends keep their own per-host
-state) to `$XDG_STATE_HOME/vento`.
+phone has encrypted ones; see [Known hosts](#known-hosts)) to
+`$XDG_STATE_HOME/vento`.
