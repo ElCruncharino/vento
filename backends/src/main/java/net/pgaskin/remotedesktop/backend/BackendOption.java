@@ -4,6 +4,7 @@
 package net.pgaskin.remotedesktop.backend;
 
 import java.util.List;
+import java.util.function.Predicate;
 
 /**
  * One setting a backend understands, described well enough for the app to
@@ -91,7 +92,8 @@ public record BackendOption(String key, String label, String summary, Type type,
      *                 something it should not do unasked — an encoding that is
      *                 lossy, say — and offering it as a preference while it is
      *                 switched off would be offering something that cannot
-     *                 happen.
+     *                 happen. One already chosen when the switch goes off goes
+     *                 back to the option's default; see {@link #stranded}.
      */
     public record Choice(String value, String label, String summary, String requires) {
         public Choice(String value, String label) {
@@ -154,6 +156,42 @@ public record BackendOption(String key, String label, String summary, Type type,
         public boolean open(String value) {
             return value != null && values.contains(value);
         }
+    }
+
+    /**
+     * For a {@link Type#CHOICE}: the choice {@code value} names, where it
+     * {@link Choice#requires requires} a switch that {@code on} says is off, or
+     * null. Such a value is left standing after its switch went, and is not
+     * what the backend would do either — TigerVNC's {@code h264} without
+     * {@code H264} negotiates something else — so a screen must not keep it
+     * selected. The Linux client's {@code Spec::stranded} is the same rule.
+     *
+     * @param on whether the {@code BOOL} option with that key is on
+     */
+    public Choice stranded(String value, Predicate<String> on) {
+        for (Choice c : choices) {
+            if (c.value().equals(value)) {
+                return c.requires() != null && !on.test(c.requires()) ? c : null;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * What a {@link #stranded} choice falls back to: the default, as if it had
+     * never been picked, or the first choice on offer where the default is
+     * stranded too (no list has one that is).
+     */
+    public String fallback(Predicate<String> on) {
+        if (stranded(defaultValue, on) == null) {
+            return defaultValue;
+        }
+        for (Choice c : choices) {
+            if (c.requires() == null || on.test(c.requires())) {
+                return c.value();
+            }
+        }
+        return defaultValue;
     }
 
     /** For a {@link Type#CHOICE}: what to show for {@code value}, or the value itself. */
