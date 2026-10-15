@@ -37,7 +37,8 @@ backend without one.
   a damaged rectangle at a time), `view.rs` (scale modes, panning and the
   pointer's mapping, pure arithmetic with tests), `toolbar.rs` (where the
   toolbar sits and which strip of the edge brings it out, with tests),
-  `follow.rs` (the desktop
+  `icons.rs` (the toolbar's font and the symbols it draws, tested against
+  the font and its codepoints file), `follow.rs` (the desktop
   following the window's size: the phone's `WindowFollower`, pure logic with
   tests), `keys.rs` (winit keys to X11 keysyms), `platform.rs` (which display
   server the window is on, and the per-server shortcuts and capture choice),
@@ -79,9 +80,14 @@ and is exactly crates.io's winit, with the defects the patches fix.
 Licences: the client is GPL-3.0-or-later like the rest of the repository, and
 what it takes from crates.io keeps each crate's own licence, as `Cargo.lock`
 lists them. One is not code and is built into the binary as it is: the
-toolbar's icons are Google's Material Symbols font (Rounded, filled; Apache
-License 2.0), embedded by the `egui_material_icons` crate (MIT). Nothing of
-this crate's graph reaches the Android app or its licence page.
+toolbar's icons are Google's Material Symbols Outlined font, version 2.975
+(Apache License 2.0), in `assets/material-symbols/` with its licence and its
+codepoints file. It comes from google/material-design-icons at commit
+49d4db35df87 (2026-10-09), which ships Material Symbols only as a variable
+font; egui sets none of a variable font's axes, so what is here is a static
+instance of it made with fontTools (unfilled, weight 400, grade 0, optical
+size 24; `src/gui/icons.rs` has the command), 1.4 MB of the binary. Nothing
+of this crate's graph reaches the Android app or its licence page.
 
 ```sh
 cd linux
@@ -210,12 +216,19 @@ window's sides; where it is left is kept as a fraction of the room either side
 of it, so that a resize keeps it centred, or against the edge it was put
 against, and the next session's toolbar starts there, for as long as the
 process runs (it is not saved). The strip that brings it out follows it.
-Its buttons are Material Symbols icons, each named in its tooltip, with a word
-beside the icon where there is a state to read (the scale mode, the monitor,
-view only on or off); Info and Debug are highlighted while the panel or the
-overlay is up, and a grip at the left end shows where to take hold. On it:
+It has no shadow, and its buttons are flat: an icon (Material Symbols
+Outlined, unfilled) and no frame at rest, egui's frame while the pointer is
+on one or pressing it. A button with a state shows it in its icon, and its
+tooltip names the button, its state and, for Scale, what a click goes to
+("Scale: fit width — click for fit height"). View only, Info and Debug, while
+on, keep a frame at rest, a dim fill of the selection's blue with the icon in
+the selection's colour. The monitor button keeps a word beside its icon,
+the monitor or display it is on. A grip at the left end shows where to take
+hold. On it:
 
-- **Scale** cycles fit width → fit height → fill width → fill height → 1:1.
+- **Scale** cycles fit width → fit height → fill width → fill height → 1:1,
+  its icon `fit_page_width`, `fit_page_height`, `width` (↔), `height` (↕)
+  and `view_real_size` (1:1) in turn.
   *Fit* never enlarges the desktop past a device pixel per desktop pixel;
   *fill* does; 1:1 is a desktop pixel per device pixel. A desktop that is
   smaller than the window in an axis is centred in it; one that is bigger is
@@ -226,7 +239,7 @@ overlay is up, and a grip at the left end shows where to take hold. On it:
   backend offers *displays* instead (RustDesk sends one screen at a time) the
   button asks the far end for the next one.
 - **View only** stops the mouse, the keyboard and the clipboard going to the
-  far end, and tells the backend so.
+  far end, and tells the backend so: an eye while on, a mouse while off.
 - **Info** opens the connection panel, below.
 - **Debug** toggles the debug overlay, below; so does **Ctrl+Alt+D**.
 - **Fullscreen** fills the screen (winit's borderless fullscreen on the

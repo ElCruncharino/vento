@@ -49,12 +49,6 @@ remotedesktop-spice = { path = "../backends/modules/spice/src/main/rust" }
 egui = "0.36"
 egui-winit = { version = "0.36", default-features = false, features = ["clipboard", "wayland", "x11"] }
 egui-wgpu = { version = "0.36", features = ["winit"] }
-# The toolbar's icons: Google's Material Symbols (Rounded, filled), the font
-# this crate embeds and registers with egui. Its 0.8 is the one made for egui
-# 0.36. The crate is MIT, the font Apache-2.0; both end up in this binary and
-# nowhere else (the phone has neither), and the README's licence note names
-# them.
-egui_material_icons = "0.8"
 wgpu = "30"
 winit = "0.30"
 pollster = "0.4"
@@ -82,6 +76,11 @@ cmake = "0.1"
 # copy would be a second place it is written down. Already in the workspace's
 # graph through `ffmpeg-sys-next`, so it costs nothing new.
 bindgen = "0.73"
+
+[dev-dependencies]
+# For the test that every toolbar symbol is in the bundled font (icons.rs).
+# Already in the graph through egui's fonts, so it costs nothing new.
+ttf-parser = "0.25"
 
 # winit from the submodule, at the tag of the release crates.io has, with
 # `patches/winit/` applied by `./patch.sh`: the same source plus our fixes to

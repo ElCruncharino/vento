@@ -53,7 +53,7 @@ use super::platform::{self, Platform};
 use super::prompts::{self, Answer, Form, Prompt};
 use super::settings::Settings;
 use super::toolbar::{self, Placement};
-use super::view::{Layout, View};
+use super::view::{Layout, ScaleMode, View};
 use super::x11::Fence;
 use super::{Host, Request};
 use crate::backend::Backend;
@@ -65,11 +65,7 @@ use egui::{
     Color32, CursorIcon, Frame, Id, LayerId, Margin, Order, PointerButton, Pos2, Rect, Response, RichText, Sense,
     TextureHandle, TextureOptions, Vec2, pos2, vec2,
 };
-use egui_material_icons::MaterialIcon;
-use egui_material_icons::icons::{
-    ICON_ASPECT_RATIO, ICON_BUG_REPORT, ICON_DESKTOP_WINDOWS, ICON_DRAG_INDICATOR, ICON_FULLSCREEN,
-    ICON_FULLSCREEN_EXIT, ICON_INFO, ICON_LINK_OFF, ICON_MONITOR, ICON_VISIBILITY,
-};
+use super::icons;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -1304,11 +1300,14 @@ impl Session {
         let show = at_edge || self.toolbar_hovered || self.drag_from.is_some() || reveal || self.disconnecting.is_some();
         let style = ctx.global_style();
         // Square, and flush with the top edge: nothing between it and the
-        // edge for the pointer to fall into. Hidden, its shadow goes too.
+        // edge for the pointer to fall into. Flat, too: a popup's frame
+        // without the popup's shadow, so that hidden it is wholly off the
+        // top and shown nothing of it lies over the desktop past its edge.
         let frame = Frame::popup(&style)
             .corner_radius(0)
+            .shadow(egui::Shadow::NONE)
             .inner_margin(Margin::symmetric(8, 6));
-        let hidden = -(self.toolbar_size.y + frame.shadow.margin().bottom.max(0.0));
+        let hidden = -self.toolbar_size.y;
         let y = ctx.animate_value_with_time(Id::new("toolbar-y"), if show { 0.0 } else { hidden }, 0.2);
         if reveal {
             ctx.request_repaint_after(TOOLBAR_REVEAL.saturating_sub(self.started.elapsed()));
@@ -1331,7 +1330,7 @@ impl Session {
                         // Where to take hold of it, though any part of it
                         // will do: a label that senses nothing (not even
                         // text selection), so a press there is the area's.
-                        ui.add(egui::Label::new(icon(ICON_DRAG_INDICATOR).weak()).selectable(false))
+                        ui.add(egui::Label::new(icon(icons::DRAG_INDICATOR).weak()).selectable(false))
                             .on_hover_text("Drag to move the toolbar along the edge");
                         ui.horizontal(|ui| self.toolbar_items(ui, host)).response.rect
                     })
@@ -1362,18 +1361,22 @@ impl Session {
         self.toolbar_hovered = response.contains_pointer() || self.drag_from.is_some();
     }
 
-    /// The toolbar's buttons: Material Symbols, each with its name in its
-    /// tooltip, and a word beside the icon where the button has a state to
-    /// show — the scale mode, the monitor, view only — rather than a
-    /// highlight, which says on or off but not which of five.
+    /// The toolbar's buttons: Material Symbols, each with its name and its
+    /// state in its tooltip. A button with a state shows it in its icon —
+    /// one per scale mode, one each for view only on and off — and the
+    /// monitor's carries a word, the monitor or display it is on; Info,
+    /// Debug and view only are highlighted while they are on.
     fn toolbar_items(&mut self, ui: &mut egui::Ui, host: &mut Host) {
         let connected = self.connected();
-        let scale = ui.add_enabled(connected, labelled(ICON_ASPECT_RATIO, self.view.mode.label()));
+        let mode = self.view.mode;
+        let scale = ui.add_enabled(connected, icon_only(scale_icon(mode)));
         if scale
-            .on_hover_text(
-                "Scale: cycles fit width, fit height, fill width, fill height and 1:1.\n\
+            .on_hover_text(format!(
+                "Scale: {} — click for {}.\n\
                  Where the desktop overflows the window, the pointer near an edge pans it.",
-            )
+                mode.label().to_lowercase(),
+                mode.next().label().to_lowercase(),
+            ))
             .clicked()
         {
             self.view.cycle();
@@ -1386,7 +1389,7 @@ impl Session {
                 Some(i) => format!("{}", i + 1),
             };
             if ui
-                .add_enabled(connected, labelled(ICON_MONITOR, label))
+                .add_enabled(connected, labelled(icons::MONITOR, label))
                 .on_hover_text("Monitor: show the whole desktop, or one of its monitors")
                 .clicked()
             {
@@ -1400,7 +1403,7 @@ impl Session {
         } else if facts.displays.len() > 1 {
             let label = format!("{} of {}", facts.display + 1, facts.displays.len());
             if ui
-                .add_enabled(connected, labelled(ICON_DESKTOP_WINDOWS, label))
+                .add_enabled(connected, labelled(icons::DESKTOP_WINDOWS, label))
                 .on_hover_text("Display: ask the far end for its next display")
                 .clicked()
             {
@@ -1409,18 +1412,26 @@ impl Session {
             }
         }
 
+        // An eye while only watching, a mouse while in control, so that the
+        // icon says which without the highlight's help.
         let view_only = self.view_only;
-        let label = if view_only { "View only: on" } else { "View only: off" };
+        let symbol = if view_only { icons::VISIBILITY } else { icons::MOUSE };
         if ui
-            .add_enabled(connected, labelled(ICON_VISIBILITY, label).selected(view_only))
-            .on_hover_text("View only: watch without sending the mouse, the keyboard or the clipboard")
+            .add_enabled(connected, toggle(ui.visuals(), symbol, view_only))
+            .on_hover_text(if view_only {
+                "View only: on — the mouse, the keyboard and the clipboard stay here. Click to take \
+                 control again."
+            } else {
+                "View only: off — the mouse, the keyboard and the clipboard go to the far end. Click \
+                 to watch only."
+            })
             .clicked()
         {
             self.set_option("ViewOnly", if view_only { "false" } else { "true" });
         }
 
         if ui
-            .add_enabled(connected, icon_only(ICON_INFO).selected(self.panel.open))
+            .add_enabled(connected, toggle(ui.visuals(), icons::INFO, self.panel.open))
             .on_hover_text("Info: the connection's facts, and the settings it can still be told")
             .clicked()
         {
@@ -1428,7 +1439,7 @@ impl Session {
         }
 
         if ui
-            .add(icon_only(ICON_BUG_REPORT).selected(self.hud.on))
+            .add(toggle(ui.visuals(), icons::BUG_REPORT, self.hud.on))
             .on_hover_text(format!(
                 "Debug overlay ({}): the state, the pixel path, the cursor, the view and the input, in a \
                  corner. Ctrl+Alt+D toggles it too.",
@@ -1441,7 +1452,7 @@ impl Session {
 
         let fullscreen = host.window.fullscreen().is_some();
         if ui
-            .add(icon_only(if fullscreen { ICON_FULLSCREEN_EXIT } else { ICON_FULLSCREEN }))
+            .add(icon_only(if fullscreen { icons::FULLSCREEN_EXIT } else { icons::FULLSCREEN }))
             .on_hover_text(if fullscreen {
                 "Leave fullscreen: back to a window"
             } else {
@@ -1456,7 +1467,7 @@ impl Session {
         }
 
         if ui
-            .add_enabled(self.disconnecting.is_none() && self.closed.is_none(), icon_only(ICON_LINK_OFF))
+            .add_enabled(self.disconnecting.is_none() && self.closed.is_none(), icon_only(icons::LINK_OFF))
             .on_hover_text(if self.relative {
                 "Disconnect: end the session. Ctrl+Alt held together frees the locked pointer."
             } else {
@@ -1638,20 +1649,67 @@ fn is_d(event: &KeyEvent) -> bool {
 }
 
 /// A toolbar icon, at the toolbar's size.
-fn icon(icon: MaterialIcon) -> RichText {
-    icon.rich_text().size(TOOLBAR_ICON)
+fn icon(symbol: &'static str) -> RichText {
+    icons::text(symbol).size(TOOLBAR_ICON)
 }
 
-/// A toolbar button of an icon alone, square.
-fn icon_only(symbol: MaterialIcon) -> egui::Button<'static> {
-    egui::Button::new(icon(symbol)).min_size(Vec2::splat(TOOLBAR_BUTTON))
+/// The Scale button's icon for a mode: Material Symbols' own fit page
+/// width and height for the fit modes, arrows kept within a page as fit
+/// keeps the desktop within 1:1; the bare width and height arrows for the
+/// fill modes, which stretch the desktop along that axis however far the
+/// window asks; and the symbol that reads "1:1" for 1:1.
+fn scale_icon(mode: ScaleMode) -> &'static str {
+    match mode {
+        ScaleMode::FitWidth => icons::FIT_PAGE_WIDTH,
+        ScaleMode::FitHeight => icons::FIT_PAGE_HEIGHT,
+        ScaleMode::FillWidth => icons::WIDTH,
+        ScaleMode::FillHeight => icons::HEIGHT,
+        ScaleMode::Original => icons::VIEW_REAL_SIZE,
+    }
 }
 
-/// A toolbar button of an icon and a word.
-fn labelled(symbol: MaterialIcon, label: impl Into<String>) -> egui::Button<'static> {
-    egui::Button::new((icon(symbol), label.into())).min_size(Vec2::splat(TOOLBAR_BUTTON))
+/// A toolbar button of an icon alone, square, and flat: no frame at rest,
+/// egui's while the pointer is on it or pressing it.
+fn icon_only(symbol: &'static str) -> egui::Button<'static> {
+    egui::Button::new(icon(symbol)).min_size(Vec2::splat(TOOLBAR_BUTTON)).frame_when_inactive(false)
+}
+
+/// A toolbar button that is on or off: flat while off, and while on framed
+/// at rest too (as `Button::selectable` is), in the selection's colours, so
+/// that on reads from across the toolbar without a hover — its icon in the
+/// selection's colour, on a fill of the selection's blue at about half its
+/// strength rather than all of it, which three buttons on at once made the
+/// loudest thing on the screen.
+fn toggle(visuals: &egui::Visuals, symbol: &'static str, on: bool) -> egui::Button<'static> {
+    let button = icon_only(symbol).selected(on).frame_when_inactive(on);
+    if on { button.fill(visuals.selection.bg_fill.gamma_multiply(0.5)) } else { button }
+}
+
+/// A toolbar button of an icon and a word, flat as the others.
+fn labelled(symbol: &'static str, label: impl Into<String>) -> egui::Button<'static> {
+    egui::Button::new((icon(symbol), label.into()))
+        .min_size(Vec2::splat(TOOLBAR_BUTTON))
+        .frame_when_inactive(false)
 }
 
 fn on_off(on: bool) -> &'static str {
     if on { "on" } else { "off" }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_scale_mode_has_its_own_icon() {
+        let mut mode = ScaleMode::FitWidth;
+        let mut seen = Vec::new();
+        for _ in 0..5 {
+            let codepoint = scale_icon(mode);
+            assert!(!seen.contains(&codepoint), "{} shares its icon", mode.label());
+            seen.push(codepoint);
+            mode = mode.next();
+        }
+        assert_eq!(mode, ScaleMode::FitWidth);
+    }
 }

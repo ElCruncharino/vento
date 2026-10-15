@@ -1282,15 +1282,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "egui_material_icons"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cee0067630964844d829cc80f9b9744fdf0443b2eea1e66a0934ccc1af14eb82"
-dependencies = [
- "egui",
-]
-
-[[package]]
 name = "either"
 version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5265,7 +5256,6 @@ dependencies = [
  "egui",
  "egui-wgpu",
  "egui-winit",
- "egui_material_icons",
  "log",
  "pollster",
  "raw-window-handle",
@@ -5275,6 +5265,7 @@ dependencies = [
  "remotedesktop-rfb",
  "remotedesktop-rustdesk",
  "remotedesktop-spice",
+ "ttf-parser",
  "wayland-backend",
  "wayland-client",
  "wayland-protocols",
