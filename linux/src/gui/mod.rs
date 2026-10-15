@@ -453,10 +453,12 @@ impl App {
     /// covered. `minimized` is winit's `is_minimized`, asked by the caller.
     ///
     /// What can be told depends on the display server. X11 says both: the
-    /// window manager's `_NET_WM_STATE_HIDDEN`, read on every frame (a
+    /// window manager's `_NET_WM_STATE_HIDDEN`, asked on every frame (a
     /// minimised session still runs one a second, for the poll, so it is
     /// seen within a second, or at once with the focus-out a minimise
-    /// usually brings), and the server's visibility events, which winit
+    /// usually brings) — no round trip to the server, since winit keeps the
+    /// property from its change notifications (`patches/winit/0005`) — and
+    /// the server's visibility events, which winit
     /// reports as `Occluded` — under a compositing manager the window is
     /// never reported covered, and then only minimising pauses. Wayland
     /// has no minimised state, but xdg-shell v6 has `suspended`, which a

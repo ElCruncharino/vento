@@ -209,7 +209,12 @@ acknowledging, and RustDesk drops to a frame a second. They resume when it is
 shown again. A window that is on screen without the keyboard focus stays
 live. X11 says both through winit: `_NET_WM_STATE_HIDDEN`, checked every
 frame and on a focus change, and the visibility events, which under a
-compositing manager never say covered.
+compositing manager never say covered. The check is no round trip to the X
+server: winit read the property on every call, and `patches/winit/0005` has
+it keep the property until the window manager's `PropertyNotify` says it
+changed (counted with the RECORD extension on the rig: two `GetProperty` a
+second while a session drew, before; one at each minimise and restore and
+none otherwise, after).
 Wayland has no minimised state, but xdg-shell v6 has `suspended`, which a
 compositor may send while the window cannot be seen at all (minimised, on a
 workspace not shown); `patches/winit/0002` makes winit report it as
