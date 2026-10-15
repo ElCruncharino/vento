@@ -180,6 +180,13 @@ impl Dialog {
                     option_row(ui, spec, values);
                 }
             });
+        // A choice whose switch was turned off this frame goes back to its
+        // default (`Options::settle`'s rule), rather than staying selected
+        // and being sent; the row above it was drawn before the switch
+        // moved, so the frame after shows it.
+        if settle(kind.options, values) {
+            ui.ctx().request_repaint();
+        }
 
         // Not the connection's: every connection's.
         ui.add_space(12.0);
@@ -224,6 +231,7 @@ impl Dialog {
                 options.set(spec.key, value);
             }
         }
+        options.check_requirements(kind.options)?;
         Ok(Request {
             kind,
             address: self.address.trim().to_string(),
@@ -233,6 +241,23 @@ impl Dialog {
             options,
         })
     }
+}
+
+/// [`Options::settle`] over the dialog's own map; whether anything changed.
+fn settle(specs: &[Spec], values: &mut BTreeMap<&'static str, String>) -> bool {
+    let mut changed = false;
+    for spec in specs {
+        let fallback = {
+            let on = |key: &str| values.get(key).is_some_and(|v| v.eq_ignore_ascii_case("true"));
+            let value = values.get(spec.key).map(String::as_str).unwrap_or(spec.default);
+            spec.stranded(value, on).map(|_| spec.fallback(on))
+        };
+        if let Some(value) = fallback {
+            values.insert(spec.key, value.to_string());
+            changed = true;
+        }
+    }
+    changed
 }
 
 fn defaults(specs: &[Spec]) -> BTreeMap<&'static str, String> {

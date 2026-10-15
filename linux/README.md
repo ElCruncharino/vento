@@ -216,7 +216,12 @@ compression, SPICE's image compression, RustDesk's codec and frame rate — as
 a control per kind (a dropdown for a choice, a box for a switch, a field for a
 number or text), showing what the session connected with and then whatever has
 been set since, with the dialog's rules for a gated option and a choice that
-requires a switch. Then the two that are not options, because whether they
+requires a switch. Such a choice is offered only while its switch is on, and
+turning the switch off puts the option back to its default, in the dialog and
+the panel alike — unticking TigerVNC's "Offer H.264 encoding" takes Encoding
+from H.264 back to Tight — rather than leaving it selected and sent; the
+command line refuses one given without its switch (`-o Encoding=h264` without
+`-o H264=true`). Then the two that are not options, because whether they
 can be offered is a fact about the live connection: **Desktop size**, where the
 far end takes one (`can_resize`), offering this window's size in desktop
 pixels first, the size the desktop has, the far end's own screens and the

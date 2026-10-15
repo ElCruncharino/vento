@@ -289,6 +289,7 @@ headless, any of which selects the probe instead of the window:
             options::find(kind.options, k)?.check(v)?;
             options.set(k, v);
         }
+        options.check_requirements(kind.options)?;
 
         if !headless {
             return Ok(Mode::Gui(Box::new(gui::Launch {

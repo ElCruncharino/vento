@@ -123,6 +123,33 @@ impl Spec {
             Kind::Text => Ok(()),
         }
     }
+
+    /// For a `Choice`: the choice `value` names, where it requires a switch
+    /// that `on` says is off — a value left standing after its switch went,
+    /// or given without it. Such a value is not offered, and is not what
+    /// the backend would do either (TigerVNC's `Encoding=h264` without
+    /// `H264` negotiates something else), so it must not stay selected.
+    pub fn stranded(&self, value: &str, on: impl Fn(&str) -> bool) -> Option<&'static Choice> {
+        let choices: &'static [Choice] = self.choices;
+        choices
+            .iter()
+            .find(|c| c.value == value)
+            .filter(|c| c.requires.is_some_and(|key| !on(key)))
+    }
+
+    /// What a stranded choice falls back to: the option's default, as if it
+    /// had never been picked, or the first choice on offer where the default
+    /// is stranded too (no list here has one that is).
+    pub fn fallback(&self, on: impl Fn(&str) -> bool) -> &'static str {
+        if self.stranded(self.default, &on).is_none() {
+            return self.default;
+        }
+        let choices: &'static [Choice] = self.choices;
+        choices
+            .iter()
+            .find(|c| c.requires.is_none_or(&on))
+            .map_or(self.default, |c| c.value)
+    }
 }
 
 const fn choice(value: &'static str, label: &'static str) -> Choice {
@@ -955,6 +982,37 @@ impl Options {
         self.set.contains(key)
     }
 
+    /// Every choice whose required switch is off, put back to what
+    /// [`Spec::fallback`] says; the keys that changed, for a live session to
+    /// pass on. A fallback is nobody's choice, so it is not counted as set.
+    /// The dialog and the live panel both keep to this whenever a switch
+    /// moves.
+    pub fn settle(&mut self, specs: &[Spec]) -> Vec<&'static str> {
+        let mut changed = Vec::new();
+        for spec in specs {
+            if spec.stranded(self.get(spec.key), |key| self.bool(key)).is_some() {
+                let value = spec.fallback(|key| self.bool(key));
+                self.values.insert(spec.key.to_string(), value.to_string());
+                self.set.remove(spec.key);
+                changed.push(spec.key);
+            }
+        }
+        changed
+    }
+
+    /// The first choice given without its switch, in words: the command line
+    /// refuses `-o Encoding=h264` without `-o H264=true` rather than guess
+    /// which of the two was meant.
+    pub fn check_requirements(&self, specs: &[Spec]) -> Result<(), String> {
+        for spec in specs {
+            if let Some(choice) = spec.stranded(self.get(spec.key), |key| self.bool(key)) {
+                let needs = choice.requires.unwrap_or_default();
+                return Err(format!("{}={} needs {needs}=true", spec.key, choice.value));
+            }
+        }
+        Ok(())
+    }
+
     /// `Boolean.parseBoolean`: true for `"true"` in any case, false for
     /// everything else including nothing.
     pub fn bool(&self, key: &str) -> bool {
@@ -1044,6 +1102,31 @@ mod tests {
         let h264 = TIGERVNC[0].choices.iter().find(|c| c.value == "h264").unwrap();
         assert_eq!(h264.requires, Some("H264"));
         assert_eq!(find(RUSTDESK, "RendezvousKey").unwrap().gate.unwrap().values, ["id"]);
+    }
+
+    #[test]
+    fn a_choice_whose_switch_is_off_falls_back_to_the_default() {
+        let mut options = Options::defaults(TIGERVNC);
+        options.set("H264", "true");
+        options.set("Encoding", "h264");
+        assert!(options.settle(TIGERVNC).is_empty(), "its switch is on");
+        assert_eq!(options.check_requirements(TIGERVNC), Ok(()));
+        options.set("H264", "false");
+        assert_eq!(options.check_requirements(TIGERVNC), Err("Encoding=h264 needs H264=true".to_string()));
+        assert_eq!(options.settle(TIGERVNC), ["Encoding"]);
+        assert_eq!(options.get("Encoding"), "tight");
+        assert!(!options.is_set("Encoding"), "a fallback is nobody's choice");
+        assert!(options.settle(TIGERVNC).is_empty(), "and settled stays settled");
+        // Any other choice stands without the switch.
+        options.set("Encoding", "zrle");
+        assert!(options.settle(TIGERVNC).is_empty());
+        assert_eq!(options.get("Encoding"), "zrle");
+        // Nothing in any list has a default that needs a switch.
+        for specs in [RFB, LIBVNC, TIGERVNC, IRONRDP, FREERDP, SPICE, RUSTDESK, REALVNC] {
+            for spec in specs {
+                assert!(spec.stranded(spec.default, |_| false).is_none(), "{}", spec.key);
+            }
+        }
     }
 
     /// Every list has the keys its Java twin has, in the same order, with the

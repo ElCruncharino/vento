@@ -519,6 +519,13 @@ impl Session {
         } else {
             self.backend.set_option(key, value);
         }
+        // A switch that went off takes the choices that need it with it,
+        // here as in the dialog, so the panel never shows (and the backend
+        // never holds) an encoding that cannot be negotiated.
+        for key in self.live.settle(self.request.kind.options) {
+            log::info!("option {key} = {:?}, its switch being off", self.live.get(key));
+            self.backend.set_option(key, self.live.get(key));
+        }
     }
 
     // ---- focus, capture and the clipboard ----------------------------------
