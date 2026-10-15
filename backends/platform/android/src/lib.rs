@@ -25,8 +25,6 @@ pub mod backend;
 #[cfg(target_os = "android")]
 pub mod bitmap;
 #[cfg(target_os = "android")]
-pub mod callbacks;
-#[cfg(target_os = "android")]
 pub mod log;
 #[cfg(target_os = "android")]
 pub mod mediacodec;

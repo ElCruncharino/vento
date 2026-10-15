@@ -43,7 +43,7 @@ MODULES=(
     "ironrdp:net/pgaskin/remotedesktop/backend/ironrdp/IronRdpNatives:remotedesktop_ironrdp:cargo:registered"
     "freerdp:net/pgaskin/remotedesktop/backend/freerdp/FreeRdpNative:remotedesktop_freerdp:cmake:exported"
     "realvnc:net/pgaskin/remotedesktop/backend/realvnc/RealVncTraffic:remotedesktop_realvnc:cmake:exported"
-    "rustdesk:net/pgaskin/remotedesktop/backend/rustdesk/RustDeskNative:remotedesktop_rustdesk:cargo:exported"
+    "rustdesk:net/pgaskin/remotedesktop/backend/rustdesk/RustDeskNatives:remotedesktop_rustdesk:cargo:registered"
     "spice:net/pgaskin/remotedesktop/backend/spice/SpiceNatives:remotedesktop_spice:cargo:registered"
 )
 
