@@ -8,14 +8,14 @@
 // the way in — said again in C, because three of the clients here are C and
 // C++ libraries with a shim of ours around each, and those shims were three
 // copies of one JNI binding. What differed between them was the protocol's;
-// what was the same was the Android half, and that half is now one adapter in
-// `backends/platform/android/jni`, written once against this header. A
-// desktop client of the same three libraries is written against this header
-// too, with a stderr logger and a window where the adapter has logcat and a
-// `Bitmap`.
+// what was the same is written once against this header, in Rust:
+// `session::c` in `backends/session` is every C backend as a
+// `session::Backend`, and each client holds that — the Linux one directly,
+// the phone through the one JNI layer in `backends/platform/android`, linked
+// into each C backend's own library. A platform's C is `vento_log` and
+// nothing else: logcat on the phone, stderr on a desktop.
 //
-// The shape is `common::Events` and the Java `*Native` classes', method for
-// method: `vento_callbacks` is the outward half, fire-and-forget, with every
+// The shape is `common::Events`, method for method: `vento_callbacks` is the outward half, fire-and-forget, with every
 // question a protocol can ask turned into an event that says one is pending,
 // answered later through the session. The inward half is `vento_session`, an
 // opaque object reached through a vtable, so that three backends can live in
@@ -113,12 +113,12 @@ enum {
 };
 
 /* What a session tells the platform. Every member is required: a platform
-   implements the whole interface or none of it, as the Rust `Events` trait and
-   the Java `Callbacks` interface both demand, and the session files call
-   through these without a NULL check — which is the cheapest thing a callback
-   can be, and `damaged` runs hundreds of times a frame. A platform that is not
-   interested in one writes a function that returns; the Android adapter does
-   exactly that where a module's Java interface lacks a method. */
+   implements the whole interface or none of it, as the Rust `Events` trait
+   demands, and the session files call through these without a NULL check —
+   which is the cheapest thing a callback can be, and `damaged` runs hundreds
+   of times a frame. A platform that is not interested in one writes a
+   function that returns. `session::c` fills every member, into the mailbox
+   both clients drain. */
 typedef struct vento_callbacks {
     void *user;
 
@@ -197,10 +197,10 @@ typedef struct vento_callbacks {
 } vento_callbacks;
 
 /* The strings `info` returns: a row per fact, in the order that backend's
-   Java `nativeInfo` documents. Owned by whoever asked, and freed with
-   `vento_strings_free`. Chosen over an emit callback because both callers so
-   far — the JNI adapter building a `String[]`, a desktop panel printing a
-   table — want the whole list at once, and over a fixed array because the
+   Rust adapter labels them. Owned by whoever asked, and freed with
+   `vento_strings_free`. Chosen over an emit callback because the caller —
+   `session::c`, turning them into a panel's rows for either client — wants
+   the whole list at once, and over a fixed array because the
    backends disagree about how many facts there are. */
 typedef struct vento_strings {
     char **items;

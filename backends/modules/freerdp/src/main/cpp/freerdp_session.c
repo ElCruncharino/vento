@@ -7,8 +7,8 @@
 // That is the whole point of the second RDP client: every RFB question here has
 // been answerable by asking the other two clients, and every RDP one has had a
 // single answer. Nothing in here names a platform: what the phone needs of it
-// is in `freerdp_jni.c`, which is one macro and a `nativeCreate`, over the
-// adapter under `backends/platform/android`.
+// is the Rust adapter in `src/main/rust`, linked into the same library, which
+// the one JNI layer in `backends/platform/android` stands in front of.
 //
 // Three things are the library's decisions rather than ours, and each cost a
 // session to find out (they were found by driving the library on the phone with
@@ -27,8 +27,9 @@
 //      when its channel connects. It negotiates perfectly either way, which is
 //      a black desktop with a healthy-looking connection behind it.
 //
-// (A fourth is Android's and is in `freerdp_jni.c`: nothing of ours may define
-// `JNI_OnLoad`, because WinPR does.)
+// (A fourth is Android's and is in this module's CMakeLists.txt: WinPR defines
+// a `JNI_OnLoad` of its own, so it is compiled under another name and the one
+// the library exports, the Rust crate's, calls it.)
 //
 // And two are ours, both forced by the seam rather than chosen:
 //
@@ -1893,7 +1894,7 @@ static void op_clipboard(vento_session *base, const char *utf8) {
 }
 
 /* The facts: protocol, connection, security, encoding, line speed, server and
-   viewer pixels — the order `FreeRdpNative.nativeInfo` documents. What the
+   viewer pixels — the order the Rust adapter's `info` labels them in. What the
    protocol has no concept of is omitted rather than printed empty, which is
    why there is no desktop name here: RDP has none. */
 static bool op_info(vento_session *base, vento_strings *out) {

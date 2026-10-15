@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// FreeRDP's own client as a `vento_session`. The parameters are
-// `FreeRdpNative.nativeCreate`'s, in its order, and that class's javadoc is
-// where each is explained. Its credentials carry a domain, which is the one
+// FreeRDP's own client as a `vento_session`. The config is filled in from the
+// backend's options by `backends/modules/freerdp/src/main/rust`, the adapter
+// both clients hold it through, and each field is explained below. Its
+// credentials carry a domain, which is the one
 // place the shape of what is sent *back* differs between the protocols.
 
 #ifndef VENTO_FREERDP_H

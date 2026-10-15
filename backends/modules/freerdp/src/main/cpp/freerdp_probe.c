@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// The FreeRDP backend's probe: `FreeRdpNative.nativeCreate`'s parameters
-// from the command line, over the body in `backends/platform/desktop/c`.
+// The FreeRDP backend's probe: `vento_freerdp_config` from the command
+// line, over the body in `backends/platform/desktop/c`.
 //
 //   vento_freerdp_probe HOST --trust --user proto --password protopass --out shot.ppm
 

@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Patrick Gaskin
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# The desktop platform for a C backend, as `vento_jni.cmake` is the Android
-# one: `backends/platform/desktop/c`, compiled once as two object libraries.
+# The desktop platform for a C backend, as `vento_android.cmake` is the
+# Android one: `backends/platform/desktop/c`, compiled once as two object libraries.
 # `vento_desktop` is the platform proper — `vento_log` onto stderr, which is
 # all a session file needs of one to link — and carries the neutral include
 # directory, so a target that links it finds `<vento/backend.h>`.

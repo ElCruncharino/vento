@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! FreeRDP's `vento_freerdp` as a [`Backend`](session::backend::Backend):
-//! `FreeRdpNative.nativeCreate`'s parameters and `FreeRdpBackend`'s option
-//! handling and rows. The library's config path is a directory of ours, which
+//! its config from the options, its live options and its rows — what the
+//! Linux client holds, and on the phone what the one JNI layer stands in front
+//! of, linked into the library CMake makes of the C. The library's config path is a directory of ours, which
 //! also becomes the process's HOME; its certificate store there is never read
 //! or written, since every certificate is the trust prompt's to decide.
 
@@ -19,6 +20,33 @@ pub static KIND: Kind = Kind {
     version: || unsafe { session::c::string(ffi::vento_freerdp_version()) },
     create,
 };
+
+// The phone's library: this backend, registered on the module's generated
+// natives class. Android only — the host links the C as a library of its own.
+//
+// WinPR has a `JNI_OnLoad` of its own, which keeps the `JavaVM` it reads the
+// time zone through, and a library has room for one: the module's CMake
+// compiles WinPR's under another name (`winpr_JNI_OnLoad`), and this one calls
+// it before registering anything.
+#[cfg(target_os = "android")]
+platform_android::natives!(
+    class = c"net/pgaskin/remotedesktop/backend/freerdp/FreeRdpNatives",
+    kind = KIND,
+    on_load = winpr_on_load,
+);
+
+#[cfg(target_os = "android")]
+unsafe extern "C" {
+    fn winpr_JNI_OnLoad(vm: *mut platform_android::backend::RawVm, reserved: *mut std::ffi::c_void) -> i32;
+}
+
+/// # Safety
+///
+/// `vm` is the runtime's own, handed to the library's `JNI_OnLoad`.
+#[cfg(target_os = "android")]
+unsafe fn winpr_on_load(vm: *mut platform_android::backend::RawVm) {
+    unsafe { winpr_JNI_OnLoad(vm, std::ptr::null_mut()) };
+}
 
 static BEHAVIOUR: Behaviour = Behaviour {
     info,

@@ -19,3 +19,10 @@ doctest = false
 [dependencies]
 log.workspace = true
 remotedesktop-session = { workspace = true, features = ["c"] }
+
+# The phone's half: the one JNI layer, registered on this module's generated
+# natives class from the `JNI_OnLoad` in `src/lib.rs`. The library the app
+# loads is still the one CMake links; this crate goes into it as a static
+# library (`CargoBuildTask` with `crateType = 'staticlib'`).
+[target.'cfg(target_os = "android")'.dependencies]
+remotedesktop-platform-android.workspace = true

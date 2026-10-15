@@ -137,13 +137,17 @@ under the host locale (`export LC_ALL=C`).
 
 ## Adapting the shim
 
-- A C backend's shim is two files under `src/main/cpp`: `<name>_session.c`
+- A C backend's shim is one file under `src/main/cpp`, `<name>_session.c`
   (`.cxx` for TigerVNC), which drives the library against the neutral C API
-  in `backends/common/include/vento/` and names no platform, and
-  `<name>_jni.c`, which is the Java class's own entry points over the adapter
-  in `backends/platform/android/jni`. An upstream change reaches the session
-  file; the JNI file changes only when `nativeCreate`'s parameters do, and so
-  does `<name>_probe.c`, the host probe's `main` beside them. The module's
+  in `backends/common/include/vento/` and names no platform. Above it is the
+  crate in `src/main/rust`, which fills the backend's `vento_<name>_config`
+  from the options and words its rows; it is what the Linux client holds,
+  and on the phone it is linked into the module's library as a static
+  library (`rustStaticLibrary` in `backends/build.gradle`,
+  `backends/cmake/vento_android.cmake`) with the one JNI layer in
+  `backends/platform/android`. An upstream change reaches the session file;
+  the crate changes only when the config does, and so does `<name>_probe.c`,
+  the host probe's `main` beside them. The module's
   CMakeLists is one file for both builds, `if(ANDROID)` and `else()` around
   a shared middle: a vendored tree's new option goes in the middle, a new
   port or NDK library in the Android half, a new system library in the host
