@@ -258,7 +258,7 @@ impl Decoder {
             have_layout: false,
             frame_width: width as i32,
             frame_height: height as i32,
-            bt709: true,
+            bt709: false,
             full_range: false,
             output: Output::new(),
             skipped: 0,
@@ -382,13 +382,16 @@ impl Decoder {
             }
 
             // Both out of the bitstream's own description of itself. A stream
-            // that says nothing is taken for what the encoders this has met
-            // produce.
+            // that says nothing is taken for BT.601, which is what the encoders
+            // this has met produce untagged — a RustDesk peer's libvpx and
+            // libaom are handed libyuv's BT.601 and told nothing — and what
+            // `platform_desktop`'s libavcodec path takes silence for too.
+            // (A framework that fills in a default of its own by picture size
+            // answers before this does.)
             let mut standard = 0;
             let mut range = 0;
-            self.bt709 = !AMediaFormat_getInt32(format, c"color-standard".as_ptr(), &mut standard)
-                || standard == COLOR_STANDARD_BT709
-                || standard == 0;
+            self.bt709 = AMediaFormat_getInt32(format, c"color-standard".as_ptr(), &mut standard)
+                && standard == COLOR_STANDARD_BT709;
             self.full_range = AMediaFormat_getInt32(format, c"color-range".as_ptr(), &mut range)
                 && range == COLOR_RANGE_FULL;
 

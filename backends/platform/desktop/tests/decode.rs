@@ -230,6 +230,20 @@ fn av1() {
     clip(Codec::Av1, &ivf(&fixture("av1.ivf")));
 }
 
+/// What a RustDesk peer sends: BT.601 limited range with nothing in the
+/// stream saying so. Taken for BT.709, the background comes out seven levels
+/// short in red and four over in blue, and the rig's red warning bar a dozen
+/// or more too light.
+#[test]
+fn vp9_untagged_is_bt601() {
+    clip(Codec::Vp9, &ivf(&fixture("vp9-untagged.ivf")));
+}
+
+#[test]
+fn av1_untagged_is_bt601() {
+    clip(Codec::Av1, &ivf(&fixture("av1-untagged.ivf")));
+}
+
 #[test]
 fn h264() {
     clip(Codec::H264, &annex_b(&fixture("h264.h264"), h264_aud));

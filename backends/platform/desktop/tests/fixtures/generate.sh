@@ -23,9 +23,11 @@
 # The source is RGB, converted to YUV by an explicit matrix and range and
 # tagged as such, so what the stream says about its colour is what was done to
 # it. VP8 is BT.601 because its bitstream has nowhere to say anything else; the
-# rest are BT.709 limited range, which is what the encoders a RustDesk peer
-# runs produce, and one H.264 clip is BT.601 full range to prove the decoder
-# reads the tags rather than assuming.
+# rest are BT.709 limited range, so that a decoder that ignored the tags would
+# fail on colour, and one H.264 clip is BT.601 full range to prove the same of
+# range. The two "untagged" clips are what a RustDesk peer actually sends:
+# BT.601 limited range (libyuv's ARGBToI420) with no colour description at all,
+# which a decoder has to take for BT.601 rather than assume BT.709.
 #
 # The encoders are asked for what a remote desktop asks for: no lookahead, no
 # reordering, one encoded frame per picture — no alt-ref frames hidden in a
@@ -42,6 +44,9 @@ picture() { # matrix range
 }
 bt709=(-colorspace bt709 -color_primaries bt709 -color_trc bt709 -color_range tv)
 bt601=(-colorspace smpte170m -color_primaries smpte170m -color_trc smpte170m)
+# The scaler tags what it converts, and the encoders write what the frames say;
+# this takes the description off again, as RustDesk's encoders never set one.
+untagged="setparams=colorspace=unknown:color_primaries=unknown:color_trc=unknown:range=tv"
 ff() { ffmpeg -hide_banner -loglevel error -y -f lavfi -i "$@"; }
 
 ff "$(picture bt709 tv)" "${bt709[@]}" -frames:v 3 \
@@ -50,9 +55,15 @@ ff "$(picture bt709 tv)" "${bt709[@]}" -frames:v 3 \
 ff "$(picture bt601 tv)" "${bt601[@]}" -color_range tv -frames:v 3 \
     -c:v libvpx -deadline good -cpu-used 4 -lag-in-frames 0 -auto-alt-ref 0 -crf 4 -b:v 2M -g 100 \
     -f ivf vp8.ivf
+ff "$(picture bt601 tv),$untagged" -frames:v 3 \
+    -c:v libvpx-vp9 -deadline good -cpu-used 4 -lag-in-frames 0 -auto-alt-ref 0 -crf 4 -b:v 0 -g 100 \
+    -f ivf vp9-untagged.ivf
 ff "$(picture bt709 tv)" "${bt709[@]}" -frames:v 3 \
     -c:v libaom-av1 -usage realtime -cpu-used 8 -lag-in-frames 0 -crf 8 -g 100 \
     -f ivf av1.ivf
+ff "$(picture bt601 tv),$untagged" -frames:v 3 \
+    -c:v libaom-av1 -usage realtime -cpu-used 8 -lag-in-frames 0 -crf 8 -g 100 \
+    -f ivf av1-untagged.ivf
 ff "$(picture bt709 tv)" "${bt709[@]}" -frames:v 3 \
     -c:v libx264 -preset medium -tune zerolatency -crf 6 -g 100 -x264-params aud=1 \
     -f h264 h264.h264

@@ -25,11 +25,14 @@
 //!   opens and then fails every frame.
 //!
 //! Colour follows the frame, as MediaCodec's follows the buffer's format: the
-//! two BT.601 matrices are taken for BT.601, and anything else — BT.709, or a
-//! stream that says nothing — for BT.709, which is what the encoders this has
-//! met produce. VP8 is the exception, because its silence is not silence: its
-//! bitstream has one colour space, BT.601, and libavcodec reports that as
-//! unspecified.
+//! two BT.601 matrices are taken for BT.601, BT.709 for BT.709 (and for
+//! anything else that names itself), and BT.601 again for a stream that says
+//! nothing — which is what the encoders this has met produce untagged, and
+//! what libavcodec's own scaler takes silence for. A RustDesk peer converts
+//! its desktop with libyuv's `ARGBToI420`, BT.601 limited range, and hands
+//! that to libvpx and libaom with no colour description at all; VP8's
+//! bitstream has nowhere to put one, and libavcodec reports its one colour
+//! space, BT.601, as unspecified too.
 
 use std::ffi::{CStr, c_int};
 use std::ptr;
@@ -84,7 +87,6 @@ fn find(codec: Codec) -> Option<*const ff::AVCodec> {
 /// hands out boxed — and what a caller that wants [`skipped`](Self::skipped)
 /// can make directly.
 pub struct Decoder {
-    codec: Codec,
     context: *mut ff::AVCodecContext,
     packet: *mut ff::AVPacket,
     /// The frame being converted, and the one a newer picture is received
@@ -115,7 +117,6 @@ impl Decoder {
         // Built before anything can fail, so that `Drop` is the one place any
         // of it is freed.
         let decoder = Decoder {
-            codec,
             context,
             packet: unsafe { ff::av_packet_alloc() },
             frame: unsafe { ff::av_frame_alloc() },
@@ -234,11 +235,10 @@ impl Decoder {
         ]
         .iter()
         .any(|fmt| f.format == *fmt as c_int);
-        let bt601 = match f.colorspace {
-            AVCOL_SPC_BT470BG | AVCOL_SPC_SMPTE170M => true,
-            AVCOL_SPC_UNSPECIFIED => self.codec == Codec::Vp8,
-            _ => false,
-        };
+        let bt601 = matches!(
+            f.colorspace,
+            AVCOL_SPC_BT470BG | AVCOL_SPC_SMPTE170M | AVCOL_SPC_UNSPECIFIED
+        );
         let frame = Frame {
             bytes,
             planes,
