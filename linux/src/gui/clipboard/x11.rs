@@ -30,7 +30,7 @@
 //!   and serving it meanwhile, for up to [`HANDOFF`].
 
 use super::text::{self, MAX_TEXT};
-use super::{Command, HANDOFF, Link, READ_DEADLINE, poll};
+use super::{Asked, Command, HANDOFF, Link, READ_DEADLINE, Why, fold, poll};
 use std::collections::HashMap;
 use std::os::fd::{AsRawFd, RawFd};
 use std::sync::Arc;
@@ -99,7 +99,7 @@ enum Step {
 const BLIND: &[&str] = &["UTF8_STRING", "STRING"];
 
 struct Reading {
-    seq: u64,
+    why: Why,
     deadline: Instant,
     step: Step,
     /// The target last asked for: an answer for another is a late one, to a
@@ -135,7 +135,7 @@ pub struct Worker {
     owned: Option<Owned>,
     reading: Option<Reading>,
     /// A read asked for while another was going, started once it ends.
-    queued: Option<u64>,
+    queued: Option<Asked>,
     sending: Vec<Sending>,
     /// The most bytes put in one property.
     chunk: usize,
@@ -269,11 +269,11 @@ impl Worker {
 
     fn command(&mut self, command: Command) {
         match command {
-            Command::Read(seq) => {
+            Command::Read(asked) => {
                 if self.reading.is_some() {
-                    self.queued = Some(seq);
+                    self.queued = fold(self.queued, asked);
                 } else {
-                    self.start_read(seq);
+                    self.start_read(asked);
                 }
             }
             Command::Set(text) => {
@@ -291,22 +291,22 @@ impl Worker {
 
     // ---- reading ----------------------------------------------------------
 
-    fn start_read(&mut self, seq: u64) {
+    fn start_read(&mut self, asked: Asked) {
         let clipboard = self.atoms.get("CLIPBOARD");
         // Our own text needs no conversation.
         if let Some(text) = self.claiming.clone().or_else(|| self.owned.as_ref().map(|o| o.text.to_string())) {
-            self.link.answer(seq, Some(text));
+            self.link.answer(asked.why, Some(text));
             return;
         }
         let owner = self.conn.get_selection_owner(clipboard).ok().and_then(|c| c.reply().ok()).map(|r| r.owner);
         if owner.is_none_or(|o| o == NONE) {
             log::debug!("clipboard: no owner, nothing to read");
-            self.link.answer(seq, None);
+            self.link.answer(asked.why, None);
             return;
         }
         self.reading = Some(Reading {
-            seq,
-            deadline: Instant::now() + READ_DEADLINE,
+            why: asked.why,
+            deadline: asked.at + READ_DEADLINE,
             step: Step::Targets,
             asked: NONE,
         });
@@ -334,10 +334,14 @@ impl Worker {
         let _ = self.conn.delete_property(self.window, self.atoms.get("_VENTO_CLIPBOARD"));
         // A read asked for meanwhile supersedes this one: the window wants
         // what the clipboard holds now, and only that answer is taken.
-        if let Some(seq) = self.queued.take() {
-            self.start_read(seq);
+        // Its reasons go with it.
+        if let Some(queued) = self.queued.take() {
+            self.start_read(Asked {
+                why: queued.why.and(reading.why),
+                ..queued
+            });
         } else {
-            self.link.answer(reading.seq, text);
+            self.link.answer(reading.why, text);
         }
     }
 

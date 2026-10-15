@@ -18,15 +18,23 @@
 //!   through [`Clipboard::take`], with the event loop woken for it. One
 //!   deadline bounds it ([`READ_DEADLINE`]), after which it is given up and
 //!   answered with nothing; on Wayland a source that goes quiet for
-//!   [`READ_IDLE`] is given up sooner. A read asked for while one is going
-//!   is started once that one ends, and only its answer is given.
+//!   [`READ_IDLE`] is given up sooner. A read is asked for with its
+//!   reason ([`Why`]): the focus coming back, whose answer the session
+//!   offers to the far end, or a Ctrl+V, whose answer is pasted. One asked
+//!   for while another is going is started once that one ends, and takes
+//!   over its reasons, so only the newest text is given, to everyone who
+//!   asked.
 //! - **Setting** the text makes this process the owner, served from the
 //!   same thread in every format in `text.rs`, until another client takes
 //!   it over.
 //!
 //! egui keeps a clipboard of its own inside egui-winit (a `String`, with
-//! the feature off), which is what its Ctrl+V pastes into a text field; the
-//! window keeps it in step with every read and every set.
+//! the feature off), which its Ctrl+V would paste into a text field. That
+//! is the clipboard as of the last read, stale if something copied since
+//! without the focus moving (a clipboard sync tool, a script, a hotkey), so
+//! the window takes the paste command itself ([`is_paste`]), reads, and
+//! hands egui the paste when the text is in. The `String` is still kept in
+//! step with every read and every set.
 //!
 //! The X11 side is `x11.rs`, on a connection of its own; the Wayland side
 //! is `wayland.rs`, on winit's connection with an event queue of its own,
@@ -38,11 +46,11 @@ mod x11;
 
 use super::Platform;
 use std::os::unix::net::UnixStream;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
 use winit::window::Window;
 
 /// The longest a read of the local clipboard may take, from being asked
@@ -59,10 +67,62 @@ pub const READ_IDLE: Duration = Duration::from_secs(1);
 /// manager is given to take a copy (X11's `SAVE_TARGETS`).
 const HANDOFF: Duration = Duration::from_secs(2);
 
+/// Why a read was asked for: to offer the text to the far end (the
+/// focus-in read), to paste it into a text field (Ctrl+V), or both. A read
+/// asked for while another is going is folded into the next one, keeping
+/// every reason, and so are answers the window has not yet taken.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Why {
+    pub offer: bool,
+    pub paste: bool,
+}
+
+impl Why {
+    pub const OFFER: Why = Why {
+        offer: true,
+        paste: false,
+    };
+    pub const PASTE: Why = Why {
+        offer: false,
+        paste: true,
+    };
+
+    fn and(self, other: Why) -> Why {
+        Why {
+            offer: self.offer || other.offer,
+            paste: self.paste || other.paste,
+        }
+    }
+}
+
+/// A read asked for and not yet started: why, and when it was asked, which
+/// is what its deadline runs from.
+#[derive(Clone, Copy)]
+struct Asked {
+    why: Why,
+    at: Instant,
+}
+
+impl Asked {
+    /// Two reads folded into one: both reasons, and the later time, so that
+    /// the newest asker is given its whole deadline.
+    fn and(self, other: Asked) -> Asked {
+        Asked {
+            why: self.why.and(other.why),
+            at: self.at.max(other.at),
+        }
+    }
+}
+
+/// `queued` with `asked` folded in.
+fn fold(queued: Option<Asked>, asked: Asked) -> Option<Asked> {
+    Some(queued.map_or(asked, |q| q.and(asked)))
+}
+
 /// What the window asks of the clipboard's thread.
 enum Command {
-    /// Read the clipboard; the answer is tagged with this number.
-    Read(u64),
+    /// Read the clipboard.
+    Read(Asked),
     /// Own the clipboard, with this text.
     Set(String),
     /// Hand the text to a clipboard manager if there is one, and stop.
@@ -71,7 +131,7 @@ enum Command {
 
 /// The latest answer, and whom to wake for it.
 struct Answer {
-    slot: Mutex<Option<(u64, Option<String>)>>,
+    slot: Mutex<Option<(Option<String>, Why)>>,
     wake: Box<dyn Fn() + Send + Sync>,
 }
 
@@ -92,8 +152,12 @@ impl Link {
         self.commands.try_iter().collect()
     }
 
-    fn answer(&self, seq: u64, text: Option<String>) {
-        *self.answer.slot.lock().unwrap() = Some((seq, text));
+    /// The newest text, for every reason not yet taken.
+    fn answer(&self, why: Why, text: Option<String>) {
+        let mut slot = self.answer.slot.lock().unwrap();
+        let why = slot.take().map_or(why, |(_, untaken)| why.and(untaken));
+        *slot = Some((text, why));
+        drop(slot);
         (self.answer.wake)();
     }
 }
@@ -101,8 +165,6 @@ impl Link {
 pub struct Clipboard {
     commands: Sender<Command>,
     bell: UnixStream,
-    /// The number of the latest read asked for: only its answer is taken.
-    latest: AtomicU64,
     answer: Arc<Answer>,
     thread: Option<JoinHandle<()>>,
     /// Sent when the thread is done, so that the window waits for it with a
@@ -161,7 +223,6 @@ impl Clipboard {
         Some(Clipboard {
             commands: tx,
             bell: ours,
-            latest: AtomicU64::new(0),
             answer,
             thread: Some(thread),
             done,
@@ -178,9 +239,8 @@ impl Clipboard {
     }
 
     /// Ask for what the clipboard holds; [`take`](Self::take) has it later.
-    pub fn read(&self) {
-        let seq = self.latest.fetch_add(1, Ordering::Relaxed) + 1;
-        self.send(Command::Read(seq));
+    pub fn read(&self, why: Why) {
+        self.send(Command::Read(Asked { why, at: Instant::now() }));
     }
 
     /// Make this process the clipboard's owner, holding `text`.
@@ -188,14 +248,10 @@ impl Clipboard {
         self.send(Command::Set(text));
     }
 
-    /// The answer to the latest read, once: `Some(None)` where there was no
-    /// text, or it could not be had in time.
-    pub fn take(&self) -> Option<Option<String>> {
-        let mut slot = self.answer.slot.lock().unwrap();
-        match slot.take() {
-            Some((seq, text)) if seq == self.latest.load(Ordering::Relaxed) => Some(text),
-            _ => None,
-        }
+    /// The latest answer, once, with every reason it answers: a text of
+    /// `None` where there was none, or it could not be had in time.
+    pub fn take(&self) -> Option<(Option<String>, Why)> {
+        self.answer.slot.lock().unwrap().take()
     }
 }
 
@@ -214,6 +270,22 @@ impl Drop for Clipboard {
     }
 }
 
+/// Whether a key press is egui-winit's paste command, which the window
+/// takes for itself (see `App::window_event`): Ctrl+V by the layout's
+/// letter, or by the key where a V would be on a layout whose letters are
+/// not Latin, or the Paste key. egui-winit's own rule, which keeps the
+/// layout's letter where it has one, so Ctrl+K on Dvorak's V key is not a
+/// paste.
+pub fn is_paste(ctrl: bool, logical: &Key, physical: PhysicalKey) -> bool {
+    match logical {
+        Key::Named(NamedKey::Paste) => true,
+        _ if !ctrl => false,
+        Key::Character(c) if c.eq_ignore_ascii_case("v") => true,
+        Key::Character(c) if c.is_ascii() => false,
+        _ => physical == PhysicalKey::Code(KeyCode::KeyV),
+    }
+}
+
 /// Polls `fds` for up to `timeout` (forever with `None`), going round an
 /// interrupted call; the revents are left in `fds`.
 fn poll(fds: &mut [libc::pollfd], timeout: Option<Duration>) {
@@ -225,5 +297,42 @@ fn poll(fds: &mut [libc::pollfd], timeout: Option<Duration>) {
         for fd in fds.iter_mut() {
             fd.revents = 0;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn letter(c: &str) -> Key {
+        Key::Character(c.into())
+    }
+
+    #[test]
+    fn paste_is_ctrl_v_by_the_layout_s_letter() {
+        let v = PhysicalKey::Code(KeyCode::KeyV);
+        let k = PhysicalKey::Code(KeyCode::KeyK);
+        assert!(is_paste(true, &letter("v"), v));
+        assert!(is_paste(true, &letter("V"), v));
+        assert!(!is_paste(false, &letter("v"), v));
+        // Dvorak: the V key is a K, and Ctrl+K is not a paste; its V is.
+        assert!(!is_paste(true, &letter("k"), v));
+        assert!(is_paste(true, &letter("v"), k));
+        // Cyrillic: no Latin letter, so the key where V is.
+        assert!(is_paste(true, &letter("\u{43c}"), v));
+        assert!(!is_paste(true, &letter("\u{43c}"), k));
+        assert!(is_paste(false, &Key::Named(NamedKey::Paste), k));
+    }
+
+    #[test]
+    fn folded_reads_keep_every_reason_and_the_later_time() {
+        let t0 = Instant::now();
+        let t1 = t0 + Duration::from_millis(5);
+        let a = Asked { why: Why::OFFER, at: t0 };
+        let b = Asked { why: Why::PASTE, at: t1 };
+        let f = fold(Some(a), b).unwrap();
+        assert_eq!(f.why, Why { offer: true, paste: true });
+        assert_eq!(f.at, t1);
+        assert_eq!(fold(None, a).unwrap().why, Why::OFFER);
     }
 }

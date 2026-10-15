@@ -408,7 +408,10 @@ not with U+FFFD in it, which TigerVNC's servers refuse whole. What the far end
 copies is served as `UTF8_STRING`, `TEXT`, `text/plain;charset=utf-8` (and
 `UTF-8`), `text/plain` (UTF-8) and `STRING` (Latin-1, `?` for the rest). A
 Ctrl+C in one of the window's text fields sets the local clipboard, and Ctrl+V
-there pastes the local clipboard as of the last focus-in or far-end copy.
+there pastes what the local clipboard holds at that moment: the key starts a
+read like the focus-in one, and the text is pasted when it is in, a few
+milliseconds later — or not at all, from an owner that does not answer within
+the deadline, with the window responsive meanwhile.
 
 **The debug overlay** (the connection panel's **Debug overlay**, or
 **Ctrl+Alt+D**) is the

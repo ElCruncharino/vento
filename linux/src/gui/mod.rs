@@ -40,7 +40,7 @@ mod x11;
 
 use crate::backends::{Dirs, Kind};
 use crate::options::Options;
-use clipboard::Clipboard;
+use clipboard::{Clipboard, Why};
 use dialog::Dialog;
 pub use platform::Platform;
 use platform::Shortcuts;
@@ -51,7 +51,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalPosition;
-use winit::event::{DeviceEvent, DeviceId, StartCause, WindowEvent};
+use winit::event::{DeviceEvent, DeviceId, ElementState, StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, DeviceEvents, EventLoop, EventLoopProxy};
 use winit::window::{Window, WindowId};
 
@@ -145,6 +145,7 @@ pub fn run(launch: Launch) -> i32 {
         platform: Platform::Other,
         pointer: None,
         focused: false,
+        modifiers: Default::default(),
         occluded: false,
         shown: true,
         repaint_at: Arc::new(Mutex::new(None)),
@@ -243,6 +244,8 @@ struct App {
     /// The last pointer position that was not swallowed (see `centred`).
     pointer: Option<PhysicalPosition<f64>>,
     focused: bool,
+    /// The modifiers held, as winit last said: for the paste command.
+    modifiers: winit::keyboard::ModifiersState,
     /// X11: the window is wholly covered, as its visibility events say.
     occluded: bool,
     /// Whether the window could be seen when last looked, which is what the
@@ -488,14 +491,20 @@ impl App {
             shortcuts.pump();
         }
 
-        // A read of the local clipboard that has come back: egui's own
-        // clipboard follows it, so that Ctrl+V in a text field pastes what
-        // is really there, and the session offers it to the far end.
-        if let Some(text) = self.clipboard.as_ref().and_then(Clipboard::take) {
+        // A read of the local clipboard that has come back: pasted where a
+        // Ctrl+V asked for it, offered to the far end where the focus
+        // coming back did, and egui's own clipboard kept in step.
+        if let Some((text, why)) = self.clipboard.as_ref().and_then(Clipboard::take) {
             if let Some(text) = &text {
                 state.set_clipboard_text(text.clone());
+                // As egui-winit pastes: CRLF made LF, nothing for nothing.
+                if why.paste && !text.is_empty() {
+                    state.egui_input_mut().events.push(egui::Event::Paste(text.replace("\r\n", "\n")));
+                }
             }
-            if let Screen::Session(session) = &mut self.screen {
+            if why.offer
+                && let Screen::Session(session) = &mut self.screen
+            {
                 session.local_clipboard(text);
             }
         }
@@ -787,13 +796,14 @@ impl ApplicationHandler<Wake> for App {
                 // on the clipboard's thread, and handled when it comes back
                 // (see `draw`), dialog or session.
                 if *focused && let Some(clipboard) = &self.clipboard {
-                    clipboard.read();
+                    clipboard.read(Why::OFFER);
                 }
                 self.sync_shortcuts();
                 // A minimise usually takes the focus with it: seen now
                 // rather than at the next frame.
                 self.sync_shown(window.is_minimized());
             }
+            WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
             WindowEvent::Occluded(occluded) => {
                 self.occluded = *occluded;
                 self.sync_shown(window.is_minimized());
@@ -814,6 +824,18 @@ impl ApplicationHandler<Wake> for App {
                     // egui's, but the session still hears of it: a key
                     // going up here is no longer down for its chord.
                     session.key_elsewhere(key);
+                }
+                // A paste into a text field is of the clipboard as it is now,
+                // which egui-winit would read on this thread and wait for;
+                // here it is read on the clipboard's, and pasted when it is in
+                // (see `draw`) — or not at all, from an owner that does not
+                // answer within the clipboard's deadline.
+                if key.state == ElementState::Pressed
+                    && let Some(clipboard) = &self.clipboard
+                    && clipboard::is_paste(self.modifiers.control_key(), &key.logical_key, key.physical_key)
+                {
+                    clipboard.read(Why::PASTE);
+                    return;
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {

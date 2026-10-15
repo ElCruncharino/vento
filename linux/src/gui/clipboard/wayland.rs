@@ -30,7 +30,7 @@
 //! gone when it exits, unless the compositor or a tool keeps it.
 
 use super::text::{self, Encoding, MAX_TEXT};
-use super::{Command, Link, READ_DEADLINE, READ_IDLE, poll};
+use super::{Asked, Command, Link, READ_DEADLINE, READ_IDLE, Why, fold, poll};
 use raw_window_handle::{HasDisplayHandle, RawDisplayHandle};
 use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd};
 use std::sync::{Arc, Mutex};
@@ -51,7 +51,7 @@ type Mimes = Mutex<Vec<String>>;
 
 /// A read coming in through a pipe.
 struct Receiving {
-    seq: u64,
+    why: Why,
     fd: OwnedFd,
     mime: &'static str,
     buf: Vec<u8>,
@@ -87,11 +87,13 @@ struct State {
     drag: Option<wl_data_offer::WlDataOffer>,
     /// Our source, while it is the selection.
     own: Option<wl_data_source::WlDataSource>,
-    /// The read waiting for its sync.
-    syncing: Option<(u64, Instant)>,
+    /// The read waiting for its sync, and the sync's number.
+    syncing: Option<(u64, Asked)>,
+    /// Syncs sent so far, to number them.
+    syncs: u64,
     receiving: Option<Receiving>,
     /// A read asked for while another was going, started once it ends.
-    queued: Option<(u64, Instant)>,
+    queued: Option<Asked>,
     sending: Vec<Sending>,
 }
 
@@ -150,6 +152,7 @@ impl Worker {
             drag: None,
             own: None,
             syncing: None,
+            syncs: 0,
             receiving: None,
             queued: None,
             sending: Vec::new(),
@@ -185,7 +188,7 @@ impl Worker {
             }
             for command in self.state.link.commands() {
                 match command {
-                    Command::Read(seq) => self.state.read(seq, Instant::now()),
+                    Command::Read(asked) => self.state.read(asked),
                     Command::Set(text) => self.state.set(text),
                     Command::Quit => {
                         self.state.quit();
@@ -247,7 +250,7 @@ impl Worker {
 
 impl State {
     fn next_deadline(&self) -> Option<Instant> {
-        let reading = self.syncing.map(|(_, since)| since + READ_DEADLINE);
+        let reading = self.syncing.map(|(_, asked)| asked.at + READ_DEADLINE);
         let receiving = self
             .receiving
             .as_ref()
@@ -258,41 +261,44 @@ impl State {
 
     // ---- reading ----------------------------------------------------------
 
-    fn read(&mut self, seq: u64, since: Instant) {
+    fn read(&mut self, asked: Asked) {
         if self.syncing.is_some() || self.receiving.is_some() {
-            self.queued = Some((seq, since));
+            self.queued = fold(self.queued, asked);
             return;
         }
-        self.display.sync(&self.qh, seq);
-        self.syncing = Some((seq, since));
+        self.syncs += 1;
+        self.display.sync(&self.qh, self.syncs);
+        self.syncing = Some((self.syncs, asked));
     }
 
     /// The sync is back: everything the compositor sent before the window
     /// asked has been dispatched, the selection included.
-    fn synced(&mut self, seq: u64) {
-        let Some((asked, since)) = self.syncing.take() else {
+    fn synced(&mut self, sync: u64) {
+        let Some((number, asked)) = self.syncing else {
             return;
         };
-        if asked != seq {
+        if number != sync {
             return;
         }
-        if let Some((seq, since)) = self.queued.take() {
-            return self.read(seq, since);
+        self.syncing = None;
+        if let Some(queued) = self.queued.take() {
+            return self.read(queued.and(asked));
         }
+        let (why, since) = (asked.why, asked.at);
         let Some(offer) = &self.selection else {
             log::debug!("clipboard: no selection, nothing to read");
-            return self.link.answer(seq, None);
+            return self.link.answer(why, None);
         };
         let mimes = offer.data::<Mimes>().map(|m| m.lock().unwrap().clone()).unwrap_or_default();
         let Some(mime) = text::best(mimes.iter().map(String::as_str)) else {
             log::debug!("clipboard: the selection offers no text ({mimes:?})");
-            return self.link.answer(seq, None);
+            return self.link.answer(why, None);
         };
         let (r, w) = match pipe() {
             Ok(pair) => pair,
             Err(e) => {
                 log::warn!("clipboard: no pipe to read it through ({e})");
-                return self.link.answer(seq, None);
+                return self.link.answer(why, None);
             }
         };
         log::debug!("clipboard: reading it as {mime}");
@@ -302,7 +308,7 @@ impl State {
         drop(w);
         let now = Instant::now();
         self.receiving = Some(Receiving {
-            seq,
+            why,
             fd: r,
             mime,
             buf: Vec::new(),
@@ -313,15 +319,17 @@ impl State {
 
     /// Whatever the pipe holds now, and the end of the read if it is over.
     fn pump_receive(&mut self, now: Instant) {
-        if let Some((_, since)) = self.syncing
-            && since + READ_DEADLINE <= now
+        if let Some((_, asked)) = self.syncing
+            && asked.at + READ_DEADLINE <= now
         {
             // A compositor that does not answer a sync is not one to read
             // from either; the late answer finds nothing waiting.
-            let (seq, _) = self.syncing.take().unwrap();
+            self.syncing = None;
             log::warn!("clipboard: the compositor did not answer in time; nothing read");
-            self.link.answer(seq, None);
-            return self.next();
+            if self.queued.is_none() {
+                return self.link.answer(asked.why, None);
+            }
+            return self.next(asked.why);
         }
         let Some(r) = &mut self.receiving else {
             return;
@@ -359,19 +367,27 @@ impl State {
         };
         let r = self.receiving.take().unwrap();
         match end {
-            Ok(()) => self.link.answer(r.seq, Some(text::decode(r.mime, &r.buf))),
+            Ok(()) if self.queued.is_none() => self.link.answer(r.why, Some(text::decode(r.mime, &r.buf))),
+            // Superseded: the window wants what the clipboard holds now.
+            Ok(()) => {}
             Err(why) => {
                 log::warn!("clipboard: gave up reading it after {} bytes: {why}", r.buf.len());
-                self.link.answer(r.seq, None);
+                if self.queued.is_none() {
+                    self.link.answer(r.why, None);
+                }
             }
         }
-        self.next();
+        self.next(r.why);
     }
 
-    /// The read asked for while one was going, now that it is over.
-    fn next(&mut self) {
-        if let Some((seq, since)) = self.queued.take() {
-            self.read(seq, since);
+    /// The read asked for while one was going, now that it is over, with
+    /// the reasons of the one it supersedes (none if that was answered).
+    fn next(&mut self, superseded: Why) {
+        if let Some(queued) = self.queued.take() {
+            self.read(Asked {
+                why: queued.why.and(superseded),
+                ..queued
+            });
         }
     }
 
