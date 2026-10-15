@@ -418,14 +418,25 @@ impl App {
                 gpu.renderer.update_texture(&gpu.device, &gpu.queue, *id, delta);
             }
         }
-        let frame = match gpu.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => Some(t),
-            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                gpu.surface.configure(&gpu.device, &gpu.config);
-                window.request_redraw();
-                None
+        // A minimised window shows nothing, so nothing is rendered into it:
+        // the frame has still run (the events taken, the poll made) and the
+        // textures still get their updates above, but there is no present
+        // until the window is back, which its first expose asks a redraw
+        // for. Only X11 says; elsewhere this is `None` and every frame is
+        // presented as before.
+        let shown = window.is_minimized() != Some(true);
+        let frame = if !shown {
+            None
+        } else {
+            match gpu.surface.get_current_texture() {
+                wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => Some(t),
+                wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                    gpu.surface.configure(&gpu.device, &gpu.config);
+                    window.request_redraw();
+                    None
+                }
+                _ => None,
             }
-            _ => None,
         };
         if let Some(frame) = frame {
             let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());

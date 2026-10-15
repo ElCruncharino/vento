@@ -90,6 +90,14 @@ const TOOLBAR_REVEAL: Duration = Duration::from_secs(3);
 const BELL: Duration = Duration::from_millis(600);
 /// How long a disconnect is given before the session is closed regardless.
 const DISCONNECT_PATIENCE: Duration = Duration::from_secs(10);
+/// How often the facts and the info are asked for.
+const POLL: Duration = Duration::from_secs(1);
+/// How early a frame may come and still count as the poll's. egui takes a
+/// frame's predicted time (1/60 s by default) off every repaint asked for
+/// later, so the wake for the poll lands that much before the second is up;
+/// counted as not due, it asked again and a second frame followed straight
+/// after, two draws a second where one will do.
+const POLL_EARLY: Duration = Duration::from_millis(50);
 
 /// How the local pointer is held in relative mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -407,10 +415,10 @@ impl Session {
         if !self.connected() {
             return;
         }
-        let due = self.last_poll.is_none_or(|t| t.elapsed() >= Duration::from_secs(1));
+        let due = self.last_poll.is_none_or(|t| t.elapsed() + POLL_EARLY >= POLL);
         if !due {
             if let Some(last) = self.last_poll {
-                ctx.request_repaint_after(Duration::from_secs(1).saturating_sub(last.elapsed()));
+                ctx.request_repaint_after(POLL.saturating_sub(last.elapsed()));
             }
             return;
         }
@@ -420,7 +428,7 @@ impl Session {
             info: self.backend.info(),
             traffic: self.backend.traffic(),
         };
-        ctx.request_repaint_after(Duration::from_secs(1));
+        ctx.request_repaint_after(POLL);
         self.follow_tick(host);
     }
 
