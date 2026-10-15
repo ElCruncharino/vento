@@ -30,6 +30,7 @@ mod platform;
 mod prompts;
 mod session;
 mod settings;
+mod toolbar;
 mod view;
 mod wayland;
 mod x11;

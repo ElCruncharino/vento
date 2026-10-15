@@ -35,7 +35,9 @@ backend without one.
   toolbar, the prompts, the cursor), `desktop.rs` (the desktop as one
   texture, or as tiles where it is bigger than the device's largest, updated
   a damaged rectangle at a time), `view.rs` (scale modes, panning and the
-  pointer's mapping, pure arithmetic with tests), `follow.rs` (the desktop
+  pointer's mapping, pure arithmetic with tests), `toolbar.rs` (where the
+  toolbar sits and which strip of the edge brings it out, with tests),
+  `follow.rs` (the desktop
   following the window's size: the phone's `WindowFollower`, pure logic with
   tests), `keys.rs` (winit keys to X11 keysyms), `platform.rs` (which display
   server the window is on, and the per-server shortcuts and capture choice),
@@ -185,10 +187,15 @@ backend keeps receiving. Checked on `scripts/testx11` for tigervnc, libvnc,
 rfb and freerdp: live with another window focused, paused minimised or
 covered, live again restored.
 
-**The toolbar** floats at the top edge and stays out of the way: it slides off
-the top of the window when the pointer is elsewhere and slides back when the
-pointer touches the top edge (and for the first three seconds of a session, so
-that it is seen once). On it:
+**The toolbar** sits flush with the top edge, square-cornered, and stays out of
+the way: it slides off the top of the window when the pointer is elsewhere and
+slides back when the pointer reaches the top edge within the toolbar's own
+span — the rest of the edge is the desktop's, for whatever the far end has at
+the top of its screen — and for the first three seconds of a session, so that
+it is seen once. In a window that strip reaches 8 points down, since a pointer
+coming off the title bar seldom stops on the window's very first row; in
+fullscreen, where the screen's edge stops the pointer, it is the top row of
+pixels. On it:
 
 - **Scale** cycles fit width → fit height → fill width → fill height → 1:1.
   *Fit* never enlarges the desktop past a device pixel per desktop pixel;

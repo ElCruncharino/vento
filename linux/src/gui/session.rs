@@ -52,6 +52,7 @@ use super::panel::{Action, Controls, Panel, Snapshot};
 use super::platform::{self, Platform};
 use super::prompts::{self, Answer, Form, Prompt};
 use super::settings::Settings;
+use super::toolbar::{self, Placement};
 use super::view::{Layout, View};
 use super::x11::Fence;
 use super::{Host, Request};
@@ -61,7 +62,7 @@ use crate::events::{Cursor, Event, Identity, Mailbox, State};
 use crate::known_hosts::{self, KnownHosts, Store, Verdict};
 use crate::options::Options;
 use egui::{
-    Align2, Color32, CursorIcon, Frame, Id, LayerId, Order, PointerButton, Pos2, Rect, Response, Sense,
+    Color32, CursorIcon, Frame, Id, LayerId, Margin, Order, PointerButton, Pos2, Rect, Response, Sense,
     TextureHandle, TextureOptions, Vec2, pos2, vec2,
 };
 use std::collections::{HashMap, VecDeque};
@@ -88,6 +89,8 @@ const NOTCH_POINTS: f32 = 50.0;
 
 /// How long the toolbar stays out after connecting, so that it is seen once.
 const TOOLBAR_REVEAL: Duration = Duration::from_secs(3);
+/// The toolbar's buttons' height, in points.
+const TOOLBAR_BUTTON: f32 = 28.0;
 /// How long the bell rings in the title.
 const BELL: Duration = Duration::from_millis(600);
 /// How long a disconnect is given before the session is closed regardless.
@@ -135,7 +138,9 @@ pub struct Session {
     /// Which of `facts.monitors` is on screen, or `None` for the whole
     /// desktop.
     monitor: Option<usize>,
-    toolbar_height: f32,
+    /// The toolbar's size as last drawn, which is where it would be when
+    /// out, and so the span of the edge that brings it out.
+    toolbar_size: Vec2,
     toolbar_hovered: bool,
     panel: Panel,
     /// Every option's value as the session has it: what it connected with,
@@ -254,7 +259,7 @@ impl Session {
             last_poll: None,
             view: View::default(),
             monitor: None,
-            toolbar_height: 40.0,
+            toolbar_size: vec2(0.0, 40.0),
             toolbar_hovered: false,
             panel: Panel::default(),
             live,
@@ -1235,33 +1240,49 @@ impl Session {
 
     // ---- the toolbar -------------------------------------------------------
 
-    /// Slid in from the top edge while the pointer is there or on it, and
-    /// away otherwise.
+    /// Slid down from the top edge, flush with it, while the pointer is at
+    /// the edge within the toolbar's own span or on the toolbar itself, and
+    /// back up out of sight otherwise. Only its own span, because the rest
+    /// of the top edge is the desktop's: a pointer heading for something at
+    /// the top of the far end's screen, a menu bar or a tab, had the toolbar
+    /// come down over it wherever it touched the edge.
     fn toolbar(&mut self, ctx: &egui::Context, host: &mut Host) {
         let pointer = ctx.input(|i| i.pointer.latest_pos());
         let screen = ctx.content_rect();
-        let at_edge = pointer.is_some_and(|p| screen.contains(p) && p.y <= screen.min.y + 2.0);
+        let fullscreen = host.window.fullscreen().is_some();
+        let width = self.toolbar_size.x;
+        let left = Placement::default().left(screen, width);
+        let at_edge = pointer.is_some_and(|p| toolbar::reveals(screen, left, width, fullscreen, ctx.pixels_per_point(), p));
         let reveal = self.started.elapsed() < TOOLBAR_REVEAL;
         let show = at_edge || self.toolbar_hovered || reveal || self.disconnecting.is_some();
-        let hidden = -(self.toolbar_height + 12.0);
-        let y = ctx.animate_value_with_time(Id::new("toolbar-y"), if show { 6.0 } else { hidden }, 0.2);
+        let style = ctx.global_style();
+        // Square, and flush with the top edge: nothing between it and the
+        // edge for the pointer to fall into. Hidden, its shadow goes too.
+        let frame = Frame::popup(&style)
+            .corner_radius(0)
+            .inner_margin(Margin::symmetric(8, 6));
+        let hidden = -(self.toolbar_size.y + frame.shadow.margin().bottom.max(0.0));
+        let y = ctx.animate_value_with_time(Id::new("toolbar-y"), if show { 0.0 } else { hidden }, 0.2);
         if reveal {
             ctx.request_repaint_after(TOOLBAR_REVEAL.saturating_sub(self.started.elapsed()));
         }
 
         let area = egui::Area::new(Id::new("toolbar"))
             .order(Order::Foreground)
-            .anchor(Align2::CENTER_TOP, vec2(0.0, y))
+            .fixed_pos(pos2(left, screen.min.y + y))
             // Unconstrained, or egui would keep it on screen: off the top
             // is where it goes to hide.
             .constrain(false)
             .interactable(true)
             .show(ctx, |ui| {
-                Frame::popup(ui.style()).show(ui, |ui| {
+                frame.show(ui, |ui| {
+                    // A little taller than egui's buttons, which were made
+                    // for a menu rather than for a bar at a screen's edge.
+                    ui.spacing_mut().interact_size.y = TOOLBAR_BUTTON;
                     ui.horizontal(|ui| self.toolbar_items(ui, host));
                 });
             });
-        self.toolbar_height = area.response.rect.height();
+        self.toolbar_size = area.response.rect.size();
         self.toolbar_hovered = area.response.contains_pointer();
     }
 
