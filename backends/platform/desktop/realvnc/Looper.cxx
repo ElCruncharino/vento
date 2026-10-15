@@ -29,6 +29,12 @@ uint32_t epollEvents(int events) {
            | (events & LOOPER_EVENT_HANGUP ? EPOLLHUP : 0u);
 }
 
+/* What an event carries: the registration's number above, the descriptor
+   below. The wake descriptor's number is 0, which no registration has. */
+uint64_t tag(int fd, uint32_t seq) {
+    return ((uint64_t) seq << 32) | (uint32_t) fd;
+}
+
 int looperEvents(uint32_t events) {
     return (events & EPOLLIN ? LOOPER_EVENT_INPUT : 0) | (events & EPOLLOUT ? LOOPER_EVENT_OUTPUT : 0)
            | (events & EPOLLERR ? LOOPER_EVENT_ERROR : 0)
@@ -47,24 +53,35 @@ Looper *Looper::forThread() {
 Looper::Looper() : epfd_(epoll_create1(EPOLL_CLOEXEC)), wakefd_(eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK)) {
     epoll_event ev{};
     ev.events = EPOLLIN;
-    ev.data.fd = wakefd_;
+    ev.data.u64 = tag(wakefd_, 0);
     epoll_ctl(epfd_, EPOLL_CTL_ADD, wakefd_, &ev);
 }
 
 int Looper::addFd(int fd, int ident, int events, ALooper_callbackFunc callback, void *data) {
+    const std::lock_guard<std::mutex> guard(lock_);
+    const uint32_t seq = nextSeq_++;
+    if (nextSeq_ == 0) {
+        nextSeq_ = 1;
+    }
     epoll_event ev{};
     ev.events = epollEvents(events);
-    ev.data.fd = fd;
-    const std::lock_guard<std::mutex> guard(lock_);
+    ev.data.u64 = tag(fd, seq);
     bool exists = fds_.count(fd) != 0;
-    fds_[fd] = {fd, ident, events, callback, data};
     if (parked_.erase(fd)) {
         exists = false; // was out of the set while parked
     }
-    if (epoll_ctl(epfd_, exists ? EPOLL_CTL_MOD : EPOLL_CTL_ADD, fd, &ev) < 0) {
+    int r = epoll_ctl(epfd_, exists ? EPOLL_CTL_MOD : EPOLL_CTL_ADD, fd, &ev);
+    if (r < 0 && exists && errno == ENOENT) {
+        // Android's tolerance: the descriptor registered under this number
+        // was closed without being removed, which takes it out of the epoll
+        // set, and this is a new one that happens to have its number.
+        r = epoll_ctl(epfd_, EPOLL_CTL_ADD, fd, &ev);
+    }
+    if (r < 0) {
         LOGW("looper: epoll_ctl fd %d: %s", fd, strerror(errno));
         return -1;
     }
+    fds_[fd] = {fd, ident, events, callback, data, seq};
     return 1;
 }
 
@@ -74,9 +91,21 @@ int Looper::removeFd(int fd) {
         return 0;
     }
     if (!parked_.erase(fd)) {
+        // Fails harmlessly for a descriptor already closed.
         epoll_ctl(epfd_, EPOLL_CTL_DEL, fd, nullptr);
     }
     return 1;
+}
+
+void Looper::removeSeq(int fd, uint32_t seq) {
+    {
+        const std::lock_guard<std::mutex> guard(lock_);
+        const auto it = fds_.find(fd);
+        if (it == fds_.end() || it->second.seq != seq) {
+            return; // re-registered by the callback, which is not a removal
+        }
+    }
+    removeFd(fd);
 }
 
 void Looper::unparkDue() {
@@ -91,7 +120,7 @@ void Looper::unparkDue() {
         if (e != fds_.end()) {
             epoll_event ev{};
             ev.events = epollEvents(e->second.events);
-            ev.data.fd = it->first;
+            ev.data.u64 = tag(it->first, e->second.seq);
             epoll_ctl(epfd_, EPOLL_CTL_ADD, it->first, &ev);
         }
         it = parked_.erase(it);
@@ -123,8 +152,9 @@ int Looper::pollOnce(int timeoutMs, int *outFd, int *outEvents, void **outData) 
     }
     bool woken = false;
     for (int i = 0; i < n; i++) {
-        const int fd = evs[i].data.fd;
-        if (fd == wakefd_) {
+        const int fd = (int) (uint32_t) evs[i].data.u64;
+        const uint32_t seq = (uint32_t) (evs[i].data.u64 >> 32);
+        if (seq == 0 && fd == wakefd_) {
             uint64_t count;
             while (read(wakefd_, &count, sizeof count) > 0) {
             }
@@ -135,7 +165,10 @@ int Looper::pollOnce(int timeoutMs, int *outFd, int *outEvents, void **outData) 
         {
             const std::lock_guard<std::mutex> guard(lock_);
             const auto it = fds_.find(fd);
-            if (it == fds_.end()) {
+            if (it == fds_.end() || it->second.seq != seq) {
+                // Removed, or removed and its number given to another
+                // descriptor, by a callback earlier in this batch: the event
+                // is the old one's and nobody's now.
                 continue;
             }
             e = it->second;
@@ -148,10 +181,11 @@ int Looper::pollOnce(int timeoutMs, int *outFd, int *outEvents, void **outData) 
             return e.ident;
         }
         if (e.callback(fd, events, e.data) == 0) {
-            removeFd(fd);
+            removeSeq(fd, seq);
         } else if (!(events & (LOOPER_EVENT_INPUT | LOOPER_EVENT_OUTPUT))) {
             const std::lock_guard<std::mutex> guard(lock_);
-            if (fds_.count(fd) && !parked_.count(fd)
+            const auto it = fds_.find(fd);
+            if (it != fds_.end() && it->second.seq == seq && !parked_.count(fd)
                     && epoll_ctl(epfd_, EPOLL_CTL_DEL, fd, nullptr) == 0) {
                 parked_[fd] = std::chrono::steady_clock::now() + PARK;
             }

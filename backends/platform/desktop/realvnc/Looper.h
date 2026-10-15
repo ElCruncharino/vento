@@ -10,6 +10,8 @@
 #ifndef VENTO_REALVNC_LOOPER_H
 #define VENTO_REALVNC_LOOPER_H
 
+#include <stdint.h>
+
 #include <chrono>
 #include <map>
 #include <mutex>
@@ -51,14 +53,23 @@ private:
         int fd, ident, events;
         ALooper_callbackFunc callback;
         void *data;
+        uint32_t seq;
     };
 
     void unparkDue();
+    /* `removeFd`, but only of the registration `seq` names. */
+    void removeSeq(int fd, uint32_t seq);
 
     int epfd_;
     int wakefd_;
     std::mutex lock_;
     std::map<int, Entry> fds_;
+    /* Every registration's number, as Android's `mNextRequestSeq` numbers
+       them, carried in the epoll event beside the descriptor. A descriptor's
+       number is reused as soon as it is closed, so an event read in the same
+       batch as a callback that closed it and opened another is the old
+       descriptor's, and the number is how it is told apart and dropped. */
+    uint32_t nextSeq_ = 1;
     /* Descriptors that reported only an error or hangup and were kept by
        their callback. Level-triggered epoll would return them at once, for
        ever — a UDP socket with a pending ECONNREFUSED does this, and spun the
