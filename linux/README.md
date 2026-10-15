@@ -201,20 +201,26 @@ a backend is always released off the window's thread, so neither the dialog
 coming back nor the window closing waits for one that will not let go; once
 the window has gone the process gives it two seconds, then exits anyway.
 
-A session is told when its window cannot be seen — minimised, or on X11
-wholly covered — and the backends pause their updates then, as the phone's do
-when its session screen stops: the three VNC backends stop reading, FreeRDP
-and IronRDP send a Suppress Output PDU, SPICE stops acknowledging, and
-RustDesk drops to a frame a second. They resume when it is shown again. A
-window that is on screen without the keyboard focus stays live. X11 says both
-through winit: `_NET_WM_STATE_HIDDEN`, checked every frame and on a focus
-change, and the visibility events, which under a compositing manager never
-say covered. Wayland says neither — xdg-toplevel has no minimised state, and
-winit 0.30 does not pass on its `suspended` one — so there a session never
-pauses; a hidden window's frames stop with its frame callbacks while the
-backend keeps receiving. Checked on `scripts/testx11` for tigervnc, libvnc,
-rfb and freerdp: live with another window focused, paused minimised or
-covered, live again restored.
+A session is told when its window cannot be seen — minimised, on X11 wholly
+covered, on Wayland suspended — and the backends pause their updates then, as
+the phone's do when its session screen stops: the three VNC backends stop
+reading, FreeRDP and IronRDP send a Suppress Output PDU, SPICE stops
+acknowledging, and RustDesk drops to a frame a second. They resume when it is
+shown again. A window that is on screen without the keyboard focus stays
+live. X11 says both through winit: `_NET_WM_STATE_HIDDEN`, checked every
+frame and on a focus change, and the visibility events, which under a
+compositing manager never say covered.
+Wayland has no minimised state, but xdg-shell v6 has `suspended`, which a
+compositor may send while the window cannot be seen at all (minimised, on a
+workspace not shown); `patches/winit/0002` makes winit report it as
+`Occluded`, as winit 0.30 did not. Where the compositor does not send it —
+sway 1.11 and niri do not — a session never pauses there; a hidden window's
+frames stop with its frame callbacks while the backend keeps receiving.
+Checked on `scripts/testx11` for tigervnc, libvnc, rfb and freerdp: live with
+another window focused, paused minimised or covered, live again restored; and
+on Wayland with tigervnc in a headless tinywl (wlroots 0.20) made to suspend
+its windows on a signal: paused (the socket's receive queue filled to 10 KB,
+no commits) while suspended, live again when it was not.
 
 **The toolbar** sits flush with the top edge, square-cornered, edged on its
 sides and bottom but not along the top, which is the window's edge, and stays

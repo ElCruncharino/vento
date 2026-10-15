@@ -246,7 +246,9 @@ struct App {
     focused: bool,
     /// The modifiers held, as winit last said: for the paste command.
     modifiers: winit::keyboard::ModifiersState,
-    /// X11: the window is wholly covered, as its visibility events say.
+    /// The window cannot be seen, as winit's `Occluded` says: on X11 wholly
+    /// covered, by its visibility events; on Wayland suspended, by the
+    /// compositor.
     occluded: bool,
     /// Whether the window could be seen when last looked, which is what the
     /// session is told (see `sync_shown`).
@@ -457,10 +459,13 @@ impl App {
     /// usually brings), and the server's visibility events, which winit
     /// reports as `Occluded` — under a compositing manager the window is
     /// never reported covered, and then only minimising pauses. Wayland
-    /// says neither: xdg-toplevel has no minimised state, winit 0.30 does
-    /// not pass on its `suspended` state, and it reports no `Occluded`
-    /// there; a hidden window's frame callbacks stop, and so do its frames,
-    /// but the backend is not told and keeps receiving.
+    /// has no minimised state, but xdg-shell v6 has `suspended`, which a
+    /// compositor may send while the window cannot be seen at all
+    /// (minimised, on a workspace not shown), and which our winit patch
+    /// reports as `Occluded`. A compositor that does not send it (sway
+    /// 1.11, niri) never pauses a session: a hidden window's frame
+    /// callbacks stop, and so do its frames, but the backend is not told
+    /// and keeps receiving.
     fn sync_shown(&mut self, minimized: Option<bool>) {
         let shown = !self.occluded && minimized != Some(true);
         if shown != self.shown {

@@ -273,7 +273,8 @@ pub trait Backend: Send + Sync {
     fn release_all_keys(&self);
 
     /// Whether the session can be seen: false while its window is minimised
-    /// or hidden, true again when it is shown. Backends may pause updates
+    /// or hidden (wholly covered on X11, suspended by the compositor on
+    /// Wayland), true again when it is shown. Backends may pause updates
     /// while it is not. Not the keyboard focus: a window on screen without
     /// it stays live. (The name is the Android app's, where the session's
     /// screen going to the background is the same thing.)
