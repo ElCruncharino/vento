@@ -15,6 +15,20 @@ use egui::{Pos2, Rect};
 /// edge by itself, and there it is the top row alone (see [`reveals`]).
 pub const WINDOWED_REACH: f32 = 8.0;
 
+/// How much of a hidden toolbar a window leaves showing at its top edge:
+/// the lower edge of the toolbar's background, under its buttons' margin
+/// (six points) so that no button shows, as a mark of where along the edge
+/// to put the pointer now that only the toolbar's own span brings it out.
+/// Fullscreen leaves nothing, as the screen is the desktop's there.
+pub const WINDOWED_PEEK: f32 = 4.0;
+
+/// Where the top of a toolbar `height` tall is, relative to the window's
+/// top edge, while it is hidden: wholly off the top in fullscreen, and
+/// [`WINDOWED_PEEK`] short of that in a window. Shown, it is at zero.
+pub fn hidden_y(height: f32, fullscreen: bool) -> f32 {
+    if fullscreen { -height } else { -height + WINDOWED_PEEK.min(height) }
+}
+
 /// Where the toolbar sits along the top edge: how far along the room the
 /// window leaves it its left edge is, 0 flush left, 1 flush right.
 ///
@@ -147,6 +161,22 @@ mod tests {
         assert!(!at(880.0, 0.0));
         assert!(!at(20.0, 0.0));
         assert!(!at(1270.0, 0.0));
+    }
+
+    #[test]
+    fn hidden_a_window_leaves_its_lower_edge_and_fullscreen_nothing() {
+        // 28-point buttons in a 6-point margin either side.
+        let height = 40.0;
+        assert_eq!(hidden_y(height, true), -40.0);
+        assert_eq!(hidden_y(height, false), -36.0);
+        // What shows is inside the strip that brings it out, so the
+        // pointer on it brings it out.
+        let showing = hidden_y(height, false) + height;
+        assert_eq!(showing, WINDOWED_PEEK);
+        assert!(showing <= WINDOWED_REACH);
+        // Before it has been measured it is nothing tall, and nothing of
+        // it shows.
+        assert_eq!(hidden_y(0.0, false), 0.0);
     }
 
     #[test]

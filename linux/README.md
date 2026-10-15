@@ -217,8 +217,10 @@ rfb and freerdp: live with another window focused, paused minimised or
 covered, live again restored.
 
 **The toolbar** sits flush with the top edge, square-cornered, and stays out of
-the way: it slides off the top of the window when the pointer is elsewhere and
-slides back when the pointer reaches the top edge within the toolbar's own
+the way: it slides off the top of the window when the pointer is elsewhere —
+in a window all but the lower 4 points of its background, the margin under its
+buttons, left showing along the edge as a mark of where it is, and in
+fullscreen wholly — and slides back when the pointer reaches the top edge within the toolbar's own
 span — the rest of the edge is the desktop's, for whatever the far end has at
 the top of its screen — and for the first three seconds of a session, so that
 it is seen once. In a window that strip reaches 8 points down, since a pointer

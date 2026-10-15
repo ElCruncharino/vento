@@ -1308,13 +1308,14 @@ impl Session {
         let style = ctx.global_style();
         // Square, and flush with the top edge: nothing between it and the
         // edge for the pointer to fall into. Flat, too: a popup's frame
-        // without the popup's shadow, so that hidden it is wholly off the
-        // top and shown nothing of it lies over the desktop past its edge.
+        // without the popup's shadow, so that hidden nothing but the peek
+        // `hidden_y` leaves in a window shows, and shown nothing of it lies
+        // over the desktop past its edge.
         let frame = Frame::popup(&style)
             .corner_radius(0)
             .shadow(egui::Shadow::NONE)
             .inner_margin(Margin::symmetric(8, 6));
-        let hidden = -self.toolbar_size.y;
+        let hidden = toolbar::hidden_y(self.toolbar_size.y, fullscreen);
         let y = ctx.animate_value_with_time(Id::new("toolbar-y"), if show { 0.0 } else { hidden }, 0.2);
         if reveal {
             ctx.request_repaint_after(TOOLBAR_REVEAL.saturating_sub(self.started.elapsed()));
