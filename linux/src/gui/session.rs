@@ -1326,17 +1326,8 @@ impl Session {
                     // A little taller than egui's buttons, which were made
                     // for a menu rather than for a bar at a screen's edge.
                     ui.spacing_mut().interact_size.y = TOOLBAR_BUTTON;
-                    ui.horizontal(|ui| {
-                        // Where to take hold of it, though any part of it
-                        // will do: a label that senses nothing (not even
-                        // text selection), so a press there is the area's.
-                        ui.add(egui::Label::new(icon(icons::DRAG_INDICATOR).weak()).selectable(false))
-                            .on_hover_text("Drag to move the toolbar along the edge");
-                        ui.horizontal(|ui| self.toolbar_items(ui, host)).response.rect
-                    })
-                    .inner
+                    ui.horizontal(|ui| self.toolbar_items(ui, host));
                 })
-                .inner
             });
         let response = &area.response;
         if response.drag_started() {
@@ -1350,9 +1341,10 @@ impl Session {
                 self.placement.move_to(screen, width, from + moved);
                 ctx.set_cursor_icon(CursorIcon::Grabbing);
             }
-        } else if response.hovered() && !pointer.is_some_and(|p| area.inner.contains(p)) {
-            // The grip and the margins, but not the buttons, which are
-            // pressed before they are dragged.
+        } else if response.hovered() && !over_button(ctx, response) {
+            // The margins, which are where to take hold of it (the buttons'
+            // interact rects meet, so there are no gaps between them), but
+            // not the buttons, which are pressed before they are dragged.
             ctx.set_cursor_icon(CursorIcon::Grab);
         }
         self.toolbar_size = response.rect.size();
@@ -1678,6 +1670,23 @@ fn scale_icon(mode: ScaleMode) -> &'static str {
         ScaleMode::FillHeight => icons::HEIGHT,
         ScaleMode::Original => icons::VIEW_REAL_SIZE,
     }
+}
+
+/// Whether the pointer is on one of the toolbar's buttons rather than on
+/// the toolbar `area` itself. Both count as hovered, as egui hovers the top
+/// button and the area that senses drags behind it alike, so it is told
+/// apart by what else is under the pointer on the toolbar's layer: anything
+/// there that takes clicks is a button. (On its layer only: the desktop
+/// under the toolbar takes clicks too.) Read out first and then looked up,
+/// as the snapshot holds the context that `read_response` takes too.
+fn over_button(ctx: &egui::Context, area: &egui::Response) -> bool {
+    let under: Vec<Id> = ctx.interaction_snapshot(|s| s.contains_pointer.iter().copied().collect());
+    under.into_iter().any(|id| {
+        id != area.id
+            && ctx
+                .read_response(id)
+                .is_some_and(|r| r.layer_id == area.layer_id && r.sense.senses_click())
+    })
 }
 
 /// A toolbar button of an icon alone, square, and flat: no frame at rest,

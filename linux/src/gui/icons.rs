@@ -70,7 +70,6 @@ macro_rules! symbols {
 
 symbols! {
     BUG_REPORT = "bug_report" "\u{e868}";
-    DRAG_INDICATOR = "drag_indicator" "\u{e945}";
     FIT_PAGE_HEIGHT = "fit_page_height" "\u{f397}";
     FIT_PAGE_WIDTH = "fit_page_width" "\u{f396}";
     FULLSCREEN = "fullscreen" "\u{e5d0}";

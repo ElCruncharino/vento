@@ -219,7 +219,8 @@ coming off the title bar seldom stops on the window's very first row; in
 fullscreen, where the screen's edge stops the pointer, it is the top row of
 pixels. It can be dragged along the edge, by any part of it, buttons
 included — a drag never presses the button it started on — and stops at the
-window's sides; where it is left is kept as a fraction of the room either side
+window's sides; there is no grip, and the pointer over its margins is a hand
+to show it can be taken hold of there; where it is left is kept as a fraction of the room either side
 of it, so that a resize keeps it centred, or against the edge it was put
 against, and the next session's toolbar starts there, for as long as the
 process runs (it is not saved). The strip that brings it out follows it.
@@ -230,8 +231,7 @@ tooltip names the button, its state and, for Scale, what a click goes to
 ("Scale: fit width — click for fit height"). View only, Info and Debug, while
 on, keep a frame at rest, a dim fill of the selection's blue with the icon in
 the selection's colour. There are no words on it: which monitor or display
-is showing is in the tooltip too. A grip at the left end shows where to take
-hold. On it:
+is showing is in the tooltip too. On it:
 
 - **Scale** cycles fit width → fit height → fill width → fill height → 1:1,
   its icon `fit_page_width`, `fit_page_height`, `width` (↔), `height` (↕)
