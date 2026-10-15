@@ -40,6 +40,19 @@
 //! rather than refused: a picture a little less precise than the stream is
 //! better than none, and a refusal is a session with no picture for good and an
 //! info row that still names the codec.
+//!
+//! **H.264 stays libavcodec's**, though two decoders without FFmpeg were tried
+//! in its place (October 2026): the `openh264` crate, Cisco's library, and
+//! `rusty_h264`, which is pure Rust. On what the rigs send, RustDesk's VAAPI
+//! High profile and wayvnc's Constrained Baseline, both were bit-exact with
+//! libavcodec, and neither crashed or panicked on 3000 truncated and bit-flipped
+//! streams. Neither was better at anything, though. Both took 1.5 to 2 times as
+//! long a frame at 1920x1200 (openh264's threads segfault). Both refuse High 10,
+//! 4:2:2, 4:4:4 and interlaced streams, which libavcodec decodes. openh264 is not
+//! bit-exact on B-frames. Neither reports the stream's colour, which the rule
+//! above is made from. And FFmpeg stays for the other four codecs anyway, so no
+//! dependency would go: a second H.264 decoder would only have been more code,
+//! and from source it has no Cisco patent licence either.
 
 use std::ffi::{CStr, c_int};
 use std::ptr;
