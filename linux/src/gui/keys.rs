@@ -11,16 +11,19 @@
 //! otherwise, which is `xkeysym`'s `from_char`; a named key is looked up in
 //! a table of the ones a desktop has a use for. Modifiers are told apart by
 //! side, since the far end's applications can be, and the number pad by
-//! location, since `KP_1` and `1` are different keys to the same
-//! applications.
+//! location, since `KP_1` and `1`, or `KP_Home` and `Home`, are different
+//! keys to the same applications.
 //!
 //! Where the layout's level for the modifiers held has no name winit gives
 //! or this table sends, the key's own (its first level, the layout's again)
-//! is used instead. That is what keeps Alt pressed after Shift: on most
-//! layouts that level of the Alt key is `Meta_L`, which winit leaves
-//! unidentified, and under `grp:alt_shift_toggle` it is `ISO_Next_Group`;
-//! either way the far end wants the Alt it has its own layout to make sense
-//! of, and the Ctrl+Alt chords want it too.
+//! is used instead, and failing that the keysym itself. The first is what
+//! keeps Alt pressed after Shift: on most layouts that level of the Alt key
+//! is `Meta_L`, which winit leaves unidentified, and under
+//! `grp:alt_shift_toggle` it is `ISO_Next_Group`; either way the far end
+//! wants the Alt it has its own layout to make sense of, and the Ctrl+Alt
+//! chords want it too. The second is for a key winit has no name for at any
+//! level, such as the number pad's 5 without Num Lock (`KP_Begin`): the
+//! keysym is what the far end takes anyway.
 //!
 //! The identity is per physical key rather than per keysym, because the
 //! keysym of a key can change while it is held — Shift released before the
@@ -30,12 +33,12 @@
 
 use std::collections::HashMap;
 use winit::event::KeyEvent;
-use winit::keyboard::{Key, KeyCode, KeyLocation, NamedKey, PhysicalKey};
+use winit::keyboard::{Key, KeyCode, KeyLocation, NamedKey, NativeKey, PhysicalKey};
 use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 use xkeysym::Keysym;
 
 /// The keysym for a key event, or `None` for a key with no keysym worth
-/// sending (a dead key, or something winit could not name).
+/// sending (a dead key, or one with no keysym at all).
 pub fn keysym(event: &KeyEvent) -> Option<u32> {
     resolve(
         &event.logical_key,
@@ -69,7 +72,13 @@ fn resolve(
         KeyLocation::Left => false,
         _ => is_right(physical),
     };
-    from_key(unmodified, right, numpad)
+    if let Some(sym) = from_key(unmodified, right, numpad) {
+        return Some(sym);
+    }
+    match logical {
+        Key::Unidentified(NativeKey::Xkb(sym)) if *sym != 0 => Some(*sym),
+        _ => None,
+    }
 }
 
 /// A key winit has named or given the character of, as a keysym.
@@ -115,6 +124,33 @@ fn keypad(c: char) -> Keysym {
 
 fn named_keysym(key: NamedKey, right: bool, numpad: bool) -> Option<Keysym> {
     let side = |left: Keysym, right_sym: Keysym| if right { right_sym } else { left };
+    // The number pad without Num Lock: winit names these keys by what they
+    // do, and only the location says they were the pad's.
+    if numpad {
+        let pad = match key {
+            NamedKey::Home => Some(Keysym::KP_Home),
+            NamedKey::End => Some(Keysym::KP_End),
+            NamedKey::PageUp => Some(Keysym::KP_Page_Up),
+            NamedKey::PageDown => Some(Keysym::KP_Page_Down),
+            NamedKey::ArrowLeft => Some(Keysym::KP_Left),
+            NamedKey::ArrowUp => Some(Keysym::KP_Up),
+            NamedKey::ArrowRight => Some(Keysym::KP_Right),
+            NamedKey::ArrowDown => Some(Keysym::KP_Down),
+            NamedKey::Insert => Some(Keysym::KP_Insert),
+            NamedKey::Delete => Some(Keysym::KP_Delete),
+            NamedKey::Enter => Some(Keysym::KP_Enter),
+            NamedKey::Tab => Some(Keysym::KP_Tab),
+            NamedKey::Space => Some(Keysym::KP_Space),
+            NamedKey::F1 => Some(Keysym::KP_F1),
+            NamedKey::F2 => Some(Keysym::KP_F2),
+            NamedKey::F3 => Some(Keysym::KP_F3),
+            NamedKey::F4 => Some(Keysym::KP_F4),
+            _ => None,
+        };
+        if pad.is_some() {
+            return pad;
+        }
+    }
     Some(match key {
         NamedKey::Alt => side(Keysym::Alt_L, Keysym::Alt_R),
         NamedKey::AltGraph => Keysym::ISO_Level3_Shift,
@@ -125,13 +161,7 @@ fn named_keysym(key: NamedKey, right: bool, numpad: bool) -> Option<Keysym> {
         NamedKey::Shift => side(Keysym::Shift_L, Keysym::Shift_R),
         NamedKey::Meta | NamedKey::Super => side(Keysym::Super_L, Keysym::Super_R),
         NamedKey::Hyper => side(Keysym::Hyper_L, Keysym::Hyper_R),
-        NamedKey::Enter => {
-            if numpad {
-                Keysym::KP_Enter
-            } else {
-                Keysym::Return
-            }
-        }
+        NamedKey::Enter => Keysym::Return,
         NamedKey::Tab => Keysym::Tab,
         NamedKey::Space => Keysym::space,
         NamedKey::ArrowDown => Keysym::Down,
@@ -239,7 +269,6 @@ impl KeyIds {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use winit::keyboard::NativeKey;
 
     #[test]
     fn characters_are_latin_1_or_unicode_keysyms() {
@@ -262,6 +291,27 @@ mod tests {
         assert_eq!(named_keysym(NamedKey::Enter, false, false), Some(Keysym::Return));
         assert_eq!(named_keysym(NamedKey::PageDown, false, false), Some(Keysym::Page_Down));
         assert_eq!(named_keysym(NamedKey::TVPower, false, false), None);
+    }
+
+    #[test]
+    fn the_number_pad_sends_its_own_keysyms_with_num_lock_off_or_on() {
+        let at = PhysicalKey::Code(KeyCode::Numpad7);
+        let pad = |key: Key| resolve(&key, &key, KeyLocation::Numpad, at);
+        assert_eq!(pad(Key::Named(NamedKey::Home)), Some(Keysym::KP_Home.raw()));
+        assert_eq!(pad(Key::Named(NamedKey::ArrowUp)), Some(Keysym::KP_Up.raw()));
+        assert_eq!(pad(Key::Named(NamedKey::PageDown)), Some(Keysym::KP_Page_Down.raw()));
+        assert_eq!(pad(Key::Named(NamedKey::Insert)), Some(Keysym::KP_Insert.raw()));
+        assert_eq!(pad(Key::Named(NamedKey::Delete)), Some(Keysym::KP_Delete.raw()));
+        assert_eq!(pad(Key::Named(NamedKey::Enter)), Some(Keysym::KP_Enter.raw()));
+        assert_eq!(pad(Key::Character("7".into())), Some(Keysym::KP_7.raw()));
+        assert_eq!(pad(Key::Character(".".into())), Some(Keysym::KP_Decimal.raw()));
+        // The 5 without Num Lock, which winit has no name for.
+        let begin = Key::Unidentified(NativeKey::Xkb(Keysym::KP_Begin.raw()));
+        assert_eq!(pad(begin), Some(Keysym::KP_Begin.raw()));
+        // The same names elsewhere are the keys they name.
+        let home = Key::Named(NamedKey::Home);
+        let at = PhysicalKey::Code(KeyCode::Home);
+        assert_eq!(resolve(&home, &home, KeyLocation::Standard, at), Some(Keysym::Home.raw()));
     }
 
     #[test]
@@ -292,6 +342,11 @@ mod tests {
         assert_eq!(
             resolve(&group, &alt, KeyLocation::Standard, right),
             Some(Keysym::Alt_R.raw())
+        );
+        // No name at any level: the keysym as it is.
+        assert_eq!(
+            resolve(&meta(Keysym::Meta_L), &meta(Keysym::Meta_L), KeyLocation::Left, win),
+            Some(Keysym::Meta_L.raw())
         );
         // A named level is taken as it is, whatever the key is unshifted.
         let tab = Key::Named(NamedKey::Tab);
