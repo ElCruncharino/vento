@@ -583,8 +583,16 @@ impl App {
             match gpu.surface.get_current_texture() {
                 wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => Some(t),
                 wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                    // A surface is lost too when another client has destroyed
+                    // the window, and configuring it again is then an error
+                    // wgpu would panic on; the `Destroyed` that follows closes
+                    // the window (see `window_event`).
+                    let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
                     gpu.surface.configure(&gpu.device, &gpu.config);
-                    window.request_redraw();
+                    match pollster::block_on(scope.pop()) {
+                        Some(error) => log::warn!("the window's surface could not be configured again: {error}"),
+                        None => window.request_redraw(),
+                    }
                     None
                 }
                 _ => None,
@@ -745,6 +753,17 @@ impl ApplicationHandler<Wake> for App {
         };
         match &event {
             WindowEvent::CloseRequested => {
+                self.close(event_loop);
+                return;
+            }
+            WindowEvent::Destroyed => {
+                // Another client destroyed the window, as `xdotool
+                // windowclose` or a window manager's kill does on X11:
+                // closed as if asked, but with the surface let go first,
+                // since a draw before the loop ends would configure one
+                // whose window is gone, which wgpu takes for fatal.
+                log::info!("the window was destroyed from outside; closing");
+                self.gpu = None;
                 self.close(event_loop);
                 return;
             }

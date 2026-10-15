@@ -663,6 +663,14 @@ handles.
   (Xvnc, xrdp). On the rig, `xdotool click 5` three times and `click 4`
   once over a TigerVNC session gave the far end 6 and 2 presses before,
   3 and 1 after.
+- **A window destroyed from outside closes cleanly.** Any client may
+  destroy any window (`xdotool windowclose`, a window manager's forced
+  close), and the window's focus-out arrives before the `DestroyNotify`;
+  winit 0.30 panicked when asked the size of a window that was gone in
+  between, and `patches/winit/0003` has it answer with the last size it
+  reported. On the `Destroyed` that follows the window drops its surface
+  and closes as if asked: on the rig, `xdotool windowclose` on a TigerVNC
+  session exited 0 with the backend torn down (it panicked before).
 - **The native cursor is an Xcursor, premultiplied.** winit copies the
   pixels it is given into a Render cursor as they are, which wants them
   premultiplied, so `cursor.rs` premultiplies them for X11 (Wayland's side
