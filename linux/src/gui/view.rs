@@ -160,17 +160,37 @@ impl View {
 
 impl Layout {
     /// The desktop pixel under a point, clamped into the source so that a
-    /// pointer dragged past the edge keeps pressing the edge. Through `rect`
-    /// as drawn, which is the scale give or take its rounding.
+    /// pointer dragged past the edge keeps pressing the edge.
+    ///
+    /// By the device pixel the point is in, and that pixel's centre, through
+    /// `rect` as drawn: the centre is where the GPU samples the picture, so
+    /// the pixel named is the one drawn there. From the pixel's corner, as it
+    /// was, a downscaled desktop's last column and row could not be reached
+    /// at all (at 1920 in 1280 the window's last pixel was desktop 1918),
+    /// which is where an auto-hiding taskbar or a hot corner waits. The
+    /// first and last device pixels always name the first and last desktop
+    /// pixels, since past twice smaller the centre of the first is already
+    /// beyond the desktop's first column.
     pub fn desktop_at(&self, pos: Pos2) -> (i32, i32) {
-        let per_point = self.source.size() / self.rect.size().max(Vec2::splat(f32::MIN_POSITIVE));
-        let x = self.source.min.x + (pos.x - self.rect.min.x) * per_point.x;
-        let y = self.source.min.y + (pos.y - self.rect.min.y) * per_point.y;
-        let max_x = (self.source.max.x - 1.0).max(self.source.min.x);
-        let max_y = (self.source.max.y - 1.0).max(self.source.min.y);
+        let ppp = self.pixels_per_point;
+        let axis = |pos: f32, min: f32, len: f32, source_min: f32, source_len: f32| -> i32 {
+            let pixels = (len * ppp).round().max(1.0);
+            // A point from a whole device pixel can come back a hair under
+            // it after the division into points and back.
+            let pixel = ((pos - min) * ppp + 1e-3).floor();
+            let last = (source_len - 1.0).max(0.0);
+            let at = if pixel <= 0.0 {
+                0.0
+            } else if pixel >= pixels - 1.0 {
+                last
+            } else {
+                ((pixel + 0.5) * source_len / pixels).floor().clamp(0.0, last)
+            };
+            (source_min + at) as i32
+        };
         (
-            x.floor().clamp(self.source.min.x, max_x) as i32,
-            y.floor().clamp(self.source.min.y, max_y) as i32,
+            axis(pos.x, self.rect.min.x, self.rect.width(), self.source.min.x, self.source.width()),
+            axis(pos.y, self.rect.min.y, self.rect.height(), self.source.min.y, self.source.height()),
         )
     }
 
@@ -280,11 +300,55 @@ mod tests {
         let layout = view.layout(rect(0.0, 0.0, 1920.0, 1200.0), rect(0.0, 0.0, 960.0, 1000.0), 1.0);
         assert_eq!(layout.scale, 0.5);
         assert_eq!(layout.desktop_at(pos2(0.0, 200.0)), (0, 0));
-        assert_eq!(layout.desktop_at(pos2(480.0, 500.0)), (960, 600));
+        // A device pixel here covers two desktop pixels, and its centre is
+        // the second's left edge, which is the second.
+        assert_eq!(layout.desktop_at(pos2(480.0, 500.0)), (961, 601));
         assert_eq!(layout.desktop_at(pos2(5000.0, -5.0)), (1919, 0));
         // A monitor's rectangle maps into its own coordinates.
         let layout = view.layout(rect(1920.0, 0.0, 1280.0, 800.0), rect(0.0, 0.0, 1280.0, 800.0), 1.0);
         assert_eq!(layout.desktop_at(pos2(10.0, 10.0)), (1930, 10));
+    }
+
+    #[test]
+    fn every_edge_pixel_of_the_desktop_can_be_pointed_at() {
+        let mut view = View {
+            mode: ScaleMode::FitWidth,
+            ..View::default()
+        };
+        // Downscaled by a third: the window's last pixel is the desktop's.
+        let layout = view.layout(rect(0.0, 0.0, 1920.0, 1200.0), rect(0.0, 0.0, 1280.0, 800.0), 1.0);
+        assert_eq!(layout.desktop_at(pos2(0.0, 0.0)), (0, 0));
+        assert_eq!(layout.desktop_at(pos2(1279.0, 799.0)), (1919, 1199));
+        assert_eq!(layout.desktop_at(pos2(1278.0, 798.0)), (1917, 1197));
+        assert_eq!(layout.desktop_at(pos2(640.0, 400.0)), (960, 600));
+        // Downscaled by four, both ends still.
+        let layout = view.layout(rect(0.0, 0.0, 5120.0, 2880.0), rect(0.0, 0.0, 1280.0, 800.0), 1.0);
+        assert_eq!(layout.desktop_at(pos2(0.0, layout.rect.min.y)), (0, 0));
+        assert_eq!(layout.desktop_at(pos2(1279.0, layout.rect.max.y - 1.0)), (5119, 2879));
+        assert_eq!(layout.desktop_at(pos2(1.0, layout.rect.min.y + 1.0)), (6, 6));
+        // Enlarged by two: each device pixel is the desktop pixel drawn there.
+        view.mode = ScaleMode::FillWidth;
+        let layout = view.layout(rect(0.0, 0.0, 800.0, 600.0), rect(0.0, 0.0, 1600.0, 1200.0), 1.0);
+        assert_eq!(layout.desktop_at(pos2(0.0, 0.0)), (0, 0));
+        assert_eq!(layout.desktop_at(pos2(1.0, 2.0)), (0, 1));
+        assert_eq!(layout.desktop_at(pos2(3.0, 3.0)), (1, 1));
+        assert_eq!(layout.desktop_at(pos2(1599.0, 1199.0)), (799, 599));
+    }
+
+    #[test]
+    fn at_a_fractional_scale_1_1_maps_each_device_pixel_to_its_own() {
+        let mut view = View {
+            mode: ScaleMode::Original,
+            ..View::default()
+        };
+        let ppp = 1.25;
+        view.pan = vec2(37.3, 0.0);
+        let layout = view.layout(rect(0.0, 0.0, 1920.0, 1200.0), rect(0.0, 0.0, 1280.0 / ppp, 800.0 / ppp), ppp);
+        let origin = (layout.rect.min.x * ppp).round() as i32;
+        for pixel in 0..1280 {
+            let (x, _) = layout.desktop_at(pos2(pixel as f32 / ppp, 0.0));
+            assert_eq!(x, pixel - origin, "device pixel {pixel}");
+        }
     }
 
     #[test]

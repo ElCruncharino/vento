@@ -230,7 +230,9 @@ key is the far end's while a session has focus — including the compositor's
 or window manager's own chords, see below.
 
 **The mouse** sends absolute desktop coordinates, mapped through the view and
-clamped to it, with an RFB button mask (left 1, middle 2, right 4) and the
+clamped to it — the desktop pixel drawn under the pointer, by the centre of
+the device pixel it is in, so that a scaled desktop's last row and column can
+be pointed at — with an RFB button mask (left 1, middle 2, right 4) and the
 wheel as momentary presses of 8/16/32/64 (up, down, left, right); smooth
 scrolling is turned into notches of fifty points. The far end's cursor shape,
 where the protocol sends one, is drawn under the local pointer with the OS
