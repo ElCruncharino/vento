@@ -100,7 +100,8 @@ headless, any of which selects the probe instead of the window:
                          for this run: a certificate the known hosts match
                          needs no --trust, and none is ever pinned from here
   --click X,Y            left-click there once connected
-  --key KEYSYM           press and release this X keysym (0x61 is 'a')
+  --key KEYSYM           press and release this X keysym: 0x61, 97 and 0141
+                         are all 'a', as strtol reads them
   --clipboard TEXT       send this as the clipboard a second after connecting";
 
     pub fn run(args: Vec<String>) -> i32 {
@@ -314,15 +315,31 @@ headless, any of which selects the probe instead of the window:
         value.trim().parse().map_err(|_| format!("{flag}: {value:?} is not a number"))
     }
 
-    /// `0x61`, `97`, or `0o`/`0b`; what probe.c's `strtol(.., 0)` takes.
+    /// A keysym as probe.c's `strtol(.., 0)` reads one, so that the same
+    /// `--key` means the same key to both probes: hex after `0x` or `0X`
+    /// (`0x61`), octal after any other leading zero (`0141`), decimal
+    /// otherwise (`97`), after leading white space and an optional `+`, with
+    /// nothing after the digits. `0o` and `0b` are not prefixes to strtol
+    /// (without C23's), so they are not here either. What does not fit a
+    /// keysym's 32 bits, or is negative, is refused rather than wrapped.
     fn keysym(value: &str) -> Result<u32, String> {
-        let v = value.trim();
-        let parsed = if let Some(hex) = v.strip_prefix("0x").or_else(|| v.strip_prefix("0X")) {
-            u32::from_str_radix(hex, 16)
+        let wrong = || format!("--key: {value:?} is not a keysym");
+        // C's isspace, which is not Unicode's.
+        let v = value.trim_start_matches([' ', '\t', '\n', '\x0b', '\x0c', '\r']);
+        let v = v.strip_prefix('+').unwrap_or(v);
+        let (digits, radix) = if let Some(hex) = v.strip_prefix("0x").or_else(|| v.strip_prefix("0X")) {
+            (hex, 16)
+        } else if v.len() > 1 && v.starts_with('0') {
+            (&v[1..], 8)
         } else {
-            v.parse()
+            (v, 10)
         };
-        parsed.map_err(|_| format!("--key: {value:?} is not a keysym"))
+        // from_str_radix takes a sign of its own, which strtol does not after
+        // a prefix; so the digits are checked first.
+        if digits.is_empty() || !digits.chars().all(|c| c.is_digit(radix)) {
+            return Err(wrong());
+        }
+        u32::from_str_radix(digits, radix).map_err(|_| wrong())
     }
 
     /// At most `bytes` of `text`, cut where a character starts: the far end's
@@ -672,6 +689,23 @@ headless, any of which selects the probe instead of the window:
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        fn a_keysym_is_read_as_strtol_with_base_zero_reads_it() {
+            assert_eq!(keysym("0x61"), Ok(0x61));
+            assert_eq!(keysym("0X61"), Ok(0x61));
+            assert_eq!(keysym("97"), Ok(0x61));
+            assert_eq!(keysym("0141"), Ok(0x61));
+            assert_eq!(keysym("0"), Ok(0));
+            assert_eq!(keysym("00"), Ok(0));
+            assert_eq!(keysym(" \t+0xff0d"), Ok(0xff0d));
+            assert_eq!(keysym("0xffffffff"), Ok(u32::MAX));
+            for refused in [
+                "0o141", "0b101", "08", "0x", "", " ", "0x+61", "0x-61", "-1", "97 ", "1e3", "0x1ffffffff", "++1",
+            ] {
+                assert!(keysym(refused).is_err(), "{refused:?}");
+            }
+        }
 
         #[test]
         fn a_clipboard_line_is_cut_between_characters() {
