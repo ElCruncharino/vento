@@ -78,6 +78,11 @@ pub struct Connect<'a> {
     /// The size of the screen this session will be drawn on, where there is
     /// one, which is what the RDP backends' `DesktopSize=device` asks for.
     pub screen: Option<(u32, u32)>,
+    /// The size this address's desktop ended up at last time, where the
+    /// client keeps that note — the phone does, per address, for both RDP
+    /// backends — which is what the RDP backends' `DesktopSize=remote` asks
+    /// for.
+    pub last_size: Option<(u32, u32)>,
     /// What the far end lists this machine as: a phone's model, a desktop's
     /// host name.
     pub client_name: &'a str,

@@ -3866,6 +3866,7 @@ dependencies = [
  "jni",
  "log",
  "remotedesktop-common",
+ "remotedesktop-session",
 ]
 
 [[package]]
@@ -3884,7 +3885,6 @@ dependencies = [
  "cipher 0.5.2",
  "des",
  "flate2",
- "jni",
  "log",
  "remotedesktop-common",
  "remotedesktop-platform-android",

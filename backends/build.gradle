@@ -80,6 +80,7 @@ ext.codegenSources = files(
         '../Cargo.toml', '../Cargo.lock', '../rust-toolchain.toml',
         'codegen/Cargo.toml', 'codegen/src',
         'session/Cargo.toml', 'session/build.rs', 'session/src',
+        'platform/android/Cargo.toml', 'platform/android/src',
         'common/Cargo.toml', 'common/src')
 
 ext.generateCatalog = { Project module, variant, String backend, String className ->
@@ -88,6 +89,24 @@ ext.generateCatalog = { Project module, variant, String backend, String classNam
         workspaceDir.set(cargoWorkspace)
         generatorSources.from(codegenSources)
         arguments.set(['catalog', backend, module.android.namespace, className])
+    }
+    variant.sources.java?.addGeneratedSourceDirectory(task) { it.outputDir }
+}
+
+/*
+ * A Rust backend's natives class, `<className>` in the module's package: the
+ * `native` methods of `NativeBackend.Natives`, out of the JNI table in
+ * `platform/android/src/surface.rs`, on a class that loads `library`. One per
+ * module rather than one shared class because each library registers its
+ * functions on a class from its `JNI_OnLoad`, and two libraries registering
+ * on one class would leave the last one loaded answering for both.
+ */
+ext.generateNatives = { Project module, variant, String className, String library ->
+    final cap = variant.name.substring(0, 1).toUpperCase(Locale.ROOT) + variant.name.substring(1)
+    final task = module.tasks.register("generate${cap}Natives", GenerateJavaTask) {
+        workspaceDir.set(cargoWorkspace)
+        generatorSources.from(codegenSources)
+        arguments.set(['natives', module.android.namespace, className, library])
     }
     variant.sources.java?.addGeneratedSourceDirectory(task) { it.outputDir }
 }

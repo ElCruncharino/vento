@@ -406,6 +406,9 @@ headless, any of which selects the probe instead of the window:
                     mailbox: Arc::clone(&mailbox),
                     dirs: &self.dirs,
                     screen: None,
+                    // The desktop keeps no note of a desktop's last size, so
+                    // `DesktopSize=remote` is the fallback here.
+                    last_size: None,
                     client_name: &client_name,
                     platform: Platform::Linux,
                     decoders: Some(backends::decoders()),

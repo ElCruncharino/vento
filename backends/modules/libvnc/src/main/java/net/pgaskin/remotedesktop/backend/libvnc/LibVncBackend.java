@@ -30,7 +30,7 @@ import java.util.function.Consumer;
  * has to do differently is a fact about that library rather than about
  * backends.
  *
- * <p>Beside {@code RfbBackend}, which is the same protocol and a client we
+ * <p>Beside the RFB backend, which is the same protocol and a client we
  * wrote, the differences that reach this far are all absences:
  *
  * <ul>

@@ -8,6 +8,7 @@ import android.content.Context;
 import net.pgaskin.remotedesktop.backend.Backend;
 import net.pgaskin.remotedesktop.backend.BackendOption;
 import net.pgaskin.remotedesktop.backend.BackendProvider;
+import net.pgaskin.remotedesktop.backend.NativeBackend;
 
 import java.util.List;
 import java.util.Map;
@@ -17,6 +18,10 @@ import java.util.Map;
  * called and what it can be told are the catalog's, which the Linux client
  * reads too: {@link RfbCatalog}, generated from {@code backends/session} at
  * build time, holds the words and the option keys.
+ *
+ * <p>A session is a {@link NativeBackend} on {@link RfbNatives}, generated
+ * too: the client in {@code src/main/rust} as a {@code session::Backend},
+ * with nothing about RFB on this side of the boundary that needs a hook.
  */
 public final class RfbProvider implements BackendProvider {
 
@@ -53,15 +58,7 @@ public final class RfbProvider implements BackendProvider {
     @Override
     public Backend create(Context context, String address, String userName, String password,
                           Map<String, String> options) {
-        return new RfbBackend(context, address, userName, password, options);
-    }
-
-    /** The compression option as the native side wants it: 0–9, or −1 for none. */
-    static int compressLevel(String value) {
-        try {
-            return Integer.parseInt(value);
-        } catch (NumberFormatException e) {
-            return -1;
-        }
+        return new NativeBackend(context, "Rfb", RfbCatalog.OPTIONS, new RfbNatives(),
+                NativeBackend.Hooks.NONE, address, userName, password, options);
     }
 }

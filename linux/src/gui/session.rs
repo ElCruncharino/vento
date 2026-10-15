@@ -258,6 +258,7 @@ impl Session {
             mailbox: Arc::clone(&mailbox),
             dirs,
             screen: Some(screen),
+            last_size: None,
             client_name: &client_name,
             platform: backends::Platform::Linux,
             decoders: Some(backends::decoders()),
