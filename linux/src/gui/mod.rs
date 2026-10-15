@@ -39,10 +39,10 @@ use crate::options::Options;
 use dialog::Dialog;
 pub use platform::Platform;
 use platform::Shortcuts;
-use session::Session;
+use session::{Session, Teardown};
 pub use settings::Settings;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalPosition;
 use winit::event::{DeviceEvent, DeviceId, StartCause, WindowEvent};
@@ -136,14 +136,43 @@ pub fn run(launch: Launch) -> i32 {
         pointer: None,
         focused: false,
         repaint_at: Arc::new(Mutex::new(None)),
+        teardowns: Vec::new(),
         exit_code: 0,
     };
-    if let Err(e) = event_loop.run_app(&mut app) {
+    let ran = event_loop.run_app(&mut app);
+    let exit_code = app.exit_code;
+    // The window goes first, and then whatever backend is still being
+    // destroyed is given a moment: a process that exits under a protocol
+    // thread takes the C libraries' exit handlers down with it, but a window
+    // that stays up while it waits is the freeze `Teardown` exists to avoid.
+    // Hidden rather than only dropped, because on X11 dropping it queues the
+    // destroy without sending it, and the window stayed on screen until the
+    // process was gone. (Wayland has no hiding; there it stays up for the
+    // wait, which is the rare case of a backend that would not let go.)
+    let teardowns = std::mem::take(&mut app.teardowns);
+    if teardowns.iter().any(|t| !t.is_finished())
+        && let Some(window) = &app.window
+    {
+        window.set_visible(false);
+    }
+    drop(app);
+    let deadline = Instant::now() + TEARDOWN_PATIENCE;
+    for teardown in teardowns {
+        if !teardown.wait_until(deadline) {
+            log::warn!("a backend was still being destroyed {TEARDOWN_PATIENCE:?} after the window closed; exiting anyway");
+            break;
+        }
+    }
+    if let Err(e) = ran {
         eprintln!("the event loop failed: {e}");
         return 1;
     }
-    app.exit_code
+    exit_code
 }
+
+/// How long the process waits, once the window has closed, for a backend
+/// that is still being destroyed.
+const TEARDOWN_PATIENCE: Duration = Duration::from_secs(2);
 
 struct Gpu {
     surface: wgpu::Surface<'static>,
@@ -178,6 +207,8 @@ struct App {
     focused: bool,
     /// When egui last asked to be repainted by.
     repaint_at: Arc<Mutex<Option<Instant>>>,
+    /// The backends of sessions that have ended, still being destroyed.
+    teardowns: Vec<Teardown>,
     exit_code: i32,
 }
 
@@ -465,7 +496,8 @@ impl App {
                 pointer: self.pointer,
             };
             self.settings = session.settings;
-            session.shutdown(&self.egui, &mut host);
+            let teardown = session.shutdown(&self.egui, &mut host);
+            self.reap(teardown);
             self.screen = Screen::Dialog(dialog);
         }
         window.set_title("Vento");
@@ -487,11 +519,18 @@ impl App {
                     platform: self.platform,
                     pointer: self.pointer,
                 };
-                session.shutdown(&self.egui, &mut host);
+                let teardown = session.shutdown(&self.egui, &mut host);
+                self.reap(teardown);
             }
         }
         self.shortcuts = None;
         event_loop.exit();
+    }
+
+    /// Keeps `teardown` until it has finished, and forgets the ones that have.
+    fn reap(&mut self, teardown: Teardown) {
+        self.teardowns.retain(|t| !t.is_finished());
+        self.teardowns.push(teardown);
     }
 }
 

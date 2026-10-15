@@ -134,6 +134,14 @@ the session had gone fullscreen. The window's title is the desktop's name once
 the protocol has said it, and rings the bell by putting one in the title for a
 moment.
 
+Disconnecting, or closing the window, ends a session at once, including one
+that is still connecting: every backend's dial and handshake give way to it,
+where several used to sit out their 20-second connect timeout first. A session
+that has still not closed ten seconds after a disconnect is given up on, and
+a backend is always released off the window's thread, so neither the dialog
+coming back nor the window closing waits for one that will not let go; once
+the window has gone the process gives it two seconds, then exits anyway.
+
 **The toolbar** floats at the top edge and stays out of the way: it slides off
 the top of the window when the pointer is elsewhere and slides back when the
 pointer touches the top edge (and for the first three seconds of a session, so

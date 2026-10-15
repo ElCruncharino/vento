@@ -1333,8 +1333,10 @@ impl Session {
 
     // ---- the end -----------------------------------------------------------
 
-    /// Ends the session and releases the backend, and the texture with it.
-    pub fn shutdown(mut self, ctx: &egui::Context, host: &mut Host) {
+    /// Ends the session and releases the texture, and starts releasing the
+    /// backend: what comes back is its `destroy`, under way on a thread of
+    /// its own.
+    pub fn shutdown(mut self, ctx: &egui::Context, host: &mut Host) -> Teardown {
         self.release_keys();
         self.native.reset(host.window);
         if self.captured() {
@@ -1359,7 +1361,53 @@ impl Session {
                 Err(e) => log::warn!("could not keep the identity for {address} in {}: {e}", self.identities.path().display()),
             }
         }
-        self.backend.destroy();
+        Teardown::start(self.backend)
+    }
+}
+
+/// A backend's `destroy`, on a thread of its own.
+///
+/// `destroy` joins the protocol thread, so it is as quick as the backend is
+/// to let go — and one that is not, still dialling or stuck in a handshake
+/// or simply past `DISCONNECT_PATIENCE` without a close, held the window's
+/// thread for as long: the window would not close, nor the dialog come
+/// back. Every backend now ends its dial when asked, so this is the second
+/// line rather than the first; the window keeps the handle so that it can
+/// give whatever is still going a moment before the process exits.
+pub struct Teardown(Option<std::thread::JoinHandle<()>>);
+
+impl Teardown {
+    fn start(backend: Arc<dyn Backend>) -> Teardown {
+        let destroying = Arc::clone(&backend);
+        match std::thread::Builder::new()
+            .name("destroy".into())
+            .spawn(move || destroying.destroy())
+        {
+            Ok(thread) => Teardown(Some(thread)),
+            Err(e) => {
+                log::warn!("could not start a thread to destroy the backend on ({e}); destroying it here");
+                backend.destroy();
+                Teardown(None)
+            }
+        }
+    }
+
+    pub fn is_finished(&self) -> bool {
+        self.0.as_ref().is_none_or(|thread| thread.is_finished())
+    }
+
+    /// Waits for it until `deadline` at most; whether it finished.
+    pub fn wait_until(self, deadline: Instant) -> bool {
+        while !self.is_finished() {
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        if let Some(thread) = self.0 {
+            let _ = thread.join();
+        }
+        true
     }
 }
 
