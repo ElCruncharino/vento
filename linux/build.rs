@@ -21,6 +21,12 @@
 //! exists is what the `realvnc` cfg says, so the Rust side can leave the
 //! backend out of its list rather than fail to link.
 //!
+//! That choice is made again whenever `PATH`, `CC` or `CXX` changes, and a
+//! tree configured for other compilers is thrown away and configured afresh:
+//! CMake keeps the compiler it was first configured with in its cache, and
+//! the configure step is skipped while there is one, so installing clang
+//! after a gcc build would otherwise never bring RealVNC in.
+//!
 //! Bindings are generated from our own headers, every item named `vento_` or
 //! `VENTO_`. The alternative — `#[repr(C)]` declarations written by hand with
 //! a layout check compiled from C — would be a second copy of a vtable whose
@@ -29,6 +35,7 @@
 //! `ffmpeg-sys-next`, so generating is the cheaper way to be right.
 
 use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -62,6 +69,11 @@ fn main() {
     ] {
         println!("cargo:rerun-if-changed={}", backends.join(path).display());
     }
+    // What decides the compilers (see `compilers`). Printing any rerun line
+    // means cargo watches only what is printed, so these have to be said.
+    for var in ["PATH", "CC", "CXX"] {
+        println!("cargo:rerun-if-env-changed={var}");
+    }
 
     let lib = build_c_backends(&backends, &out);
     println!("cargo:rustc-link-search=native={}", lib.display());
@@ -88,7 +100,8 @@ fn main() {
 /// Runs the host CMake build with the shared switch on and returns the
 /// directory the libraries were written to.
 fn build_c_backends(backends: &Path, out: &Path) -> PathBuf {
-    let clang = on_path("clang") && on_path("clang++");
+    let clang = compilers();
+    reconfigure_if_changed(out, &clang);
     let mut cfg = cmake::Config::new(backends);
     cfg.define("VENTO_SHARED", "ON")
         // The CMake root's own default: a probe at -O0 is not what anybody
@@ -104,20 +117,77 @@ fn build_c_backends(backends: &Path, out: &Path) -> PathBuf {
         // vendored projects, and the libraries are found where they are built.
         .build_target("all")
         // The configure step of three vendored trees is slow, and ninja
-        // re-runs it on its own when a CMake file changes.
+        // re-runs it on its own when a CMake file changes; a change of
+        // compilers, which it does not see, is `reconfigure_if_changed`'s.
         .always_configure(false);
     if on_path("ninja") {
         cfg.generator("Ninja");
     }
-    if clang {
-        cfg.define("CMAKE_C_COMPILER", "clang")
-            .define("CMAKE_CXX_COMPILER", "clang++");
+    if let Some((cc, cxx)) = &clang {
+        cfg.define("CMAKE_C_COMPILER", cc)
+            .define("CMAKE_CXX_COMPILER", cxx);
     }
     let dst = cfg.build();
     // `build()` returns the install prefix; the build tree is `build/` under
     // it, and `lib/` is where vento_desktop.cmake sends the libraries.
-    let _ = out;
     dst.join("build").join("lib")
+}
+
+/// clang and clang++ where both are on the path and run, as the paths `PATH`
+/// finds them at; `None` for whatever the `cmake` crate picks otherwise
+/// (`CC` and `CXX`, or `cc` and `c++`).
+fn compilers() -> Option<(PathBuf, PathBuf)> {
+    let found = |program: &str| {
+        on_path(program).then(|| which(program).unwrap_or_else(|| PathBuf::from(program)))
+    };
+    Some((found("clang")?, found("clang++")?))
+}
+
+/// The CMake tree under `out` deleted when it was configured for other
+/// compilers than these, so that the `cmake` crate, which only configures a
+/// tree that has no cache, configures it again. Every object in it would be
+/// rebuilt anyway, and a stale `libvento_realvnc.so` from a clang tree must
+/// not outlive a switch away from clang.
+///
+/// What the tree was configured for is a line written beside it. A tree from
+/// before that line existed is judged by its cache's C compiler instead —
+/// clang or not, which is the decision that matters.
+fn reconfigure_if_changed(out: &Path, clang: &Option<(PathBuf, PathBuf)>) {
+    let var = |name: &str| env::var(name).unwrap_or_default();
+    let want = match clang {
+        Some((cc, cxx)) => format!("clang {} {}", cc.display(), cxx.display()),
+        None => format!(
+            "default CC={} CXX={} cc={} c++={}",
+            var("CC"),
+            var("CXX"),
+            which("cc").unwrap_or_default().display(),
+            which("c++").unwrap_or_default().display()
+        ),
+    };
+    let tree = out.join("build");
+    let stamp = out.join("vento-compilers");
+    let cache = fs::read_to_string(tree.join("CMakeCache.txt")).ok();
+    let stale = match (fs::read_to_string(&stamp).ok(), &cache) {
+        (Some(had), Some(_)) => had.trim() != want,
+        (None, Some(cache)) => {
+            let was_clang = cache
+                .lines()
+                .find_map(|l| l.strip_prefix("CMAKE_C_COMPILER:"))
+                .and_then(|l| l.split_once('='))
+                .is_some_and(|(_, path)| {
+                    Path::new(path)
+                        .file_name()
+                        .is_some_and(|f| f.to_string_lossy().contains("clang"))
+                });
+            was_clang != clang.is_some()
+        }
+        (_, None) => false,
+    };
+    if stale {
+        println!("cargo:warning=C backends: the compilers changed, configuring afresh for {want}");
+        fs::remove_dir_all(&tree).expect("deleting the stale CMake tree");
+    }
+    fs::write(&stamp, format!("{want}\n")).expect("writing the compilers stamp");
 }
 
 fn on_path(program: &str) -> bool {
@@ -126,6 +196,17 @@ fn on_path(program: &str) -> bool {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+/// Where `PATH` finds `program`, as a shell would.
+fn which(program: &str) -> Option<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+    env::split_paths(&env::var_os("PATH")?)
+        .map(|dir| dir.join(program))
+        .find(|p| {
+            p.metadata()
+                .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        })
 }
 
 /// `vento/backend.h` and the four backend headers, as Rust.

@@ -554,7 +554,10 @@ on its compositor), and absolute pointing and the native cursor there.
 
 RealVNC's viewer core is proprietary and nothing of it is in this repository.
 The backend is built only when `clang` is on `PATH`; when it is not, the other
-seven are built and RealVNC is left out with a note. To use it, take
+seven are built and RealVNC is left out with a note. The next `cargo build`
+after `PATH` changes (clang installed, say) looks again, and when the answer
+differs the C tree is configured afresh with the other compilers, so nothing
+has to be cleaned by hand. To use it, take
 `libvncviewer.so` and `libc++_shared.so` for your host's ABI out of the viewer
 APK of the build `realvnc/.../Library.java` pins (the session verifies them by
 SHA-256 and refuses any other), and point `--library-dir` at them:
