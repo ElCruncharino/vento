@@ -240,7 +240,10 @@ them when it does.
 **Keys** go to the far end as X11 keysyms, from winit's *logical* key — what
 the layout says the key means — as Latin-1 keysyms where there are such, the
 Unicode keysym (`0x01000000 | codepoint`) otherwise, and a table for the named
-keys; the number pad sends `KP_*`, and modifiers are told apart by side. Each
+keys; the number pad sends `KP_*`, and modifiers are told apart by side. A
+level winit has no name for is sent as the key's own unmodified level, so
+Alt pressed after Shift (`Meta_L` on most layouts) is still Alt — the far
+end has the Shift and its own layout to make of them what it does. Each
 physical key gets a stable id so a release finds its press whatever the
 modifiers did meanwhile; every key still down is released when the window
 loses focus. There is one local chord, **Ctrl+Alt+D** for the debug overlay

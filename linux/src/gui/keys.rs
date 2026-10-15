@@ -14,6 +14,14 @@
 //! location, since `KP_1` and `1` are different keys to the same
 //! applications.
 //!
+//! Where the layout's level for the modifiers held has no name winit gives
+//! or this table sends, the key's own (its first level, the layout's again)
+//! is used instead. That is what keeps Alt pressed after Shift: on most
+//! layouts that level of the Alt key is `Meta_L`, which winit leaves
+//! unidentified, and under `grp:alt_shift_toggle` it is `ISO_Next_Group`;
+//! either way the far end wants the Alt it has its own layout to make sense
+//! of, and the Ctrl+Alt chords want it too.
+//!
 //! The identity is per physical key rather than per keysym, because the
 //! keysym of a key can change while it is held — Shift released before the
 //! letter is — and the release must still find its press. `KeyIds` hands out
@@ -22,15 +30,51 @@
 
 use std::collections::HashMap;
 use winit::event::KeyEvent;
-use winit::keyboard::{Key, KeyLocation, NamedKey, PhysicalKey};
+use winit::keyboard::{Key, KeyCode, KeyLocation, NamedKey, PhysicalKey};
+use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 use xkeysym::Keysym;
 
 /// The keysym for a key event, or `None` for a key with no keysym worth
 /// sending (a dead key, or something winit could not name).
 pub fn keysym(event: &KeyEvent) -> Option<u32> {
-    let right = event.location == KeyLocation::Right;
-    let numpad = event.location == KeyLocation::Numpad;
-    let sym = match &event.logical_key {
+    resolve(
+        &event.logical_key,
+        &event.key_without_modifiers(),
+        event.location,
+        event.physical_key,
+    )
+}
+
+/// `keysym` on its parts: the logical key, the same key without modifiers,
+/// the location winit read from the logical key's keysym, and the physical
+/// key.
+fn resolve(
+    logical: &Key,
+    unmodified: &Key,
+    location: KeyLocation,
+    physical: PhysicalKey,
+) -> Option<u32> {
+    // A dead key composes here; the character it ends in is what is sent.
+    if matches!(logical, Key::Dead(_)) {
+        return None;
+    }
+    let numpad = location == KeyLocation::Numpad;
+    if let Some(sym) = from_key(logical, location == KeyLocation::Right, numpad) {
+        return Some(sym);
+    }
+    // The location came from a keysym that may say nothing of a side
+    // (`ISO_Next_Group`), so the side is the physical key's then.
+    let right = match location {
+        KeyLocation::Right => true,
+        KeyLocation::Left => false,
+        _ => is_right(physical),
+    };
+    from_key(unmodified, right, numpad)
+}
+
+/// A key winit has named or given the character of, as a keysym.
+fn from_key(key: &Key, right: bool, numpad: bool) -> Option<u32> {
+    let sym = match key {
         Key::Character(text) => {
             let c = text.chars().next()?;
             if numpad {
@@ -43,6 +87,15 @@ pub fn keysym(event: &KeyEvent) -> Option<u32> {
         Key::Dead(_) | Key::Unidentified(_) => return None,
     };
     (sym != Keysym::NoSymbol).then_some(sym.raw())
+}
+
+fn is_right(physical: PhysicalKey) -> bool {
+    matches!(
+        physical,
+        PhysicalKey::Code(
+            KeyCode::AltRight | KeyCode::ControlRight | KeyCode::ShiftRight | KeyCode::SuperRight
+        )
+    )
 }
 
 /// The number pad's own keysyms for the characters it types.
@@ -186,7 +239,7 @@ impl KeyIds {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use winit::keyboard::KeyCode;
+    use winit::keyboard::NativeKey;
 
     #[test]
     fn characters_are_latin_1_or_unicode_keysyms() {
@@ -209,6 +262,50 @@ mod tests {
         assert_eq!(named_keysym(NamedKey::Enter, false, false), Some(Keysym::Return));
         assert_eq!(named_keysym(NamedKey::PageDown, false, false), Some(Keysym::Page_Down));
         assert_eq!(named_keysym(NamedKey::TVPower, false, false), None);
+    }
+
+    #[test]
+    fn a_modifier_s_unnamed_level_is_the_key_itself() {
+        // Alt with Shift held: Meta_L on the usual layouts.
+        let meta = |sym: Keysym| Key::Unidentified(NativeKey::Xkb(sym.raw()));
+        let alt = Key::Named(NamedKey::Alt);
+        let left = PhysicalKey::Code(KeyCode::AltLeft);
+        let right = PhysicalKey::Code(KeyCode::AltRight);
+        assert_eq!(
+            resolve(&meta(Keysym::Meta_L), &alt, KeyLocation::Left, left),
+            Some(Keysym::Alt_L.raw())
+        );
+        assert_eq!(
+            resolve(&meta(Keysym::Meta_R), &alt, KeyLocation::Right, right),
+            Some(Keysym::Alt_R.raw())
+        );
+        // A layout whose Alt key is something else unshifted: the layout's
+        // key, not the position's (altwin:swap_alt_win has Alt on the
+        // Windows key).
+        let win = PhysicalKey::Code(KeyCode::SuperLeft);
+        assert_eq!(
+            resolve(&meta(Keysym::Meta_L), &alt, KeyLocation::Left, win),
+            Some(Keysym::Alt_L.raw())
+        );
+        // grp:alt_shift_toggle: a group switch, which says no side.
+        let group = Key::Named(NamedKey::GroupNext);
+        assert_eq!(
+            resolve(&group, &alt, KeyLocation::Standard, right),
+            Some(Keysym::Alt_R.raw())
+        );
+        // A named level is taken as it is, whatever the key is unshifted.
+        let tab = Key::Named(NamedKey::Tab);
+        let at = PhysicalKey::Code(KeyCode::Tab);
+        assert_eq!(resolve(&tab, &tab, KeyLocation::Standard, at), Some(Keysym::Tab.raw()));
+    }
+
+    #[test]
+    fn dead_and_unknown_keys_send_nothing() {
+        let at = PhysicalKey::Code(KeyCode::Quote);
+        let dead = Key::Dead(Some('´'));
+        assert_eq!(resolve(&dead, &Key::Character("'".into()), KeyLocation::Standard, at), None);
+        let none = Key::Unidentified(NativeKey::Unidentified);
+        assert_eq!(resolve(&none, &none, KeyLocation::Standard, at), None);
     }
 
     #[test]
