@@ -308,6 +308,7 @@ impl Client {
             focused: true,
             connected: false,
             described: (0, 0, 0),
+            ticket: config.password.clone(),
         };
 
         // The main channel first, and everything else with the id its INIT
@@ -457,6 +458,12 @@ struct Session<'a> {
     /// live streams and the draws dropped — so that the rows are rebuilt when
     /// one of them changes rather than on every frame.
     described: (usize, usize, u64),
+    /// The ticket every channel is opened with: the configured one until a
+    /// person answers a refusal, and then the answer. A session is several
+    /// connections, and each presents the ticket, so a password typed for
+    /// the main channel has to be the one the others present too — or each
+    /// of them is refused and asks again.
+    ticket: Option<String>,
 }
 
 impl Session<'_> {
@@ -471,7 +478,7 @@ impl Session<'_> {
         queue: &mpsc::Sender<Message>,
         ends: &mpsc::Sender<Ended>,
     ) -> Result<Channel> {
-        let mut password = config.password.clone();
+        let mut password = self.ticket.clone();
         // The certificate is asked about once, on the first channel: the other
         // three reach the same server moments later and would present it again.
         let mut asked = false;
@@ -521,6 +528,10 @@ impl Session<'_> {
                         Some(answer) => password = Some(answer),
                         None => return Err(Error::Cancelled),
                     }
+                }
+                Ok(channel) => {
+                    self.ticket = password;
+                    return Ok(channel);
                 }
                 other => return other,
             }
