@@ -11,7 +11,7 @@ use crate::proto::{Counter, Reader, Writer, to_latin1};
 use crate::security::{self, Security};
 use crate::transport::{Wire, Writes};
 use crate::zlib::ZlibStream;
-use common::{Credentials, Handler};
+use common::{Credentials, Handler, Hangup};
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -101,14 +101,14 @@ enum Out {
 struct Shared {
     framebuffer: RwLock<Framebuffer>,
     out: Sender<Out>,
-    socket: Mutex<Option<TcpStream>>,
+    /// The socket, from the moment it starts dialling: what `close` breaks.
+    hangup: Hangup,
     info: Mutex<Info>,
     /// Whether a framebuffer update has been asked for and not yet arrived.
     /// A `Mutex` rather than an atomic because "ask unless one is outstanding"
     /// is a test and a set, and two threads do it.
     requested: Mutex<bool>,
     running: AtomicBool,
-    closing: AtomicBool,
     focused: AtomicBool,
     view_only: AtomicBool,
     /// The server acknowledged `ExtendedMouseButtons`, so the button mask may
@@ -150,11 +150,10 @@ impl Client {
             shared: Arc::new(Shared {
                 framebuffer: RwLock::new(Framebuffer::new()),
                 out: tx,
-                socket: Mutex::new(None),
+                hangup: Hangup::new(),
                 info: Mutex::new(Info::default()),
                 requested: Mutex::new(false),
                 running: AtomicBool::new(false),
-                closing: AtomicBool::new(false),
                 focused: AtomicBool::new(true),
                 view_only: AtomicBool::new(false),
                 extended_buttons: AtomicBool::new(false),
@@ -340,14 +339,12 @@ impl Client {
         }
     }
 
-    /// End the session. The reader is blocked on a socket read, so it is woken
-    /// by shutting the socket down rather than by a flag it cannot see.
+    /// End the session. The reader is blocked on a socket read, or still in
+    /// the dial, so it is woken by shutting the socket down rather than by a
+    /// flag it cannot see.
     pub fn close(&self) {
-        self.shared.closing.store(true, Ordering::Release);
+        self.shared.hangup.hang_up();
         let _ = self.shared.out.send(Out::Stop);
-        if let Some(socket) = self.shared.socket.lock().unwrap().as_ref() {
-            let _ = socket.shutdown(std::net::Shutdown::Both);
-        }
     }
 
     fn send(&self, bytes: Vec<u8>) {
@@ -364,7 +361,7 @@ impl Client {
         let result = self.session(config, handler);
         self.shared.running.store(false, Ordering::Release);
         let _ = self.shared.out.send(Out::Stop);
-        if self.shared.closing.load(Ordering::Acquire) {
+        if self.shared.hangup.is_hung_up() {
             return Err(Error::Closed);
         }
         result
@@ -372,10 +369,13 @@ impl Client {
 
     fn session(&self, config: &Config, handler: &mut dyn Handler) -> Result<()> {
         let (host, port) = resolve(&config.address)?;
-        let socket = connect(&host, port, config.connect_timeout)?;
+        let socket = connect(&self.shared.hangup, &host, port, config.connect_timeout)?;
+        // Held for the rest of the session, handshake and all: a server that
+        // takes the connection and then says nothing is a read that only a
+        // shut-down socket ends.
+        let _holding = self.shared.hangup.hold(&socket)?;
         socket.set_nodelay(true).ok();
         socket.set_read_timeout(Some(config.connect_timeout)).ok();
-        *self.shared.socket.lock().unwrap() = Some(socket.try_clone()?);
 
         let mut wire = Wire::plain(
             socket.try_clone()?,
@@ -957,14 +957,16 @@ fn resolve(address: &str) -> Result<(String, u16)> {
     common::address::split(address, 5900, common::address::Ports::Display).map_err(Error::Address)
 }
 
-fn connect(host: &str, port: u16, timeout: Duration) -> Result<TcpStream> {
+/// Each address in turn, through `hangup` so that a close ends the dial too.
+fn connect(hangup: &Hangup, host: &str, port: u16, timeout: Duration) -> Result<TcpStream> {
     if host.is_empty() {
         return Err(Error::Protocol("no address".into()));
     }
     let mut last = None;
     for addr in (host, port).to_socket_addrs()? {
-        match TcpStream::connect_timeout(&addr, timeout) {
+        match hangup.dial(addr, timeout) {
             Ok(socket) => return Ok(socket),
+            Err(_) if hangup.is_hung_up() => return Err(Error::Closed),
             Err(e) => last = Some(e),
         }
     }
@@ -987,6 +989,12 @@ impl common::Client for Client {
 
     fn close(&self) {
         self.close();
+    }
+
+    /// `run` reports a requested close as [`Error::Closed`], which is the
+    /// one ending the screen asked for and wants nothing said of.
+    fn closed_on_request(error: &Error) -> bool {
+        matches!(error, Error::Closed)
     }
 }
 
