@@ -22,3 +22,9 @@ name = "common"
 
 [dependencies]
 log.workspace = true
+# The dial a disconnect can interrupt (`src/hangup.rs`): a socket made before
+# it connects, which std does not offer, and the `poll` that waits on it.
+# Both were in the lock already: RustDesk dials with socket2, and libc is
+# under most of what is here.
+socket2 = "0.6"
+libc = "0.2"
