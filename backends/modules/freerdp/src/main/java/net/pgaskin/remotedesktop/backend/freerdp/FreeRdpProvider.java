@@ -178,7 +178,7 @@ public final class FreeRdpProvider implements BackendProvider {
         return new FreeRdpBackend(context, address, userName, password, options);
     }
 
-    /** The library keeps a certificate store of its own; see {@link FreeRdpBackend}. */
+    /** The library kept a certificate store of its own once; see {@link FreeRdpBackend}. */
     @Override
     public void forgetHosts(Context context) {
         FreeRdpBackend.forgetHosts(context);

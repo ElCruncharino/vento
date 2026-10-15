@@ -33,8 +33,9 @@ static void usage(void) {
             "  --size WxH           the desktop asked for, per monitor (1280x800)\n"
             "  --monitors N         how many (1)\n"
             "  --layout N           the keyboard layout id, or 0 for the library's (0)\n"
-            "  --config-dir DIR     a writable directory for the certificate store,\n"
-            "                       which becomes $HOME (vento-probe-freerdp, here)\n"
+            "  --config-dir DIR     a writable directory the library wants (nothing\n"
+            "                       is kept there), which becomes $HOME\n"
+            "                       (vento-probe-freerdp, here)\n"
             "  --timeout MS         connect timeout, or 0 for the library's (0)\n"
             "%s",
             vento_probe_usage);

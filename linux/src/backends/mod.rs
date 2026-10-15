@@ -28,8 +28,9 @@ use std::sync::Arc;
 #[derive(Clone, Debug)]
 pub struct Dirs {
     /// What a session leaves behind that is not a setting: TigerVNC's
-    /// known-hosts file, FreeRDP's certificate store, RealVNC's key,
-    /// identities and logs, each under a directory of its own backend.
+    /// known-hosts file, FreeRDP's config directory (which keeps nothing),
+    /// RealVNC's key, identities and logs, each under a directory of its own
+    /// backend.
     pub state: PathBuf,
     /// Where `libvncviewer.so` and `libc++_shared.so` out of the RealVNC
     /// viewer's APK are, for the one backend whose library is not in any

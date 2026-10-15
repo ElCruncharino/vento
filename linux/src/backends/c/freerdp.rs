@@ -3,8 +3,9 @@
 
 //! FreeRDP's `vento_freerdp` as a [`Backend`](crate::backend::Backend):
 //! `FreeRdpNative.nativeCreate`'s parameters and `FreeRdpBackend`'s option
-//! handling and rows. The certificate store is a directory of ours, which
-//! also becomes the process's HOME.
+//! handling and rows. The library's config path is a directory of ours, which
+//! also becomes the process's HOME; its certificate store there is never read
+//! or written, since every certificate is the trust prompt's to decide.
 
 use super::{Behaviour, CSession, start};
 use crate::backend::{Backend, ConnectionFact, Field, Traffic};
@@ -43,10 +44,10 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
     let o = c.options;
     let (domain, user) = c.domain_and_user();
     let (width, height) = desktop_size(o.get("DesktopSize"), c.screen);
-    // A directory of ours: the library keeps a certificate store there and
-    // one it cannot write is a connection that fails as a TLS error.
+    // A directory of ours: the library sets a certificate store up there at
+    // connect, never consulted, and without a path for one cannot connect.
     let store = c.dirs.state.join("freerdp");
-    std::fs::create_dir_all(&store).map_err(|e| format!("the certificate store: {e}"))?;
+    std::fs::create_dir_all(&store).map_err(|e| format!("FreeRDP's config directory: {e}"))?;
 
     let address = CString::new(c.address).map_err(|_| "address has a NUL")?;
     let user_c = (!user.is_empty()).then(|| CString::new(user.clone()).unwrap_or_default());
