@@ -7,7 +7,9 @@
 //! whole after that: each frame's coalesced rectangles are read out of the
 //! backend with `read_region` into a staging buffer sized for the rectangle
 //! and handed to egui as an `ImageDelta::partial`, which egui-wgpu turns into
-//! a `write_texture` of just that region. This is the same shape as the
+//! a `write_texture` of just that region. The staging buffers come back once
+//! egui has let go of them and are read into again, so that a rectangle is
+//! not first filled with black only for `read_region` to overwrite it. This is the same shape as the
 //! Android `Mirror` — the damage is already coalesced by the mailbox, and a
 //! partial texture write costs what the rectangle costs.
 //!
@@ -34,6 +36,10 @@ use crate::backend::Backend;
 use crate::events::Rect;
 use egui::emath::GuiRounding;
 use egui::{Color32, ColorImage, ImageData, Mesh, Shape, TextureId, TextureOptions, pos2, vec2};
+use std::sync::Arc;
+
+/// How many staging buffers are kept for reuse, at most.
+const SPARES: usize = 8;
 
 /// One texture's worth of the desktop.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -56,6 +62,51 @@ pub struct Desktop {
     uploads: u64,
     bytes: u64,
     last: Option<Rect>,
+    staging: Staging,
+}
+
+/// The staging buffers, kept for reuse.
+#[derive(Default)]
+struct Staging {
+    /// Handed to egui with an upload, until it has applied them and
+    /// dropped its share.
+    lent: Vec<Arc<ColorImage>>,
+    /// The ones it is done with, to be read into again.
+    spare: Vec<Vec<Color32>>,
+}
+
+impl Staging {
+    /// A buffer of `n` pixels for `read_region` to write all of. One egui
+    /// is done with comes back to be written again: whatever it held is
+    /// overwritten, and only a buffer shorter than `n` is lengthened, which
+    /// fills just the part it lacked. The spares are the longest few and,
+    /// together, no more than `budget` pixels — a desktop's worth, so that
+    /// what is kept between frames is bounded by the framebuffer the backend
+    /// already holds.
+    fn take(&mut self, n: usize, budget: usize) -> Vec<Color32> {
+        for image in std::mem::take(&mut self.lent) {
+            match Arc::try_unwrap(image) {
+                Ok(image) => self.spare.push(image.pixels),
+                Err(image) => self.lent.push(image),
+            }
+        }
+        self.spare.sort_by_key(|v| std::cmp::Reverse(v.len()));
+        let mut kept = 0;
+        self.spare.retain(|v| {
+            kept += v.capacity();
+            kept <= budget
+        });
+        self.spare.truncate(SPARES);
+        // The shortest that is long enough, or else the longest there is.
+        let pick = self.spare.iter().rposition(|v| v.len() >= n).or((!self.spare.is_empty()).then_some(0));
+        let mut pixels = pick.map(|i| self.spare.remove(i)).unwrap_or_default();
+        if pixels.len() >= n {
+            pixels.truncate(n);
+        } else {
+            pixels.resize(n, Color32::BLACK);
+        }
+        pixels
+    }
 }
 
 impl Desktop {
@@ -89,6 +140,7 @@ impl Desktop {
             uploads: 0,
             bytes: 0,
             last: None,
+            staging: Staging::default(),
         }
     }
 
@@ -130,12 +182,14 @@ impl Desktop {
         // The staging buffer is the image's own pixel vector, filled
         // through its bytes: `Color32` is four bytes `R, G, B, A`, which
         // is what `read_region` writes, so nothing is converted.
-        let mut pixels = vec![Color32::BLACK; w * h];
+        let mut pixels = self.staging.take(w * h, self.width * self.height);
         let bytes: &mut [u8] = bytemuck::cast_slice_mut(&mut pixels);
         if !backend.read_region(x, y, w, h, bytes, w * 4, 0, 0) {
+            self.staging.spare.push(pixels);
             return;
         }
-        let image = ColorImage::new([w, h], pixels);
+        let image = Arc::new(ColorImage::new([w, h], pixels));
+        self.staging.lent.push(Arc::clone(&image));
         let Tile { id, held, .. } = self.tiles[tile];
         ctx.tex_manager().write().set(
             id,
@@ -305,6 +359,46 @@ mod tests {
 
     fn frect(x: f32, y: f32, w: f32, h: f32) -> egui::Rect {
         egui::Rect::from_min_size(pos2(x, y), vec2(w, h))
+    }
+
+    #[test]
+    fn a_staging_buffer_comes_back_once_egui_lets_go_of_it() {
+        let mut staging = Staging::default();
+        let mut pixels = staging.take(4, 100);
+        assert_eq!(pixels, [Color32::BLACK; 4]);
+        pixels[0] = Color32::RED;
+        let image = Arc::new(ColorImage::new([2, 2], pixels));
+        staging.lent.push(Arc::clone(&image));
+        // Still held, as egui holds a delta until it is drawn: a new one.
+        let other = staging.take(4, 100);
+        assert_eq!(other[0], Color32::BLACK);
+        drop(image);
+        // Let go of: the same pixels, not filled again.
+        let again = staging.take(4, 100);
+        assert_eq!(again[0], Color32::RED);
+        assert!(staging.lent.is_empty());
+    }
+
+    #[test]
+    fn a_staging_buffer_is_the_shortest_that_fits_and_the_spares_are_bounded() {
+        let mut staging = Staging::default();
+        for n in [10, 40, 20] {
+            staging.spare.push(vec![Color32::RED; n]);
+        }
+        // Fifteen: the twenty, shortened, with nothing filled.
+        let pixels = staging.take(15, 1000);
+        assert_eq!(pixels, [Color32::RED; 15]);
+        // Fifty: the longest, lengthened by what it lacked.
+        let pixels = staging.take(50, 1000);
+        assert_eq!(pixels[..40], [Color32::RED; 40]);
+        assert_eq!(pixels[40..], [Color32::BLACK; 10]);
+        // A budget of fewer pixels than the spares hold drops the shorter.
+        staging.spare = vec![vec![Color32::RED; 60], vec![Color32::RED; 30]];
+        let _ = staging.take(1, 70);
+        assert!(staging.spare.is_empty());
+        staging.spare = (0..SPARES + 3).map(|_| vec![Color32::RED; 1]).collect();
+        let _ = staging.take(1, 1000);
+        assert_eq!(staging.spare.len(), SPARES - 1);
     }
 
     #[test]
