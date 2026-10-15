@@ -655,6 +655,31 @@ impl Session {
         }
     }
 
+    /// A key from winit that is egui's rather than the far end's: view only,
+    /// a prompt, a text field. It goes no further, but `down` is kept true
+    /// to it. Only the far end's keys were counted, so a modifier let go of
+    /// while input was blocked stayed down for the chord: Ctrl held, View
+    /// only on, Ctrl let go, View only off, and the next Alt+D was the
+    /// overlay. And a key that went down at the far end before its release
+    /// came here (a text field taking the keyboard mid-press) is released
+    /// there, which nothing else would do until the focus left.
+    pub fn key_elsewhere(&mut self, event: &KeyEvent) {
+        let physical = event.physical_key;
+        match event.state {
+            ElementState::Pressed => {
+                if let Some(keysym) = keys::keysym(event) {
+                    self.down.insert(physical, keysym);
+                }
+            }
+            ElementState::Released => {
+                self.down.remove(&physical);
+                if self.held.remove(&physical).is_some() {
+                    self.backend.key_up(self.key_ids.id(physical));
+                }
+            }
+        }
+    }
+
     /// Raw motion while the pointer is locked.
     pub fn mouse_motion(&mut self, dx: f64, dy: f64) {
         if !self.takes_raw_mouse() {
@@ -782,6 +807,14 @@ impl Session {
             }
         }
         self.sync_capture(host);
+        // Whatever stopped input going to the far end — a prompt arriving,
+        // view only, a disconnect — the keys it has down are let go of
+        // there, since their releases will now be egui's. View only and the
+        // disconnect did this already; a prompt that came up mid-press left
+        // the key down at the far end until the focus moved.
+        if !self.accepts_input() {
+            self.release_keys();
+        }
 
         let title = self.title();
         if title != self.title_set(ctx) {

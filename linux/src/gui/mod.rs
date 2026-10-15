@@ -677,12 +677,15 @@ impl ApplicationHandler<Wake> for App {
                 ..
             } if !is_synthetic => {
                 let egui = self.egui.clone();
-                if let Screen::Session(session) = &mut self.screen
-                    && session.takes_keys(&egui)
-                {
-                    session.key(key);
-                    window.request_redraw();
-                    return;
+                if let Screen::Session(session) = &mut self.screen {
+                    if session.takes_keys(&egui) {
+                        session.key(key);
+                        window.request_redraw();
+                        return;
+                    }
+                    // egui's, but the session still hears of it: a key
+                    // going up here is no longer down for its chord.
+                    session.key_elsewhere(key);
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
