@@ -113,7 +113,8 @@ cargo run -- tigervnc 127.0.0.1:5901 --no-grab-keyboard
 cargo run -- tigervnc 127.0.0.1:5901 --native-cursor
 
 # Straight into a session, with --connect. Without --password the credentials
-# prompt asks.
+# prompt asks. Disconnecting it quits; if the far end ends it instead, the
+# dialog comes up with the reason.
 cargo run -- tigervnc 127.0.0.1:5901 --password vncpass --connect
 cargo run -- rdp 127.0.0.1:3389 --user proto --password protopass --connect
 cargo run -- rustdesk 127.0.0.1 -o ConnectBy=address --password rustdeskpass --connect
@@ -173,7 +174,13 @@ which would be tens of thousands a minute).
 One window, which is either the connection dialog or a session. A session
 that ends goes back to the dialog, filled in with what it was connected to and,
 unless the disconnect was asked for, told why it ended — and to a window, if
-the session had gone fullscreen. The window's title is the desktop's name once
+the session had gone fullscreen. The exception is the session `--connect`
+opened: that one is the whole program, so disconnecting it (the toolbar's
+Disconnect, or Cancel while it connects) quits with status 0, the backend
+released as when the window is closed. Only an asked-for disconnect does: if
+the far end hangs up or the connection fails, the dialog comes up with the
+reason as for any other session, and a session started from there afterwards
+goes back to the dialog when it is disconnected. The window's title is the desktop's name once
 the protocol has said it, and rings the bell by putting one in the title for a
 moment — unless the backend's Bell option (`AcceptBell`, on the VNC backends)
 is off, in which case a bell is dropped before the window or the probe sees

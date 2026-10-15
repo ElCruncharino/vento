@@ -143,6 +143,7 @@ pub fn run(launch: Launch) -> i32 {
         shown: true,
         repaint_at: Arc::new(Mutex::new(None)),
         teardowns: Vec::new(),
+        launched: false,
         exit_code: 0,
     };
     let ran = event_loop.run_app(&mut app);
@@ -193,6 +194,26 @@ enum Screen {
     Session(Box<Session>),
 }
 
+/// What the window does once a session has ended.
+#[derive(Debug, PartialEq, Eq)]
+enum After {
+    /// Back to the dialog, filled in, with the reason if there is one.
+    Dialog,
+    /// Close the window and exit, as closing it would.
+    Quit,
+}
+
+/// `vento <backend> <address> --connect` is a session and nothing else, so
+/// disconnecting it is the end of the program; any other ending of it —
+/// the far end hanging up, an error — goes back to the dialog so that the
+/// reason stays on screen, and every session after it is the dialog's.
+/// `launched`: the session was the one `--connect` opened; `asked`: its
+/// ending was a disconnect from this side (the toolbar's, or the Cancel
+/// while connecting).
+fn after_session(launched: bool, asked: bool) -> After {
+    if launched && asked { After::Quit } else { After::Dialog }
+}
+
 struct App {
     launch: Option<Launch>,
     dirs: Dirs,
@@ -222,6 +243,10 @@ struct App {
     repaint_at: Arc<Mutex<Option<Instant>>>,
     /// The backends of sessions that have ended, still being destroyed.
     teardowns: Vec<Teardown>,
+    /// The session on screen is the one `--connect` opened, which quits
+    /// the window when it is disconnected (see `after_session`). Cleared
+    /// when it ends, so a session started later from the dialog does not.
+    launched: bool,
     exit_code: i32,
 }
 
@@ -309,6 +334,7 @@ impl App {
             if let Some(request) = launch.request {
                 if launch.connect {
                     self.connect(request);
+                    self.launched = matches!(self.screen, Screen::Session(_));
                 } else {
                     self.screen = Screen::Dialog(Dialog::from_request(&request));
                 }
@@ -435,7 +461,7 @@ impl App {
 
         let raw_input = state.take_egui_input(&window);
         let mut next: Option<Request> = None;
-        let mut ended: Option<String> = None;
+        let mut ended: Option<(String, bool)> = None;
         let mut host = Host {
             window: &window,
             winit: state,
@@ -454,7 +480,7 @@ impl App {
             Screen::Session(session) => {
                 session.frame(ui, &mut host);
                 if let Some(detail) = &session.closed {
-                    ended = Some(detail.clone());
+                    ended = Some((detail.clone(), session.disconnect_asked()));
                 }
             }
         });
@@ -537,8 +563,15 @@ impl App {
         output.textures_delta.clear();
 
         // After the frame, so that the session's last picture was drawn.
-        if let Some(detail) = ended {
-            self.end_session(&detail, event_loop);
+        if let Some((detail, asked)) = ended {
+            match after_session(self.launched, asked) {
+                After::Quit => {
+                    log::info!("the session --connect opened was disconnected; quitting");
+                    self.close(event_loop);
+                    return;
+                }
+                After::Dialog => self.end_session(&detail, event_loop),
+            }
         }
         if let Some(request) = next {
             self.connect(request);
@@ -574,6 +607,7 @@ impl App {
             self.reap(teardown);
             self.screen = Screen::Dialog(dialog);
         }
+        self.launched = false;
         window.set_title("Vento");
         self.egui.data_mut(|d| d.remove_temp::<String>(egui::Id::new("title")));
         window.request_redraw();
@@ -846,5 +880,20 @@ impl Gpu {
             config,
             renderer,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_disconnected_command_line_session_quits() {
+        assert_eq!(after_session(true, true), After::Quit);
+        // The far end ended it: the reason is shown, whoever started it.
+        assert_eq!(after_session(true, false), After::Dialog);
+        // Started from the dialog: back to it either way.
+        assert_eq!(after_session(false, true), After::Dialog);
+        assert_eq!(after_session(false, false), After::Dialog);
     }
 }

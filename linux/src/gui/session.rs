@@ -1485,6 +1485,12 @@ impl Session {
         }
     }
 
+    /// Whether the session's ending was asked for from this side, rather
+    /// than the far end's or the library's doing.
+    pub fn disconnect_asked(&self) -> bool {
+        self.disconnecting.is_some()
+    }
+
     pub fn disconnect(&mut self) {
         if self.disconnecting.is_none() {
             self.disconnecting = Some(Instant::now());

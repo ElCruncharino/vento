@@ -7,7 +7,8 @@
 //! window is the default: nothing on the command line opens the connection
 //! dialog empty, a backend and an address open it filled in — connecting to
 //! somebody else's machine is a click, not a side effect of a typo — and
-//! `--connect` opens straight into the session. `--list` prints the
+//! `--connect` opens straight into the session, which quits the window
+//! when it is disconnected. `--list` prints the
 //! backends and their options. Any of the probe's flags
 //! (`--probe`, `--out`, `--click`, …) selects the headless mode instead — the
 //! spirit of `backends/platform/desktop/c/probe.c`, which is what proved
@@ -93,7 +94,9 @@ usage: vento                                   the connection dialog
                          answered with a cancel (the probe gives it to the
                          first prompt only: a second means it was refused)
   -o KEY=VALUE           a backend option (repeatable); --list shows each
-  --connect              connect at once instead of showing the dialog
+  --connect              connect at once instead of showing the dialog;
+                         disconnecting that session quits (an ending the
+                         far end caused shows the dialog with the reason)
   --no-clipboard-out     do not send locally copied text to the far end
   --no-clipboard-in      do not take what the far end copies onto the local
                          clipboard
