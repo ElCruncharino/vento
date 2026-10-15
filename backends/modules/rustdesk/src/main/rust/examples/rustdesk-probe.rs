@@ -36,7 +36,7 @@
 //! default; the flag exists because which of them the picture depends on is a
 //! measurement rather than a reading.
 
-use remotedesktop_rustdesk::{Codec, crypto, protos, rendezvous, wire};
+use remotedesktop_rustdesk::{crypto, protos, rendezvous, wire};
 
 use std::io::Write;
 use std::sync::Arc;
@@ -626,6 +626,7 @@ impl Video {
     #[cfg(not(target_os = "android"))]
     fn write_ppm(&self, path: &str) -> Result<usize, String> {
         use common::video::{Changes, Decoders};
+        use remotedesktop_rustdesk::Codec;
 
         let codec = Codec::ALL
             .into_iter()
