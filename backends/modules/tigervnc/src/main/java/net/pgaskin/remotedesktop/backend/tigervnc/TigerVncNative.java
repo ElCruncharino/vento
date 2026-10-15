@@ -22,11 +22,12 @@ import android.graphics.Bitmap;
  *   <li><b>No {@code nativePointerRelative} and no pointer mode</b>, as with
  *       libvncclient: QEMU's {@code PointerTypeChange} is not among the
  *       encodings this client asks for, so this backend is always absolute.
- *   <li><b>{@code nativeAnswerQuestion} rather than {@code nativeAnswerTrust}.</b>
- *       The certificate is checked on the native side, the way TigerVNC's own
- *       viewer checks it and against the same known-hosts file, so what crosses
- *       the JNI surface is the question it decided to ask and the yes or no it
- *       gets back.
+ *   <li><b>{@code onQuestion} as well as {@code onTrustNeeded}.</b> A
+ *       certificate is a fingerprint for {@code KnownHosts}, as libvncclient's
+ *       is; an RSA-AES server key, which only this client can do, is a question
+ *       in their viewer's words, asked every time, since their viewer keeps
+ *       nothing of one either. Both are answered through
+ *       {@link #nativeAnswerTrust}.
  * </ul>
  *
  * <h2>Threads</h2>
@@ -82,10 +83,21 @@ final class TigerVncNative {
         void onCredentialsNeeded(boolean needsUserName);
 
         /**
-         * The client wants a yes or a no before the handshake goes on — which
-         * is always about the far end's identity, since that is the one thing
-         * it cannot check on its own. The session is stopped
-         * until {@link #nativeAnswerQuestion}, and a no ends it.
+         * The server's certificate, as its SHA-256 fingerprint, upper case and
+         * colon-separated — one that did not verify, and one an authority
+         * vouches for as well, since that says who the server claims to be and
+         * not that it is the one reached last time. Nothing about it is kept
+         * on the native side: the caller's store decides, or a person does.
+         * The session is stopped until {@link #nativeAnswerTrust}, and a no
+         * ends it.
+         */
+        void onTrustNeeded(String fingerprint);
+
+        /**
+         * An RSA-AES server key, which is the one identity a certificate store
+         * has nothing to say about: a title and a text in their viewer's words,
+         * and a yes or a no back through {@link #nativeAnswerTrust}. A no ends
+         * the session.
          */
         void onQuestion(String title, String text);
 
@@ -93,7 +105,7 @@ final class TigerVncNative {
          * The tunnel came up with no certificate in it, which is encryption
          * that proves nothing about what is at the far end. There is nothing
          * to show and nothing to pin, so the answer is a person's every time
-         * and it goes back through {@link #nativeAnswerQuestion}.
+         * and it goes back through {@link #nativeAnswerTrust}.
          *
          * @param why what could not be checked, as a sentence
          */
@@ -105,15 +117,6 @@ final class TigerVncNative {
 
     /** The library's version — the one call that proves the whole path. */
     static native String nativeVersion();
-
-    /**
-     * Where the client may keep the certificates a person has accepted. It keeps
-     * the known-hosts file TigerVNC's viewer keeps and finds it the way the
-     * viewer does, through the environment, which on Android points nowhere
-     * writable — so this is said once, before any session, and names the
-     * directory TigerVNC's own goes under.
-     */
-    static native void nativeSetStateDir(String path);
 
     /**
      * Start connecting. Returns a handle immediately; everything after this
@@ -152,8 +155,12 @@ final class TigerVncNative {
     /** A {@code null} password cancels, which ends the session. */
     static native void nativeAnswerCredentials(long handle, String userName, String password);
 
-    /** A no ends the session, since the question is whether to trust the far end. */
-    static native void nativeAnswerQuestion(long handle, boolean yes);
+    /**
+     * The answer to {@code onTrustNeeded}, {@code onUnverified} or
+     * {@code onQuestion}, whichever is outstanding — only one can be. A no ends
+     * the session, since each is whether to trust the far end.
+     */
+    static native void nativeAnswerTrust(long handle, boolean yes);
 
     static native void nativeDisconnect(long handle);
 

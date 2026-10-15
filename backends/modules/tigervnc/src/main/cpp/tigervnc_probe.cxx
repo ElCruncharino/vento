@@ -35,7 +35,6 @@ vento_session *create(void *config, const vento_callbacks *callbacks) {
             "  --color N            0 full, 1 for 64 colours, 2 for 8, -2 by speed (0)\n"
             "  --h264               offer H.264 as well\n"
             "  --audio              ask for the server's sound\n"
-            "  --state-dir DIR      where the known-hosts file goes (the real $HOME's)\n"
             "  --timeout MS         connect timeout, or 0 for none (0)\n"
             "%s",
             vento_probe_usage);
@@ -75,8 +74,6 @@ int main(int argc, char **argv) {
         } else if (strcmp(a, "--audio") == 0) {
             config.audio = true;
             i++;
-        } else if (strcmp(a, "--state-dir") == 0) {
-            vento_tigervnc_set_state_dir(vento_probe_value(argc, argv, &i));
         } else if (strcmp(a, "--timeout") == 0) {
             config.connect_timeout_ms = atoi(vento_probe_value(argc, argv, &i));
         } else if (a[0] != '-' && !config.address) {

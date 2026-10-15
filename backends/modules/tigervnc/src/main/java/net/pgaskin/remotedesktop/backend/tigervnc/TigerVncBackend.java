@@ -12,6 +12,7 @@ import android.util.Log;
 import net.pgaskin.remotedesktop.backend.Backend;
 import net.pgaskin.remotedesktop.backend.ConnectionFact;
 import net.pgaskin.remotedesktop.backend.CursorCache;
+import net.pgaskin.remotedesktop.backend.KnownHosts;
 import net.pgaskin.remotedesktop.backend.Monitor;
 import net.pgaskin.remotedesktop.backend.Prompt;
 
@@ -39,14 +40,14 @@ import java.util.function.Consumer;
  *   <li><b>Buttons eight and nine reach the far end</b> where the plain RFB
  *       pointer message has no room for the ninth, because this client speaks
  *       the extended pointer message when the server offers it.
- *   <li><b>The far end's identity is TigerVNC's business.</b> The native side
- *       checks the certificate the way their viewer does, keeps their viewer's
- *       known-hosts file beside the app's, and asks in their viewer's words;
- *       what the seam carries is the question and the answer. One difference:
- *       a certificate an authority vouches for is asked about once too, where
- *       their viewer would take it without a word.
- *       So {@code KnownHosts} is not consulted for this backend, and clearing it
- *       does not reach this store — {@link #forgetHosts} is what does.
+ *   <li><b>A certificate is pinned in {@link KnownHosts}</b>, the same store
+ *       and the same fingerprint as libvncclient's, so one server reached
+ *       through either is one entry. The native side refuses what cannot be
+ *       excused and keeps nothing; a certificate an authority vouches for is
+ *       put to the store too, where their viewer would take it without a word.
+ *       An RSA-AES server key, which only this client speaks, is asked about
+ *       in their viewer's words every time, since their viewer keeps nothing
+ *       of one either.
  * </ul>
  */
 public final class TigerVncBackend implements Backend, TigerVncNative.Callbacks {
@@ -63,6 +64,7 @@ public final class TigerVncBackend implements Backend, TigerVncNative.Callbacks 
      * the protocol thread's, so it needs no lock of its own.
      */
     private final CursorCache cursors = new CursorCache();
+    private final Context context;
     private final String address;
     private final String userName;
     private final String password;
@@ -84,13 +86,11 @@ public final class TigerVncBackend implements Backend, TigerVncNative.Callbacks 
     private volatile boolean dead;
 
     /**
-     * TigerVNC's known-hosts file, deleted.
-     *
-     * <p>Here rather than in the provider because the path is this class's
-     * doing: {@link TigerVncNative#nativeSetStateDir} is told the app's files
-     * directory below, and TigerVNC puts its own directory under whatever it is
-     * given. Nothing has to be running for this to be right — the file
-     * outlives every session, which is the point of it.
+     * The known-hosts file of TigerVNC's own that builds before this one kept
+     * under the app's files directory, deleted. Nothing reads it any more —
+     * certificates are pinned in {@link KnownHosts} — but it is still a list
+     * of the machines this phone has been to, written without anybody asking,
+     * and "forget every server" that left it behind would be a half-truth.
      */
     static void forgetHosts(Context context) {
         final File hosts = new File(new File(context.getFilesDir(), STATE_DIR), KNOWN_HOSTS);
@@ -99,13 +99,13 @@ public final class TigerVncBackend implements Backend, TigerVncNative.Callbacks 
         }
     }
 
-    /** TigerVNC's directory under the one it is given, and what it calls the file. */
+    /** Where that file was, under the files directory, and what it was called. */
     private static final String STATE_DIR = "tigervnc";
     private static final String KNOWN_HOSTS = "x509_known_hosts";
 
     public TigerVncBackend(Context context, String address, String userName, String password,
                            Map<String, String> extraOptions) {
-        TigerVncNative.nativeSetStateDir(context.getFilesDir().getAbsolutePath());
+        this.context = context.getApplicationContext();
         this.address = address;
         this.userName = userName == null ? "" : userName;
         // Empty is not a password: something that looks like a stored secret
@@ -480,6 +480,21 @@ public final class TigerVncBackend implements Backend, TigerVncNative.Callbacks 
         });
     }
 
+    /**
+     * The certificate, against the same store every other backend pins into, so
+     * a host reached through any of them is one entry.
+     */
+    @Override
+    public void onTrustNeeded(String fingerprint) {
+        if (KnownHosts.matches(context, address, fingerprint)) {
+            Log.i(TAG, "certificate matches the pin for " + address);
+            answerTrust(true);
+            return;
+        }
+        main.post(() -> KnownHosts.ask(context, address, fingerprint, prompts, this::answerTrust));
+    }
+
+    /** An RSA-AES server key, in their viewer's words; nothing is remembered. */
     @Override
     public void onQuestion(String title, String text) {
         Log.i(TAG, "the client wants an answer: " + title);
@@ -489,10 +504,7 @@ public final class TigerVncBackend implements Backend, TigerVncNative.Callbacks 
                     title + "\n\n" + text, Prompt.Message.Severity.WARNING, true, "Connect") {
                 @Override
                 protected void deliver(boolean ok) {
-                    final long session = handle;
-                    if (session != 0) {
-                        TigerVncNative.nativeAnswerQuestion(session, ok);
-                    }
+                    answerTrust(ok);
                 }
             };
             if (h == null) {
@@ -521,10 +533,7 @@ public final class TigerVncBackend implements Backend, TigerVncNative.Callbacks 
                     Prompt.Message.Severity.WARNING, true, "Connect anyway") {
                 @Override
                 protected void deliver(boolean ok) {
-                    final long session = handle;
-                    if (session != 0) {
-                        TigerVncNative.nativeAnswerQuestion(session, ok);
-                    }
+                    answerTrust(ok);
                 }
             };
             if (h == null) {
@@ -533,6 +542,13 @@ public final class TigerVncBackend implements Backend, TigerVncNative.Callbacks 
                 h.message(prompt);
             }
         });
+    }
+
+    private void answerTrust(boolean accept) {
+        final long h = handle;
+        if (h != 0) {
+            TigerVncNative.nativeAnswerTrust(h, accept);
+        }
     }
 
     @Override

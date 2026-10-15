@@ -356,9 +356,9 @@ headless without `--trust` — and never writes it: `--trust` says yes for that
 run and nothing else.
 
 No backend keeps a store of certificates of its own: FreeRDP is told to read
-and write none, TigerVNC is told to hand its certificates over rather than keep
-its viewer's `x509_known_hosts`, and libvnc and the four Rust clients never
-had one. What the backends do still keep is RealVNC's, under the state
+and write none, TigerVNC hands its certificates over rather than keep its
+viewer's `x509_known_hosts` (on the phone as well), and libvnc and the four
+Rust clients never had one. What the backends do still keep is RealVNC's, under the state
 directory (`--state-dir`, by default `$XDG_STATE_HOME/vento`):
 
 | Backend | What | Where |

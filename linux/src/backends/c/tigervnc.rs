@@ -3,11 +3,11 @@
 
 //! TigerVNC's `vento_tigervnc` as a [`Backend`](crate::backend::Backend):
 //! `TigerVncNative.nativeCreate`'s parameters and `TigerVncBackend`'s option
-//! handling and rows. Unlike the phone's, its certificates are this client's
-//! to judge: `caller_pins` has the session hand them to `trust_needed`, so
-//! they meet the [known hosts](crate::known_hosts) as every other backend's
-//! do, and TigerVNC's own known-hosts file is never read or written — which is
-//! why no state directory is given it.
+//! handling and rows. Its certificates are this client's to judge, as they are
+//! the phone's: the session hands them to `trust_needed`, so they meet the
+//! [known hosts](crate::known_hosts) as every other backend's do, and
+//! TigerVNC's own known-hosts file is never read or written — which is why no
+//! state directory is given it.
 
 use super::{Behaviour, CSession, start};
 use crate::backend::{Backend, ConnectionFact, Field, Traffic};
@@ -93,7 +93,6 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
         h264: o.bool("H264"),
         audio: o.bool("Audio"),
         connect_timeout_ms: CONNECT_TIMEOUT_MS,
-        caller_pins: true,
     };
     log::info!("connecting to {}", c.address);
     let backend = start(

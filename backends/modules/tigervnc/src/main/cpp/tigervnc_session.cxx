@@ -32,15 +32,13 @@
 //      descriptor afterwards, so everything above that is theirs.
 //   5. The certificate check. Their library hands a certificate that did not
 //      verify to the client and stops there (and, patched, one that did, so
-//      that it can be asked about too), and the known-hosts file, the
-//      exceptions and the questions are their viewer's — so they are here as
-//      their viewer has them, the same file in the same place and the same
-//      questions in the same words, and a person upgrading the app keeps every
-//      exception they had made. That is why this backend asks `question`
-//      rather than `trust_needed`: the decision is taken here, and what
-//      crosses the seam is the question and a yes or a no. A caller with a pin
-//      store of its own (`caller_pins`, the Linux client) gets the other
-//      backends' `trust_needed` instead, and their file is not touched.
+//      that it can be asked about too). Their viewer would then look in its
+//      own known-hosts file and ask in its own words; here nothing of the sort
+//      is kept or asked. What cannot be excused is refused, and everything
+//      else goes to `trust_needed` as its fingerprint, like every other
+//      backend's, so that the caller's store — the phone's KnownHosts, the
+//      Linux client's known_hosts — is the one place a server is pinned, and
+//      one server reached through libvnc or this is one pin.
 //
 // Their DecodeManager decodes on one thread per core up to four, which is not a
 // parameter and is unique here: the other clients in this repository decode on
@@ -70,7 +68,6 @@
 #include <stdint.h>
 #include <string.h>
 #include <sys/socket.h>
-#include <sys/stat.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -90,10 +87,8 @@
 #include <core/Logger.h>
 #include <core/Region.h>
 #include <core/Timer.h>
-#include <core/xdgdirs.h>
 
 #include <gnutls/gnutls.h>
-#include <gnutls/x509.h>
 
 #include <network/TcpSocket.h>
 
@@ -371,12 +366,12 @@ extern const vento_session_ops OPS;
 class Session : public vento_session {
 public:
     Session(const vento_callbacks &cb, std::string address, std::string userName,
-            std::string password, bool shared, bool anonymousTls, bool callerPins,
+            std::string password, bool shared, bool anonymousTls,
             int encoding, int compressLevel, int qualityLevel, int colorLevel, bool h264,
             bool audio, int connectTimeoutMs)
             : cb_(cb), address_(std::move(address)), userName_(std::move(userName)),
               password_(std::move(password)), shared_(shared),
-              anonymousTls_(anonymousTls), callerPins_(callerPins), encoding_(encoding),
+              anonymousTls_(anonymousTls), encoding_(encoding),
               compressLevel_(compressLevel), qualityLevel_(qualityLevel),
               colorLevel_(colorLevel), h264_(h264), audio_(audio),
               connectTimeoutMs_(connectTimeoutMs) {
@@ -594,8 +589,6 @@ public:
 
     bool anonymousTls() const { return anonymousTls_; }
 
-    bool callerPins() const { return callerPins_; }
-
     bool audio() const { return audio_; }
 
     void setPicture(int encoding, int compressLevel, int qualityLevel, int colorLevel,
@@ -754,7 +747,6 @@ private:
     std::string password_;
     const bool shared_;
     const bool anonymousTls_;
-    const bool callerPins_;
     int encoding_;
     int compressLevel_;
     int qualityLevel_;
@@ -1046,98 +1038,32 @@ void Conn::getUserPasswd(bool /*secure*/, std::string *user, std::string *passwo
 }
 
 /**
- * One problem a certificate can have that a person may overrule, and how it is
- * put to them — for a host never seen, and for one seen before with a different
- * certificate. Their viewer's list and their viewer's words; anything a
- * certificate can have wrong that is not in it is refused without asking.
+ * What a certificate can have wrong that a person may overrule by accepting it:
+ * their viewer's list — an unknown or unusable issuer, not yet or no longer
+ * valid, an insecure algorithm, a name it is not for. Anything else GnuTLS
+ * reports is refused without asking, as their viewer refuses it.
  */
-struct CertificateProblem {
-    unsigned mask;
-    const char *title;
-    const char *newHost;
-    const char *changedHost;
-    /** The two leads above end where the name the certificate is not for goes. */
-    bool namesHost;
-};
-
-const CertificateProblem CERTIFICATE_PROBLEMS[] = {
-        {GNUTLS_CERT_INVALID | GNUTLS_CERT_SIGNER_NOT_FOUND | GNUTLS_CERT_SIGNER_NOT_CA,
-         "Unknown certificate issuer",
-         "This certificate has been signed by an unknown authority:",
-         "This host is previously known with a different certificate, and the new"
-         " certificate has been signed by an unknown authority:", false},
-        {GNUTLS_CERT_NOT_ACTIVATED,
-         "Certificate is not yet valid",
-         "This certificate is not yet valid:",
-         "This host is previously known with a different certificate, and the new"
-         " certificate is not yet valid:", false},
-        {GNUTLS_CERT_EXPIRED,
-         "Expired certificate",
-         "This certificate has expired:",
-         "This host is previously known with a different certificate, and the new"
-         " certificate has expired:", false},
-        {GNUTLS_CERT_INSECURE_ALGORITHM,
-         "Insecure certificate algorithm",
-         "This certificate uses an insecure algorithm:",
-         "This host is previously known with a different certificate, and the new"
-         " certificate uses an insecure algorithm:", false},
-        {GNUTLS_CERT_UNEXPECTED_OWNER,
-         "Certificate hostname mismatch",
-         "The specified hostname \"",
-         "This host is previously known with a different certificate, and the"
-         " specified hostname \"", true},
-};
-
-/** GnuTLS's one-line summary of the certificate, a field to a line. */
-std::string describeCertificate(const gnutls_datum_t *certificate) {
-    gnutls_x509_crt_t crt;
-    int err = gnutls_x509_crt_init(&crt);
-    if (err != GNUTLS_E_SUCCESS) {
-        throw rdr::tls_error("Failed to decode server certificate", err);
-    }
-    err = gnutls_x509_crt_import(crt, certificate, GNUTLS_X509_FMT_DER);
-    gnutls_datum_t info = {};
-    if (err == GNUTLS_E_SUCCESS) {
-        err = gnutls_x509_crt_print(crt, GNUTLS_CRT_PRINT_ONELINE, &info);
-    }
-    gnutls_x509_crt_deinit(crt);
-    if (err != GNUTLS_E_SUCCESS) {
-        throw rdr::tls_error("Failed to decode server certificate", err);
-    }
-    std::string out((const char *) info.data);
-    gnutls_free(info.data);
-    for (size_t i = 0; i + 1 < out.size(); i++) {
-        if (out[i] == ',' && out[i + 1] == ' ') {
-            out[i] = '\n';
-        }
-    }
-    return out;
-}
+constexpr unsigned EXCUSABLE_PROBLEMS = GNUTLS_CERT_INVALID | GNUTLS_CERT_SIGNER_NOT_FOUND
+        | GNUTLS_CERT_SIGNER_NOT_CA | GNUTLS_CERT_NOT_ACTIVATED | GNUTLS_CERT_EXPIRED
+        | GNUTLS_CERT_INSECURE_ALGORITHM | GNUTLS_CERT_UNEXPECTED_OWNER;
 
 // Reached for every certificate, one that verified included (status 0): the
 // patch on their checkSession hands it over too, because an authority's word
-// is who the server says it is and not that it is the one reached last time,
-// so it is asked about like any other, as the other backends ask. A name that
-// does not match is one of the problems a certificate arrives with. The rest
-// is their viewer's trust-on-first-use, carried over whole — an exception is
-// a certificate pinned to a name in their known-hosts file, one that is there
-// already is accepted without a word, and a new one is asked about once per
-// problem (once, for one with none) and written there only when every answer
-// was yes. With `caller_pins`, everything past the refusal of what cannot be
-// excused is the caller's instead.
+// is who the server says it is and not that it is the one reached last time.
+// What cannot be excused is refused here; the rest is the caller's, through
+// `trust_needed`, whose store has the answer or whose person does. Nothing is
+// read from or written to their viewer's x509_known_hosts: a store of this
+// backend's own would be a second place a server is pinned, one the app's
+// list of known servers does not show.
 bool Conn::verifyCertificate(unsigned int status, const uint8_t *certificate,
                              size_t length) {
-    unsigned allowed = 0;
-    for (const CertificateProblem &problem : CERTIFICATE_PROBLEMS) {
-        allowed |= problem.mask;
-    }
-    if ((status & ~allowed) != 0) {
+    if ((status & ~EXCUSABLE_PROBLEMS) != 0) {
         // Refused without a question, and said in GnuTLS's words: returning
         // no is what sends the server its alert, and this is what the session
         // reports for it.
         gnutls_datum_t why = {};
         const int err = gnutls_certificate_verification_status_print(
-                status & ~allowed, GNUTLS_CRT_X509, &why, 0);
+                status & ~EXCUSABLE_PROBLEMS, GNUTLS_CRT_X509, &why, 0);
         if (err != GNUTLS_E_SUCCESS) {
             throw rdr::tls_error("Failed to get certificate problem description", err);
         }
@@ -1146,88 +1072,21 @@ bool Conn::verifyCertificate(unsigned int status, const uint8_t *certificate,
         return false;
     }
 
+    // The fingerprint, in the form libvnc's prints, so that one server reached
+    // through either is one pin rather than two.
     gnutls_datum_t cert = {const_cast<uint8_t *>(certificate), (unsigned int) length};
-    if (s->callerPins()) {
-        // The caller's store is the judge, as it is for every other backend
-        // it has: the fingerprint, in the form libvnc's prints, so that one
-        // server reached through either is one pin rather than two. Their
-        // file is neither consulted nor written.
-        uint8_t digest[32];
-        size_t size = sizeof(digest);
-        const int err = gnutls_fingerprint(GNUTLS_DIG_SHA256, &cert, digest, &size);
-        if (err != GNUTLS_E_SUCCESS || size != sizeof(digest)) {
-            throw rdr::tls_error("Failed to fingerprint the server certificate", err);
-        }
-        char hex[sizeof(digest) * 3 + 1];
-        for (size_t i = 0; i < sizeof(digest); i++) {
-            snprintf(hex + i * 3, 4, "%02X:", digest[i]);
-        }
-        hex[sizeof(digest) * 3 - 1] = '\0';
-        return s->askTrust(hex);
+    uint8_t digest[32];
+    size_t size = sizeof(digest);
+    const int err = gnutls_fingerprint(GNUTLS_DIG_SHA256, &cert, digest, &size);
+    if (err != GNUTLS_E_SUCCESS || size != sizeof(digest)) {
+        throw rdr::tls_error("Failed to fingerprint the server certificate", err);
     }
-
-    // Found the way their viewer finds it, which is what
-    // vento_tigervnc_set_state_dir arranges and what forgetHosts deletes.
-    const char *stateDir = core::getvncstatedir();
-    if (stateDir == nullptr) {
-        throw std::runtime_error("Could not determine VNC state directory path");
+    char hex[sizeof(digest) * 3 + 1];
+    for (size_t i = 0; i < sizeof(digest); i++) {
+        snprintf(hex + i * 3, 4, "%02X:", digest[i]);
     }
-    const std::string knownHosts = std::string(stateDir) + "/x509_known_hosts";
-
-    const int known = gnutls_verify_stored_pubkey(knownHosts.c_str(), nullptr, getServerName(),
-                                                  nullptr, GNUTLS_CRT_X509, &cert, 0);
-    if (known == GNUTLS_E_SUCCESS) {
-        return true;
-    }
-    if (known != GNUTLS_E_NO_CERTIFICATE_FOUND && known != GNUTLS_E_CERTIFICATE_KEY_MISMATCH) {
-        throw rdr::tls_error("Failed to load list of servers with a security exception", known);
-    }
-    const bool changed = known == GNUTLS_E_CERTIFICATE_KEY_MISMATCH;
-
-    const std::string info = describeCertificate(&cert);
-    if (status == 0) {
-        // Their viewer never asks this, since their library never asked it;
-        // the words are theirs where they fit.
-        const std::string text =
-                std::string(changed ? "This host is previously known with a different certificate,"
-                                      " and the new certificate has been signed by a trusted"
-                                      " authority:"
-                                    : "This certificate has been signed by a trusted authority,"
-                                      " and this host has not been connected to before:")
-                + "\n\n" + info + "\n\n"
-                + (changed ? "Someone could be trying to impersonate the site and you should not"
-                             " continue.\n\nDo you want to make an exception for this server?"
-                           : "Do you want to connect to this server and remember its certificate?");
-        if (!s->askQuestion(changed ? "Unexpected server certificate" : "New server certificate",
-                            text.c_str())) {
-            return false;
-        }
-    }
-    for (const CertificateProblem &problem : CERTIFICATE_PROBLEMS) {
-        if ((status & problem.mask) == 0) {
-            continue;
-        }
-        std::string text = changed ? problem.changedHost : problem.newHost;
-        if (problem.namesHost) {
-            text += getServerName();
-            text += changed ? "\" does not match the new certificate provided by the server:"
-                            : "\" does not match the certificate provided by the server:";
-        }
-        text += "\n\n" + info + "\n\n"
-                "Someone could be trying to impersonate the site and you should not continue."
-                "\n\nDo you want to make an exception for this server?";
-        if (!s->askQuestion(changed ? "Unexpected server certificate" : problem.title,
-                            text.c_str())) {
-            return false;
-        }
-    }
-
-    if (gnutls_store_pubkey(knownHosts.c_str(), nullptr, getServerName(), nullptr,
-                            GNUTLS_CRT_X509, &cert, 0, 0) != GNUTLS_E_SUCCESS) {
-        LOGW("could not add %s to %s; the same question will be asked next time",
-             getServerName(), knownHosts.c_str());
-    }
-    return true;
+    hex[sizeof(digest) * 3 - 1] = '\0';
+    return s->askTrust(hex);
 }
 
 // An RSA-AES key's fingerprint, in their viewer's words. Asked every time: their
@@ -1875,28 +1734,13 @@ const char *vento_tigervnc_version() {
     return "TigerVNC " PACKAGE_VERSION;
 }
 
-// The known-hosts file is found the way their viewer finds it, through their
-// getvncstatedir(), which reads the environment — and HOME on Android is not a
-// directory an app may write to. Both are set rather than one because the XDG
-// variable is only consulted after a home directory is found, and what it
-// names is the *parent*: their own directory under it is made here, since
-// nothing of theirs makes it and a store that fails is only a line in the log.
-void vento_tigervnc_set_state_dir(const char *path) {
-    if (path != nullptr && path[0] != '\0') {
-        const std::string dir = path;
-        setenv("XDG_STATE_HOME", dir.c_str(), 1);
-        setenv("HOME", dir.c_str(), 0);
-        mkdir((dir + "/tigervnc").c_str(), 0700);
-    }
-}
-
 vento_session *vento_tigervnc_create(const vento_tigervnc_config *cfg,
                                      const vento_callbacks *cb) {
     initLogging();
     Session *s = new Session(*cb, cfg->address ? cfg->address : "",
                              cfg->user_name ? cfg->user_name : "",
                              cfg->password ? cfg->password : "", cfg->shared,
-                             cfg->anonymous_tls, cfg->caller_pins, cfg->encoding, cfg->compress_level,
+                             cfg->anonymous_tls, cfg->encoding, cfg->compress_level,
                              cfg->quality_level, cfg->color_level, cfg->h264, cfg->audio,
                              cfg->connect_timeout_ms);
     if (!s->start()) {

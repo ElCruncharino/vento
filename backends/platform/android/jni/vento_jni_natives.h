@@ -11,10 +11,8 @@
 //                     nativeAnswerTrust, PLAIN)
 //
 // The second argument is the name of the method that answers the identity
-// questions — `nativeAnswerTrust` for the two backends whose trust decision
-// is Java's, `nativeAnswerQuestion` for TigerVNC, whose decision is its own
-// and asks Java only yes or no; both reach `vento_session_answer_trust`. The
-// third is `PLAIN` for a `nativeAnswerCredentials(handle, user, password)`
+// questions, `nativeAnswerTrust` in every module today, which reaches
+// `vento_session_answer_trust`. The third is `PLAIN` for a `nativeAnswerCredentials(handle, user, password)`
 // and `DOMAIN` for FreeRDP's, which carries one.
 //
 // A native binds by mangled name, so a missing one here fails the first time
