@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Two builds from one file. Under Gradle this is a root, configured by the NDK
-# toolchain, and makes `libremotedesktop_tigervnc.so`: the session, the JNI
-# file over the Android adapter, and the phone's two media sinks, with the
+# toolchain, and makes `libremotedesktop_tigervnc.so`: the session, with the
+# module's Rust crate linked in as the JNI layer over it, and the phone's two
+# media sinks, with the
 # vendored libjpeg-turbo and pixman and the nettle and GnuTLS ports linked in,
 # since a phone has none of them. Under `backends/CMakeLists.txt` it is a
 # subdirectory on a Linux host and makes `vento_tigervnc`, the session with
@@ -38,7 +39,7 @@ if(ANDROID)
 endif()
 include("${VENTO_BACKENDS}/cmake/warnings.cmake")
 if(ANDROID)
-    include("${VENTO_BACKENDS}/cmake/vento_jni.cmake")
+    include("${VENTO_BACKENDS}/cmake/vento_android.cmake")
 else()
     include("${VENTO_BACKENDS}/cmake/vento_desktop.cmake")
 endif()
@@ -208,19 +209,20 @@ add_subdirectory("${THIRD_PARTY}/tigervnc/common" tigervnc-common EXCLUDE_FROM_A
 remotedesktop_vendored_warnings("${THIRD_PARTY}/tigervnc/common")
 
 if(ANDROID)
-    # Two halves and the two media sinks: the session, which is the shim over
-    # TigerVNC's client and names no platform; the JNI file, which is
-    # `TigerVncNative`'s entry points over the shared Android adapter
-    # `vento_jni` brings with it; and the H.264 context and audio output the
-    # phone's own decoders stand behind, from `backends/platform/android`.
-    add_library(remotedesktop_tigervnc SHARED tigervnc_session.cxx tigervnc_jni.cxx
+    # The session, which is the shim over TigerVNC's client and names no
+    # platform; the Rust crate beside it in `src/main/rust`, which is the
+    # backend over the session and the JNI layer every backend shares; and the
+    # H.264 context and audio output the phone's own decoders stand behind,
+    # from `backends/platform/android`.
+    add_library(remotedesktop_tigervnc SHARED tigervnc_session.cxx
             "${VENTO_BACKENDS}/platform/android/tigervnc/H264AndroidDecoderContext.cxx"
             "${VENTO_BACKENDS}/platform/android/tigervnc/AndroidAudioOutput.cxx")
+    vento_android_library(remotedesktop_tigervnc remotedesktop_tigervnc)
     remotedesktop_warnings(remotedesktop_tigervnc)
     # gnutls by name as well as through theirs: the certificate check is the
     # shim's now, and it calls the known-hosts functions itself.
     target_link_libraries(remotedesktop_tigervnc PRIVATE rfbclient rfb network rdr core gnutls
-            vento_jni jnigraphics log mediandk aaudio)
+            aaudio)
 else()
     # The session and the desktop's audio sink, for whatever desktop process
     # links them: the neutral include directory is the interface, and

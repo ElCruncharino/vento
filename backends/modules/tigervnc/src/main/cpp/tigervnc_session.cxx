@@ -7,9 +7,9 @@
 // behind seams — the audio one is `AudioOutput.h` beside this file, asked of
 // `vento_tigervnc_audio_output()`, and the H.264 decoder context is picked by
 // their own build (`H264_ANDROID` for the phone's, `HAVE_LIBAV` for FFmpeg's)
-// — and what the phone needs of the rest is in `tigervnc_jni.cxx`, which is
-// one macro and a `nativeCreate`, over the adapter under
-// `backends/platform/android`.
+// — and what the phone needs of the rest is the Rust adapter in
+// `src/main/rust`, linked into the same library, which the one JNI layer in
+// `backends/platform/android` stands in front of, as it does every backend.
 //
 // Five things here are the shim's rather than the library's, and each is forced
 // by what TigerVNC's client code does and does not do:
@@ -1586,8 +1586,8 @@ bool Session::readThumbnail(int step, void *dst, size_t stride, int dstW, int ds
 }
 
 // Desktop name, protocol, connection, security, the encoding the server last
-// used, the line speed, and the two pixel formats — the order
-// `TigerVncNative.nativeInfo` documents.
+// used, the line speed, and the two pixel formats — the order the Rust
+// adapter's `info` labels them in.
 bool Session::info(vento_strings *out) {
     std::string desktop, protocol, security, serverPF, viewerPF;
     {

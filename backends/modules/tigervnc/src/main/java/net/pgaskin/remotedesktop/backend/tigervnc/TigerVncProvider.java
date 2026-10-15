@@ -4,11 +4,15 @@
 package net.pgaskin.remotedesktop.backend.tigervnc;
 
 import android.content.Context;
+import android.util.Log;
 
 import net.pgaskin.remotedesktop.backend.Backend;
 import net.pgaskin.remotedesktop.backend.BackendOption;
 import net.pgaskin.remotedesktop.backend.BackendProvider;
+import net.pgaskin.remotedesktop.backend.NativeBackend;
+import net.pgaskin.remotedesktop.backend.VncHooks;
 
+import java.io.File;
 import java.util.List;
 import java.util.Map;
 
@@ -17,24 +21,25 @@ import java.util.Map;
  * is called and what it can be told are the catalog's, which the Linux client
  * reads too: {@link TigerVncCatalog}, generated from {@code backends/session}
  * at build time, holds the words and the option keys.
+ *
+ * <p>A session is a {@link NativeBackend} on {@link TigerVncNatives}, generated
+ * too: the shim over TigerVNC's client in {@code src/main/cpp}, with the crate
+ * in {@code src/main/rust} linked into the same library as the backend over it
+ * — which turns the options into the RFB encoding the client prefers and its
+ * levels, and words the panel's rows. A certificate meets {@code KnownHosts}
+ * as every other backend's does, and one an authority vouches for goes there
+ * too, where their viewer would take it without a word; an RSA-AES server key,
+ * which only this client speaks, is asked about in their viewer's words every
+ * time, since their viewer keeps nothing of one either. What is left on this
+ * side is {@link VncHooks}, and the file below.
  */
 public final class TigerVncProvider implements BackendProvider {
 
-    /** RFB encoding numbers, which is what this client's preference is. */
-    private static final int ENCODING_RAW = 0;
-    private static final int ENCODING_RRE = 2;
-    private static final int ENCODING_HEXTILE = 5;
-    private static final int ENCODING_TIGHT = 7;
-    private static final int ENCODING_ZRLE = 16;
-    private static final int ENCODING_H264 = 50;
+    private static final String TAG = "TigerVnc";
 
-    /**
-     * Automatic, for a quality or a colour depth. Both are the client's own
-     * rules over its own bandwidth estimate, which is the row the panel already
-     * shows as the line speed — this is the one client here that measures
-     * anything, so it is the only one with an automatic to offer.
-     */
-    static final int LEVEL_AUTO = -2;
+    /** Where earlier builds kept TigerVNC's own known hosts, under the files directory. */
+    private static final String STATE_DIR = "tigervnc";
+    private static final String KNOWN_HOSTS = "x509_known_hosts";
 
     @Override
     public String id() {
@@ -69,55 +74,22 @@ public final class TigerVncProvider implements BackendProvider {
     @Override
     public Backend create(Context context, String address, String userName, String password,
                           Map<String, String> options) {
-        return new TigerVncBackend(context, address, userName, password, options);
-    }
-
-    /** The known-hosts file earlier builds left behind; see {@link TigerVncBackend}. */
-    @Override
-    public void forgetHosts(Context context) {
-        TigerVncBackend.forgetHosts(context);
-    }
-
-    /** A 0–9 option as the native side wants it, or −1 for "do not send it". */
-    static int level(String value) {
-        try {
-            return Integer.parseInt(value);
-        } catch (NumberFormatException e) {
-            return -1;
-        }
+        return new NativeBackend(context, TAG, TigerVncCatalog.OPTIONS, new TigerVncNatives(),
+                VncHooks.INSTANCE, address, userName, password, options);
     }
 
     /**
-     * The quality option, which has one more answer than the compression one:
-     * "auto" is the client's own rule over its estimate, and everything else is
-     * a level, with "lossless" falling through to the absence of one.
+     * The known-hosts file of TigerVNC's own that builds before this one kept
+     * under the app's files directory, deleted. Nothing reads it any more —
+     * certificates are pinned in {@code KnownHosts} — but it is still a list
+     * of the machines this phone has been to, written without anybody asking,
+     * and "forget every server" that left it behind would be a half-truth.
      */
-    static int quality(String value) {
-        return "auto".equals(value) ? LEVEL_AUTO : level(value);
-    }
-
-    /** The colour option as the shim's level: 0 full, 1 rgb222, 2 rgb111. */
-    static int colorLevel(String value) {
-        return switch (value == null ? "" : value) {
-            case "auto" -> LEVEL_AUTO;
-            case "rgb222" -> 1;
-            case "rgb111" -> 2;
-            default -> 0;
-        };
-    }
-
-    /** The encoding option as the RFB number this client prefers. */
-    static int encoding(String value) {
-        if (value == null) {
-            return ENCODING_TIGHT;
+    @Override
+    public void forgetHosts(Context context) {
+        final File hosts = new File(new File(context.getFilesDir(), STATE_DIR), KNOWN_HOSTS);
+        if (hosts.exists() && !hosts.delete()) {
+            Log.w(TAG, "could not delete " + hosts);
         }
-        return switch (value) {
-            case "h264" -> ENCODING_H264;
-            case "zrle" -> ENCODING_ZRLE;
-            case "hextile" -> ENCODING_HEXTILE;
-            case "rre" -> ENCODING_RRE;
-            case "raw" -> ENCODING_RAW;
-            default -> ENCODING_TIGHT;
-        };
     }
 }
