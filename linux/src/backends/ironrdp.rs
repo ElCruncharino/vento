@@ -5,7 +5,7 @@
 //! `bindings/mod.rs`, with `IronRdpBackend.java`'s option handling and its
 //! rows.
 
-use super::{CONNECT_TIMEOUT_MS, Connect, Kind, client_name, split_domain};
+use super::{CONNECT_TIMEOUT_MS, Connect, Kind, client_name, rdp_identity};
 use crate::backend::{
     Backend, ConnectionFact, Credentials, Facts, Field, Monitor, Picture, Traffic,
 };
@@ -260,24 +260,15 @@ impl Backend for IronRdp {
     }
 
     /// A typed `DOMAIN\user` is split again, as the Java prompt splits it;
-    /// an empty name is the one the session was created with.
+    /// an empty name is the one the session was created with, and a bare one
+    /// keeps the session's domain (see [`rdp_identity`]).
     fn answer_credentials(&self, credentials: Option<Credentials>) {
         self.session.answer_credentials(credentials.map(|c| {
-            if c.user.is_empty() {
-                Credentials {
-                    user: self.user.clone(),
-                    domain: self.domain.clone(),
-                    password: c.password,
-                }
-            } else if c.domain.is_empty() {
-                let (domain, user) = split_domain(&c.user);
-                Credentials {
-                    user,
-                    domain,
-                    password: c.password,
-                }
-            } else {
-                c
+            let (domain, user) = rdp_identity(&c, &self.domain, &self.user);
+            Credentials {
+                user,
+                domain,
+                password: c.password,
             }
         }));
     }

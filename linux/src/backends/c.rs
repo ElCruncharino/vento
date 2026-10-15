@@ -493,18 +493,16 @@ impl Backend for CBackend {
         match credentials {
             None => self.session.answer_credentials("", "", None),
             Some(c) => {
-                let (domain, user) = if !self.behaviour.rdp_domain {
-                    (String::new(), self.user.clone())
+                // What was typed, with an empty user name sent as the one
+                // the session was created with, as the Java prompts fill it
+                // in. Only RDP has a domain to carry along.
+                let (domain, user) = if self.behaviour.rdp_domain {
+                    super::rdp_identity(&c, &self.domain, &self.user)
                 } else if c.user.is_empty() {
-                    (self.domain.clone(), self.user.clone())
-                } else if c.domain.is_empty() {
-                    super::split_domain(&c.user)
+                    (String::new(), self.user.clone())
                 } else {
-                    (c.domain.clone(), c.user.clone())
+                    (String::new(), c.user.clone())
                 };
-                // An empty user name is sent as the one the session was
-                // created with, as the Java prompts fill it in.
-                let user = if user.is_empty() { self.user.clone() } else { user };
                 self.session.answer_credentials(&user, &domain, Some(&c.password));
             }
         }

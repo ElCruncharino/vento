@@ -272,7 +272,8 @@ it is.
 
 **Prompts** are modal dialogs over the session, which is blocked until one is
 answered — so Escape, or clicking outside, is a no: credentials (the user name
-field only where the scheme has one), a certificate's fingerprint to trust for
+field only where the scheme has one; for RDP a name typed without a domain
+keeps the session's, and `.\user` is a local account), a certificate's fingerprint to trust for
 this session (nothing is persisted), an unverifiable server, TigerVNC's own
 questions, RealVNC's security prompt with its identity and encryption states in
 words and its *remember server* box, and messages (OK, or confirm/cancel when
