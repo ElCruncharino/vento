@@ -178,8 +178,10 @@ pub enum Event {
     DesktopSize { width: usize, height: usize },
     /// Everything that belongs to one or more updates has arrived, and these
     /// rectangles of the framebuffer have new pixels; the pixels themselves
-    /// are read with `read_region`.
-    Frame(Vec<Rect>),
+    /// are read with `read_region`. `ended` is when the first `frame_end` in
+    /// it came — the oldest, where an unread frame took in later ones — which
+    /// is what a window measures how long its pixels took to show from.
+    Frame { rects: Vec<Rect>, ended: Instant },
     /// The pointer's shape, or `None` where the server has hidden it or asked
     /// for the default one, both of which mean "draw your own".
     Cursor(Option<Cursor>),
@@ -446,9 +448,11 @@ impl Mailbox {
                 .rev()
                 .take_while(|e| !e.is_size())
                 .find_map(|e| match e {
-                    Event::Frame(rects) => Some(rects),
+                    Event::Frame { rects, .. } => Some(rects),
                     _ => None,
                 });
+            // The unread frame keeps when it ended: its pixels have waited
+            // since then, and still have.
             match unread {
                 Some(previous) => {
                     let mut merged = Damage::default();
@@ -456,7 +460,10 @@ impl Mailbox {
                     merged.extend(rects);
                     *previous = merged.take();
                 }
-                _ => inner.queue.push_back(Event::Frame(rects)),
+                _ => inner.queue.push_back(Event::Frame {
+                    rects,
+                    ended: Instant::now(),
+                }),
             }
         }
         self.notify();
@@ -619,6 +626,32 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    /// A frame's rectangles, when it is one: when it ended is the one
+    /// thing a test cannot spell out.
+    fn frame(event: Option<Event>) -> Option<Vec<Rect>> {
+        match event {
+            Some(Event::Frame { rects, .. }) => Some(rects),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn a_merged_frame_ended_when_its_oldest_part_did() {
+        let mailbox = Mailbox::new(None);
+        let before = Instant::now();
+        mailbox.on_damaged(0, 0, 1, 1);
+        mailbox.on_frame_end();
+        let first = Instant::now();
+        std::thread::sleep(Duration::from_millis(5));
+        mailbox.on_damaged(2, 2, 1, 1);
+        mailbox.on_frame_end();
+        let Some(Event::Frame { rects, ended }) = mailbox.take() else {
+            panic!("a frame");
+        };
+        assert_eq!(rects.len(), 2);
+        assert!(before <= ended && ended <= first, "the first frame_end's time, not the second's");
+    }
+
     fn rect(x: usize, y: usize, w: usize, h: usize) -> Rect {
         Rect {
             x,
@@ -716,12 +749,8 @@ mod tests {
         mailbox.on_frame_end();
         assert_eq!(mailbox.frames(), 3);
         assert_eq!(
-            mailbox.take(),
-            Some(Event::Frame(vec![
-                rect(0, 0, 10, 10),
-                rect(20, 20, 5, 5),
-                rect(100, 100, 1, 1)
-            ]))
+            frame(mailbox.take()),
+            Some(vec![rect(0, 0, 10, 10), rect(20, 20, 5, 5), rect(100, 100, 1, 1)])
         );
         assert_eq!(mailbox.take(), None);
     }
@@ -734,7 +763,7 @@ mod tests {
         mailbox.on_bell();
         mailbox.on_damaged(2, 2, 1, 1);
         mailbox.on_frame_end();
-        assert_eq!(mailbox.take(), Some(Event::Frame(vec![rect(0, 0, 1, 1), rect(2, 2, 1, 1)])));
+        assert_eq!(frame(mailbox.take()), Some(vec![rect(0, 0, 1, 1), rect(2, 2, 1, 1)]));
         assert_eq!(mailbox.take(), Some(Event::Bell));
         assert_eq!(mailbox.take(), None);
     }
@@ -763,9 +792,9 @@ mod tests {
         mailbox.on_damaged(10, 10, 5, 5);
         mailbox.on_frame_end();
         assert_eq!(mailbox.take(), Some(Event::Connected { width: 100, height: 100 }));
-        assert_eq!(mailbox.take(), Some(Event::Frame(vec![rect(90, 90, 10, 10)])));
+        assert_eq!(frame(mailbox.take()), Some(vec![rect(90, 90, 10, 10)]));
         assert_eq!(mailbox.take(), Some(Event::DesktopSize { width: 50, height: 50 }));
-        assert_eq!(mailbox.take(), Some(Event::Frame(vec![rect(0, 0, 5, 5), rect(10, 10, 5, 5)])));
+        assert_eq!(frame(mailbox.take()), Some(vec![rect(0, 0, 5, 5), rect(10, 10, 5, 5)]));
         assert_eq!(mailbox.take(), Some(Event::Bell));
         assert_eq!(mailbox.take(), None);
     }
@@ -789,7 +818,7 @@ mod tests {
         assert_eq!(waiting.len(), 5, "{waiting:?}");
         assert_eq!(waiting[0], Event::Connected { width: 1920, height: 1200 });
         // One frame with every column in it, merged as it went.
-        assert_eq!(waiting[1], Event::Frame(vec![rect(0, 0, 750, 1)]));
+        assert_eq!(frame(Some(waiting[1].clone())), Some(vec![rect(0, 0, 750, 1)]));
         // And the latest of each of the others, in the order they were last
         // said.
         assert!(matches!(&waiting[2], Event::Cursor(Some(c)) if c.rgba == [0x00, 0x00, 0xff, 0xff]));

@@ -408,8 +408,24 @@ desktop's origin and size on screen; whether the mouse is captured or
 hovering, the buttons, how many keys are held at the far end, and VIEW ONLY
 when it is; the shortcuts inhibitor's state, the follower's (off, waiting
 for the far end, or the size it asked for), the cursor shape (native, or
-software when that setting is on, its size and hotspot) and the two clipboard switches. The counters
-are kept whether or not it is on, and the box is a few labels a frame while
+software when that setting is on, its size and hotspot) and the two clipboard
+switches; and three delays, each as the last, then the mean and the worst of
+the last 32: **render**, from a backend's `frame_end` (stamped when the
+mailbox queues the frame; a frame that took in later ones while unread keeps
+the oldest) to that frame's pixels being submitted and presented, which
+includes waiting for the surface to take a frame; **pointer**, from winit
+handing over a mouse event that egui reads (the mouse when it is not
+captured) to the pointer event it made being given to the backend in the
+next frame; and **keys**, from winit handing over a key to the backend's
+`key_down` returning, which is the same call, so it measures this end's
+handling and nothing more. None of them is the round trip — input in,
+the far end's pixels back — which no backend here can be asked for: the
+events a backend gives this end have no echo of the pointer, and a far end
+that moves its own cursor (RDP's pointer position, RustDesk's) does not say
+it is answering a move of ours. The counters
+are kept whether or not it is on — for the delays a clock read per backend
+frame, per presented frame, per frame with mouse input and per key, and a
+store into a ring — and the box is a few labels a frame while
 it is.
 
 **Prompts** are modal dialogs over the session, which is blocked until one is

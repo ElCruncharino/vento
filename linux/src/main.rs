@@ -506,7 +506,7 @@ headless, any of which selects the probe instead of the window:
             match event {
                 Event::Connected { width, height } => say(&format!("connected {width}x{height}")),
                 Event::DesktopSize { width, height } => say(&format!("desktop_size {width}x{height}")),
-                Event::Frame(rects) => say(&format!("frame_end ({} rectangles)", rects.len())),
+                Event::Frame { rects, .. } => say(&format!("frame_end ({} rectangles)", rects.len())),
                 Event::Cursor(None) => say("cursor default"),
                 Event::Cursor(Some(c)) => {
                     let opaque = c.rgba.chunks_exact(4).filter(|p| p[3] != 0).count();

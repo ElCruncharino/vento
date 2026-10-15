@@ -541,6 +541,7 @@ impl App {
                 _ => None,
             }
         };
+        let mut presented = None;
         if let Some(frame) = frame {
             let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
             let mut encoder = gpu
@@ -570,6 +571,13 @@ impl App {
             gpu.queue.submit(commands.into_iter().chain(std::iter::once(encoder.finish())));
             window.pre_present_notify();
             gpu.queue.present(frame);
+            presented = Some(Instant::now());
+        }
+        // The overlay's render latency ends here: the frame's pixels have
+        // been submitted and the surface handed to the compositor, which
+        // is as far as this end can follow them.
+        if let Screen::Session(session) = &mut self.screen {
+            session.presented(presented);
         }
         for id in &output.textures_delta.free {
             gpu.renderer.free_texture(id);
@@ -751,10 +759,11 @@ impl ApplicationHandler<Wake> for App {
                 is_synthetic,
                 ..
             } if !is_synthetic => {
+                let since = Instant::now();
                 let egui = self.egui.clone();
                 if let Screen::Session(session) = &mut self.screen {
                     if session.takes_keys(&egui) {
-                        session.key(key);
+                        session.key(key, since);
                         window.request_redraw();
                         return;
                     }
@@ -777,6 +786,9 @@ impl ApplicationHandler<Wake> for App {
                     return;
                 }
                 self.pointer = Some(*position);
+                if let Screen::Session(session) = &mut self.screen {
+                    session.pointer_event();
+                }
             }
             WindowEvent::CursorLeft { .. } | WindowEvent::CursorEntered { .. }
                 if matches!(&self.screen, Screen::Session(s) if s.centred()) =>
@@ -791,6 +803,9 @@ impl ApplicationHandler<Wake> for App {
                     session.mouse_button(*button, *pressed);
                     return;
                 }
+                if let Screen::Session(session) = &mut self.screen {
+                    session.pointer_event();
+                }
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 if let Screen::Session(session) = &mut self.screen
@@ -798,6 +813,9 @@ impl ApplicationHandler<Wake> for App {
                 {
                     session.mouse_wheel(*delta);
                     return;
+                }
+                if let Screen::Session(session) = &mut self.screen {
+                    session.pointer_event();
                 }
             }
             _ => {}

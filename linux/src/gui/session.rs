@@ -224,6 +224,13 @@ pub struct Session {
     uploads_seen: u64,
     /// Whether the pointer was over the desktop in the last frame.
     hovered: bool,
+    /// When the oldest frame taken but not yet presented ended at the
+    /// backend: the start of the overlay's render latency.
+    unpresented: Option<Instant>,
+    /// When winit handed over the first pointer event egui has not yet
+    /// read, which the next frame turns into the pointer event the backend
+    /// is given: the start of the overlay's pointer latency.
+    pointer_since: Option<Instant>,
     /// The session is over, with the detail the backend gave (empty for an
     /// ending that was asked for).
     pub closed: Option<String>,
@@ -310,6 +317,8 @@ impl Session {
             damage: 0,
             uploads_seen: 0,
             hovered: false,
+            unpresented: None,
+            pointer_since: None,
             closed: None,
         })
     }
@@ -403,8 +412,9 @@ impl Session {
                     self.last_poll = None;
                     self.relative = self.mailbox.pointer_relative();
                 }
-                Event::Frame(rects) => {
+                Event::Frame { rects, ended } => {
                     self.damage += rects.len() as u64;
+                    self.unpresented = Some(self.unpresented.map_or(ended, |t| t.min(ended)));
                     if let Some(desktop) = &mut self.desktop {
                         desktop.update(ctx, &*self.backend, &rects);
                     }
@@ -687,8 +697,27 @@ impl Session {
 
     // ---- input from winit --------------------------------------------------
 
-    /// A key from winit, already known to be ours (see `takes_keys`).
-    pub fn key(&mut self, event: &KeyEvent) {
+    /// A pointer event from winit, now, that egui will read in the next
+    /// frame: the time of the first since the last frame is kept, for the
+    /// overlay. One clock read a frame, whether the overlay is on or not.
+    pub fn pointer_event(&mut self) {
+        self.pointer_since.get_or_insert_with(Instant::now);
+    }
+
+    /// The frame just drawn went to the screen at `at`, or was not drawn
+    /// (`None`: the window is minimised, or its surface had to be made
+    /// again), in which case nothing is measured: a picture nobody could
+    /// see has no latency worth the name, and the next one will be timed
+    /// from its own frame.
+    pub fn presented(&mut self, at: Option<Instant>) {
+        if let (Some(ended), Some(at)) = (self.unpresented.take(), at) {
+            self.hud.render.record(at.saturating_duration_since(ended));
+        }
+    }
+
+    /// A key from winit, already known to be ours (see `takes_keys`),
+    /// handed over at `since`.
+    pub fn key(&mut self, event: &KeyEvent, since: Instant) {
         let physical = event.physical_key;
         match event.state {
             ElementState::Pressed => {
@@ -710,6 +739,7 @@ impl Session {
                     self.held.insert(physical, keysym);
                     log::debug!("key down {keysym:#x} ({:?}) as {id}", event.logical_key);
                     self.backend.key_down(keysym, id);
+                    self.hud.keys.record(since.elapsed());
                 }
                 if self.captured() && chord(&self.held) {
                     // Let go of the lock, and of the chord's keys at the far
@@ -918,8 +948,11 @@ impl Session {
             });
         self.hovered = response.as_ref().is_some_and(Response::hovered);
         self.native_key = None;
+        // Taken whether or not there is a desktop for it to be sent over,
+        // so that a move from before one was there is not counted later.
+        let pointer_since = self.pointer_since.take();
         if let (Some(layout), Some(response)) = (layout, response) {
-            self.pointer(ctx, &response, &layout, dt);
+            self.pointer(ctx, &response, &layout, dt, pointer_since);
             if self.settings.software_cursor {
                 self.draw_cursor(ctx, &response);
             } else {
@@ -1096,7 +1129,16 @@ impl Session {
             on_off(self.settings.clipboard_out),
             on_off(self.settings.clipboard_in)
         );
-        vec![first, second, third, fourth]
+        // What can be timed at this end, and only that: how long the far
+        // end takes to act on input and send back what it did is not
+        // something any of the protocols lets this end see.
+        let fifth = format!(
+            "render {}  pointer {}  keys {}",
+            self.hud.render.summary(),
+            self.hud.pointer.summary(),
+            self.hud.keys.summary()
+        );
+        vec![first, second, third, fourth, fifth]
     }
 
     fn title_set(&self, ctx: &egui::Context) -> String {
@@ -1171,7 +1213,9 @@ impl Session {
 
     /// The pointer over the desktop: the edge pan, and in absolute mode the
     /// position, the buttons and the wheel.
-    fn pointer(&mut self, ctx: &egui::Context, response: &Response, layout: &Layout, dt: f32) {
+    /// `since` is when winit handed over the first of the frame's pointer
+    /// events; what was sent to the backend for them is timed from it.
+    fn pointer(&mut self, ctx: &egui::Context, response: &Response, layout: &Layout, dt: f32, since: Option<Instant>) {
         let over = response.hovered() || response.dragged() || response.is_pointer_button_down_on();
         let pos = ctx.input(|i| i.pointer.latest_pos());
 
@@ -1196,6 +1240,7 @@ impl Session {
         // and in that order.
         let events = ctx.input(|i| i.events.clone());
         let (_, _, mut mask) = self.last_pointer;
+        let mut sent = false;
         if over && let Some(pos) = pos {
             let mut at = layout.desktop_at(pos);
             for event in &events {
@@ -1225,14 +1270,15 @@ impl Session {
                         for bit in self.notches(notches) {
                             self.backend.pointer(at.0, at.1, mask | bit);
                             self.backend.pointer(at.0, at.1, mask);
+                            sent = true;
                         }
                         continue;
                     }
                     _ => continue,
                 }
-                self.send_pointer(at, mask);
+                sent |= self.send_pointer(at, mask);
             }
-            self.send_pointer(at, mask);
+            sent |= self.send_pointer(at, mask);
         } else if mask != 0 {
             // A button pressed over the desktop and let go elsewhere: the
             // far end is told at the last place it saw.
@@ -1241,17 +1287,23 @@ impl Session {
                 .any(|e| matches!(e, egui::Event::PointerButton { pressed: false, .. }));
             if released {
                 let (x, y, _) = self.last_pointer;
-                self.send_pointer((x, y), 0);
+                sent |= self.send_pointer((x, y), 0);
             }
+        }
+        if sent && let Some(since) = since {
+            self.hud.pointer.record(since.elapsed());
         }
     }
 
-    /// One pointer event, unless it is the one already sent.
-    fn send_pointer(&mut self, at: (i32, i32), mask: i32) {
-        if (at.0, at.1, mask) != self.last_pointer {
+    /// One pointer event, unless it is the one already sent; whether it
+    /// was sent.
+    fn send_pointer(&mut self, at: (i32, i32), mask: i32) -> bool {
+        let fresh = (at.0, at.1, mask) != self.last_pointer;
+        if fresh {
             self.backend.pointer(at.0, at.1, mask);
             self.last_pointer = (at.0, at.1, mask);
         }
+        fresh
     }
 
     /// The far end's cursor under the local pointer, in absolute mode.

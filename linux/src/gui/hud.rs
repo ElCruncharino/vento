@@ -49,7 +49,72 @@ impl Rate {
     }
 }
 
-/// The box, and the rates every readout wants.
+/// How many of the latest samples a [`Latency`] summarises.
+pub const SAMPLES: usize = 32;
+
+/// A delay, measured as it happens: the last one, and the mean and the
+/// worst of the last [`SAMPLES`]. A count of samples rather than a window
+/// of time, as a delay is measured only when something happens — a still
+/// desktop sends no frames, a still mouse no moves — and a window of time
+/// would empty out and say nothing about the last thing that did. Taking a
+/// sample is a store into a ring; the summary is worked out only when the
+/// box asks for it.
+#[derive(Debug, Default)]
+pub struct Latency {
+    recent: [Duration; SAMPLES],
+    /// How many of `recent` are samples, up to all of them.
+    len: usize,
+    /// Where the next sample goes, which is the oldest once the ring is full.
+    next: usize,
+}
+
+impl Latency {
+    pub fn record(&mut self, delay: Duration) {
+        self.recent[self.next] = delay;
+        self.next = (self.next + 1) % SAMPLES;
+        self.len = (self.len + 1).min(SAMPLES);
+    }
+
+    pub fn last(&self) -> Option<Duration> {
+        (self.len > 0).then(|| self.recent[(self.next + SAMPLES - 1) % SAMPLES])
+    }
+
+    pub fn mean(&self) -> Option<Duration> {
+        (self.len > 0).then(|| self.samples().sum::<Duration>() / self.len as u32)
+    }
+
+    pub fn max(&self) -> Option<Duration> {
+        self.samples().max()
+    }
+
+    /// The samples there are, in no particular order: the summary does not
+    /// need one.
+    fn samples(&self) -> impl Iterator<Item = Duration> + '_ {
+        self.recent[..self.len].iter().copied()
+    }
+
+    /// `12.3 ms (avg 10.1, max 20.4)`, or `-` with nothing measured yet.
+    pub fn summary(&self) -> String {
+        match (self.last(), self.mean(), self.max()) {
+            (Some(last), Some(mean), Some(max)) => {
+                format!("{} (avg {:.1}, max {:.1})", ms(last), millis(mean), millis(max))
+            }
+            _ => "-".to_string(),
+        }
+    }
+}
+
+fn millis(d: Duration) -> f64 {
+    d.as_secs_f64() * 1e3
+}
+
+/// A delay in milliseconds to a tenth, which is as fine as a frame's worth
+/// of anything is worth reading.
+fn ms(d: Duration) -> String {
+    format!("{:.1} ms", millis(d))
+}
+
+/// The box, and the rates and delays every readout wants.
 #[derive(Debug, Default)]
 pub struct Hud {
     pub on: bool,
@@ -57,6 +122,18 @@ pub struct Hud {
     pub fps: Rate,
     pub damage: Rate,
     pub bytes: Rate,
+    /// From a backend's `frame_end` to the frame with its pixels being
+    /// presented: the oldest unpresented `frame_end`, when several were
+    /// merged into one frame here.
+    pub render: Latency,
+    /// From winit handing over a pointer event that egui reads (the mouse
+    /// when it is not captured) to the pointer event it made being given
+    /// to the backend, which is the next frame's.
+    pub pointer: Latency,
+    /// From winit handing over a key to the backend having been given it,
+    /// which is the same call: what it measures is this end's handling,
+    /// the backend's `key_down` included.
+    pub keys: Latency,
 }
 
 impl Hud {
@@ -130,6 +207,49 @@ mod tests {
         // Held until the next window is full, then the new count.
         assert_eq!(rate.sample(70, start + Duration::from_millis(1500)), 60);
         assert_eq!(rate.sample(80, start + Duration::from_millis(2000)), 20);
+    }
+
+    fn ms(n: u64) -> Duration {
+        Duration::from_millis(n)
+    }
+
+    #[test]
+    fn a_latency_with_nothing_measured_says_so() {
+        let latency = Latency::default();
+        assert_eq!(latency.last(), None);
+        assert_eq!(latency.mean(), None);
+        assert_eq!(latency.max(), None);
+        assert_eq!(latency.summary(), "-");
+    }
+
+    #[test]
+    fn a_latency_is_the_last_and_the_mean_and_worst_of_the_recent() {
+        let mut latency = Latency::default();
+        latency.record(ms(10));
+        latency.record(ms(30));
+        latency.record(ms(20));
+        assert_eq!(latency.last(), Some(ms(20)));
+        assert_eq!(latency.mean(), Some(ms(20)));
+        assert_eq!(latency.max(), Some(ms(30)));
+        assert_eq!(latency.summary(), "20.0 ms (avg 20.0, max 30.0)");
+    }
+
+    #[test]
+    fn a_latency_forgets_what_is_older_than_its_samples() {
+        let mut latency = Latency::default();
+        // One slow frame, then a ring's worth of fast ones: the slow one
+        // is gone from the worst and the mean.
+        latency.record(ms(500));
+        for _ in 0..SAMPLES {
+            latency.record(ms(4));
+        }
+        assert_eq!(latency.max(), Some(ms(4)));
+        assert_eq!(latency.mean(), Some(ms(4)));
+        // Wrapping round keeps the last the last.
+        latency.record(ms(7));
+        assert_eq!(latency.last(), Some(ms(7)));
+        assert_eq!(latency.max(), Some(ms(7)));
+        assert_eq!(latency.mean(), Some((ms(4) * (SAMPLES as u32 - 1) + ms(7)) / SAMPLES as u32));
     }
 
     #[test]
