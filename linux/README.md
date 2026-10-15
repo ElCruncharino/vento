@@ -197,7 +197,13 @@ the top of its screen — and for the first three seconds of a session, so that
 it is seen once. In a window that strip reaches 8 points down, since a pointer
 coming off the title bar seldom stops on the window's very first row; in
 fullscreen, where the screen's edge stops the pointer, it is the top row of
-pixels. On it:
+pixels. It can be dragged along the edge, by any part of it, buttons
+included — a drag never presses the button it started on — and stops at the
+window's sides; where it is left is kept as a fraction of the room either side
+of it, so that a resize keeps it centred, or against the edge it was put
+against, and the next session's toolbar starts there, for as long as the
+process runs (it is not saved). The strip that brings it out follows it. On
+it:
 
 - **Scale** cycles fit width → fit height → fill width → fill height → 1:1.
   *Fit* never enlarges the desktop past a device pixel per desktop pixel;

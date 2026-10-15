@@ -128,6 +128,11 @@ pub struct Session {
     /// The client's settings as this session runs with them: what it
     /// started with, then whatever the panel changed.
     pub settings: Settings,
+    /// Where the toolbar sits along the top edge: where the last session
+    /// left it, then wherever it is dragged. Handed back, like `settings`.
+    pub placement: Placement,
+    /// Where the toolbar's left edge was when the drag under way began.
+    drag_from: Option<f32>,
     backend: Arc<dyn Backend>,
     mailbox: Arc<Mailbox>,
     started: Instant,
@@ -226,6 +231,7 @@ impl Session {
         request: Request,
         dirs: &Dirs,
         settings: Settings,
+        placement: Placement,
         screen: (u32, u32),
         wake: Box<dyn Fn() + Send + Sync>,
     ) -> Result<Session, String> {
@@ -253,6 +259,8 @@ impl Session {
         Ok(Session {
             request,
             settings,
+            placement,
+            drag_from: None,
             backend,
             mailbox,
             started: Instant::now(),
@@ -1268,15 +1276,24 @@ impl Session {
     /// of the top edge is the desktop's: a pointer heading for something at
     /// the top of the far end's screen, a menu bar or a tab, had the toolbar
     /// come down over it wherever it touched the edge.
+    ///
+    /// It can be dragged along the edge, out of the way of what is under
+    /// it, by any part of it: the area senses drags beneath its buttons,
+    /// which sense only clicks, so egui gives a press on a button the click
+    /// and the area the drag (`hit_test`'s "the top Button and the
+    /// ScrollArea behind it"). A drag-only widget starts dragging at the
+    /// press, so the toolbar moves only once the pointer is decidedly
+    /// dragging, which is also when a release stops being a click: a
+    /// button is either clicked or dragged, never both.
     fn toolbar(&mut self, ctx: &egui::Context, host: &mut Host) {
         let pointer = ctx.input(|i| i.pointer.latest_pos());
         let screen = ctx.content_rect();
         let fullscreen = host.window.fullscreen().is_some();
         let width = self.toolbar_size.x;
-        let left = Placement::default().left(screen, width);
+        let left = self.placement.left(screen, width);
         let at_edge = pointer.is_some_and(|p| toolbar::reveals(screen, left, width, fullscreen, ctx.pixels_per_point(), p));
         let reveal = self.started.elapsed() < TOOLBAR_REVEAL;
-        let show = at_edge || self.toolbar_hovered || reveal || self.disconnecting.is_some();
+        let show = at_edge || self.toolbar_hovered || self.drag_from.is_some() || reveal || self.disconnecting.is_some();
         let style = ctx.global_style();
         // Square, and flush with the top edge: nothing between it and the
         // edge for the pointer to fall into. Hidden, its shadow goes too.
@@ -1296,6 +1313,7 @@ impl Session {
             // is where it goes to hide.
             .constrain(false)
             .interactable(true)
+            .sense(Sense::drag())
             .show(ctx, |ui| {
                 frame.show(ui, |ui| {
                     // A little taller than egui's buttons, which were made
@@ -1304,8 +1322,26 @@ impl Session {
                     ui.horizontal(|ui| self.toolbar_items(ui, host));
                 });
             });
-        self.toolbar_size = area.response.rect.size();
-        self.toolbar_hovered = area.response.contains_pointer();
+        let response = &area.response;
+        if response.drag_started() {
+            self.drag_from = Some(left);
+        }
+        if let Some(from) = self.drag_from {
+            if !response.dragged() {
+                self.drag_from = None;
+            } else if ctx.input(|i| i.pointer.is_decidedly_dragging()) {
+                let moved = response.total_drag_delta().unwrap_or_default().x;
+                self.placement.move_to(screen, width, from + moved);
+                ctx.set_cursor_icon(CursorIcon::Grabbing);
+            }
+        } else if response.hovered() {
+            // The bare background, between and around the buttons.
+            ctx.set_cursor_icon(CursorIcon::Grab);
+        }
+        self.toolbar_size = response.rect.size();
+        // A drag that has run off the toolbar is still the toolbar's, and
+        // so is the keyboard while it lasts.
+        self.toolbar_hovered = response.contains_pointer() || self.drag_from.is_some();
     }
 
     fn toolbar_items(&mut self, ui: &mut egui::Ui, host: &mut Host) {

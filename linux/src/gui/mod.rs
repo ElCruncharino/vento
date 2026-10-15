@@ -42,6 +42,7 @@ pub use platform::Platform;
 use platform::Shortcuts;
 use session::{Session, Teardown};
 pub use settings::Settings;
+use toolbar::Placement;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
@@ -126,6 +127,7 @@ pub fn run(launch: Launch) -> i32 {
         launch: Some(launch),
         dirs: Dirs::default(),
         settings: Settings::default(),
+        placement: Placement::default(),
         proxy,
         window: None,
         gpu: None,
@@ -196,6 +198,8 @@ struct App {
     /// The settings a session starts with, and what the dialog edits; a
     /// session that changed them hands them back when it ends.
     settings: Settings,
+    /// Where the toolbar sits, kept from one session to the next.
+    placement: Placement,
     proxy: EventLoopProxy<Wake>,
     window: Option<Arc<Window>>,
     gpu: Option<Gpu>,
@@ -323,6 +327,7 @@ impl App {
             request.clone(),
             &self.dirs,
             self.settings,
+            self.placement,
             (size.width, size.height),
             wake,
         ) {
@@ -560,6 +565,7 @@ impl App {
                 pointer: self.pointer,
             };
             self.settings = session.settings;
+            self.placement = session.placement;
             let teardown = session.shutdown(&self.egui, &mut host);
             self.reap(teardown);
             self.screen = Screen::Dialog(dialog);

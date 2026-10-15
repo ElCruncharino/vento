@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The toolbar's geometry: where along the window's top edge it sits, and
-//! which strip of that edge brings it out. The session draws it and asks
-//! these; nothing here touches egui's state, so it is tested here. The
-//! unit is the egui point, as in `view.rs`.
+//! The toolbar's geometry: where along the window's top edge it sits, where
+//! a drag puts it, and which strip of that edge brings it out. The session
+//! draws it and asks these; nothing here touches egui's state, so it is
+//! tested here. The unit is the egui point, as in `view.rs`.
 
 use egui::{Pos2, Rect};
 
@@ -17,6 +17,13 @@ pub const WINDOWED_REACH: f32 = 8.0;
 
 /// Where the toolbar sits along the top edge: how far along the room the
 /// window leaves it its left edge is, 0 flush left, 1 flush right.
+///
+/// A fraction of the room rather than a position, so that a resize keeps
+/// it where it was put relative to the edges — centred stays centred, and
+/// one dragged against the right edge stays against it — and so that it is
+/// inside the window whatever the window's size. The window keeps one for
+/// the life of the process and hands it to each session, so that the next
+/// session's toolbar is where the last one was left; it is not saved.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Placement {
     along: f32,
@@ -38,6 +45,16 @@ impl Placement {
             window.center().x - width / 2.0
         } else {
             window.min.x + room * self.along
+        }
+    }
+
+    /// Puts the toolbar's left edge at `left`, or as near to it as keeps
+    /// the toolbar inside `window`. In a window narrower than the toolbar
+    /// there is nowhere to move it to, and it stays where it was put.
+    pub fn move_to(&mut self, window: Rect, width: f32, left: f32) {
+        let room = window.width() - width;
+        if room > 0.0 {
+            self.along = ((left - window.min.x) / room).clamp(0.0, 1.0);
         }
     }
 }
@@ -66,6 +83,55 @@ mod tests {
         let p = Placement::default();
         assert_eq!(p.left(window(1280.0, 800.0), 480.0), 400.0);
         assert_eq!(p.left(window(400.0, 800.0), 480.0), -40.0);
+    }
+
+    #[test]
+    fn a_drag_is_kept_inside_the_window() {
+        let w = window(1280.0, 800.0);
+        let mut p = Placement::default();
+        p.move_to(w, 480.0, 100.0);
+        assert_eq!(p.left(w, 480.0), 100.0);
+        // Past either edge it stops at the edge.
+        p.move_to(w, 480.0, -300.0);
+        assert_eq!(p.left(w, 480.0), 0.0);
+        p.move_to(w, 480.0, 1000.0);
+        assert_eq!(p.left(w, 480.0), 800.0);
+        // A window that is not at the origin is measured from its own edge.
+        let off = Rect::from_min_max(pos2(50.0, 0.0), pos2(1330.0, 800.0));
+        p.move_to(off, 480.0, 0.0);
+        assert_eq!(p.left(off, 480.0), 50.0);
+    }
+
+    #[test]
+    fn a_resize_keeps_it_where_it_was_relative_to_the_edges() {
+        let mut p = Placement::default();
+        // Flush right stays flush right.
+        p.move_to(window(1280.0, 800.0), 480.0, 800.0);
+        assert_eq!(p.left(window(1920.0, 1080.0), 480.0), 1440.0);
+        assert_eq!(p.left(window(800.0, 600.0), 480.0), 320.0);
+        // A quarter of the way along stays a quarter of the way along.
+        p.move_to(window(1280.0, 800.0), 480.0, 200.0);
+        assert_eq!(p.left(window(2080.0, 800.0), 480.0), 400.0);
+        // Too narrow a window centres it, and a drag there changes nothing
+        // for when the window is wide again.
+        let narrow = window(400.0, 800.0);
+        assert_eq!(p.left(narrow, 480.0), -40.0);
+        p.move_to(narrow, 480.0, 0.0);
+        assert_eq!(p.left(window(2080.0, 800.0), 480.0), 400.0);
+    }
+
+    #[test]
+    fn the_strip_follows_the_toolbar_where_it_was_dragged() {
+        let w = window(1280.0, 800.0);
+        let mut p = Placement::default();
+        p.move_to(w, 480.0, 0.0);
+        let left = p.left(w, 480.0);
+        let at = |x| reveals(w, left, 480.0, false, 1.0, pos2(x, 0.0));
+        assert!(at(10.0));
+        assert!(at(479.0));
+        // Where it was centred is now the desktop's.
+        assert!(!at(640.0));
+        assert!(!at(800.0));
     }
 
     #[test]
