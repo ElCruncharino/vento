@@ -276,6 +276,21 @@ impl App {
         // The toolbar's icons, Material Symbols, as a font family of their
         // own (see icons.rs).
         self.egui.add_font(icons::font_insert());
+        // No animations of egui's own: a dropdown, a tooltip or a window
+        // is there the frame it is asked for, at full opacity, and gone
+        // the frame it is closed, and a collapsing section opens at once.
+        // A fade is a frame or two of something half-drawn over a desktop
+        // that is itself moving, and costs repaints at a time when the
+        // remote picture is what should be getting them. Every fade and
+        // fold in egui takes its length from `animation_time`, which an
+        // `Area`'s fade-in and a `Window`'s fade-out read as instant at
+        // zero; a programmatic scroll has its own, `scroll_animation`.
+        // The toolbar's slide is not egui's — it names its own time — and
+        // stays.
+        self.egui.all_styles_mut(|style| {
+            style.animation_time = 0.0;
+            style.scroll_animation = egui::style::ScrollAnimation::none();
+        });
         let state = egui_winit::State::new(
             self.egui.clone(),
             egui::ViewportId::ROOT,

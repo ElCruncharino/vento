@@ -186,6 +186,13 @@ moment — unless the backend's Bell option (`AcceptBell`, on the VNC backends)
 is off, in which case a bell is dropped before the window or the probe sees
 it.
 
+Nothing in the interface fades or folds: egui's own animations are off
+(`animation_time` and the programmatic scroll's, both zero), so a dropdown, a
+tooltip, a prompt or the panel is there at full opacity the frame it is
+opened, and gone the frame it is closed. The one movement left is the
+toolbar's slide in and out at the top edge, below, which is the client's and
+not egui's.
+
 Disconnecting, or closing the window, ends a session at once, including one
 that is still connecting: every backend's dial and handshake give way to it,
 where several used to sit out their 20-second connect timeout first. A session
