@@ -292,12 +292,15 @@ impl KnownHosts {
 /// `KnownHosts.key`: folded for case and nothing else, which is right twice
 /// over — a name is case-insensitive in DNS and an IPv6 literal in its own
 /// notation. A default port left off is not filled in, so one machine can
-/// have two entries, as on the phone.
+/// have two entries, as on the phone. Trimmed as Java's `trim()` trims —
+/// ASCII controls and the space, nothing wider — since the phone's pins are
+/// filed under its keys and the two must file one address in one place
+/// (`backends/vectors/known_hosts.json`).
 pub fn key(address: &str) -> String {
-    address.trim().to_lowercase()
+    address.trim_matches(|c: char| c <= ' ').to_lowercase()
 }
 
-/// `KnownHosts.canonical`: the hex digits alone, upper case.
+/// `KnownHosts.canonical`: the ASCII hex digits alone, upper case.
 pub fn canonical(fingerprint: &str) -> String {
     fingerprint
         .chars()
@@ -306,7 +309,8 @@ pub fn canonical(fingerprint: &str) -> String {
         .collect()
 }
 
-fn verdict(table: &Table, address: &str, fingerprint: &str) -> Verdict {
+/// [`KnownHosts::verdict`] over a table already read.
+pub fn verdict(table: &Table, address: &str, fingerprint: &str) -> Verdict {
     let key = key(address);
     let wanted = canonical(fingerprint);
     if let Some(pin) = table.get(&key) {

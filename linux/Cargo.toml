@@ -87,6 +87,10 @@ bindgen = "0.73"
 # For the test that every toolbar symbol is in the bundled font (icons.rs).
 # Already in the graph through egui's fonts, so it costs nothing new.
 ttf-parser = "0.25"
+# For the shared test vectors in `backends/vectors/` (tests/vectors.rs), which
+# the Java tests read too. Already in the graph through IronRDP (picky), so it
+# costs nothing new.
+serde_json = "1"
 
 # winit from the submodule, at the tag of the release crates.io has, with
 # `patches/winit/` applied by `./patch.sh`: the same source plus our fixes to

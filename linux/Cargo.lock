@@ -5070,6 +5070,7 @@ dependencies = [
  "remotedesktop-rfb",
  "remotedesktop-rustdesk",
  "remotedesktop-spice",
+ "serde_json",
  "ttf-parser",
  "wayland-backend",
  "wayland-client",

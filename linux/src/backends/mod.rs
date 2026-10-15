@@ -95,7 +95,7 @@ impl Connect<'_> {
 /// forms, because both are typed: the backslash is what Windows shows and
 /// the `@` is what a UPN looks like.
 pub fn split_domain(value: &str) -> (String, String) {
-    let name = value.trim();
+    let name = trim(value);
     if let Some((domain, user)) = name.split_once('\\') {
         return (domain.to_string(), user.to_string());
     }
@@ -107,12 +107,18 @@ pub fn split_domain(value: &str) -> (String, String) {
     (String::new(), name.to_string())
 }
 
+/// A typed name without what Java's `trim()` takes off it — ASCII controls
+/// and the space — so that the phone and this client read one answer alike.
+fn trim(typed: &str) -> &str {
+    typed.trim_matches(|c: char| c <= ' ')
+}
+
 /// Credentials as the Java prompts deliver them: an empty user name means
-/// the one the session was created with.
+/// the one the session was created with. A name is read trimmed, so one that
+/// is only spaces is an empty one (`backends/vectors/credentials.json`).
 pub fn fill_user(mut credentials: Credentials, user: &str) -> Credentials {
-    if credentials.user.is_empty() {
-        credentials.user = user.to_string();
-    }
+    let typed = trim(&credentials.user);
+    credentials.user = if typed.is_empty() { user } else { typed }.to_string();
     credentials
 }
 
@@ -124,13 +130,14 @@ pub fn fill_user(mut credentials: Credentials, user: &str) -> Credentials {
 /// means `CORP\alice`. A local account on a machine with a domain is
 /// `.\alice`, as Windows writes it.
 pub fn rdp_identity(answer: &Credentials, domain: &str, user: &str) -> (String, String) {
-    if answer.user.is_empty() {
+    let typed = trim(&answer.user);
+    if typed.is_empty() {
         return (domain.to_string(), user.to_string());
     }
     if !answer.domain.is_empty() {
-        return (answer.domain.clone(), answer.user.clone());
+        return (answer.domain.clone(), typed.to_string());
     }
-    match split_domain(&answer.user) {
+    match split_domain(typed) {
         (typed, name) if typed.is_empty() => (domain.to_string(), name),
         split => split,
     }
