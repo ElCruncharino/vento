@@ -28,6 +28,7 @@ use crate::ffi;
 use crate::options::Options;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_void};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 pub mod freerdp;
@@ -183,6 +184,9 @@ struct CSession {
     /// The `Arc<Mailbox>` the callbacks carry, as a raw pointer to reclaim
     /// once the session is destroyed.
     user: *const Mailbox,
+    /// Whether `destroy` has run: the session is freed and the mailbox
+    /// reclaimed once, however many times a shared handle is retired.
+    destroyed: AtomicBool,
 }
 
 // SAFETY: the C session is documented as callable from any thread, and the
@@ -355,7 +359,12 @@ impl CSession {
     /// Ends the session, waits for its thread, frees it, and then reclaims
     /// the mailbox the callbacks carried — in that order, because the
     /// callbacks are only provably finished once `destroy` has returned.
+    /// Only the first call does anything, as [`Backend::destroy`] promises:
+    /// a second would free the session and drop the mailbox's count twice.
     fn destroy(&self) {
+        if self.destroyed.swap(true, Ordering::AcqRel) {
+            return;
+        }
         unsafe {
             (self.ops().destroy.unwrap())(self.session);
             drop(Arc::from_raw(self.user));
@@ -589,7 +598,11 @@ fn start(
     }
     let (domain, user_name) = c.domain_and_user();
     Ok(Arc::new(CBackend {
-        session: CSession { session, user },
+        session: CSession {
+            session,
+            user,
+            destroyed: AtomicBool::new(false),
+        },
         mailbox,
         options: Mutex::new(c.options.clone()),
         user: user_name,
