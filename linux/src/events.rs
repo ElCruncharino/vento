@@ -16,10 +16,12 @@
 //! list behind the same mutex and sends nothing; `frame_end` turns the list
 //! into one [`Event::Frame`], and if the previous event in the queue is still
 //! an unread `Frame` the two are merged rather than queued — a window that
-//! fell behind sees one frame with everything that moved, not a backlog. The
-//! list itself is capped: past [`Damage::LIMIT`] rectangles it collapses to
-//! their bounding box, since a frame with that many rectangles is a frame
-//! that is being redrawn anyway. A channel per rectangle was the alternative,
+//! fell behind sees one frame with everything that moved, not a backlog. A
+//! rectangle that repeats one already marked, lies inside one, or makes one
+//! rectangle with it is merged into it, so that a window that fell behind
+//! reads each pixel once. The list itself is capped: past [`Damage::LIMIT`]
+//! rectangles it collapses to their bounding box, since a frame with that
+//! many rectangles is a frame that is being redrawn anyway. A channel per rectangle was the alternative,
 //! and the cost is not the channel but the allocation and the wake: this
 //! sends one of each per frame.
 //!
@@ -41,6 +43,11 @@ pub struct Rect {
 }
 
 impl Rect {
+    /// How many pixels, wide enough that no rectangle overflows it.
+    pub fn area(self) -> u64 {
+        self.width as u64 * self.height as u64
+    }
+
     /// The smallest rectangle holding both.
     pub fn union(self, other: Rect) -> Rect {
         let x = self.x.min(other.x);
@@ -220,9 +227,18 @@ impl Damage {
     /// rectangles than a window can usefully upload separately.
     pub const LIMIT: usize = 64;
 
+    /// Mark `rect`. A rectangle is merged with one already marked wherever
+    /// their bounding box is no bigger than the two of them apart — which
+    /// takes in a repeat, one inside another, and two halves of one — so
+    /// that no pixel is read twice for the sake of a list, and the merge is
+    /// tried again with what it made.
     pub fn add(&mut self, rect: Rect) {
         if rect.width == 0 || rect.height == 0 {
             return;
+        }
+        let mut rect = rect;
+        while let Some(i) = self.rects.iter().position(|&r| r.union(rect).area() <= r.area() + rect.area()) {
+            rect = rect.union(self.rects.swap_remove(i));
         }
         if self.rects.len() >= Damage::LIMIT {
             let all = self.rects.drain(..).fold(rect, Rect::union);
@@ -556,13 +572,65 @@ mod tests {
     #[test]
     fn damage_collapses_to_a_bounding_box_past_the_limit() {
         let mut damage = Damage::default();
+        // Apart, so that none of them merges with its neighbour.
         for i in 0..Damage::LIMIT {
-            damage.add(rect(i * 10, 0, 10, 10));
+            damage.add(rect(i * 20, 0, 10, 10));
         }
+        assert_eq!(damage.rects.len(), Damage::LIMIT);
         damage.add(rect(0, 500, 1, 1));
         let rects = damage.take();
-        assert_eq!(rects, vec![rect(0, 0, Damage::LIMIT * 10, 501)]);
+        assert_eq!(rects, vec![rect(0, 0, (Damage::LIMIT - 1) * 20 + 10, 501)]);
         assert!(damage.is_empty());
+    }
+
+    #[test]
+    fn damage_drops_repeats_and_rectangles_inside_others() {
+        let mut damage = Damage::default();
+        damage.add(rect(10, 10, 100, 100));
+        damage.add(rect(10, 10, 100, 100));
+        damage.add(rect(20, 20, 5, 5));
+        assert_eq!(damage.rects, [rect(10, 10, 100, 100)]);
+        // A bigger one takes in the one it covers.
+        damage.add(rect(0, 0, 200, 200));
+        assert_eq!(damage.take(), [rect(0, 0, 200, 200)]);
+    }
+
+    #[test]
+    fn damage_merges_where_the_union_costs_nothing_and_not_elsewhere() {
+        let mut damage = Damage::default();
+        // Two halves of one row, and then two that overlap by half: each
+        // pair's bounding box is no more than the pair.
+        damage.add(rect(0, 0, 50, 10));
+        damage.add(rect(50, 0, 50, 10));
+        assert_eq!(damage.rects, [rect(0, 0, 100, 10)]);
+        damage.add(rect(0, 100, 10, 10));
+        damage.add(rect(5, 100, 10, 10));
+        assert_eq!(damage.rects, [rect(0, 0, 100, 10), rect(0, 100, 15, 10)]);
+        // Diagonal neighbours would read the corners they do not cover.
+        let mut damage = Damage::default();
+        damage.add(rect(0, 0, 10, 10));
+        damage.add(rect(10, 10, 10, 10));
+        assert_eq!(damage.rects.len(), 2);
+        // A merge is tried again with what it made: the third joins the two
+        // into one, and that one swallows the first's neighbour.
+        damage.add(rect(0, 10, 10, 10));
+        damage.add(rect(10, 0, 10, 10));
+        assert_eq!(damage.take(), [rect(0, 0, 20, 20)]);
+    }
+
+    #[test]
+    fn a_full_screen_update_marked_tile_by_tile_is_one_rectangle() {
+        // The shape an encoder's tiles give: 64-pixel squares, a frame's
+        // worth twice over, as a server that sends the screen twice does.
+        let mut damage = Damage::default();
+        for _ in 0..2 {
+            for y in (0..1200).step_by(64) {
+                for x in (0..1920).step_by(64) {
+                    damage.add(rect(x, y, 64.min(1920 - x), 64.min(1200 - y)));
+                }
+            }
+        }
+        assert_eq!(damage.take(), [rect(0, 0, 1920, 1200)]);
     }
 
     #[test]
