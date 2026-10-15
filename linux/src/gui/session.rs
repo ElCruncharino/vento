@@ -31,8 +31,9 @@
 //! pointer is captured and hidden while the window has focus and its raw
 //! motion is sent as deltas; Ctrl+Alt held together lets it go, and a click
 //! on the desktop takes it back. On Wayland the capture is a pointer lock;
-//! on X11, which has none, the pointer is hidden and warped back to the
-//! window's centre whenever it moves (see `sync_capture`).
+//! on X11, which has none, the pointer is hidden, warped back to the
+//! window's centre whenever it moves, and fenced in by pointer barriers on
+//! the window's edges meanwhile (see `sync_capture`).
 //!
 //! The clipboard crosses in both directions under the two settings the
 //! phone has (`settings.rs`), with its rule: the last text seen crossing
@@ -52,6 +53,7 @@ use super::platform::{self, Platform};
 use super::prompts::{self, Answer, Form, Prompt};
 use super::settings::Settings;
 use super::view::{Layout, View};
+use super::x11::Fence;
 use super::{Host, Request};
 use crate::backend::Backend;
 use crate::backends::{self, Connect, Dirs, Pinned};
@@ -104,7 +106,7 @@ const POLL_EARLY: Duration = Duration::from_millis(50);
 enum Capture {
     /// Wayland: the compositor's pointer lock.
     Locked,
-    /// X11: hidden, no grab, and warped back to the window's centre.
+    /// X11: hidden, no grab, fenced, and warped back to the window's centre.
     Centred,
 }
 
@@ -163,6 +165,9 @@ pub struct Session {
     /// X11: where the pointer was before it was captured, put back when it
     /// is let go.
     restore: Option<PhysicalPosition<f64>>,
+    /// X11: the barriers that keep a captured pointer on the window, made
+    /// at the first capture and up while it lasts.
+    fence: Option<Fence>,
     /// Raw motion sent while captured, in all: the overlay's `Δ`, which is
     /// how doubled motion would show.
     motion_sent: (i64, i64),
@@ -265,6 +270,7 @@ impl Session {
             relative: false,
             capture: None,
             restore: None,
+            fence: None,
             motion_sent: (0, 0),
             escaped: false,
             key_ids: KeyIds::default(),
@@ -450,6 +456,17 @@ impl Session {
     /// The window changed shape; the follower is asked `DEBOUNCE` later.
     pub fn resized(&mut self) {
         self.follower.resized(Instant::now());
+        self.refence();
+    }
+
+    /// X11: the window moved or changed size under a captured pointer, and
+    /// the barriers go where it is now.
+    pub fn refence(&mut self) {
+        if self.capture == Some(Capture::Centred)
+            && let Some(fence) = &mut self.fence
+        {
+            fence.raise();
+        }
     }
 
     /// The window's size in desktop pixels: its device pixels, which is
@@ -573,10 +590,18 @@ impl Session {
                     // root window's selection. So: no grab, the cursor
                     // hidden, raw XI2 deltas, and the pointer warped back to
                     // the centre whenever it moves (the window swallows
-                    // those motions; a warp makes no raw motion).
+                    // those motions; a warp makes no raw motion), with
+                    // barriers on the window's edges so that it cannot be
+                    // anywhere else before the warp (see `x11::Fence`).
                     self.restore = host.pointer;
                     host.window.set_cursor_visible(false);
                     let _ = host.window.set_cursor_position(platform::centre(host.window));
+                    if self.fence.is_none() {
+                        self.fence = Fence::new(host.window);
+                    }
+                    if let Some(fence) = &mut self.fence {
+                        fence.raise();
+                    }
                     self.capture = Some(Capture::Centred);
                     self.motion_rest = (0.0, 0.0);
                     log::info!("pointer captured: hidden and held at the centre (Ctrl+Alt releases it)");
@@ -604,8 +629,16 @@ impl Session {
     /// The pointer as it was before the capture: unlocked, shown, and on
     /// X11 back where it was.
     fn let_go(&mut self, host: &mut Host) {
-        if self.capture.take() == Some(Capture::Locked) {
-            let _ = host.window.set_cursor_grab(CursorGrabMode::None);
+        match self.capture.take() {
+            Some(Capture::Locked) => {
+                let _ = host.window.set_cursor_grab(CursorGrabMode::None);
+            }
+            Some(Capture::Centred) => {
+                if let Some(fence) = &mut self.fence {
+                    fence.lower();
+                }
+            }
+            None => {}
         }
         host.window.set_cursor_visible(true);
         if let Some(at) = self.restore.take() {

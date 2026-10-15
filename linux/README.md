@@ -481,11 +481,24 @@ handles.
   window's selection, which would be double speed. So the cursor is hidden,
   raw motion is sent as before, and the pointer is warped back to the
   window's centre whenever it moves; a warp makes no raw motion, and the
-  window swallows the motion events it causes. Letting go puts the pointer
-  back where it was before the capture. The overlay's mouse line shows the
-  raw motion sent (`Δ x,y`): ten moves of 20 read 200,0 over VNC (`rfb`)
-  and over SPICE, and the guest's cursor moved. A single report of 900
-  pixels, more than half the window, was warped straight back. Raw values
+  window swallows the motion events it causes. Until the warp, though, the
+  pointer is wherever the move took it, and unfenced a fast move and a
+  click went to the window beside (`xdotool mousemove_relative -- 700 0
+  click 1` activated the witness xterm and ended the capture five times in
+  five). So while captured there are XFixes pointer barriers on the
+  window's four edges (`x11::Fence`), moved with the window: they stop the
+  pointer on its edge, change nothing of what is delivered, and pass the
+  warps. With them that move and click, and moves of up to 3000 pixels
+  each way and diagonally, stayed in the window every time, also after the
+  window was moved; Super+Return and Alt+Tab still went to the far end.
+  They need XFixes 5 (2011); without it the capture is as before, unfenced,
+  with a warning in the log. Ctrl+Alt, a focus loss and the disconnect take
+  them down with the capture, and letting go puts the pointer back where it
+  was before the capture. The overlay's mouse line shows the raw motion
+  sent (`Δ x,y`): ten moves of 20 read 200,0 over VNC (`rfb`) and over
+  SPICE, and the guest's cursor moved. A single report of 900 pixels, more
+  than half the window, read 900,0 against the barrier and was warped
+  straight back. Raw values
   from an absolute device (a VM's tablet, xdotool's absolute `mousemove`)
   are positions rather than deltas, which relative mode cannot use — as on
   Wayland. XI2 raw events stay selected whatever the focus, since winit

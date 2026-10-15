@@ -636,6 +636,11 @@ impl ApplicationHandler<Wake> for App {
                     session.resized();
                 }
             }
+            WindowEvent::Moved(_) => {
+                if let Screen::Session(session) = &mut self.screen {
+                    session.refence();
+                }
+            }
             WindowEvent::Focused(focused) => {
                 // On X11 the keyboard grab makes focus events of its own,
                 // which are not the focus moving (see `x11.rs`): neither
