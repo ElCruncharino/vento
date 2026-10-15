@@ -325,6 +325,13 @@ headless, any of which selects the probe instead of the window:
         parsed.map_err(|_| format!("--key: {value:?} is not a keysym"))
     }
 
+    /// At most `bytes` of `text`, cut where a character starts: the far end's
+    /// clipboard is anybody's text, and a cut through the middle of a
+    /// character is a panic rather than a shorter line.
+    fn head(text: &str, bytes: usize) -> &str {
+        &text[..text.floor_char_boundary(bytes)]
+    }
+
     impl Probe {
         fn run(self: Box<Self>) -> i32 {
             let _ = self.verbose;
@@ -450,9 +457,10 @@ headless, any of which selects the probe instead of the window:
                 }
                 Event::Bell => say("bell"),
                 Event::Clipboard(text) => say(&format!(
-                    "clipboard {} bytes: {:?}",
+                    "clipboard {} bytes: {:?}{}",
                     text.len(),
-                    &text[..text.len().min(60)]
+                    head(text, 60),
+                    if text.len() > 60 { "..." } else { "" }
                 )),
                 Event::CredentialsNeeded { needs_user } => {
                     say(&format!("credentials_needed (user {})", if *needs_user { "wanted" } else { "not wanted" }))
@@ -658,6 +666,20 @@ headless, any of which selects the probe instead of the window:
             }
             let _ = thumbnail_step;
             ok
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn a_clipboard_line_is_cut_between_characters() {
+            let text = format!("{}é tail", "0".repeat(59));
+            assert_eq!(head(&text, 60), "0".repeat(59));
+            assert_eq!(head(&text, 61), format!("{}é", "0".repeat(59)));
+            assert_eq!(head("short", 60), "short");
+            assert_eq!(head("", 60), "");
         }
     }
 }
