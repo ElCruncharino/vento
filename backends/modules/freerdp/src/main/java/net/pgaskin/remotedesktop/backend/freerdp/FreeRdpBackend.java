@@ -95,7 +95,7 @@ public final class FreeRdpBackend implements Backend, FreeRdpNative.Callbacks {
         // and is not one fails the connection instead of asking for the real one.
         this.password = password == null || password.isEmpty() ? null : password;
         this.options = new ConcurrentHashMap<>();
-        for (var option : FreeRdpProvider.OPTIONS) {
+        for (var option : FreeRdpCatalog.OPTIONS) {
             options.put(option.key(), option.defaultValue());
         }
         if (extraOptions != null) {
@@ -155,7 +155,7 @@ public final class FreeRdpBackend implements Backend, FreeRdpNative.Callbacks {
         state = State.CONNECTING;
         fireState(State.CONNECTING, "Connecting to " + address);
         final int[] size = FreeRdpProvider.size(context, address,
-                options.get(FreeRdpProvider.DESKTOP_SIZE));
+                options.get(FreeRdpCatalog.DESKTOP_SIZE));
         // A directory of ours rather than the library's default, which is under
         // $HOME and does not exist in an app's process: the library sets a
         // certificate store up there at connect, which nothing here lets it
@@ -164,10 +164,10 @@ public final class FreeRdpBackend implements Backend, FreeRdpNative.Callbacks {
         //noinspection ResultOfMethodCallIgnored
         store.mkdirs();
         final long h = FreeRdpNative.nativeCreate(this, address, userName, domain, password,
-                options.get(FreeRdpProvider.NLA), bool(FreeRdpProvider.LEGACY_TLS),
-                bool(FreeRdpProvider.COMPRESSION),
-                options.get(FreeRdpProvider.GRAPHICS), options.get(FreeRdpProvider.EXPERIENCE),
-                options.get(FreeRdpProvider.SOUND), scale(),
+                options.get(FreeRdpCatalog.NLA), bool(FreeRdpCatalog.LEGACY_TLS),
+                bool(FreeRdpCatalog.COMPRESSION),
+                options.get(FreeRdpCatalog.GRAPHICS), options.get(FreeRdpCatalog.EXPERIENCE),
+                options.get(FreeRdpCatalog.SOUND), scale(),
                 size[0], size[1], monitorCount(), KEYBOARD_LAYOUT,
                 android.os.Build.MODEL, store.getAbsolutePath(), CONNECT_TIMEOUT_MS);
         if (h == 0) {
@@ -177,7 +177,7 @@ public final class FreeRdpBackend implements Backend, FreeRdpNative.Callbacks {
         synchronized (pixels) {
             handle = h;
         }
-        FreeRdpNative.nativeViewOnly(h, bool(FreeRdpProvider.VIEW_ONLY));
+        FreeRdpNative.nativeViewOnly(h, bool(FreeRdpCatalog.VIEW_ONLY));
     }
 
     @Override
@@ -267,13 +267,13 @@ public final class FreeRdpBackend implements Backend, FreeRdpNative.Callbacks {
 
     @Override
     public boolean viewOnly() {
-        return bool(FreeRdpProvider.VIEW_ONLY);
+        return bool(FreeRdpCatalog.VIEW_ONLY);
     }
 
     /** The interface size, as a percentage the shim will accept. */
     private int scale() {
         try {
-            return Integer.parseInt(options.getOrDefault(FreeRdpProvider.SCALE, "100"));
+            return Integer.parseInt(options.getOrDefault(FreeRdpCatalog.SCALE, "100"));
         } catch (NumberFormatException e) {
             return 100;
         }
@@ -282,7 +282,7 @@ public final class FreeRdpBackend implements Backend, FreeRdpNative.Callbacks {
     private int monitorCount() {
         try {
             return Math.max(1, Math.min(16,
-                    Integer.parseInt(options.getOrDefault(FreeRdpProvider.MONITORS, "1"))));
+                    Integer.parseInt(options.getOrDefault(FreeRdpCatalog.MONITORS, "1"))));
         } catch (NumberFormatException e) {
             return 1;
         }
@@ -303,9 +303,9 @@ public final class FreeRdpBackend implements Backend, FreeRdpNative.Callbacks {
         if (h == 0 || dead) {
             return;
         }
-        if (FreeRdpProvider.VIEW_ONLY.equals(key)) {
+        if (FreeRdpCatalog.VIEW_ONLY.equals(key)) {
             FreeRdpNative.nativeViewOnly(h, Boolean.parseBoolean(value));
-        } else if (FreeRdpProvider.MONITORS.equals(key)) {
+        } else if (FreeRdpCatalog.MONITORS.equals(key)) {
             FreeRdpNative.nativeSetMonitorCount(h, monitorCount());
         }
         // Everything else is decided in the connection sequence, which has

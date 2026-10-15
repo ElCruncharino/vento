@@ -104,7 +104,7 @@ public final class RfbBackend implements Backend, RfbNative.Callbacks {
         // fails the connection instead of asking for the real one.
         this.password = password == null || password.isEmpty() ? null : password;
         this.options = new ConcurrentHashMap<>();
-        for (var option : RfbProvider.OPTIONS) {
+        for (var option : RfbCatalog.OPTIONS) {
             options.put(option.key(), option.defaultValue());
         }
         if (extraOptions != null) {
@@ -132,9 +132,9 @@ public final class RfbBackend implements Backend, RfbNative.Callbacks {
         state = State.CONNECTING;
         fireState(State.CONNECTING, "Connecting to " + address);
         final long h = RfbNative.nativeCreate(this, address, userName, password,
-                options.get(RfbProvider.SECURITY), bool(RfbProvider.SHARED),
-                options.get(RfbProvider.ENCODING),
-                RfbProvider.compressLevel(options.get(RfbProvider.COMPRESSION)),
+                options.get(RfbCatalog.SECURITY), bool(RfbCatalog.SHARED),
+                options.get(RfbCatalog.ENCODING),
+                RfbProvider.compressLevel(options.get(RfbCatalog.COMPRESSION)),
                 CONNECT_TIMEOUT_MS);
         if (h == 0) {
             closed("Could not start the connection");
@@ -143,7 +143,7 @@ public final class RfbBackend implements Backend, RfbNative.Callbacks {
         synchronized (pixels) {
             handle = h;
         }
-        RfbNative.nativeViewOnly(h, bool(RfbProvider.VIEW_ONLY));
+        RfbNative.nativeViewOnly(h, bool(RfbCatalog.VIEW_ONLY));
     }
 
     @Override
@@ -253,7 +253,7 @@ public final class RfbBackend implements Backend, RfbNative.Callbacks {
 
     @Override
     public boolean viewOnly() {
-        return bool(RfbProvider.VIEW_ONLY);
+        return bool(RfbCatalog.VIEW_ONLY);
     }
 
     @Override
@@ -266,10 +266,10 @@ public final class RfbBackend implements Backend, RfbNative.Callbacks {
             return;
         }
         switch (key) {
-            case RfbProvider.VIEW_ONLY -> RfbNative.nativeViewOnly(h, Boolean.parseBoolean(value));
-            case RfbProvider.ENCODING, RfbProvider.COMPRESSION -> RfbNative.nativeSetEncodings(h,
-                    options.get(RfbProvider.ENCODING),
-                    RfbProvider.compressLevel(options.get(RfbProvider.COMPRESSION)));
+            case RfbCatalog.VIEW_ONLY -> RfbNative.nativeViewOnly(h, Boolean.parseBoolean(value));
+            case RfbCatalog.ENCODING, RfbCatalog.COMPRESSION -> RfbNative.nativeSetEncodings(h,
+                    options.get(RfbCatalog.ENCODING),
+                    RfbProvider.compressLevel(options.get(RfbCatalog.COMPRESSION)));
             default -> {
                 // Shared is decided at ClientInit and the clipboard switches are
                 // read where the clipboard is handled; neither is a call.
@@ -453,7 +453,7 @@ public final class RfbBackend implements Backend, RfbNative.Callbacks {
 
     @Override
     public void onBell() {
-        if (!bool(RfbProvider.BELL)) {
+        if (!bool(RfbCatalog.ACCEPT_BELL)) {
             return;
         }
         main.post(() -> {

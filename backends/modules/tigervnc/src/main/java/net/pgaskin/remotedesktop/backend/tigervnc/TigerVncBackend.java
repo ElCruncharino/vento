@@ -113,7 +113,7 @@ public final class TigerVncBackend implements Backend, TigerVncNative.Callbacks 
         // one.
         this.password = password == null || password.isEmpty() ? null : password;
         this.options = new ConcurrentHashMap<>();
-        for (var option : TigerVncProvider.OPTIONS) {
+        for (var option : TigerVncCatalog.OPTIONS) {
             options.put(option.key(), option.defaultValue());
         }
         if (extraOptions != null) {
@@ -141,14 +141,14 @@ public final class TigerVncBackend implements Backend, TigerVncNative.Callbacks 
         state = State.CONNECTING;
         fireState(State.CONNECTING, "Connecting to " + address);
         final long h = TigerVncNative.nativeCreate(this, address, userName, password,
-                bool(TigerVncProvider.SHARED),
-                bool(TigerVncProvider.ANONYMOUS_TLS),
-                TigerVncProvider.encoding(options.get(TigerVncProvider.ENCODING)),
-                TigerVncProvider.level(options.get(TigerVncProvider.COMPRESSION)),
-                TigerVncProvider.quality(options.get(TigerVncProvider.QUALITY)),
-                TigerVncProvider.colorLevel(options.get(TigerVncProvider.COLOUR)),
-                bool(TigerVncProvider.H264),
-                bool(TigerVncProvider.AUDIO),
+                bool(TigerVncCatalog.SHARED),
+                bool(TigerVncCatalog.ANONYMOUS_TLS),
+                TigerVncProvider.encoding(options.get(TigerVncCatalog.ENCODING)),
+                TigerVncProvider.level(options.get(TigerVncCatalog.COMPRESSION)),
+                TigerVncProvider.quality(options.get(TigerVncCatalog.QUALITY)),
+                TigerVncProvider.colorLevel(options.get(TigerVncCatalog.COLOR_LEVEL)),
+                bool(TigerVncCatalog.H264),
+                bool(TigerVncCatalog.AUDIO),
                 CONNECT_TIMEOUT_MS);
         if (h == 0) {
             closed("Could not start the connection");
@@ -157,7 +157,7 @@ public final class TigerVncBackend implements Backend, TigerVncNative.Callbacks 
         synchronized (pixels) {
             handle = h;
         }
-        TigerVncNative.nativeViewOnly(h, bool(TigerVncProvider.VIEW_ONLY));
+        TigerVncNative.nativeViewOnly(h, bool(TigerVncCatalog.VIEW_ONLY));
     }
 
     @Override
@@ -250,7 +250,7 @@ public final class TigerVncBackend implements Backend, TigerVncNative.Callbacks 
 
     @Override
     public boolean viewOnly() {
-        return bool(TigerVncProvider.VIEW_ONLY);
+        return bool(TigerVncCatalog.VIEW_ONLY);
     }
 
     @Override
@@ -263,16 +263,16 @@ public final class TigerVncBackend implements Backend, TigerVncNative.Callbacks 
             return;
         }
         switch (key) {
-            case TigerVncProvider.VIEW_ONLY ->
+            case TigerVncCatalog.VIEW_ONLY ->
                     TigerVncNative.nativeViewOnly(h, Boolean.parseBoolean(value));
-            case TigerVncProvider.ENCODING, TigerVncProvider.COMPRESSION,
-                 TigerVncProvider.QUALITY, TigerVncProvider.COLOUR, TigerVncProvider.H264 ->
+            case TigerVncCatalog.ENCODING, TigerVncCatalog.COMPRESSION,
+                 TigerVncCatalog.QUALITY, TigerVncCatalog.COLOR_LEVEL, TigerVncCatalog.H264 ->
                     TigerVncNative.nativeSetPicture(h,
-                            TigerVncProvider.encoding(options.get(TigerVncProvider.ENCODING)),
-                            TigerVncProvider.level(options.get(TigerVncProvider.COMPRESSION)),
-                            TigerVncProvider.quality(options.get(TigerVncProvider.QUALITY)),
-                            TigerVncProvider.colorLevel(options.get(TigerVncProvider.COLOUR)),
-                            bool(TigerVncProvider.H264));
+                            TigerVncProvider.encoding(options.get(TigerVncCatalog.ENCODING)),
+                            TigerVncProvider.level(options.get(TigerVncCatalog.COMPRESSION)),
+                            TigerVncProvider.quality(options.get(TigerVncCatalog.QUALITY)),
+                            TigerVncProvider.colorLevel(options.get(TigerVncCatalog.COLOR_LEVEL)),
+                            bool(TigerVncCatalog.H264));
             default -> {
                 // Shared is decided at ClientInit, audio at the first
                 // SetEncodings, and the bell is read where the bell arrives;
@@ -433,7 +433,7 @@ public final class TigerVncBackend implements Backend, TigerVncNative.Callbacks 
 
     @Override
     public void onBell() {
-        if (!bool(TigerVncProvider.BELL)) {
+        if (!bool(TigerVncCatalog.ACCEPT_BELL)) {
             return;
         }
         main.post(() -> {

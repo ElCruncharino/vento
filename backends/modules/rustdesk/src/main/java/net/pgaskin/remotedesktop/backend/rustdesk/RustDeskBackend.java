@@ -96,7 +96,7 @@ public final class RustDeskBackend implements Backend, RustDeskNative.Callbacks 
         // one.
         this.password = password == null || password.isEmpty() ? null : password;
         this.options = new ConcurrentHashMap<>();
-        for (var option : RustDeskProvider.OPTIONS) {
+        for (var option : RustDeskCatalog.OPTIONS) {
             options.put(option.key(), option.defaultValue());
         }
         if (extraOptions != null) {
@@ -124,17 +124,17 @@ public final class RustDeskBackend implements Backend, RustDeskNative.Callbacks 
         state = State.CONNECTING;
         fireState(State.CONNECTING, "Connecting to " + address);
         final long h = RustDeskNative.nativeCreate(this, address, byId(),
-                options.get(RustDeskProvider.RENDEZVOUS),
-                options.get(RustDeskProvider.RENDEZVOUS_KEY),
+                options.get(RustDeskCatalog.RENDEZVOUS_SERVER),
+                options.get(RustDeskCatalog.RENDEZVOUS_KEY),
                 password,
                 // What the far end shows and logs while this session is up. The
                 // phone rather than the app: somebody looking at their own
                 // desktop wants to know which device is on it.
                 Build.MODEL,
-                options.get(RustDeskProvider.QUALITY),
-                RustDeskProvider.fps(options.get(RustDeskProvider.FPS)),
-                options.get(RustDeskProvider.CODEC),
-                bool(RustDeskProvider.LOCK_AFTER),
+                options.get(RustDeskCatalog.QUALITY),
+                RustDeskProvider.fps(options.get(RustDeskCatalog.FRAME_RATE)),
+                options.get(RustDeskCatalog.CODEC),
+                bool(RustDeskCatalog.LOCK_AFTER_SESSION),
                 CONNECT_TIMEOUT_MS);
         if (h == 0) {
             closed("Could not start the connection");
@@ -143,7 +143,7 @@ public final class RustDeskBackend implements Backend, RustDeskNative.Callbacks 
         synchronized (pixels) {
             handle = h;
         }
-        RustDeskNative.nativeViewOnly(h, bool(RustDeskProvider.VIEW_ONLY));
+        RustDeskNative.nativeViewOnly(h, bool(RustDeskCatalog.VIEW_ONLY));
     }
 
     @Override
@@ -264,7 +264,7 @@ public final class RustDeskBackend implements Backend, RustDeskNative.Callbacks 
 
     @Override
     public boolean viewOnly() {
-        return bool(RustDeskProvider.VIEW_ONLY);
+        return bool(RustDeskCatalog.VIEW_ONLY);
     }
 
     @Override
@@ -275,13 +275,13 @@ public final class RustDeskBackend implements Backend, RustDeskNative.Callbacks 
             return;
         }
         switch (key) {
-            case RustDeskProvider.VIEW_ONLY ->
+            case RustDeskCatalog.VIEW_ONLY ->
                     RustDeskNative.nativeViewOnly(h, Boolean.parseBoolean(value));
-            case RustDeskProvider.QUALITY, RustDeskProvider.FPS, RustDeskProvider.CODEC ->
+            case RustDeskCatalog.QUALITY, RustDeskCatalog.FRAME_RATE, RustDeskCatalog.CODEC ->
                     RustDeskNative.nativeSetOptions(h,
-                            options.get(RustDeskProvider.QUALITY),
-                            RustDeskProvider.fps(options.get(RustDeskProvider.FPS)),
-                            options.get(RustDeskProvider.CODEC));
+                            options.get(RustDeskCatalog.QUALITY),
+                            RustDeskProvider.fps(options.get(RustDeskCatalog.FRAME_RATE)),
+                            options.get(RustDeskCatalog.CODEC));
             default -> {
             }
         }
@@ -564,13 +564,13 @@ public final class RustDeskBackend implements Backend, RustDeskNative.Callbacks 
      * other's identity.
      */
     private String pinnedAs() {
-        final String server = options.get(RustDeskProvider.RENDEZVOUS);
+        final String server = options.get(RustDeskCatalog.RENDEZVOUS_SERVER);
         return address + "@" + (server == null || server.isBlank()
                 ? RustDeskProvider.PUBLIC_NETWORK : server.trim());
     }
 
     private boolean byId() {
-        return RustDeskProvider.BY_ID.equals(options.get(RustDeskProvider.CONNECT_BY));
+        return RustDeskProvider.BY_ID.equals(options.get(RustDeskCatalog.CONNECT_BY));
     }
 
     @Override

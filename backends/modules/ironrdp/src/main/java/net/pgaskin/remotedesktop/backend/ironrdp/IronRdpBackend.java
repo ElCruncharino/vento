@@ -101,7 +101,7 @@ public final class IronRdpBackend implements Backend, IronRdpNative.Callbacks {
         // fails the connection instead of asking for the real one.
         this.password = password == null || password.isEmpty() ? null : password;
         this.options = new ConcurrentHashMap<>();
-        for (var option : IronRdpProvider.OPTIONS) {
+        for (var option : IronRdpCatalog.OPTIONS) {
             options.put(option.key(), option.defaultValue());
         }
         if (extraOptions != null) {
@@ -128,12 +128,12 @@ public final class IronRdpBackend implements Backend, IronRdpNative.Callbacks {
         }
         state = State.CONNECTING;
         fireState(State.CONNECTING, "Connecting to " + address);
-        final int[] size = IronRdpProvider.size(context, address, options.get(IronRdpProvider.DESKTOP_SIZE));
+        final int[] size = IronRdpProvider.size(context, address, options.get(IronRdpCatalog.DESKTOP_SIZE));
         final long h = IronRdpNative.nativeCreate(this, address, userName, domain, password,
-                options.get(IronRdpProvider.NLA),
-                bool(IronRdpProvider.COMPRESSION) ? "rdp61" : null,
-                !"bitmap".equals(options.get(IronRdpProvider.GRAPHICS)),
-                options.get(IronRdpProvider.EXPERIENCE),
+                options.get(IronRdpCatalog.NLA),
+                bool(IronRdpCatalog.COMPRESSION) ? "rdp61" : null,
+                !"bitmap".equals(options.get(IronRdpCatalog.GRAPHICS)),
+                options.get(IronRdpCatalog.EXPERIENCE),
                 size[0], size[1], monitorCount(), KEYBOARD_LAYOUT,
                 android.os.Build.MODEL, CONNECT_TIMEOUT_MS);
         if (h == 0) {
@@ -143,7 +143,7 @@ public final class IronRdpBackend implements Backend, IronRdpNative.Callbacks {
         synchronized (pixels) {
             handle = h;
         }
-        IronRdpNative.nativeViewOnly(h, bool(IronRdpProvider.VIEW_ONLY));
+        IronRdpNative.nativeViewOnly(h, bool(IronRdpCatalog.VIEW_ONLY));
     }
 
     @Override
@@ -237,7 +237,7 @@ public final class IronRdpBackend implements Backend, IronRdpNative.Callbacks {
 
     @Override
     public boolean viewOnly() {
-        return bool(IronRdpProvider.VIEW_ONLY);
+        return bool(IronRdpCatalog.VIEW_ONLY);
     }
 
     /**
@@ -248,7 +248,7 @@ public final class IronRdpBackend implements Backend, IronRdpNative.Callbacks {
     private int monitorCount() {
         try {
             return Math.max(1, Math.min(16,
-                    Integer.parseInt(options.getOrDefault(IronRdpProvider.MONITORS, "1"))));
+                    Integer.parseInt(options.getOrDefault(IronRdpCatalog.MONITORS, "1"))));
         } catch (NumberFormatException e) {
             return 1;
         }
@@ -271,9 +271,9 @@ public final class IronRdpBackend implements Backend, IronRdpNative.Callbacks {
         if (h == 0 || dead) {
             return;
         }
-        if (IronRdpProvider.VIEW_ONLY.equals(key)) {
+        if (IronRdpCatalog.VIEW_ONLY.equals(key)) {
             IronRdpNative.nativeViewOnly(h, Boolean.parseBoolean(value));
-        } else if (IronRdpProvider.MONITORS.equals(key)) {
+        } else if (IronRdpCatalog.MONITORS.equals(key)) {
             // Remembered rather than acted on: the count is what the *next*
             // layout asks for, and a desktop somebody is working on does not
             // get rearranged as a side effect of a settings row moving.

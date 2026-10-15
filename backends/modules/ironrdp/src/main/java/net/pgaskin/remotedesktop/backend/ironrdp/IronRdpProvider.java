@@ -12,73 +12,18 @@ import android.view.WindowMetrics;
 
 import net.pgaskin.remotedesktop.backend.Backend;
 import net.pgaskin.remotedesktop.backend.BackendOption;
-import net.pgaskin.remotedesktop.backend.BackendOption.Choice;
 import net.pgaskin.remotedesktop.backend.BackendProvider;
-import net.pgaskin.remotedesktop.backend.BackendOption.Scope;
 
 import java.util.List;
 import java.util.Map;
 
 /**
- * This module's entry in a build's list of backends, and what the RDP backend
- * can be told.
- *
- * <p>Shorter than {@code RfbProvider}, and shorter for a different reason. RFB's
- * list is short because the protocol has little to say; this one is short
- * because almost everything RDP negotiates is negotiated <em>well</em> — the
- * codec, the compression, the colour depth — and an option that re-decides what
- * the two ends already agreed on is a way to make a session worse.
- *
- * <p>Five things are deliberately <b>not</b> here:
- *
- * <ul>
- *   <li><b>The keyboard layout.</b> RDP sends key <em>positions</em>, and
- *       {@code rdp::keymap} maps keysyms onto a US layout, so the layout named
- *       at connect time has to be the one that table was written for. Offering a
- *       choice would let someone pick a layout that turns every letter into a
- *       different letter.
- *   <li><b>The clipboard.</b> The channel is open in both directions, but
- *       whether to share this phone's clipboard is a question about the phone
- *       and is answered once for every protocol, in the app's own settings.
- *   <li><b>The domain</b>, RDP's third credential, which is not a row because
- *       it is already a field: {@code DOMAIN&#92;user} and {@code user@domain}
- *       are split out of the user name, which is what every RDP client takes
- *       and what anyone who has one will type.
- *   <li><b>The colour depth</b>, which the three VNC backends do offer. There
- *       it is a wire format the server encodes into; here the picture arrives
- *       as RemoteFX or as bitmaps, and the codec has already decided what a
- *       pixel costs — 16-bit would apply to one of those two paths, save
- *       nothing where the codec is on, and put a conversion in front of a
- *       framebuffer that is 32 bits either way.
- *   <li><b>The graphics pipeline (MS-RDPEGFX)</b>, which is how a machine since
- *       Windows 8 would rather send a desktop and the only path that carries
- *       H.264. It was built, driven against both servers and taken out again,
- *       because IronRDP's implementation was then incomplete and, where it was
- *       complete, wrong. Nothing in the library set the capability flag a server
- *       needs before it will open the channel; the client received RFX
- *       Progressive and discarded it, though a finished decoder for it sat
- *       unused one crate away; and the ClearCodec that Windows sends for most of
- *       an interface was rejected outright — fifteen ClearCodec and twelve
- *       progressive failures in one short session, which is a desktop with
- *       solid rectangles of the wrong colour through it. Patched, all of that
- *       got as far as working against xrdp and no further. The library has
- *       since grown all three missing pieces — the flag and both decoders, and
- *       a session that composites what the pipeline draws — but upstream's own
- *       client still ships with the flag off, and none of it has been driven
- *       against a Windows host from here since. Until it has, offering it would
- *       be the same bet as before: a choice known to be right on one server and
- *       not known to be right on the one the protocol belongs to.
- * </ul>
+ * This module's entry in a build's list of backends. What the IronRDP backend
+ * is called and what it can be told are the catalog's, which the Linux client
+ * reads too: {@link IronRdpCatalog}, generated from {@code backends/session} at
+ * build time, holds the words and the option keys.
  */
 public final class IronRdpProvider implements BackendProvider {
-
-    public static final String NLA = "Nla";
-    public static final String DESKTOP_SIZE = "DesktopSize";
-    public static final String MONITORS = "Monitors";
-    public static final String GRAPHICS = "Graphics";
-    public static final String EXPERIENCE = "Experience";
-    public static final String COMPRESSION = "Compression";
-    public static final String VIEW_ONLY = "ViewOnly";
 
     /** The two answers to "how big" that are not a number; see {@link #size}. */
     static final String REMOTE = "remote";
@@ -90,77 +35,34 @@ public final class IronRdpProvider implements BackendProvider {
      */
     private static final int[] FALLBACK = {1920, 1200};
 
-    static final List<BackendOption> OPTIONS = List.of(
-            // ---- per connection ---------------------------------------------
-            BackendOption.choice(NLA, "NLA",
-                    "Network Level Authentication authenticates using CredSSP before the session starts rather than using the server-side login screen.",
-                    "prefer", Scope.CONNECTION, false,
-                    new Choice("prefer", "Where the server offers it"),
-                    new Choice("require", "Required"),
-                    new Choice("off", "Never")),
-            BackendOption.choice(DESKTOP_SIZE, "Desktop size",
-                    "Preferred screen resolution.",
-                    "1920x1200", Scope.CONNECTION, false,
-                    new Choice(REMOTE, "Do not change"),
-                    new Choice(DEVICE, "Match local device"),
-                    new Choice("1920x1200", "1920 × 1200"),
-                    new Choice("1920x1080", "1920 × 1080"),
-                    new Choice("1600x1000", "1600 × 1000"),
-                    new Choice("1366x768", "1366 × 768"),
-                    new Choice("1280x800", "1280 × 800"),
-                    new Choice("2560x1440", "2560 × 1440")),
-            BackendOption.choice(MONITORS, "Monitors",
-                    "Simulate multiple monitors.",
-                    "1", Scope.CONNECTION, false,
-                    new Choice("1", "One"),
-                    new Choice("2", "Two"),
-                    new Choice("3", "Three")),
-            BackendOption.choice(GRAPHICS, "Graphics",
-                    "EGFX is not supported, RemoteFX is older, and Bitmap sends raw images.",
-                    "rfx", Scope.LAYERED, false,
-                    new Choice("rfx", "RemoteFX"),
-                    new Choice("bitmap", "Bitmaps")),
-            BackendOption.choice(EXPERIENCE, "Visual effects",
-                    "Controls the amount of animation and visual effects, if supported by the server.",
-                    "balanced", Scope.LAYERED, false,
-                    new Choice("full", "Everything"),
-                    new Choice("balanced", "No animation"),
-                    new Choice("plain", "As little as possible")),
-            BackendOption.bool(COMPRESSION, "Compression",
-                    "Enable connection-level compression. Uses less bandwidth, but more CPU.",
-                    true, Scope.LAYERED, false),
-            BackendOption.bool(VIEW_ONLY, "View only",
-                    "Do not send input or clipboard events.",
-                    false, Scope.CONNECTION, true));
-
     @Override
     public String id() {
-        return "rdp";
+        return IronRdpCatalog.ID;
     }
 
     @Override
     public String name() {
-        return "RDP (IronRDP)";
+        return IronRdpCatalog.NAME;
     }
 
     @Override
     public String shortName() {
-        return "IronRDP";
+        return IronRdpCatalog.SHORT_NAME;
     }
 
     @Override
     public String description() {
-        return "Rust RDP implementation. Uses less CPU than FreeRDP, but drops more frames and does not properly support EGFX";
+        return IronRdpCatalog.DESCRIPTION;
     }
 
     @Override
     public int order() {
-        return 25;
+        return IronRdpCatalog.ORDER;
     }
 
     @Override
     public List<BackendOption> options() {
-        return OPTIONS;
+        return IronRdpCatalog.OPTIONS;
     }
 
     @Override

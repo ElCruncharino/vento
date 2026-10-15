@@ -105,10 +105,7 @@ abstract class CargoBuildTask extends DefaultTask {
         outDir.deleteDir()
         outDir.mkdirs()
 
-        final env = new LinkedHashMap<String, String>(System.getenv())
-        env.keySet().removeIf { name ->
-            ENV_IGNORED.contains(name) || ENV_IGNORED_PREFIX.any { name.startsWith(it) }
-        }
+        final env = scrubbedEnvironment()
         env.put('ANDROID_NDK_HOME', ndkDirectory.get().asFile.absolutePath)
         env.put('CARGO_TERM_PROGRESS_WHEN', 'never')
         env.put('CARGO_TERM_COLOR', 'never')
@@ -138,6 +135,19 @@ abstract class CargoBuildTask extends DefaultTask {
             it.commandLine = cmd
             it.environment = env
         }
+    }
+
+    /**
+     * This process's environment less everything that would change what cargo
+     * builds without being a pin: {@link #ENV_IGNORED} and the prefixes after
+     * it. {@link GenerateJavaTask} runs its generator under the same.
+     */
+    static Map<String, String> scrubbedEnvironment() {
+        final env = new LinkedHashMap<String, String>(System.getenv())
+        env.keySet().removeIf { name ->
+            ENV_IGNORED.contains(name) || ENV_IGNORED_PREFIX.any { name.startsWith(it) }
+        }
+        return env
     }
 
     /** See cargo's own {@code home::cargo_home}. */

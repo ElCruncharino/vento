@@ -68,6 +68,31 @@ ext {
 }
 
 /*
+ * What Rust says a backend is, as Java its module compiles: `vento-codegen`
+ * (`codegen/`) writes the catalog's entry for the backend — id, name,
+ * description, place in a picker, and every option with its key as a
+ * constant — and the module's provider answers from it. A generated source
+ * directory, one per variant, decided by AGP: nothing of it is in the tree,
+ * and `codegenSources` is everything it can depend on, so the task is out of
+ * date exactly when the catalog may have changed.
+ */
+ext.codegenSources = files(
+        '../Cargo.toml', '../Cargo.lock', '../rust-toolchain.toml',
+        'codegen/Cargo.toml', 'codegen/src',
+        'session/Cargo.toml', 'session/build.rs', 'session/src',
+        'common/Cargo.toml', 'common/src')
+
+ext.generateCatalog = { Project module, variant, String backend, String className ->
+    final cap = variant.name.substring(0, 1).toUpperCase(Locale.ROOT) + variant.name.substring(1)
+    final task = module.tasks.register("generate${cap}Catalog", GenerateJavaTask) {
+        workspaceDir.set(cargoWorkspace)
+        generatorSources.from(codegenSources)
+        arguments.set(['catalog', backend, module.android.namespace, className])
+    }
+    variant.sources.java?.addGeneratedSourceDirectory(task) { it.outputDir }
+}
+
+/*
  * The two upstreams that arrive as a release rather than as a submodule, both
  * of them the encryption the borrowed VNC clients reach TLS through. Their git
  * trees have no `configure` — it is an autotools bootstrap output, and gnutls'
