@@ -8,11 +8,17 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// The longest run of bytes a length field may claim before it is treated as a
-/// protocol error rather than as a string. One number for both the strings
-/// [`Reader::string`] reads and the clipboard's own length field, since what it
-/// bounds is the same thing: how much a server can make this end allocate by
-/// saying so.
+/// protocol error rather than as a string: how much a server can make this end
+/// allocate by saying so.
 pub const MAX_STRING: usize = 1 << 20;
+
+/// The most of the far end's clipboard this end takes, in bytes on the wire.
+/// The same bound as [`MAX_STRING`], for the same reason, but past it the
+/// message is skipped rather than refused: the length is there to skip by,
+/// and a large copy at the far end is somebody's ordinary afternoon, not a
+/// server that has stopped making sense. TigerVNC's viewer does the same
+/// past its `MaxCutText`.
+pub const MAX_CUT_TEXT: usize = 1 << 20;
 
 /// How much has gone past, kept where more than one thread can read it: the
 /// reader ends up on the protocol thread and the writer on its own, and what

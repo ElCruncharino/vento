@@ -544,8 +544,17 @@ impl Client {
                     // a skip of two gigabytes that reads until the far end
                     // gives up.
                     let n = length.unsigned_abs() as usize;
-                    if n > crate::proto::MAX_STRING {
-                        return Err(Error::Protocol(format!("cut text of {n} bytes")));
+                    if n > crate::proto::MAX_CUT_TEXT {
+                        // Skipped, not refused: ending the session over a big
+                        // copy at the far end lost the desktop for the sake of
+                        // a clipboard. Nothing is delivered, since a cut-off
+                        // text pasted here would read as the whole of it.
+                        log::warn!(
+                            "the far end's clipboard of {n} bytes is over the {} this client takes; skipped",
+                            crate::proto::MAX_CUT_TEXT
+                        );
+                        r.skip(n)?;
+                        continue;
                     }
                     if length < 0 {
                         // The extended clipboard's negative length is a
@@ -1138,6 +1147,58 @@ mod tests {
             sent.push(b);
         }
         assert_eq!(sent, vec![set_desktop_size(1280, 800, Screen::default())]);
+    }
+
+    /// What a session was told, for the tests that run the read loop over
+    /// bytes rather than a socket.
+    #[derive(Default)]
+    struct Recorder {
+        clipboard: Vec<String>,
+        bells: usize,
+    }
+
+    impl Handler for Recorder {
+        fn connected(&mut self, _: usize, _: usize) {}
+        fn desktop_size(&mut self, _: usize, _: usize) {}
+        fn damaged(&mut self, _: usize, _: usize, _: usize, _: usize) {}
+        fn frame_end(&mut self) {}
+        fn cursor(&mut self, _: &[u32], _: usize, _: usize, _: i32, _: i32) {}
+        fn bell(&mut self) {
+            self.bells += 1;
+        }
+        fn clipboard(&mut self, text: &str) {
+            self.clipboard.push(text.to_string());
+        }
+        fn credentials(&mut self, _: bool) -> Option<Credentials> {
+            None
+        }
+        fn trust(&mut self, _: &str) -> bool {
+            false
+        }
+    }
+
+    /// Runs the read loop over `bytes` until they run out, which is how
+    /// every such test ends: the error is the end of the input.
+    fn read_all(client: &Client, bytes: &[u8]) -> Recorder {
+        let mut recorder = Recorder::default();
+        let mut r = Reader::new(bytes);
+        let end = client.read_loop(&mut r, &mut recorder);
+        assert!(matches!(end, Err(Error::Io(_))), "the loop ran to the end of the input");
+        recorder
+    }
+
+    /// A clipboard over the limit is stepped over and the session reads on:
+    /// the bell after it still rings, and nothing of the text is delivered.
+    #[test]
+    fn an_oversized_cut_text_is_skipped_not_fatal() {
+        let n = crate::proto::MAX_CUT_TEXT + 1;
+        let mut bytes = vec![3, 0, 0, 0];
+        bytes.extend_from_slice(&(n as u32).to_be_bytes());
+        bytes.resize(bytes.len() + n, b'x');
+        bytes.push(2);
+        let seen = read_all(&Client::new(), &bytes);
+        assert!(seen.clipboard.is_empty());
+        assert_eq!(seen.bells, 1);
     }
 
     /// `0x7FFF` is standing still, and a delta too big for the field stops at
