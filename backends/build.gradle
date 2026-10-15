@@ -21,6 +21,37 @@ android {
         sourceCompatibility JavaVersion.VERSION_21
         targetCompatibility JavaVersion.VERSION_21
     }
+
+    // The rules this module keeps that the Linux client keeps too, held to one
+    // set of cases: `vectors/`, which `cargo test` reads from the other side.
+    // Read at run time from the module's directory, which is where a test
+    // runs, so they are declared as an input of the task, or a changed case
+    // would not make it out of date.
+    testOptions {
+        unitTests.all {
+            testLogging {
+                events = ["failed"]
+                exceptionFormat = "full"
+            }
+            inputs.dir('vectors')
+                    .withPropertyName('vectors')
+                    .withPathSensitivity(PathSensitivity.RELATIVE)
+        }
+    }
+}
+
+// Nothing here differs between build types, so the release variant's copy of
+// the same suite is duplicate work.
+androidComponents {
+    beforeVariants(selector().withBuildType('release')) { variant ->
+        variant.enableUnitTest = false
+    }
+}
+
+dependencies {
+    // A plain JVM, as `control/` has it: what is tested here is rules, and
+    // the classes they are in touch nothing of Android's.
+    testImplementation 'junit:junit:4.13.2'
 }
 
 // What every protocol module's native build needs, so that a protocol's own

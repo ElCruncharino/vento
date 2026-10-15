@@ -3,7 +3,10 @@
 
 package net.pgaskin.remotedesktop.backend;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.function.BiConsumer;
+import java.util.function.Function;
 import java.util.function.Predicate;
 
 /**
@@ -192,6 +195,30 @@ public record BackendOption(String key, String label, String summary, Type type,
             }
         }
         return defaultValue;
+    }
+
+    /**
+     * Every {@link #stranded} choice in {@code options} put back to its
+     * {@link #fallback}, through {@code set}; the keys that moved, in the
+     * options' order. The one rule every screen keeps whenever a switch moves,
+     * and the Linux client's {@code Options::settle}: the two are held to the
+     * same cases by {@code backends/vectors/options.json}.
+     *
+     * @param value what an option says now
+     * @param on    whether the {@code BOOL} option with that key is on
+     */
+    public static List<String> settle(List<BackendOption> options,
+                                      Function<BackendOption, String> value,
+                                      Predicate<String> on,
+                                      BiConsumer<BackendOption, String> set) {
+        final List<String> changed = new ArrayList<>();
+        for (BackendOption o : options) {
+            if (o.type == Type.CHOICE && o.stranded(value.apply(o), on) != null) {
+                set.accept(o, o.fallback(on));
+                changed.add(o.key);
+            }
+        }
+        return changed;
     }
 
     /** For a {@link Type#CHOICE}: what to show for {@code value}, or the value itself. */
