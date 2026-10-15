@@ -17,9 +17,12 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 /**
- * A {@link Backend} on any of the backends written in Rust: the protocol
- * crate's {@code session::Backend} adapter, which the Linux client holds too,
- * reached through the one JNI layer in {@code backends/platform/android}.
+ * A {@link Backend} on any backend but RealVNC's: the backend's
+ * {@code session::Backend} adapter, which the Linux client holds too, reached
+ * through the one JNI layer in {@code backends/platform/android}. For the four
+ * written in Rust that adapter is the protocol crate's own; for the three C
+ * ones it is the small crate beside the C library, over the one vtable in
+ * {@code vento/backend.h}, linked into the same library.
  *
  * <p>There used to be one of these per protocol, and they were twins: the
  * same handle, the same retirement, the same posting to the main thread,
@@ -58,7 +61,7 @@ import java.util.function.Consumer;
 public final class NativeBackend implements Backend {
 
     /**
-     * The natives every Rust backend's library registers, on a class of the
+     * The natives every backend's library registers, on a class of the
      * module's own that {@code vento-codegen natives} writes from the JNI table
      * in {@code backends/platform/android/src/surface.rs}.
      *
@@ -107,7 +110,10 @@ public final class NativeBackend implements Backend {
          */
         void answerCredentials(long handle, String userName, String password);
 
-        /** The answer to {@link #onTrustNeeded} or {@link #onUnverified}. */
+        /**
+         * The answer to {@link #onTrustNeeded}, {@link #onUnverified},
+         * {@link #onQuestion}, {@link #onMessage} or {@link #onSecurityNeeded}.
+         */
         void answerTrust(long handle, boolean accept);
 
         void disconnect(long handle);
@@ -186,6 +192,16 @@ public final class NativeBackend implements Backend {
          * {@link Listener#damaged} is: whatever is done here must be cheap.
          */
         default void desktopSize(int width, int height) {
+        }
+
+        /**
+         * What going on means, after why the far end could not be verified:
+         * the second half of {@link #onUnverified}'s question. The common
+         * answer is the plain one; a VNC TLS without a certificate is still
+         * encrypted, and says so.
+         */
+        default String unverifiedConsequence() {
+            return "Connecting anyway leaves the session unencrypted.";
         }
 
         /** Words under a credentials prompt, or empty. */
@@ -702,8 +718,9 @@ public final class NativeBackend implements Backend {
      * <p>So it is a question rather than a refusal, and it is
      * {@link Prompt.Message} rather than {@link Prompt.Trust}: a trust prompt
      * offers to remember an identity, and the whole of this case is that there
-     * is not one. Nothing is remembered and it is asked every time. Only
-     * RustDesk asks it today; the others have an identity or nothing to ask.
+     * is not one. Nothing is remembered and it is asked every time. RustDesk
+     * asks it of a peer with no key, and the two borrowed VNC clients of a TLS
+     * with no certificate; the others have an identity or nothing to ask.
      */
     void onUnverified(String why) {
         final String key = hooks.pinnedAs(address, options);
@@ -711,7 +728,7 @@ public final class NativeBackend implements Backend {
         main.post(() -> {
             final Prompt.Handler h = prompts;
             final Prompt.Message prompt = new Prompt.Message(key,
-                    why + " Connecting anyway leaves the session unencrypted.",
+                    why + " " + hooks.unverifiedConsequence(),
                     Prompt.Message.Severity.WARNING, true, "Connect anyway") {
                 @Override
                 protected void deliver(boolean ok) {
@@ -726,6 +743,40 @@ public final class NativeBackend implements Backend {
         });
     }
 
+    /**
+     * A question in the library's own words, which only TigerVNC asks: an
+     * RSA-AES server key, which their viewer asks about every time and keeps
+     * nothing of. So it is a {@link Prompt.Message}, not a pin.
+     */
+    void onQuestion(String title, String text) {
+        Log.i(tag, "the library wants an answer: " + title);
+        message(title + "\n\n" + text, Prompt.Message.Severity.WARNING, true, "Connect");
+    }
+
+    /**
+     * Something the library wants shown, with an OK or a yes and a no. A no to
+     * a question ends the session; to a plain message it is the only answer.
+     *
+     * @param severity a {@code VENTO_SEVERITY_*}, which is
+     *                 {@link Prompt.Message.Severity}'s order
+     */
+    void onMessage(String text, int severity, boolean question, String confirmLabel) {
+        final var severities = Prompt.Message.Severity.values();
+        message(text, severities[Math.max(0, Math.min(severity, severities.length - 1))],
+                question, confirmLabel == null ? "" : confirmLabel);
+    }
+
+    /**
+     * RealVNC's security question, which is asked of its own Java and never
+     * comes this way. Refused rather than dropped, so that a backend that did
+     * ask it would close instead of waiting for an answer nobody can give.
+     * Posted, so the handle is there to answer through.
+     */
+    void onSecurityNeeded(String signature) {
+        Log.w(tag, "refusing a security question this layer does not ask: " + signature);
+        main.post(() -> answerTrust(false));
+    }
+
     /** Terminal. Empty {@code detail} for an ordinary disconnect. */
     void onClosed(String detail) {
         Log.i(tag, "closed: " + (detail == null || detail.isEmpty() ? "disconnected" : detail));
@@ -733,6 +784,25 @@ public final class NativeBackend implements Backend {
     }
 
     // ---- plumbing ----------------------------------------------------------
+
+    private void message(String text, Prompt.Message.Severity severity, boolean question,
+                         String confirmLabel) {
+        main.post(() -> {
+            final Prompt.Handler h = prompts;
+            final Prompt.Message prompt = new Prompt.Message(address, text, severity, question,
+                    confirmLabel) {
+                @Override
+                protected void deliver(boolean ok) {
+                    answerTrust(ok);
+                }
+            };
+            if (h == null) {
+                prompt.cancel();
+            } else {
+                h.message(prompt);
+            }
+        });
+    }
 
     private void answerTrust(boolean accept) {
         final long h = handle;

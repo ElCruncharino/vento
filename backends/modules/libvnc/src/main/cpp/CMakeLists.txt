@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Two builds from one file. Under Gradle this is a root, configured by the NDK
-# toolchain, and makes `libremotedesktop_libvnc.so`: the session and the JNI
-# file over the Android adapter, with the vendored libjpeg-turbo and the GnuTLS
-# port linked in, since a phone has neither. Under `backends/CMakeLists.txt`
+# toolchain, and makes `libremotedesktop_libvnc.so`: the session, with the
+# module's Rust crate linked in as the JNI layer over it, and the vendored
+# libjpeg-turbo and the GnuTLS port, since a phone has neither. Under `backends/CMakeLists.txt`
 # it is a subdirectory on a Linux host and makes `vento_libvnc`, the session
 # alone, against the libjpeg-turbo and GnuTLS the host has, with a probe in
 # front of it. What is shared is the middle — how LibVNCServer itself is
@@ -28,7 +28,7 @@ if(ANDROID)
 endif()
 include("${VENTO_BACKENDS}/cmake/warnings.cmake")
 if(ANDROID)
-    include("${VENTO_BACKENDS}/cmake/vento_jni.cmake")
+    include("${VENTO_BACKENDS}/cmake/vento_android.cmake")
 else()
     include("${VENTO_BACKENDS}/cmake/vento_desktop.cmake")
 endif()
@@ -122,13 +122,14 @@ set(LIBVNC_INCLUDES
         "${CMAKE_CURRENT_BINARY_DIR}/libvncserver/include")
 
 if(ANDROID)
-    # Two halves: the session, which is the shim over libvncclient and names no
-    # platform, and the JNI file, which is `LibVncNative`'s entry points over the
-    # shared Android adapter `vento_jni` brings with it.
-    add_library(remotedesktop_libvnc SHARED libvnc_session.c libvnc_jni.c)
+    # The session, which is the shim over libvncclient and names no platform,
+    # and the Rust crate beside it in `src/main/rust`, which is the backend
+    # over the session and the JNI layer every backend shares.
+    add_library(remotedesktop_libvnc SHARED libvnc_session.c)
+    vento_android_library(remotedesktop_libvnc remotedesktop_libvnc)
     remotedesktop_warnings(remotedesktop_libvnc)
     target_include_directories(remotedesktop_libvnc SYSTEM PRIVATE ${LIBVNC_INCLUDES})
-    target_link_libraries(remotedesktop_libvnc PRIVATE vncclient vento_jni jnigraphics log)
+    target_link_libraries(remotedesktop_libvnc PRIVATE vncclient)
 else()
     # The session alone, for whatever desktop process links it: the neutral
     # include directory is its interface, and `vento_log` is left to the

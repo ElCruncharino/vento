@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! libvncclient's `vento_libvnc` as a [`Backend`](session::backend::Backend):
-//! `LibVncNative.nativeCreate`'s parameters and `LibVncBackend`'s option
-//! handling and rows.
+//! its config from the options, its live options and its rows — what the
+//! Linux client holds, and on the phone what the one JNI layer stands in front
+//! of, linked into the library CMake makes of the C.
 
 use session::c::{Behaviour, CSession, ffi, start};
 use session::backend::{Backend, ConnectionFact, Field, Traffic};
@@ -16,6 +17,14 @@ pub static KIND: Kind = Kind {
     version: || unsafe { session::c::string(ffi::vento_libvnc_version()) },
     create,
 };
+
+// The phone's library: this backend, registered on the module's generated
+// natives class. Android only — the host links the C as a library of its own.
+#[cfg(target_os = "android")]
+platform_android::natives!(
+    class = c"net/pgaskin/remotedesktop/backend/libvnc/LibVncNatives",
+    kind = KIND,
+);
 
 static BEHAVIOUR: Behaviour = Behaviour {
     info,

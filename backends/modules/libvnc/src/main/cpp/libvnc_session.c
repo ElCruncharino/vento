@@ -4,9 +4,9 @@
 // LibVNCServer's libvncclient as a `vento_session`, so that above this file it
 // is the same shape as the RFB client we wrote and the comparison is between
 // the clients rather than between two ways of binding one. Nothing in here
-// names a platform: what the phone needs of it is in `libvnc_jni.c`, which is
-// one macro and a `nativeCreate`, over the adapter under
-// `backends/platform/android`.
+// names a platform: what the phone needs of it is the Rust adapter in
+// `src/main/rust`, linked into the same library, which the one JNI layer in
+// `backends/platform/android` stands in front of — as it does every backend.
 //
 // Three things here are the shim's rather than the library's, and each is
 // forced by libvncclient's API rather than chosen:
@@ -1533,7 +1533,7 @@ static void describeVeNCrypt(char *out, size_t size, uint32_t subType) {
 }
 
 /* Desktop name, protocol, connection, security, encoding, server and viewer
-   pixels — the order `LibVncNative.nativeInfo` documents. */
+   pixels — the order the Rust adapter's `info` labels them in. */
 static bool op_info(vento_session *base, vento_strings *out) {
     Session *s = sessionOfBase(base);
     char desktop[256] = "", protocol[64] = "", security[96] = "", encoding[64] = "";

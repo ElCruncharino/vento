@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// The libvncclient backend's probe: `LibVncNative.nativeCreate`'s parameters
-// from the command line, over the body in `backends/platform/desktop/c`.
+// The libvncclient backend's probe: `vento_libvnc_config` from the command
+// line, over the body in `backends/platform/desktop/c`.
 //
 //   vento_libvnc_probe HOST:DISPLAY --password vncpass --out shot.ppm
 

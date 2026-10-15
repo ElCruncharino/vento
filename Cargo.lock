@@ -2599,6 +2599,7 @@ name = "remotedesktop-libvnc"
 version = "0.0.1"
 dependencies = [
  "log",
+ "remotedesktop-platform-android",
  "remotedesktop-session",
 ]
 
