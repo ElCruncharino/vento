@@ -30,7 +30,7 @@ mod host {
     use std::sync::Arc;
     use std::time::{Duration, Instant};
     use vento::backend::{Backend, Credentials, thumbnail_step};
-    use vento::backends::{self, Connect, Dirs, Kind};
+    use vento::backends::{self, Connect, Dirs, Kind, Platform};
     use vento::events::{Event, Identity, Mailbox, State};
     use vento::gui;
     use vento::known_hosts::{KnownHosts, Verdict};
@@ -193,7 +193,7 @@ headless, any of which selects the probe instead of the window:
         let mut clipboard = None;
         let mut out = None;
         let mut thumb_step = 8usize;
-        let mut dirs = Dirs::default();
+        let mut dirs = Dirs::xdg();
         let mut settings = gui::Settings::default();
         // Any of the probe's own flags asks for the probe; without one, the
         // window.
@@ -396,6 +396,7 @@ headless, any of which selects the probe instead of the window:
             println!("{}", (self.kind.version)());
             let mailbox = Mailbox::new(None);
             let backend = {
+                let client_name = backends::client_name();
                 let connect = Connect {
                     address: &self.address,
                     user: &self.user,
@@ -405,6 +406,9 @@ headless, any of which selects the probe instead of the window:
                     mailbox: Arc::clone(&mailbox),
                     dirs: &self.dirs,
                     screen: None,
+                    client_name: &client_name,
+                    platform: Platform::Linux,
+                    decoders: Some(backends::decoders()),
                 };
                 say("create");
                 match self.kind.start(&connect) {

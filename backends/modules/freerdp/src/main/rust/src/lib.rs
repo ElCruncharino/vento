@@ -1,27 +1,22 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! FreeRDP's `vento_freerdp` as a [`Backend`](crate::backend::Backend):
+//! FreeRDP's `vento_freerdp` as a [`Backend`](session::backend::Backend):
 //! `FreeRdpNative.nativeCreate`'s parameters and `FreeRdpBackend`'s option
 //! handling and rows. The library's config path is a directory of ours, which
 //! also becomes the process's HOME; its certificate store there is never read
 //! or written, since every certificate is the trust prompt's to decide.
 
-use super::{Behaviour, CSession, start};
-use crate::backend::{Backend, ConnectionFact, Field, Traffic};
-use crate::backends::ironrdp::{desktop_size, monitor_count};
-use crate::backends::{CONNECT_TIMEOUT_MS, Connect, Kind, client_name};
-use crate::ffi;
-use crate::options::{self, Options};
+use session::c::{Behaviour, CSession, ffi, start};
+use session::backend::{Backend, ConnectionFact, Field, Traffic};
+use session::rdp::{desktop_size, monitor_count};
+use session::kind::{CONNECT_TIMEOUT_MS, Connect, Kind};
+use session::options::Options;
 use std::ffi::CString;
 
 pub static KIND: Kind = Kind {
-    id: "freerdp",
-    name: "RDP (FreeRDP)",
-    short_name: "FreeRDP",
-    description: "The most robust RDP implementation. Support EGFX with hardware-accelerated H.264 video, and supports audio. This is the best one to use with a Windows RDP server.",
-    options: options::FREERDP,
-    version: || unsafe { super::string(ffi::vento_freerdp_version()) },
+    about: &session::catalog::FREERDP,
+    version: || unsafe { session::c::string(ffi::vento_freerdp_version()) },
     create,
 };
 
@@ -31,10 +26,6 @@ static BEHAVIOUR: Behaviour = Behaviour {
     set_option,
     rdp_domain: true,
 };
-
-/// US English, and not a choice, for the reason the other RDP client's is:
-/// the key positions are read against this table.
-const KEYBOARD_LAYOUT: i32 = 0x0409;
 
 fn scale(o: &Options) -> i32 {
     o.int("Scale", 100) as i32
@@ -57,7 +48,7 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
     let graphics = CString::new(o.get("Graphics")).unwrap_or_default();
     let experience = CString::new(o.get("Experience")).unwrap_or_default();
     let sound = CString::new(o.get("Sound")).unwrap_or_default();
-    let name = CString::new(client_name()).unwrap_or_default();
+    let name = CString::new(c.client_name).unwrap_or_default();
     let config_path = CString::new(store.to_string_lossy().into_owned()).unwrap_or_default();
     let config = ffi::vento_freerdp_config {
         address: address.as_ptr(),
@@ -74,7 +65,7 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
         width: width as i32,
         height: height as i32,
         monitors: monitor_count(o) as i32,
-        keyboard_layout: KEYBOARD_LAYOUT,
+        keyboard_layout: session::rdp::KEYBOARD_LAYOUT as i32,
         client_name: name.as_ptr(),
         config_path: config_path.as_ptr(),
         connect_timeout_ms: CONNECT_TIMEOUT_MS,
@@ -84,7 +75,6 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
         c,
         &BEHAVIOUR,
         |callbacks| unsafe { ffi::vento_freerdp_create(&config, callbacks) },
-        #[cfg(realvnc)]
         None,
     )?;
     backend.set_view_only(o.bool("ViewOnly"));

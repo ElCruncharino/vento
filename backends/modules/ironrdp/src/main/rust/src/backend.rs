@@ -1,79 +1,85 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The RFB client as a [`Backend`]: the twin of that crate's
-//! `bindings/mod.rs`, with `RfbBackend.java`'s option handling and its rows.
+//! The IronRDP client as a [`Backend`](session::backend::Backend): the twin
+//! of this crate's `bindings/mod.rs`, with `IronRdpBackend.java`'s option
+//! handling and its rows.
 
-use super::{CONNECT_TIMEOUT_MS, Connect, Kind, fill_user};
-use crate::backend::{Backend, ConnectionFact, Credentials, Facts, Field, Picture, Traffic};
-use crate::events::{Feed, Mailbox};
-use crate::options::{self, Options};
+use crate::{Client, Config, Nla, Platform};
 use common::{Bridge, Session};
-use remotedesktop_rfb::{Client, Config, Security};
+use session::backend::{
+    Backend, ConnectionFact, Credentials, Facts, Field, Monitor, Picture, Traffic,
+};
+use session::credentials::rdp_identity;
+use session::events::{Feed, Mailbox};
+use session::kind::{self, CONNECT_TIMEOUT_MS, Connect, Kind};
+use session::options::Options;
+use session::rdp::{KEYBOARD_LAYOUT, desktop_size, monitor_count};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 pub static KIND: Kind = Kind {
-    id: "rfb",
-    name: "VNC (Rust)",
-    short_name: "Rust",
-    description: "Rust RFB implementation. Does not support Tight encoding, and typically uses more bandwith and performs worse on slow networks. Allows remote pointer position updates, where supported by the server.",
-    options: options::RFB,
-    version: || remotedesktop_rfb::PROTOCOL_VERSION.to_string(),
+    about: &session::catalog::IRONRDP,
+    version: || crate::PROTOCOL_VERSION.to_string(),
     create,
 };
 
-struct Rfb {
+struct IronRdp {
     session: Session<Client>,
     mailbox: Arc<Mailbox>,
     options: Mutex<Options>,
     user: String,
-}
-
-/// The `Encoding` option's value, as `RfbProvider` writes it: one encoding,
-/// or for "auto" and anything else all of them, best first, and the server
-/// picks.
-fn encodings(name: &str) -> Vec<i32> {
-    match name {
-        "raw" => vec![remotedesktop_rfb::ENC_RAW],
-        "rre" => vec![remotedesktop_rfb::ENC_RRE],
-        "hextile" => vec![remotedesktop_rfb::ENC_HEXTILE],
-        "zrle" => vec![remotedesktop_rfb::ENC_ZRLE],
-        _ => vec![
-            remotedesktop_rfb::ENC_ZRLE,
-            remotedesktop_rfb::ENC_HEXTILE,
-            remotedesktop_rfb::ENC_RRE,
-        ],
-    }
-}
-
-/// The compression option as the client wants it: 0–9, or none.
-fn compress_level(value: &str) -> Option<u8> {
-    value.parse::<i32>().ok().filter(|n| (0..=9).contains(n)).map(|n| n as u8)
+    domain: String,
 }
 
 fn create(c: &Connect) -> Result<Arc<dyn Backend>, String> {
     let o = c.options;
+    let (domain, user) = c.domain_and_user();
+    let (width, height) = desktop_size(o.get("DesktopSize"), c.screen);
     let config = Config {
         address: c.address.to_string(),
-        user_name: Some(c.user.to_string()),
+        user_name: Some(user.clone()),
+        domain: Some(domain.clone()),
         password: c.password.map(String::from),
-        security: match o.get("Security") {
-            "require" => Security::Require,
-            "plain" => Security::Plain,
-            _ => Security::Prefer,
+        desktop_size: (
+            (width as i32).clamp(640, 8192) as u16,
+            (height as i32).clamp(480, 8192) as u16,
+        ),
+        nla: match o.get("Nla") {
+            "require" => Nla::Require,
+            "off" => Nla::Off,
+            _ => Nla::Prefer,
         },
-        shared: o.bool("Shared"),
-        encodings: encodings(o.get("Encoding")),
-        compress_level: compress_level(o.get("Compression")),
+        compression: crate::compression(if o.bool("Compression") {
+            Some("rdp61")
+        } else {
+            None
+        }),
+        remote_fx: o.get("Graphics") != "bitmap",
+        experience: crate::experience(Some(o.get("Experience"))),
+        monitors: monitor_count(o),
+        client_name: c.client_name.to_string(),
+        // `UNIX` from Linux, as IronRDP's own viewer says, and `ANDROID` from
+        // the phone.
+        platform: match c.platform {
+            kind::Platform::Android => Platform::Android,
+            kind::Platform::Linux => Platform::Linux,
+        },
+        keyboard_layout: KEYBOARD_LAYOUT,
         connect_timeout: Duration::from_millis(CONNECT_TIMEOUT_MS as u64),
     };
     log::info!(
-        "connecting to {} ({} encodings, compression {:?}, security {:?})",
+        "connecting to {} as {:?} ({}x{} × {}, nla {:?}, compression {:?}, remotefx {}, experience {:?}, platform {:?})",
         config.address,
-        config.encodings.len(),
-        config.compress_level,
-        config.security
+        config.user_name,
+        config.desktop_size.0,
+        config.desktop_size.1,
+        config.monitors,
+        config.nla,
+        config.compression,
+        config.remote_fx,
+        config.experience,
+        config.platform
     );
     let session = Session::start(
         Arc::new(Client::new()),
@@ -81,29 +87,23 @@ fn create(c: &Connect) -> Result<Arc<dyn Backend>, String> {
         Bridge::new(Feed(Arc::clone(&c.mailbox))),
     );
     session.client.set_view_only(o.bool("ViewOnly"));
-    Ok(Arc::new(Rfb {
+    Ok(Arc::new(IronRdp {
         session,
         mailbox: Arc::clone(&c.mailbox),
         options: Mutex::new(o.clone()),
-        user: c.user.to_string(),
+        user,
+        domain,
     }))
 }
 
-impl Backend for Rfb {
+impl Backend for IronRdp {
     fn pointer(&self, x: i32, y: i32, button_mask: i32) {
-        // Nine buttons go across, and how many arrive is the client's
-        // business: it drops the ninth on a server that never agreed to one.
         self.session.client.pointer(
             x.clamp(0, 65535) as u16,
             y.clamp(0, 65535) as u16,
+            // Nine bits: back and forward are buttons 8 and 9.
             (button_mask & 0x1ff) as u16,
         );
-    }
-
-    fn pointer_relative(&self, dx: i32, dy: i32, button_mask: i32) {
-        self.session
-            .client
-            .pointer_relative(dx, dy, (button_mask & 0x1ff) as u16);
     }
 
     fn key_down(&self, keysym: u32, key_id: i64) {
@@ -118,6 +118,8 @@ impl Backend for Rfb {
         self.session.client.release_all_keys();
     }
 
+    /// Unlike RFB's "stop asking", this is a Suppress Output PDU — RDP's
+    /// server sends what it likes until told not to.
     fn focus(&self, focused: bool) {
         self.session.client.set_focused(focused);
     }
@@ -136,59 +138,46 @@ impl Backend for Rfb {
             .request_desktop_size(width.min(65535) as u16, height.min(65535) as u16);
     }
 
-    /// The picture-quality controls are live: RFB lets `SetEncodings` be
-    /// sent at any time, so this really does act on the session in front of
-    /// you. Shared is decided at ClientInit and the bell is read where the
-    /// bell arrives; neither is a call.
+    /// Nothing but view-only and the monitor count is live: RDP negotiates
+    /// its codecs once. The count is remembered rather than acted on — it is
+    /// what the *next* layout asks for.
     fn set_option(&self, key: &str, value: &str) {
         let mut options = self.options.lock().unwrap();
         options.set(key, value);
         match key {
             "ViewOnly" => self.session.client.set_view_only(options.bool(key)),
-            "Encoding" | "Compression" => self.session.client.set_encodings(
-                &encodings(options.get("Encoding")),
-                compress_level(options.get("Compression")),
-            ),
+            "Monitors" => self.session.client.set_monitor_count(monitor_count(&options)),
             _ => {}
         }
     }
 
     fn facts(&self) -> Facts {
         let (width, height) = self.mailbox.size();
-        let connected = self.mailbox.connected();
         let client = &self.session.client;
-        // Live rather than connected, which is what the layout used to be
-        // asked under: a rectangle can arrive before the state does.
-        let flat: Vec<i32> = client
-            .screens()
-            .iter()
-            .flat_map(|s| [s.x as i32, s.y as i32, s.width as i32, s.height as i32])
-            .collect();
         Facts {
             width,
             height,
-            monitors: crate::backend::Monitor::from_flat(&flat),
+            monitors: Monitor::from_flat(&client.monitors()),
             displays: Vec::new(),
             display: -1,
-            can_resize: connected && client.can_resize(),
+            can_resize: self.mailbox.connected() && client.can_resize(),
             view_only: self.options.lock().unwrap().bool("ViewOnly"),
-            pointer_relative: client.pointer_is_relative(),
+            pointer_relative: false,
         }
     }
 
+    /// Two of the panel's rows are simply not here — RDP has no desktop name
+    /// and no encoding anybody can name from outside the codec negotiation —
+    /// and they are omitted always, not when they happen to be empty.
     fn info(&self) -> Vec<ConnectionFact> {
         if !self.mailbox.connected() {
             return Vec::new();
         }
         let i = self.session.client.info();
         let mut facts = vec![
-            ConnectionFact::of(Field::DesktopName, "Desktop", &i.desktop_name),
             ConnectionFact::of(Field::Protocol, "Protocol", &i.protocol),
-            // Worth a row only because there are two transports — a socket,
-            // and a socket inside TLS.
             ConnectionFact::of(Field::Connection, "Connection", &i.connection),
             ConnectionFact::of(Field::Security, "Security", &i.security),
-            ConnectionFact::of(Field::Encoding, "Encoding", &i.encoding),
             ConnectionFact::of(Field::LineSpeed, "Line speed", &i.line_speed),
         ];
         if let Some(traffic) = self.traffic() {
@@ -240,9 +229,18 @@ impl Backend for Rfb {
         Some(Picture::from_words(w, h, &words))
     }
 
+    /// A typed `DOMAIN\user` is split again, as the Java prompt splits it;
+    /// an empty name is the one the session was created with, and a bare one
+    /// keeps the session's domain (see [`rdp_identity`]).
     fn answer_credentials(&self, credentials: Option<Credentials>) {
-        self.session
-            .answer_credentials(credentials.map(|c| fill_user(c, &self.user)));
+        self.session.answer_credentials(credentials.map(|c| {
+            let (domain, user) = rdp_identity(&c, &self.domain, &self.user);
+            Credentials {
+                user,
+                domain,
+                password: c.password,
+            }
+        }));
     }
 
     fn answer_trust(&self, accept: bool) {

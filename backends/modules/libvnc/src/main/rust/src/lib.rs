@@ -1,24 +1,19 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! libvncclient's `vento_libvnc` as a [`Backend`](crate::backend::Backend):
+//! libvncclient's `vento_libvnc` as a [`Backend`](session::backend::Backend):
 //! `LibVncNative.nativeCreate`'s parameters and `LibVncBackend`'s option
 //! handling and rows.
 
-use super::{Behaviour, CSession, start};
-use crate::backend::{Backend, ConnectionFact, Field, Traffic};
-use crate::backends::{CONNECT_TIMEOUT_MS, Connect, Kind};
-use crate::ffi;
-use crate::options::{self, Options};
+use session::c::{Behaviour, CSession, ffi, start};
+use session::backend::{Backend, ConnectionFact, Field, Traffic};
+use session::kind::{CONNECT_TIMEOUT_MS, Connect, Kind};
+use session::options::Options;
 use std::ffi::CString;
 
 pub static KIND: Kind = Kind {
-    id: "libvnc",
-    name: "VNC (LibVNC)",
-    short_name: "LibVNC",
-    description: "Usually the best option for typical usage. Has the lowest bandwidth usage for small incremental updates, and is the most CPU efficient.",
-    options: options::LIBVNC,
-    version: || unsafe { super::string(ffi::vento_libvnc_version()) },
+    about: &session::catalog::LIBVNC,
+    version: || unsafe { session::c::string(ffi::vento_libvnc_version()) },
     create,
 };
 
@@ -78,7 +73,6 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
         c,
         &BEHAVIOUR,
         |callbacks| unsafe { ffi::vento_libvnc_create(&config, callbacks) },
-        #[cfg(realvnc)]
         None,
     )?;
     backend.set_view_only(o.bool("ViewOnly"));

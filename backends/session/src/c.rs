@@ -1,44 +1,43 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The four C and C++ backends, through the vtable in `vento/backend.h`:
-//! one adapter over all of them, as `backends/platform/android/jni` is one
-//! adapter for the phone.
+//! The C and C++ backends, through the vtable in `vento/backend.h`: one
+//! adapter over all of them.
 //!
-//! Everything a session is driven by is the same for the four — the vtable is
-//! the same — so [`CSession`] holds the raw session and the mailbox and wraps
+//! Everything a session is driven by is the same for each — the vtable is the
+//! same — so [`CSession`] holds the raw session and the mailbox and wraps
 //! each call once, and [`CBackend`] is the [`Backend`] over it. What differs
-//! between the four is their config, their live options and the labels on
-//! their info rows, and that is a [`Behaviour`] of function pointers each
-//! submodule fills in — the same split the Java `*Backend` classes have, where
-//! the uniform natives are stamped by a macro and each class keeps its
-//! `nativeCreate` and its `connectionInfo` mapping.
+//! between them is their config, their live options and the labels on their
+//! info rows, and that is a [`Behaviour`] of function pointers each backend's
+//! crate fills in — the libvncclient, TigerVNC and FreeRDP crates beside
+//! their C sources, and the Linux client's RealVNC adapter.
 //!
 //! The callbacks are trampolined into the mailbox: `user` is an
 //! `Arc<Mailbox>` the session carries, recovered by each trampoline as a
 //! borrow and reclaimed in [`CBackend::destroy`], which the header promises
 //! runs only after the protocol thread has ended and no callback can still be
 //! in flight.
+//!
+//! Nothing here names one backend's own symbols, so linking this needs none
+//! of their libraries: each crate that does brings its own.
 
-use crate::backend::{
-    Backend, ConnectionFact, Credentials, Facts, Monitor, Picture, Traffic,
-};
+use crate::backend::{Backend, ConnectionFact, Credentials, Facts, Monitor, Picture, Traffic};
 use crate::events::{Encryption, Identity, Mailbox, Severity};
-use crate::ffi;
+use crate::kind::Connect;
 use crate::options::Options;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_void};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-pub mod freerdp;
-pub mod libvnc;
-#[cfg(realvnc)]
-pub mod realvnc;
-pub mod tigervnc;
+pub mod ffi;
 
 /// A C string the session's bytes become, UTF-8 as the header promises.
-unsafe fn string(ptr: *const c_char) -> String {
+///
+/// # Safety
+///
+/// `ptr` is null or a NUL-terminated string that lives for the call.
+pub unsafe fn string(ptr: *const c_char) -> String {
     if ptr.is_null() {
         String::new()
     } else {
@@ -179,8 +178,10 @@ fn callbacks(user: *mut c_void) -> ffi::vento_callbacks {
 /// A started session and the vtable it is reached through. The raw pointers
 /// are the C library's and are safe to touch from any thread, as the header
 /// says of every `vento_session_*` call.
-struct CSession {
-    session: *mut ffi::vento_session,
+pub struct CSession {
+    /// For a backend's own calls beside the vtable — a live option, an
+    /// answer of its own.
+    pub session: *mut ffi::vento_session,
     /// The `Arc<Mailbox>` the callbacks carry, as a raw pointer to reclaim
     /// once the session is destroyed.
     user: *const Mailbox,
@@ -405,20 +406,20 @@ fn region_args(
     Some([int(x)?, int(y)?, int(width)?, int(height)?, int(dst_x)?, int(dst_y)?])
 }
 
-/// What differs between the four C backends.
-struct Behaviour {
+/// What differs between the C backends.
+pub struct Behaviour {
     /// The info rows as this backend's panel reads them, with its own labels;
     /// `strings` is what `info` returned, and `traffic` is already gathered.
-    info: fn(&[String], Option<Traffic>) -> Vec<ConnectionFact>,
+    pub info: fn(&[String], Option<Traffic>) -> Vec<ConnectionFact>,
     /// Whether the sent direction is counted. RealVNC's core counts one way,
     /// so its row says "in" alone rather than claiming a zero out.
-    sent_counted: bool,
+    pub sent_counted: bool,
     /// A live option change, after the value has joined `options`. View-only
     /// goes through the vtable; the rest is the backend's own live call.
-    set_option: fn(&CSession, &Options, key: &str),
+    pub set_option: fn(&CSession, &Options, key: &str),
     /// Whether the credentials carry a domain, which only the RDP backend's
     /// do; the others send a blank one.
-    rdp_domain: bool,
+    pub rdp_domain: bool,
 }
 
 /// A C backend as a [`Backend`].
@@ -429,10 +430,16 @@ pub struct CBackend {
     user: String,
     domain: String,
     behaviour: &'static Behaviour,
-    /// RealVNC answers its security prompt with a remember through a call of
-    /// its own; everyone else has only the plain yes or no.
-    #[cfg(realvnc)]
-    answer_security: Option<fn(&CSession, bool, bool)>,
+    security: Option<&'static Security>,
+}
+
+/// RealVNC's security prompt, which has a remember to carry and an identity
+/// to hand back: calls of its own, where everyone else has only the plain
+/// yes or no.
+pub struct Security {
+    pub answer: fn(&CSession, accept: bool, remember: bool),
+    /// The identity the library asked to have remembered, if any.
+    pub saved_identity: fn(&CSession) -> Option<String>,
 }
 
 impl CBackend {
@@ -544,14 +551,13 @@ impl Backend for CBackend {
                 // What was typed, with an empty user name sent as the one
                 // the session was created with, as the Java prompts fill it
                 // in. Only RDP has a domain to carry along.
-                let (domain, user) = if self.behaviour.rdp_domain {
-                    super::rdp_identity(&c, &self.domain, &self.user)
-                } else if c.user.is_empty() {
-                    (String::new(), self.user.clone())
+                let (domain, c) = if self.behaviour.rdp_domain {
+                    let (domain, user) = crate::credentials::rdp_identity(&c, &self.domain, &self.user);
+                    (domain, Credentials { user, ..c })
                 } else {
-                    (String::new(), c.user.clone())
+                    (String::new(), crate::credentials::fill_user(c, &self.user))
                 };
-                self.session.answer_credentials(&user, &domain, Some(&c.password));
+                self.session.answer_credentials(&c.user, &domain, Some(&c.password));
             }
         }
     }
@@ -560,26 +566,15 @@ impl Backend for CBackend {
         self.session.answer_trust(accept);
     }
 
-    #[cfg(realvnc)]
     fn answer_security(&self, accept: bool, remember: bool) {
-        match self.answer_security {
-            Some(f) => f(&self.session, accept, remember),
+        match self.security {
+            Some(security) => (security.answer)(&self.session, accept, remember),
             None => self.session.answer_trust(accept),
         }
     }
 
-    #[cfg(realvnc)]
     fn saved_identity(&self) -> Option<String> {
-        self.answer_security?;
-        // Only RealVNC's sessions have an answer_security, and only theirs
-        // have this call.
-        let raw = unsafe { ffi::vento_realvnc_identity_saved(self.session.session) };
-        if raw.is_null() {
-            return None;
-        }
-        let identity = unsafe { string(raw) };
-        unsafe { ffi::free(raw as *mut c_void) };
-        (!identity.is_empty()).then_some(identity)
+        (self.security?.saved_identity)(&self.session)
     }
 
     fn disconnect(&self) {
@@ -594,11 +589,11 @@ impl Backend for CBackend {
 /// Builds a session: the config built by `make` from a mailbox's `user`
 /// pointer and the callbacks, wrapped in a [`CBackend`] with `behaviour`.
 /// `make` returns null where the session could not be set up.
-fn start(
-    c: &super::Connect,
+pub fn start(
+    c: &Connect,
     behaviour: &'static Behaviour,
     make: impl FnOnce(*const ffi::vento_callbacks) -> *mut ffi::vento_session,
-    #[cfg(realvnc)] answer_security: Option<fn(&CSession, bool, bool)>,
+    security: Option<&'static Security>,
 ) -> Result<Arc<dyn Backend>, String> {
     let mailbox = Arc::clone(&c.mailbox);
     // The mailbox the callbacks carry, as a raw pointer the session owns.
@@ -622,8 +617,7 @@ fn start(
         user: user_name,
         domain,
         behaviour,
-        #[cfg(realvnc)]
-        answer_security,
+        security,
     }))
 }
 

@@ -248,6 +248,7 @@ impl Session {
         wake: Box<dyn Fn() + Send + Sync>,
     ) -> Result<Session, String> {
         let mailbox = Mailbox::new(Some(wake));
+        let client_name = backends::client_name();
         let connect = Connect {
             address: &request.address,
             user: &request.user,
@@ -257,6 +258,9 @@ impl Session {
             mailbox: Arc::clone(&mailbox),
             dirs,
             screen: Some(screen),
+            client_name: &client_name,
+            platform: backends::Platform::Linux,
+            decoders: Some(backends::decoders()),
         };
         let backend = request.kind.start(&connect)?;
         let title = request.address.clone();

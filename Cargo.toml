@@ -3,14 +3,17 @@
 # look for one. Members are globs: adding a protocol is adding a directory under
 # `backends/modules/`.
 #
-# Three kinds of crate, and the layering is the point: `backends/common` is the
-# neutral layer every client speaks to, the protocol crates are written against
-# it and know nothing of a phone, and `backends/platform/*` is where one
-# platform's glue lives — Android's JNI and MediaCodec in `android`, libavcodec
-# in `desktop`. The one client that is not a phone's is `linux/`: a desktop
-# binary that holds a session on any of the eight backends, over the Rust
-# protocols directly and the C ones through the shared libraries its build.rs
-# has CMake make. It is a workspace of its own, excluded here, and not for
+# The layering is the point. `backends/common` is the neutral layer a protocol
+# is written against; `backends/session` is the one a client holds a session
+# by — the `Backend` trait, the events, the options and the rules every client
+# keeps alike — and each backend's adapter to it lives in that backend's own
+# crate under `backends/modules/`: the protocol crate for the four in Rust, a
+# small crate beside the C library for the others. None of them knows a
+# phone. `backends/platform/*` is where one platform's glue lives — Android's
+# JNI and MediaCodec in `android`, libavcodec in `desktop`. The one client
+# that is not a phone's is `linux/`: a desktop binary that holds a session on
+# any of the eight backends through those adapters, with the C libraries its
+# build.rs has CMake make. It is a workspace of its own, excluded here, and not for
 # want of trying it as a member: Cargo unifies features across a workspace
 # for every platform at once, so the window's GUI stack switched on optional
 # features of crates the phone shares (`bytemuck/derive`, `zerocopy/derive`)
@@ -26,6 +29,7 @@
 resolver = "2"
 members = [
     "backends/common",
+    "backends/session",
     "backends/tls",
     "backends/platform/*",
     "backends/modules/*/src/main/rust",
@@ -40,6 +44,7 @@ publish = false
 
 [workspace.dependencies]
 remotedesktop-common = { path = "backends/common", version = "0.0.1" }
+remotedesktop-session = { path = "backends/session", version = "0.0.1" }
 remotedesktop-tls = { path = "backends/tls", version = "0.0.1" }
 remotedesktop-platform-android = { path = "backends/platform/android", version = "0.0.1" }
 remotedesktop-platform-desktop = { path = "backends/platform/desktop", version = "0.0.1" }

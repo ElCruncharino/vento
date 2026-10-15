@@ -1,12 +1,14 @@
 # The Linux client: one process that can hold a session on any of the eight
 # backends, written against the neutral layer and nothing of a phone's.
 #
-# The four Rust protocols come in as crates and run on `common::Session` with
-# an `Events` of this crate's that feeds a channel; the four C ones come in as
-# the shared libraries `build.rs` has CMake make out of `backends/`, reached
-# through the vtable in `vento/backend.h`. What this crate adds on top is one
-# `Backend` trait both halves fit, the option descriptions the dialog and the
-# `-o` flag share, the window (`src/gui/`), and a headless probe.
+# Every backend comes in as a crate holding its adapter to the one `Backend`
+# trait of `remotedesktop-session`, which the phone shares: the four Rust
+# protocols' own crates, and the three C libraries' small crates over the
+# vtable in `vento/backend.h`, whose shared libraries `build.rs` has CMake
+# make out of `backends/`. RealVNC's adapter is the one still here, its
+# library being the viewer's own, hosted for this client alone. What this
+# crate adds on top is the window (`src/gui/`), the known-hosts file, and a
+# headless probe.
 #
 # A workspace of its own rather than a member of the repository's, and the
 # root `Cargo.toml` says why at length: Cargo unifies features across a
@@ -33,14 +35,22 @@ path = "src/main.rs"
 [dependencies]
 log = "0.4"
 remotedesktop-common = { path = "../backends/common" }
+# The seam every backend is held by, and the one adapter over the C vtable
+# (the `c` feature), which RealVNC's adapter here fills in.
+remotedesktop-session = { path = "../backends/session", features = ["c"] }
 # libavcodec, for RustDesk's picture: the one protocol here whose frames are
 # video, and the one dependency that makes this crate's build need FFmpeg's
 # development files.
 remotedesktop-platform-desktop = { path = "../backends/platform/desktop" }
+# The backends, each with its adapter in its own crate: the four protocols,
+# and the three C libraries' crates, whose libraries `build.rs` links.
 remotedesktop-rfb = { path = "../backends/modules/rfb/src/main/rust" }
 remotedesktop-ironrdp = { path = "../backends/modules/ironrdp/src/main/rust" }
 remotedesktop-rustdesk = { path = "../backends/modules/rustdesk/src/main/rust" }
 remotedesktop-spice = { path = "../backends/modules/spice/src/main/rust" }
+remotedesktop-libvnc = { path = "../backends/modules/libvnc/src/main/rust" }
+remotedesktop-tigervnc = { path = "../backends/modules/tigervnc/src/main/rust" }
+remotedesktop-freerdp = { path = "../backends/modules/freerdp/src/main/rust" }
 # The window. winit owns the event loop and the Wayland connection, egui
 # draws into it through egui-winit and egui-wgpu, and the three wayland
 # crates are for the one protocol winit does not speak — the keyboard
@@ -77,20 +87,11 @@ bytemuck = "1"
 # Runs `backends/CMakeLists.txt` with VENTO_SHARED on, which is the whole of
 # how the C backends get here; `build.rs` says where the libraries land.
 cmake = "0.1"
-# The declarations in `vento/backend.h` and the four headers beside it, read
-# rather than retyped: the vtable's member order is the ABI, and a hand-written
-# copy would be a second place it is written down. Already in the workspace's
-# graph through `ffmpeg-sys-next`, so it costs nothing new.
-bindgen = "0.73"
 
 [dev-dependencies]
 # For the test that every toolbar symbol is in the bundled font (icons.rs).
 # Already in the graph through egui's fonts, so it costs nothing new.
 ttf-parser = "0.25"
-# For the shared test vectors in `backends/vectors/` (tests/vectors.rs), which
-# the Java tests read too. Already in the graph through IronRDP (picky), so it
-# costs nothing new.
-serde_json = "1"
 
 # winit from the submodule, at the tag of the release crates.io has, with
 # `patches/winit/` applied by `./patch.sh`: the same source plus our fixes to

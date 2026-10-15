@@ -33,6 +33,12 @@ pub const PROTOCOL_VERSION: &str = "RDP 5.x (IronRDP)";
 // The JNI half: the entry points the Java in this module declares, in front of
 // a `common::Session`. Android only — everything above is the protocol, and it
 // builds, tests and runs an example on the host with none of this compiled.
+// The protocol as the clients hold it: a `session::Backend`, with this
+// backend's options read into its config and its rows. The Linux client's for
+// now; the phone still has `bindings` and its Java twin.
+#[cfg(not(target_os = "android"))]
+pub mod backend;
+
 #[cfg(target_os = "android")]
 mod bindings;
 

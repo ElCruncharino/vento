@@ -1,0 +1,21 @@
+# The TigerVNC backend as the clients hold it: its `Kind`, over the one
+# adapter for the C backends (`remotedesktop-session`'s `c` feature), with
+# this backend's own config, live options and info rows. The library is the
+# shim in `src/main/cpp` over TigerVNC's viewer core, built by CMake, and
+# whatever links this crate links that library too: nothing here links on
+# its own, which is why there is no test binary.
+[package]
+name = "remotedesktop-tigervnc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+name = "remotedesktop_tigervnc"
+test = false
+doctest = false
+
+[dependencies]
+log.workspace = true
+remotedesktop-session = { workspace = true, features = ["c"] }

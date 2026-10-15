@@ -3,20 +3,20 @@
 
 //! The shared test vectors in `backends/vectors/`, which the Java tests in
 //! `backends/src/test` read too: one set of cases for a rule both clients
-//! keep, so that the two copies cannot drift apart without one of these
+//! keep, so that a copy cannot drift from this one without one of these
 //! failing.
 
 use serde_json::Value;
 use std::path::PathBuf;
-use vento::backend::Credentials;
-use vento::backends::{fill_user, rdp_identity, split_domain};
-use vento::events::Identity;
-use vento::known_hosts::{self, Table, Verdict};
-use vento::options::{Choice, Kind, Options, Scope, Spec};
+use session::Credentials;
+use session::credentials::{fill_user, rdp_identity, split_domain};
+use session::events::Identity;
+use session::options::{Choice, Kind, Options, Scope, Spec};
+use session::trust::{self, Verdict};
 
 fn vectors(name: &str) -> Value {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../backends/vectors")
+        .join("../vectors")
         .join(name);
     let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     serde_json::from_str(&text).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
@@ -72,10 +72,10 @@ fn fill_user_agrees_with_the_vectors() {
 fn known_hosts_keys_and_fingerprints_agree_with_the_vectors() {
     let file = vectors("known_hosts.json");
     for case in cases(&file, "key") {
-        assert_eq!(known_hosts::key(str(case, "address")), str(case, "key"), "{case}");
+        assert_eq!(trust::key(str(case, "address")), str(case, "key"), "{case}");
     }
     for case in cases(&file, "canonical") {
-        assert_eq!(known_hosts::canonical(str(case, "fingerprint")), str(case, "canonical"), "{case}");
+        assert_eq!(trust::canonical(str(case, "fingerprint")), str(case, "canonical"), "{case}");
     }
 }
 
@@ -83,10 +83,12 @@ fn known_hosts_keys_and_fingerprints_agree_with_the_vectors() {
 fn known_hosts_verdicts_agree_with_the_vectors() {
     let file = vectors("known_hosts.json");
     for case in cases(&file, "verdict") {
-        let mut table = Table::default();
-        for (key, pin) in case["pins"].as_object().unwrap() {
-            table.set(key, pin.as_str().unwrap());
-        }
+        let pins: Vec<(&str, &str)> = case["pins"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .map(|(key, pin)| (key.as_str(), pin.as_str().unwrap()))
+            .collect();
         let want = match str(case, "verdict") {
             "matches" => Verdict::Matches,
             "ask" => Verdict::Ask {
@@ -100,7 +102,7 @@ fn known_hosts_verdicts_agree_with_the_vectors() {
             },
             other => panic!("verdict {other}"),
         };
-        let got = known_hosts::verdict(&table, str(case, "address"), str(case, "fingerprint"));
+        let got = trust::verdict(&pins, str(case, "address"), str(case, "fingerprint"));
         assert_eq!(got, want, "{case}");
     }
 }

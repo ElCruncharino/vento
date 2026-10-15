@@ -68,6 +68,11 @@ flate2 = { version = "1", default-features = false, features = ["rust_backend"] 
 # is no logcat to put them in.
 log.workspace = true
 
+# `src/backend.rs`, the protocol as a `session::Backend`: the Linux client's
+# until the phone's JNI layer is over it too.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+remotedesktop-session.workspace = true
+
 # The only part of this crate that knows a phone exists: the JNI entry points
 # in `src/bindings`, and the platform crate they stand on.
 [target.'cfg(target_os = "android")'.dependencies]

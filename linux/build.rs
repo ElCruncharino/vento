@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The C backends, for the Rust binary: `backends/CMakeLists.txt` run with
-//! `VENTO_SHARED` on, and the declarations of `vento/backend.h` read into
-//! Rust.
+//! `VENTO_SHARED` on. (The declarations of `vento/backend.h` are read into
+//! Rust by `remotedesktop-session`'s own build script, under its `c`
+//! feature; the backends' crates link nothing, so the libraries are linked
+//! here, into the binary.)
 //!
 //! The host build already existed — it is what the C probes are built on —
 //! and this runs the same file through the `cmake` crate rather than
@@ -26,13 +28,6 @@
 //! CMake keeps the compiler it was first configured with in its cache, and
 //! the configure step is skipped while there is one, so installing clang
 //! after a gcc build would otherwise never bring RealVNC in.
-//!
-//! Bindings are generated from our own headers, every item named `vento_` or
-//! `VENTO_`. The alternative — `#[repr(C)]` declarations written by hand with
-//! a layout check compiled from C — would be a second copy of a vtable whose
-//! member order is the ABI, kept in step by a test; the headers are ours,
-//! small and C, and bindgen is already in this crate's graph through
-//! `ffmpeg-sys-next`, so generating is the cheaper way to be right.
 
 use std::env;
 use std::fs;
@@ -93,8 +88,6 @@ fn main() {
     } else {
         println!("cargo:warning=RealVNC backend: left out (needs clang on the path)");
     }
-
-    generate_bindings(&backends, &out);
 }
 
 /// Runs the host CMake build with the shared switch on and returns the
@@ -207,32 +200,4 @@ fn which(program: &str) -> Option<PathBuf> {
             p.metadata()
                 .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
         })
-}
-
-/// `vento/backend.h` and the four backend headers, as Rust.
-fn generate_bindings(backends: &Path, out: &Path) {
-    let include = backends.join("common/include");
-    let bindings = bindgen::Builder::default()
-        .header_contents(
-            "vento.h",
-            "#include <vento/backend.h>\n\
-             #include <vento/libvnc.h>\n\
-             #include <vento/tigervnc.h>\n\
-             #include <vento/freerdp.h>\n\
-             #include <vento/realvnc.h>\n",
-        )
-        .clang_arg(format!("-I{}", include.display()))
-        .allowlist_item("vento_.*")
-        .allowlist_item("VENTO_.*")
-        // The inline wrappers call through the vtable, which the Rust side
-        // does itself; `vento_strings_free` is `free` on each item, done
-        // here too, with libc's `free` so the allocator matches.
-        .generate_inline_functions(false)
-        .derive_default(true)
-        .layout_tests(false)
-        .generate()
-        .expect("bindgen over vento/backend.h");
-    bindings
-        .write_to_file(out.join("bindings.rs"))
-        .expect("writing bindings.rs");
 }

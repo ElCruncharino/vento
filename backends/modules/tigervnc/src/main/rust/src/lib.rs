@@ -1,28 +1,22 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! TigerVNC's `vento_tigervnc` as a [`Backend`](crate::backend::Backend):
+//! TigerVNC's `vento_tigervnc` as a [`Backend`](session::backend::Backend):
 //! `TigerVncNative.nativeCreate`'s parameters and `TigerVncBackend`'s option
-//! handling and rows. Its certificates are this client's to judge, as they are
-//! the phone's: the session hands them to `trust_needed`, so they meet the
-//! [known hosts](crate::known_hosts) as every other backend's do, and
-//! TigerVNC's own known-hosts file is never read or written — which is why no
-//! state directory is given it.
+//! handling and rows. Its certificates are the client's to judge: the session
+//! hands them to `trust_needed`, so they meet the known hosts as every other
+//! backend's do, and TigerVNC's own known-hosts file is never read or written
+//! — which is why no state directory is given it.
 
-use super::{Behaviour, CSession, start};
-use crate::backend::{Backend, ConnectionFact, Field, Traffic};
-use crate::backends::{CONNECT_TIMEOUT_MS, Connect, Kind};
-use crate::ffi;
-use crate::options::{self, Options};
+use session::c::{Behaviour, CSession, ffi, start};
+use session::backend::{Backend, ConnectionFact, Field, Traffic};
+use session::kind::{CONNECT_TIMEOUT_MS, Connect, Kind};
+use session::options::Options;
 use std::ffi::CString;
 
 pub static KIND: Kind = Kind {
-    id: "tigervnc",
-    name: "VNC (TigerVNC)",
-    short_name: "TigerVNC",
-    description: "Fastest implementation, dropping the fewest frames, but using 2-5x the CPU usage. This the only VNC backend which supports H.264 encoding, which is the most bandwidth-efficient for large screen updates, where supported by the server. It also supports QEMU audio.",
-    options: options::TIGERVNC,
-    version: || unsafe { super::string(ffi::vento_tigervnc_version()) },
+    about: &session::catalog::TIGERVNC,
+    version: || unsafe { session::c::string(ffi::vento_tigervnc_version()) },
     create,
 };
 
@@ -99,7 +93,6 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
         c,
         &BEHAVIOUR,
         |callbacks| unsafe { ffi::vento_tigervnc_create(&config, callbacks) },
-        #[cfg(realvnc)]
         None,
     )?;
     backend.set_view_only(o.bool("ViewOnly"));

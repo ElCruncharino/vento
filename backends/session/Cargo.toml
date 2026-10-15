@@ -1,0 +1,45 @@
+# One session on any backend, as every client holds one: the `Backend` trait a
+# window or a phone is written against, the `Event`s a session says through a
+# `Mailbox`, what each backend can be told (`options`) and is called
+# (`catalog`), and the rules every client keeps the same — how a credentials
+# prompt's answer is read, and how a far end's identity meets the pins.
+#
+# It sits between `remotedesktop-common`, which a protocol is written against,
+# and the clients: each backend's adapter is in that backend's own crate — the
+# protocol crate for the four in Rust, a small crate beside the C library for
+# the others — and is written against this one. With the `c` feature it also
+# carries the one adapter over `vento/backend.h`'s vtable that the C backends'
+# crates fill in.
+#
+# Nothing here knows a platform. The Linux client and the phone each supply
+# what a session needs of them (where to keep things, what decodes video, what
+# the far end is told this machine is) through `Connect`.
+[package]
+name = "remotedesktop-session"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+name = "session"
+
+[features]
+# The adapter over `vento/backend.h`, for the C backends' crates, and the
+# declarations of the five headers, generated rather than retyped.
+c = ["dep:bindgen"]
+
+[dependencies]
+log.workspace = true
+remotedesktop-common.workspace = true
+
+[build-dependencies]
+# The declarations in `vento/backend.h` and the four headers beside it, read
+# rather than retyped: the vtable's member order is the ABI, and a
+# hand-written copy would be a second place it is written down.
+bindgen = { version = "0.73", optional = true }
+
+[dev-dependencies]
+# For the shared test vectors in `backends/vectors/` (tests/vectors.rs), which
+# the Java tests read too. Already in the graph through IronRDP (picky).
+serde_json = "1"

@@ -14,21 +14,17 @@
 //! [`realvnc_identities`](crate::known_hosts::realvnc_identities), and is
 //! handed back here.
 
-use super::{Behaviour, CSession, start};
 use crate::backend::{Backend, ConnectionFact, Field, Traffic};
 use crate::backends::{Connect, Kind};
-use crate::ffi;
 use crate::known_hosts;
-use crate::options::{self, Options};
+use crate::options::Options;
+use session::c::{Behaviour, CSession, Security, ffi, start};
 use std::ffi::CString;
+use std::os::raw::c_void;
 
 pub static KIND: Kind = Kind {
-    id: "realvnc",
-    name: "VNC (RealVNC)",
-    short_name: "RealVNC",
-    description: "RealVNC's proprietary client implementation. This is the only one which supports UDP, ZRLE2, and RealVNC's proprietary authentication/encryption. It performs significantly better than the others when connecting to a RealVNC server, especially for typical desktop usage.",
-    options: options::REALVNC,
-    version: || unsafe { super::string(ffi::vento_realvnc_version()) },
+    about: &session::catalog::REALVNC,
+    version: || unsafe { session::c::string(ffi::vento_realvnc_version()) },
     create,
 };
 
@@ -100,15 +96,32 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
         c,
         &BEHAVIOUR,
         |callbacks| unsafe { ffi::vento_realvnc_create(&config, callbacks) },
-        Some(|s: &CSession, accept, remember| unsafe {
-            ffi::vento_realvnc_answer_security(s.session, accept, remember)
-        }),
+        Some(&SECURITY),
     )
+}
+
+/// The core's security prompt has a remember, and an identity to keep when
+/// it was answered with one.
+static SECURITY: Security = Security {
+    answer: |s, accept, remember| unsafe {
+        ffi::vento_realvnc_answer_security(s.session, accept, remember)
+    },
+    saved_identity,
+};
+
+fn saved_identity(s: &CSession) -> Option<String> {
+    let raw = unsafe { ffi::vento_realvnc_identity_saved(s.session) };
+    if raw.is_null() {
+        return None;
+    }
+    let identity = unsafe { session::c::string(raw) };
+    unsafe { ffi::free(raw as *mut c_void) };
+    (!identity.is_empty()).then_some(identity)
 }
 
 /// Every key goes through the core's own live set, which carries the quality
 /// group together and re-reads the encoder. View-only is already sent through
-/// the vtable by [`CBackend`](super::CBackend), so it is not sent again here.
+/// the vtable by [`CBackend`](session::c::CBackend), so it is not sent again here.
 fn set_option(session: &CSession, o: &Options, key: &str) {
     if key == "ViewOnly" {
         return;

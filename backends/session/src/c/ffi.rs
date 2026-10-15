@@ -10,9 +10,9 @@
 //! what `vento_strings` and `vento_realvnc_identity_saved` are freed with —
 //! the header frees them that way too, so the allocator matches.
 //!
-//! The generated items are `pub` and `unsafe` to touch; `backends/c.rs` is
-//! the one safe wrapper over them, and the rest of the crate never sees this
-//! module.
+//! The generated items are `pub` and `unsafe` to touch. [`super`] is the one
+//! safe wrapper over the vtable; a backend's own crate reaches its config
+//! struct, its constructor and its live calls here.
 
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]

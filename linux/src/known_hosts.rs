@@ -18,11 +18,10 @@
 //! read it. Only the window writes it, and only when a prompt was answered
 //! with *remember server* — the probe's `--trust` is for that run.
 //!
-//! The key is the address as written, folded for case, as `KnownHosts.key`
-//! folds it: a session opened from the command line has no record, two
-//! records may name one machine, and the thing identified is the machine. A
-//! fingerprint is kept as the backend handed it over and compared as its hex
-//! digits alone, since one library prints `66:CC:…` and another `66:cc:…`.
+//! What a pin means — the key an address is filed under, how two
+//! fingerprints compare, and what is asked when they do not — is
+//! `session::trust`, the phone's rule as well as this client's; what is here
+//! is where this client keeps them.
 //!
 //! The file is a line per address, `<address> <fingerprint>`, with `#`
 //! comments; whitespace, control characters and `\` inside either are
@@ -32,7 +31,8 @@
 //! beside itself and renamed over — so a crash leaves the old one or the new
 //! one, never half of either, and it is private to this user.
 
-use crate::events::Identity;
+pub use session::trust::{Verdict, canonical, key};
+use session::trust;
 use std::fs::{DirBuilder, OpenOptions};
 use std::io::{self, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
@@ -243,20 +243,6 @@ impl Store {
     }
 }
 
-/// What a fingerprint comes to against the store.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Verdict {
-    /// The one this address was accepted with: nothing is asked.
-    Matches,
-    /// Not seen under this address. `identity` is `New`, `MatchesAnother`
-    /// with the address it is pinned to in `matching_address`, or `Changed`
-    /// when this address is pinned to something else.
-    Ask {
-        identity: Identity,
-        matching_address: String,
-    },
-}
-
 /// The pin store: `KnownHosts.java`'s operations over a [`Store`].
 #[derive(Clone, Debug)]
 pub struct KnownHosts {
@@ -279,64 +265,15 @@ impl KnownHosts {
     /// not, how to put the question: `KnownHosts.matches`, and the identity
     /// `KnownHosts.ask` works out before it asks.
     pub fn verdict(&self, address: &str, fingerprint: &str) -> Verdict {
-        verdict(&self.store.read_or_empty(), address, fingerprint)
+        let table = self.store.read_or_empty();
+        let pins: Vec<(&str, &str)> = table.entries().collect();
+        trust::verdict(&pins, address, fingerprint)
     }
 
     /// Remembers `fingerprint` for `address`, as `KnownHosts.pin` does when a
     /// prompt was answered yes with *remember server* ticked.
     pub fn pin(&self, address: &str, fingerprint: &str) -> io::Result<()> {
         self.store.set(&key(address), fingerprint)
-    }
-}
-
-/// `KnownHosts.key`: folded for case and nothing else, which is right twice
-/// over — a name is case-insensitive in DNS and an IPv6 literal in its own
-/// notation. A default port left off is not filled in, so one machine can
-/// have two entries, as on the phone. Trimmed as Java's `trim()` trims —
-/// ASCII controls and the space, nothing wider — since the phone's pins are
-/// filed under its keys and the two must file one address in one place
-/// (`backends/vectors/known_hosts.json`).
-pub fn key(address: &str) -> String {
-    address.trim_matches(|c: char| c <= ' ').to_lowercase()
-}
-
-/// `KnownHosts.canonical`: the ASCII hex digits alone, upper case.
-pub fn canonical(fingerprint: &str) -> String {
-    fingerprint
-        .chars()
-        .filter(char::is_ascii_hexdigit)
-        .map(|c| c.to_ascii_uppercase())
-        .collect()
-}
-
-/// [`KnownHosts::verdict`] over a table already read.
-pub fn verdict(table: &Table, address: &str, fingerprint: &str) -> Verdict {
-    let key = key(address);
-    let wanted = canonical(fingerprint);
-    if let Some(pin) = table.get(&key) {
-        if canonical(pin) == wanted {
-            return Verdict::Matches;
-        }
-        return Verdict::Ask {
-            identity: Identity::Changed,
-            matching_address: String::new(),
-        };
-    }
-    // `KnownHosts.otherAddressFor`: one machine reached by name and by
-    // number, or moved, is the ordinary explanation, and a different thing
-    // from a fingerprint changed under an address that has not.
-    let elsewhere = (!fingerprint.is_empty())
-        .then(|| table.entries().find(|(k, v)| *k != key && canonical(v) == wanted))
-        .flatten();
-    match elsewhere {
-        Some((other, _)) => Verdict::Ask {
-            identity: Identity::MatchesAnother,
-            matching_address: other.to_string(),
-        },
-        None => Verdict::Ask {
-            identity: Identity::New,
-            matching_address: String::new(),
-        },
     }
 }
 
@@ -351,6 +288,7 @@ pub fn realvnc_identities(config: &Path) -> Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use session::events::Identity;
 
     const FP: &str = "66:cc:ed:01:02:03:04:05:06:07:08:09:0a:0b:0c:0d";
 
@@ -395,49 +333,6 @@ mod tests {
         assert_eq!(t.to_bytes(), b"# c\nh 4\nother 2\n");
         t.set("new", "5");
         assert_eq!(t.to_bytes(), b"# c\nh 4\nother 2\nnew 5\n");
-    }
-
-    #[test]
-    fn the_key_is_folded_for_case_and_the_fingerprint_for_spelling() {
-        assert_eq!(key("  [FE80::1]:5900 "), "[fe80::1]:5900");
-        assert_eq!(key("Host.Example"), "host.example");
-        assert_eq!(canonical("66:cc:ED"), "66CCED");
-        assert_eq!(canonical("66 CC-ed"), "66CCED");
-    }
-
-    #[test]
-    fn a_match_is_silent_and_anything_else_is_a_question_with_its_reason() {
-        let t = table(&format!("host:3389 {}\n", FP.to_uppercase()));
-        assert_eq!(verdict(&t, "HOST:3389", FP), Verdict::Matches);
-        assert_eq!(
-            verdict(&t, "host:3389", "00:11"),
-            Verdict::Ask {
-                identity: Identity::Changed,
-                matching_address: String::new()
-            }
-        );
-        assert_eq!(
-            verdict(&t, "10.0.0.5:3389", FP),
-            Verdict::Ask {
-                identity: Identity::MatchesAnother,
-                matching_address: "host:3389".into()
-            }
-        );
-        assert_eq!(
-            verdict(&t, "10.0.0.5:3389", "00:11"),
-            Verdict::Ask {
-                identity: Identity::New,
-                matching_address: String::new()
-            }
-        );
-        // An empty fingerprint matches nothing elsewhere.
-        assert_eq!(
-            verdict(&table("a \\x00\n"), "b", ""),
-            Verdict::Ask {
-                identity: Identity::New,
-                matching_address: String::new()
-            }
-        );
     }
 
     fn scratch(name: &str) -> PathBuf {

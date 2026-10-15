@@ -131,7 +131,7 @@ pub fn run(launch: Launch) -> i32 {
     let proxy = event_loop.create_proxy();
     let mut app = App {
         launch: Some(launch),
-        dirs: Dirs::default(),
+        dirs: Dirs::xdg(),
         settings: Settings::default(),
         placement: Placement::default(),
         proxy,

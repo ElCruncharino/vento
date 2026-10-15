@@ -1,28 +1,24 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The SPICE client as a [`Backend`]: the twin of that crate's
-//! `bindings/mod.rs`, with `SpiceBackend.java`'s option handling and its
-//! rows.
+//! The SPICE client as a [`Backend`](session::backend::Backend): the twin of
+//! this crate's `bindings/mod.rs`, with `SpiceBackend.java`'s option handling
+//! and its rows.
 
-use super::{CONNECT_TIMEOUT_MS, Connect, Kind};
-use crate::backend::{
+use crate::{Client, Config, compression_of};
+use common::{Bridge, Session};
+use session::backend::{
     Backend, ConnectionFact, Credentials, Facts, Field, Monitor, Picture, Traffic,
 };
-use crate::events::{Feed, Mailbox};
-use crate::options::{self, Options};
-use common::{Bridge, Session};
-use remotedesktop_spice::{Client, Config, compression_of};
+use session::events::{Feed, Mailbox};
+use session::kind::{CONNECT_TIMEOUT_MS, Connect, Kind};
+use session::options::Options;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 pub static KIND: Kind = Kind {
-    id: "spice",
-    name: "SPICE",
-    short_name: "SPICE",
-    description: "Usually used for QEMU/libvirt/Proxmox virtual machines. Supports clipboard and screen resizing if the guest agent is running.",
-    options: options::SPICE,
-    version: || remotedesktop_spice::VERSION.to_string(),
+    about: &session::catalog::SPICE,
+    version: || crate::VERSION.to_string(),
     create,
 };
 

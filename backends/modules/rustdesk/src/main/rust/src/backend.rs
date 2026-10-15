@@ -1,29 +1,26 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The RustDesk client as a [`Backend`]: the twin of that crate's
-//! `bindings/mod.rs`, with `RustDeskBackend.java`'s option handling and its
-//! rows. The picture is decoded by libavcodec, through
-//! `platform_desktop::ffmpeg`, where the phone hands over MediaCodec.
+//! The RustDesk client as a [`Backend`](session::backend::Backend): the twin
+//! of this crate's `bindings/mod.rs`, with `RustDeskBackend.java`'s option
+//! handling and its rows. The picture is decoded by whatever the client
+//! hands over in [`Connect::decoders`]: libavcodec on Linux, MediaCodec on
+//! the phone.
 
-use super::{CONNECT_TIMEOUT_MS, Connect, Kind, client_name};
-use crate::backend::{
+use crate::{Client, Config, Platform, PreferredCodec, Quality, Reach};
+use common::{Bridge, Session};
+use session::backend::{
     Backend, ConnectionFact, Credentials, Facts, Field, Monitor, Picture, Traffic,
 };
-use crate::events::{Feed, Mailbox};
-use crate::options::{self, Options};
-use common::{Bridge, Session};
-use remotedesktop_rustdesk::{Client, Config, Platform, PreferredCodec, Quality, Reach};
+use session::events::{Feed, Mailbox};
+use session::kind::{self, CONNECT_TIMEOUT_MS, Connect, Kind};
+use session::options::Options;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 pub static KIND: Kind = Kind {
-    id: "rustdesk",
-    name: "RustDesk",
-    short_name: "RustDesk",
-    description: "RustDesk backend supporting direct or rendezvous connections. Uses hardware-accelerated video codecs.",
-    options: options::RUSTDESK,
-    version: || remotedesktop_rustdesk::VERSION.to_string(),
+    about: &session::catalog::RUSTDESK,
+    version: || crate::VERSION.to_string(),
     create,
 };
 
@@ -53,20 +50,6 @@ fn fps(options: &Options) -> i32 {
     options.int("FrameRate", 0).clamp(0, 120) as i32
 }
 
-/// The rendezvous server an empty `RendezvousServer` means, which
-/// `RustDeskProvider.PUBLIC_NETWORK` names for the pin key.
-const PUBLIC_NETWORK: &str = "rs-ny.rustdesk.com";
-
-/// `RustDeskBackend.pinnedAs`: the id and the network it means something
-/// on. An id is handed out by a rendezvous server and re-issued when a
-/// machine's configuration is wiped, so the same digits on two networks are
-/// two machines, and one entry under the bare id would have them overwriting
-/// each other's identity.
-pub fn pinned_as(address: &str, o: &Options) -> String {
-    let server = o.get("RendezvousServer").trim();
-    format!("{address}@{}", if server.is_empty() { PUBLIC_NETWORK } else { server })
-}
-
 struct RustDesk {
     session: Session<Client>,
     mailbox: Arc<Mailbox>,
@@ -89,9 +72,12 @@ fn create(c: &Connect) -> Result<Arc<dyn Backend>, String> {
         password: c.password.map(String::from),
         connect_timeout: Duration::from_millis(CONNECT_TIMEOUT_MS as u64),
         // What the far end shows and logs while this session is up.
-        my_name: client_name(),
-        // What their own Linux client says, rather than the phone's answer.
-        platform: Platform::Linux,
+        my_name: c.client_name.to_string(),
+        // What their own client says from the same platform.
+        platform: match c.platform {
+            kind::Platform::Android => Platform::Android,
+            kind::Platform::Linux => Platform::Linux,
+        },
         quality: quality_of(o.get("Quality")),
         fps: fps(o),
         codec: codec_of(o.get("Codec")),
@@ -104,7 +90,8 @@ fn create(c: &Connect) -> Result<Arc<dyn Backend>, String> {
         config.quality,
         config.fps
     );
-    let client = Client::new(Arc::new(platform_desktop::ffmpeg::FFmpeg));
+    let decoders = c.decoders.clone().ok_or("no video decoder to hand the picture to")?;
+    let client = Client::new(decoders);
     let session = Session::start(
         Arc::new(client),
         config,
