@@ -231,6 +231,12 @@ impl Session {
         let backend = (request.kind.create)(&connect)?;
         let title = request.address.clone();
         let live = request.options.clone();
+        // What the backend was created with, which it already acts on: the
+        // toolbar and the window's own idea of where input goes start from
+        // it rather than from off, which had `-o ViewOnly=true` showing
+        // "View only: off" while the window forwarded keys the backend
+        // dropped, and held the keyboard grab for them.
+        let view_only = live.bool("ViewOnly");
         let pinned = backends::pinned_as(request.kind, &request.address, &request.options);
         Ok(Session {
             request,
@@ -268,7 +274,7 @@ impl Session {
             wheel: Vec2::ZERO,
             motion_rest: (0.0, 0.0),
             captured_mask: 0,
-            view_only: false,
+            view_only,
             shown: true,
             clipboard_seen: None,
             bell_until: None,
