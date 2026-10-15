@@ -272,8 +272,11 @@ pub trait Backend: Send + Sync {
     /// Let go of every key this session still has down at the far end.
     fn release_all_keys(&self);
 
-    /// Whether the session is in the foreground. Backends may pause updates
-    /// when it is not.
+    /// Whether the session can be seen: false while its window is minimised
+    /// or hidden, true again when it is shown. Backends may pause updates
+    /// while it is not. Not the keyboard focus: a window on screen without
+    /// it stays live. (The name is the Android app's, where the session's
+    /// screen going to the background is the same thing.)
     fn focus(&self, focused: bool);
 
     fn set_view_only(&self, view_only: bool);

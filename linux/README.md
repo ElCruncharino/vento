@@ -145,6 +145,21 @@ a backend is always released off the window's thread, so neither the dialog
 coming back nor the window closing waits for one that will not let go; once
 the window has gone the process gives it two seconds, then exits anyway.
 
+A session is told when its window cannot be seen — minimised, or on X11
+wholly covered — and the backends pause their updates then, as the phone's do
+when its session screen stops: the three VNC backends stop reading, FreeRDP
+and IronRDP send a Suppress Output PDU, SPICE stops acknowledging, and
+RustDesk drops to a frame a second. They resume when it is shown again. A
+window that is on screen without the keyboard focus stays live. X11 says both
+through winit: `_NET_WM_STATE_HIDDEN`, checked every frame and on a focus
+change, and the visibility events, which under a compositing manager never
+say covered. Wayland says neither — xdg-toplevel has no minimised state, and
+winit 0.30 does not pass on its `suspended` one — so there a session never
+pauses; a hidden window's frames stop with its frame callbacks while the
+backend keeps receiving. Checked on `scripts/testx11` for tigervnc, libvnc,
+rfb and freerdp: live with another window focused, paused minimised or
+covered, live again restored.
+
 **The toolbar** floats at the top edge and stays out of the way: it slides off
 the top of the window when the pointer is elsewhere and slides back when the
 pointer touches the top edge (and for the first three seconds of a session, so

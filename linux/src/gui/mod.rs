@@ -135,6 +135,8 @@ pub fn run(launch: Launch) -> i32 {
         platform: Platform::Other,
         pointer: None,
         focused: false,
+        occluded: false,
+        shown: true,
         repaint_at: Arc::new(Mutex::new(None)),
         teardowns: Vec::new(),
         exit_code: 0,
@@ -205,6 +207,11 @@ struct App {
     /// The last pointer position that was not swallowed (see `centred`).
     pointer: Option<PhysicalPosition<f64>>,
     focused: bool,
+    /// X11: the window is wholly covered, as its visibility events say.
+    occluded: bool,
+    /// Whether the window could be seen when last looked, which is what the
+    /// session is told (see `sync_shown`).
+    shown: bool,
     /// When egui last asked to be repainted by.
     repaint_at: Arc<Mutex<Option<Instant>>>,
     /// The backends of sessions that have ended, still being destroyed.
@@ -313,7 +320,10 @@ impl App {
             (size.width, size.height),
             wake,
         ) {
-            Ok(session) => {
+            Ok(mut session) => {
+                if !self.shown {
+                    session.shown(false);
+                }
                 self.screen = Screen::Session(Box::new(session));
             }
             Err(e) => {
@@ -354,6 +364,32 @@ impl App {
         }
     }
 
+    /// Tell the session whether the window can be seen, which is what lets
+    /// a backend pause: not while it merely lacks the keyboard focus, which
+    /// leaves the picture on screen, but while it is minimised or wholly
+    /// covered. `minimized` is winit's `is_minimized`, asked by the caller.
+    ///
+    /// What can be told depends on the display server. X11 says both: the
+    /// window manager's `_NET_WM_STATE_HIDDEN`, read on every frame (a
+    /// minimised session still runs one a second, for the poll, so it is
+    /// seen within a second, or at once with the focus-out a minimise
+    /// usually brings), and the server's visibility events, which winit
+    /// reports as `Occluded` — under a compositing manager the window is
+    /// never reported covered, and then only minimising pauses. Wayland
+    /// says neither: xdg-toplevel has no minimised state, winit 0.30 does
+    /// not pass on its `suspended` state, and it reports no `Occluded`
+    /// there; a hidden window's frame callbacks stop, and so do its frames,
+    /// but the backend is not told and keeps receiving.
+    fn sync_shown(&mut self, minimized: Option<bool>) {
+        let shown = !self.occluded && minimized != Some(true);
+        if shown != self.shown {
+            self.shown = shown;
+            if let Screen::Session(session) = &mut self.screen {
+                session.shown(shown);
+            }
+        }
+    }
+
     /// The inhibitor's state in a word, for the session's overlay.
     fn inhibitor(&self) -> &'static str {
         self.shortcuts.as_ref().map(Shortcuts::state).unwrap_or("none")
@@ -361,6 +397,10 @@ impl App {
 
     fn draw(&mut self, event_loop: &ActiveEventLoop) {
         let inhibitor = self.inhibitor();
+        let Some(minimized) = self.window.as_ref().map(|w| w.is_minimized()) else {
+            return;
+        };
+        self.sync_shown(minimized);
         let (Some(window), Some(gpu), Some(state)) = (self.window.clone(), self.gpu.as_mut(), self.winit.as_mut())
         else {
             return;
@@ -424,8 +464,7 @@ impl App {
         // until the window is back, which its first expose asks a redraw
         // for. Only X11 says; elsewhere this is `None` and every frame is
         // presented as before.
-        let shown = window.is_minimized() != Some(true);
-        let frame = if !shown {
+        let frame = if minimized == Some(true) {
             None
         } else {
             match gpu.surface.get_current_texture() {
@@ -621,6 +660,13 @@ impl ApplicationHandler<Wake> for App {
                     session.focus(*focused, &mut host);
                 }
                 self.sync_shortcuts();
+                // A minimise usually takes the focus with it: seen now
+                // rather than at the next frame.
+                self.sync_shown(window.is_minimized());
+            }
+            WindowEvent::Occluded(occluded) => {
+                self.occluded = *occluded;
+                self.sync_shown(window.is_minimized());
             }
             WindowEvent::KeyboardInput {
                 event: key,

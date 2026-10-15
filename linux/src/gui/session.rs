@@ -185,6 +185,9 @@ pub struct Session {
     /// The buttons held while captured, where egui's response is not asked.
     captured_mask: i32,
     view_only: bool,
+    /// Whether the backend was last told the window is on screen; it starts
+    /// out so.
+    shown: bool,
     /// The last clipboard text that crossed in either direction, so that it
     /// is not sent back where it came from.
     clipboard_seen: Option<String>,
@@ -266,6 +269,7 @@ impl Session {
             motion_rest: (0.0, 0.0),
             captured_mask: 0,
             view_only: false,
+            shown: true,
             clipboard_seen: None,
             bell_until: None,
             title,
@@ -493,8 +497,24 @@ impl Session {
 
     // ---- focus, capture and the clipboard ----------------------------------
 
+    /// Whether the window can be seen: the backend's `focus`, which is what
+    /// lets it pause. Not the keyboard focus, which it was: a window left
+    /// visible beside the one being typed in froze, since the RFB backends
+    /// stop reading, FreeRDP suppresses output and RustDesk drops to a frame
+    /// a second, all for a picture still on screen. The window says when it
+    /// is minimised or covered (see `App::sync_shown`).
+    pub fn shown(&mut self, shown: bool) {
+        if shown != self.shown {
+            self.shown = shown;
+            log::info!("{}", if shown { "window shown: updates resume" } else { "window hidden: updates may pause" });
+            self.backend.focus(shown);
+        }
+    }
+
+    /// The keyboard focus: the keys still down let go of when it leaves,
+    /// the clipboard offered when it comes back, and the capture and the
+    /// shortcuts (the window's) following it.
     pub fn focus(&mut self, focused: bool, host: &mut Host) {
-        self.backend.focus(focused);
         if focused {
             // What was copied here while the window was away, offered once:
             // `SessionClipboard.read`, which remembers what it saw whether
