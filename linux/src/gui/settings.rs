@@ -24,6 +24,12 @@ pub struct Settings {
     /// In absolute mode, make the far end's cursor shape the window's own
     /// cursor rather than drawing it under the local pointer.
     pub native_cursor: bool,
+    /// Hold the window manager's or the compositor's shortcuts off while a
+    /// session has the focus and takes input — the X11 keyboard grab, or
+    /// Wayland's shortcuts inhibitor — so that Alt+Tab and the rest reach
+    /// the far end. Off, neither is ever taken and they stay this
+    /// desktop's.
+    pub grab_keyboard: bool,
 }
 
 impl Default for Settings {
@@ -32,12 +38,13 @@ impl Default for Settings {
             clipboard_out: true,
             clipboard_in: true,
             native_cursor: false,
+            grab_keyboard: true,
         }
     }
 }
 
 impl Settings {
-    /// The three as rows of a two-column grid — a label and a box each, the
+    /// The four as rows of a two-column grid — a label and a box each, the
     /// shape the dialog's and the panel's options are drawn in, with the
     /// label `weak` where the panel's are. True if one was changed this
     /// frame.
@@ -60,6 +67,15 @@ impl Settings {
             &mut self.clipboard_in,
             "Receive clipboard",
             "Update the local clipboard with copied text.",
+        );
+        // With the clipboard's, as the other switch about what crosses
+        // between the two desktops: here, the keyboard's chords.
+        row(
+            ui,
+            &mut self.grab_keyboard,
+            "Grab keyboard",
+            "Send the window manager's shortcuts (Alt+Tab, Super and the rest) to the remote machine \
+             while the session has the focus and takes input. Off, they stay this desktop's.",
         );
         row(
             ui,

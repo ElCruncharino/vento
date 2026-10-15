@@ -284,7 +284,10 @@ impl App {
         match &self.shortcuts {
             Some(Shortcuts::Wayland(_)) => log::info!("Wayland: looking for the keyboard shortcuts inhibitor"),
             Some(Shortcuts::X11(_)) => {
-                log::info!("X11: the keyboard is grabbed while a session has focus and takes input, and not over the toolbar")
+                log::info!(
+                    "X11: the keyboard is grabbed while a session has focus and takes input, and not over the \
+                     toolbar, unless the grab keyboard setting is off"
+                )
             }
             None => log::info!("no shortcuts inhibitor on this display server"),
         }
@@ -350,7 +353,8 @@ impl App {
     /// released otherwise. Not merely connected, as it was: in view only, or
     /// under a prompt, the keys go nowhere at the far end, and the grab kept
     /// Alt+Tab and the rest from the window manager too. Released while the
-    /// pointer is on the toolbar as well (`Session::holds_shortcuts`). This
+    /// pointer is on the toolbar as well, and never taken with the grab
+    /// keyboard setting off (`Session::holds_shortcuts`). This
     /// runs after every frame and on focus changes, but the grab and the
     /// inhibitor act only when what is wanted changes, so a pointer resting
     /// on the toolbar costs nothing.

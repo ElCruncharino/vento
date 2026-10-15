@@ -97,9 +97,11 @@ usage: vento                                   the connection dialog
   --no-clipboard-out     do not send locally copied text to the far end
   --no-clipboard-in      do not take what the far end copies onto the local
                          clipboard
+  --no-grab-keyboard     leave the window manager's shortcuts (Alt+Tab, Super)
+                         to this desktop rather than sending them on
   --native-cursor        make the far end's cursor shape the window's own
                          pointer, where this end owns the pointer, instead
-                         of drawing it (the dialog's Settings have all three)
+                         of drawing it (the dialog's Settings have all four)
   --x11, --wayland       open the window on that display server (default:
                          Wayland where WAYLAND_DISPLAY is set, X11 otherwise)
   --library-dir DIR      where RealVNC's two libraries are (XDG data dir)
@@ -211,6 +213,7 @@ headless, any of which selects the probe instead of the window:
                 "--connect" => connect = true,
                 "--no-clipboard-out" => settings.clipboard_out = false,
                 "--no-clipboard-in" => settings.clipboard_in = false,
+                "--no-grab-keyboard" => settings.grab_keyboard = false,
                 "--native-cursor" => settings.native_cursor = true,
                 "--x11" | "--wayland" => {
                     let named = if arg == "--x11" { gui::Platform::X11 } else { gui::Platform::Wayland };

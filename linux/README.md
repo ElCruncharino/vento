@@ -91,10 +91,12 @@ cargo run -- tigervnc 127.0.0.1:5901 --password vncpass
 cargo run -- rdp
 
 # The client's own settings, which are every connection's rather than this
-# one's: the clipboard in each direction (both on unless told otherwise) and
-# the far end's cursor as the window's own (off unless told). The dialog's
-# "Settings" section has the same three.
+# one's: the clipboard in each direction (both on unless told otherwise), the
+# keyboard grab that sends Alt+Tab and the rest on (on unless told), and the
+# far end's cursor as the window's own (off unless told). The dialog's
+# "Settings" section has the same four.
 cargo run -- tigervnc 127.0.0.1:5901 --no-clipboard-out --no-clipboard-in
+cargo run -- tigervnc 127.0.0.1:5901 --no-grab-keyboard
 cargo run -- tigervnc 127.0.0.1:5901 --native-cursor
 
 # Straight into a session, with --connect. Without --password the credentials
@@ -236,7 +238,7 @@ usual sizes, and asking `request_desktop_size` for the one picked — what
 arrives is what the far end granted, and the dropdown shows that rather than
 what was asked; and **Display**, where the far end sends one of several
 screens at a time (RustDesk), asking `request_display`. And **Follow window
-size**, below, and the three **settings**, below, which a running session
+size**, below, and the four **settings**, below, which a running session
 takes a change to at once.
 
 Under them, the desktop's name, the facts the backend reports in its own words
@@ -261,8 +263,13 @@ SPICE agent.
 
 **Settings** are the client's own, one answer for every connection, as the
 phone's `AppSettings` has them: **Send clipboard** and **Receive clipboard**
-(both on by default; `--no-clipboard-out`, `--no-clipboard-in`), and **Native
-cursor** (off by default; `--native-cursor`), below. They are a section of
+(both on by default; `--no-clipboard-out`, `--no-clipboard-in`), **Grab
+keyboard** (on by default; `--no-grab-keyboard`), and **Native cursor** (off
+by default; `--native-cursor`), below. Grab keyboard is whether the window
+holds the window manager's or the compositor's shortcuts off at all — the X11
+keyboard grab, or Wayland's shortcuts inhibitor, below — so that Alt+Tab,
+Super and the rest reach the far end; off, neither is ever taken, and a
+running session lets go of whichever it holds the moment it is unticked. They are a section of
 the connection dialog, apart from the backend's options because they are not
 the connection's, and rows of the connection panel, where a session shows
 what it is running with and takes a change at once. Nothing is saved: a
@@ -286,11 +293,11 @@ loses focus. There is one local chord, **Ctrl+Alt+D** for the debug overlay
 chord's keys are let go of at the far end, as the escape does. Every other
 key is the far end's while a session has focus and takes input (not in view
 only, nor under a prompt) — including the compositor's or window manager's own
-chords, see below — except while the pointer is on the toolbar: the toolbar is
-this end's, so while it is under the pointer the keyboard is too, the grab or
-the inhibitor is let go (Alt+Tab is the window manager's again), the keys the
-far end has down are released there, and what is typed goes nowhere. Moving
-off the toolbar takes the keyboard back.
+chords (unless **Grab keyboard** is off), see below — except while the pointer
+is on the toolbar: the toolbar is this end's, so while it is under the pointer
+the keyboard is too, the grab or the inhibitor is let go (Alt+Tab is the window
+manager's again), the keys the far end has down are released there, and what
+is typed goes nowhere. Moving off the toolbar takes the keyboard back.
 
 **The mouse** sends absolute desktop coordinates, mapped through the view and
 clamped to it — the desktop pixel drawn under the pointer, by the centre of
@@ -442,8 +449,9 @@ What the window uses beyond `xdg_wm_base`:
   through the window's raw handles, binds the manager and a seat from the
   registry on an event queue of its own, and creates the inhibitor; it is
   released on focus loss, on disconnect, in view only, under a prompt and
-  while the pointer is on the toolbar. The log says when it is created,
-  granted (`active`) and released. The compositor may show its own indicator
+  while the pointer is on the toolbar, and never created with **Grab
+  keyboard** off. The log says when it is created, granted (`active`) and
+  released. The compositor may show its own indicator
   while it is in force (niri does), and keeps one chord of its own to take
   focus away.
 - `zwp_pointer_constraints_v1` and `zwp_relative_pointer_manager_v1` — the
@@ -495,7 +503,7 @@ handles.
   mouse binding survives the grab: Openbox's Alt+drag did not move the window
   while it was held (it did with another window focused). The log says `X11
   keyboard grabbed` and `released`, and the overlay's inhibitor line says
-  `grabbed`.
+  `grabbed`. With **Grab keyboard** off it is never taken.
 - **A refused grab is retried** every 250 ms while the window has focus and
   a session takes input, with the loop woken for it; the overlay says why
   meanwhile (`refused (already grabbed)`). Tried with Openbox's Alt+Tab

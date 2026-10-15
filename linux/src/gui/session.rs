@@ -318,8 +318,9 @@ impl Session {
     /// while the pointer is on the toolbar. The toolbar is this end's, so
     /// while it is being used the keyboard is too — Alt+Tab included, which
     /// is how a grabbed window is otherwise left only with the mouse.
+    /// Never with the grab keyboard setting off.
     pub fn holds_shortcuts(&self) -> bool {
-        self.accepts_input() && !self.toolbar_hovered
+        self.settings.grab_keyboard && self.accepts_input() && !self.toolbar_hovered
     }
 
     /// Whether a key event from winit is the far end's rather than egui's:
@@ -820,9 +821,10 @@ impl Session {
             return;
         }
         log::info!(
-            "settings: send clipboard {}, receive clipboard {}, native cursor {}",
+            "settings: send clipboard {}, receive clipboard {}, grab keyboard {}, native cursor {}",
             on_off(settings.clipboard_out),
             on_off(settings.clipboard_in),
+            on_off(settings.grab_keyboard),
             on_off(settings.native_cursor)
         );
         self.settings = settings;
