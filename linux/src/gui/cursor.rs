@@ -7,10 +7,12 @@
 //!
 //! A shape is uploaded once. winit makes a `CustomCursor` through the event
 //! loop — on Wayland a set of pixels it copies into a shared-memory buffer
-//! every time the cursor is *set*, on X11 an Xcursor made once and set with
-//! one request — so the window's cursor is set only when what it should
-//! be changes — a new shape, a new scale, the pointer arriving on or leaving
-//! the desktop — and never once a frame. The cache is keyed by the shape's
+//! when the cursor is *set* (kept while that cursor stays the window's, by
+//! `patches/winit/0004`, but made again after any other cursor, egui's
+//! icons included), on X11 an Xcursor made once and set with one request —
+//! so the window's cursor is set only when what it should be changes — a
+//! new shape, a new scale, the pointer arriving on or leaving the desktop —
+//! and never once a frame. The cache is keyed by the shape's
 //! pixels and hotspot, so a cursor that flickers between two shapes (an
 //! xterm's I-beam and the arrow over its scrollbar) is two uploads and not
 //! one a change.

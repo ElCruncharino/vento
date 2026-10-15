@@ -1,0 +1,130 @@
+From b866783df45099a0d88945786aa4fda72e8546bb Mon Sep 17 00:00:00 2001
+From: "Claude Opus 5.5" <noreply@anthropic.com>
+Date: Thu, 15 Oct 2026 13:55:39 -0400
+Subject: [PATCH 4/4] wayland: keep the custom cursor's buffer when it is set
+ again
+
+set_custom_cursor copied the image into a fresh wl_shm buffer on every
+call, even when the cursor given was the one already selected, so an
+application that sets its cursor every frame, which is the easy way to
+write one that follows some state, made a wl_buffer (and, now and
+then, grew the shm pool) sixty times a second for a picture that had
+not changed. The buffer creation also unwrapped, so a pool that could
+not grow was a panic.
+
+A custom cursor now remembers the image it was made from, and setting
+the selected one again re-applies its buffer instead of making
+another; cursors are the same one when their CustomCursor handles are,
+as their Eq says. A buffer that cannot be made is a warning, and the
+previous cursor stays.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/src/changelog/unreleased.md b/src/changelog/unreleased.md
+index 9a60855..aa9e18c 100644
+--- a/src/changelog/unreleased.md
++++ b/src/changelog/unreleased.md
+@@ -48,3 +48,4 @@ changelog entry.
+ 
+ - On X11, fix a wheel that arrives as button presses (XTEST, Xvnc, xrdp) scrolling twice per notch.
+ - On X11, fix a panic in `Window::inner_size` and other getters when another client destroyed the window.
++- On Wayland, fix `Window::set_cursor` copying a custom cursor into a new buffer when it is already the window's cursor, and panicking when the buffer could not be allocated.
+diff --git a/src/platform_impl/linux/wayland/types/cursor.rs b/src/platform_impl/linux/wayland/types/cursor.rs
+index c1a0c26..4d972b3 100644
+--- a/src/platform_impl/linux/wayland/types/cursor.rs
++++ b/src/platform_impl/linux/wayland/types/cursor.rs
+@@ -1,7 +1,9 @@
++use std::sync::Arc;
++
+ use cursor_icon::CursorIcon;
+ 
+ use sctk::reexports::client::protocol::wl_shm::Format;
+-use sctk::shm::slot::{Buffer, SlotPool};
++use sctk::shm::slot::{Buffer, CreateBufferError, SlotPool};
+ 
+ use crate::cursor::CursorImage;
+ 
+@@ -19,6 +21,8 @@ impl Default for SelectedCursor {
+ 
+ #[derive(Debug)]
+ pub struct CustomCursor {
++    /// The image the buffer was made from, which is what makes two cursors the same one.
++    pub image: Arc<CursorImage>,
+     pub buffer: Buffer,
+     pub w: i32,
+     pub h: i32,
+@@ -27,15 +31,16 @@ pub struct CustomCursor {
+ }
+ 
+ impl CustomCursor {
+-    pub(crate) fn new(pool: &mut SlotPool, image: &CursorImage) -> Self {
+-        let (buffer, canvas) = pool
+-            .create_buffer(
+-                image.width as i32,
+-                image.height as i32,
+-                4 * (image.width as i32),
+-                Format::Argb8888,
+-            )
+-            .unwrap();
++    pub(crate) fn new(
++        pool: &mut SlotPool,
++        image: Arc<CursorImage>,
++    ) -> Result<Self, CreateBufferError> {
++        let (buffer, canvas) = pool.create_buffer(
++            image.width as i32,
++            image.height as i32,
++            4 * (image.width as i32),
++            Format::Argb8888,
++        )?;
+ 
+         for (canvas_chunk, rgba) in canvas.chunks_exact_mut(4).zip(image.rgba.chunks_exact(4)) {
+             // Alpha in buffer is premultiplied.
+@@ -48,12 +53,13 @@ impl CustomCursor {
+             *array = color.to_le_bytes();
+         }
+ 
+-        CustomCursor {
++        Ok(CustomCursor {
+             buffer,
+             w: image.width as i32,
+             h: image.height as i32,
+             hotspot_x: image.hotspot_x as i32,
+             hotspot_y: image.hotspot_y as i32,
+-        }
++            image,
++        })
+     }
+ }
+diff --git a/src/platform_impl/linux/wayland/window/state.rs b/src/platform_impl/linux/wayland/window/state.rs
+index ff3cfec..2e0f4fb 100644
+--- a/src/platform_impl/linux/wayland/window/state.rs
++++ b/src/platform_impl/linux/wayland/window/state.rs
+@@ -760,9 +760,27 @@ impl WindowState {
+             },
+         };
+ 
++        // The cursor already selected keeps its buffer: copying the image into a fresh one on
++        // every call would cost an application that sets its cursor often (once a frame, say) a
++        // shm allocation and a wl_buffer each time for a picture that has not changed.
++        if let SelectedCursor::Custom(selected) = &self.selected_cursor {
++            if Arc::ptr_eq(&selected.image, &cursor) {
++                if self.cursor_visible {
++                    self.apply_custom_cursor(selected);
++                }
++                return;
++            }
++        }
++
+         let cursor = {
+             let mut pool = self.custom_cursor_pool.lock().unwrap();
+-            CustomCursor::new(&mut pool, &cursor)
++            match CustomCursor::new(&mut pool, cursor) {
++                Ok(cursor) => cursor,
++                Err(err) => {
++                    warn!("Failed to create a buffer for the custom cursor: {err}");
++                    return;
++                },
++            }
+         };
+ 
+         if self.cursor_visible {

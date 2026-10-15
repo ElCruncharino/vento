@@ -570,9 +570,14 @@ What the window uses beyond `xdg_wm_base`:
   premultiplies it (the shapes arrive straight, which is what the phone's
   `Bitmap.setPixels` takes too, and what TigerVNC's library makes of
   `CursorWithAlpha`'s premultiplied pixels), refuses anything over 2048
-  pixels a side, and copies the pixels into a fresh buffer on *every*
-  `set_cursor`, even of the same cursor — which is why the window's cursor
-  is set on a change and never once a frame. The buffer is in device pixels:
+  pixels a side, and copies the pixels into a fresh buffer on a
+  `set_cursor` — on every one, even of the same cursor, until
+  `patches/winit/0004` had it keep the buffer while that cursor stays the
+  window's (in a headless sway under `WAYLAND_DEBUG`, setting one cursor
+  three times made one `wl_buffer`, not three, and a different one a new
+  one). Any other cursor in between, egui's icons included, still drops
+  it, which is why the window's cursor is set on a change and never once a
+  frame. The buffer is in device pixels:
   with `wp_viewporter` winit sets its destination to the buffer's size over
   the window's scale factor, and without it sets the buffer scale to the
   output's integer scale, so a shape resampled to device pixels per desktop
