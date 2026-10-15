@@ -33,6 +33,13 @@
 //! that to libvpx and libaom with no colour description at all; VP8's
 //! bitstream has nowhere to put one, and libavcodec reports its one colour
 //! space, BT.601, as unspecified too.
+//!
+//! **Deeper than eight bits** — a High 10 H.264 stream, or VP9's and AV1's
+//! profiles that carry ten or twelve — is narrowed to eight bits plane by plane
+//! into buffers the decoder keeps, and then converted like any other frame,
+//! rather than refused: a picture a little less precise than the stream is
+//! better than none, and a refusal is a session with no picture for good and an
+//! info row that still names the codec.
 
 use std::ffi::{CStr, c_int};
 use std::ptr;
@@ -98,6 +105,9 @@ pub struct Decoder {
     /// The last frame's planes and the vectorised conversion's verdict, which
     /// between them are how little of this one is converted.
     output: Output,
+    /// A deeper-than-eight-bit frame's planes, narrowed: kept rather than
+    /// allocated per frame, since a stream that is one is one throughout.
+    narrow: [Vec<u8>; 3],
     /// Frames received and dropped unread, because a newer whole picture came
     /// out of the same packet behind them.
     pub skipped: u64,
@@ -124,6 +134,7 @@ impl Decoder {
             pts: 0,
             failed: false,
             output: Output::new(),
+            narrow: Default::default(),
             skipped: 0,
         };
         if decoder.packet.is_null() || decoder.frame.is_null() || decoder.newer.is_null() {
@@ -214,17 +225,19 @@ impl Decoder {
         use ff::AVPixelFormat::{AV_PIX_FMT_YUVJ420P, AV_PIX_FMT_YUVJ422P, AV_PIX_FMT_YUVJ444P};
 
         let f = unsafe { &*self.frame };
-        let Some((bytes, planes)) = planes(f) else {
-            // The context's format is the frame's for a decoder that is not
-            // handing back hardware surfaces, and is typed where the frame's is
-            // a bare integer.
-            let name = unsafe { ff::av_get_pix_fmt_name((*self.context).pix_fmt) };
+        // The context's format is the frame's for a decoder that is not
+        // handing back hardware surfaces, and is typed where the frame's is a
+        // bare integer.
+        let format = unsafe { (*self.context).pix_fmt };
+        let Some((bytes, planes)) = planes(f).or_else(|| narrowed(f, format, &mut self.narrow))
+        else {
+            let name = unsafe { ff::av_get_pix_fmt_name(format) };
             let name = if name.is_null() {
                 "an unknown format".into()
             } else {
                 unsafe { CStr::from_ptr(name) }.to_string_lossy()
             };
-            log::warn!("the decoder's output is {name}, which is not 8-bit YUV");
+            log::warn!("the decoder's output is {name}, which is not YUV this can convert");
             self.failed = true;
             return;
         };
@@ -283,8 +296,9 @@ impl Drop for Decoder {
     }
 }
 
-/// A received frame's planes, as `convert` reads them. `None` for a format
-/// that is not 8-bit YUV, which this does not convert.
+/// A received frame's planes, as `convert` reads them, where they can be read
+/// in place. `None` for a format that is not 8-bit YUV, which is
+/// [`narrowed`]'s to try next.
 fn planes(f: &ff::AVFrame) -> Option<([&[u8]; 3], [Plane; 3])> {
     use ff::AVPixelFormat::*;
     let (width, height) = (f.width.max(0) as usize, f.height.max(0) as usize);
@@ -357,6 +371,106 @@ fn planes(f: &ff::AVFrame) -> Option<([&[u8]; 3], [Plane; 3])> {
     }
 }
 
+/// A planar YUV frame of nine to sixteen bits a sample, narrowed to eight into
+/// `into` and described as [`planes`] describes an 8-bit one. `None` for
+/// anything else: RGB, a palette, big-endian samples (which no decoder on a
+/// little-endian machine hands back), or chroma subsampled other than 4:2:0,
+/// 4:2:2 or 4:4:4.
+///
+/// The whole picture every frame, which is a copy [`planes`] does not make;
+/// what is in doubt for a deep stream is whether there is a picture at all.
+fn narrowed<'a>(
+    f: &ff::AVFrame,
+    format: ff::AVPixelFormat,
+    into: &'a mut [Vec<u8>; 3],
+) -> Option<([&'a [u8]; 3], [Plane; 3])> {
+    let (width, height) = (f.width.max(0) as usize, f.height.max(0) as usize);
+    if width == 0 || height == 0 || f.format != format as c_int {
+        return None;
+    }
+    let desc = unsafe { ff::av_pix_fmt_desc_get(format) };
+    if desc.is_null() {
+        return None;
+    }
+    let desc = unsafe { &*desc };
+    let unwanted = (ff::AV_PIX_FMT_FLAG_BE
+        | ff::AV_PIX_FMT_FLAG_PAL
+        | ff::AV_PIX_FMT_FLAG_BITSTREAM
+        | ff::AV_PIX_FMT_FLAG_HWACCEL
+        | ff::AV_PIX_FMT_FLAG_RGB
+        | ff::AV_PIX_FMT_FLAG_BAYER
+        | ff::AV_PIX_FMT_FLAG_FLOAT
+        | ff::AV_PIX_FMT_FLAG_XYZ) as u64;
+    if desc.flags & unwanted != 0
+        || desc.flags & ff::AV_PIX_FMT_FLAG_PLANAR as u64 == 0
+        || desc.nb_components < 3
+        || desc.log2_chroma_w > 1
+        || desc.log2_chroma_h > 1
+    {
+        return None;
+    }
+    // Y, U and V each in a plane of its own, two bytes a sample, the value in
+    // the low bits; an alpha plane after them is not read.
+    let depth = desc.comp[0].depth;
+    let one_each = desc.comp[..3].iter().enumerate().all(|(i, c)| {
+        c.plane == i as c_int && c.step == 2 && c.offset == 0 && c.shift == 0 && c.depth == depth
+    });
+    if !one_each || !(9..=16).contains(&depth) {
+        return None;
+    }
+    let (horiz, vert) = (1usize << desc.log2_chroma_w, 1usize << desc.log2_chroma_h);
+    let (cw, ch) = (width.div_ceil(horiz), height.div_ceil(vert));
+
+    for (i, (w, h)) in [(width, height), (cw, ch), (cw, ch)]
+        .into_iter()
+        .enumerate()
+    {
+        let stride = usize::try_from(f.linesize[i])
+            .ok()
+            .filter(|s| *s >= w * 2)?;
+        if f.data[i].is_null() {
+            return None;
+        }
+        // SAFETY: as in `planes`, a decoded plane has `linesize` bytes for
+        // every row of the picture, and the last row as far as its last
+        // sample is the least of that.
+        let src = unsafe { std::slice::from_raw_parts(f.data[i], stride * (h - 1) + w * 2) };
+        let dst = &mut into[i];
+        dst.resize(w * h, 0);
+        for (row, out) in dst.chunks_exact_mut(w).enumerate() {
+            narrow(&src[row * stride..row * stride + w * 2], depth as u32, out);
+        }
+    }
+    let plane = |w: usize, horiz: usize, vert: usize| Plane {
+        offset: 0,
+        col_inc: 1,
+        row_inc: w,
+        horiz_subsampling: horiz,
+        vert_subsampling: vert,
+    };
+    let [y, u, v] = into;
+    Some((
+        [&y[..], &u[..], &v[..]],
+        [
+            plane(width, 1, 1),
+            plane(cw, horiz, vert),
+            plane(cw, horiz, vert),
+        ],
+    ))
+}
+
+/// One row of little-endian samples of `depth` bits to eight, rounded to the
+/// nearest: limited range's 64 and 940 in ten bits are 16 and 235 in eight,
+/// as the encoder meant them.
+fn narrow(src: &[u8], depth: u32, out: &mut [u8]) {
+    let shift = depth - 8;
+    let half = 1u32 << (shift - 1);
+    for (sample, out) in src.chunks_exact(2).zip(out) {
+        let wide = u16::from_le_bytes([sample[0], sample[1]]) as u32;
+        *out = ((wide + half) >> shift).min(255) as u8;
+    }
+}
+
 /// libavcodec's own words for an error code.
 fn error(code: c_int) -> String {
     let mut buf = [0 as std::ffi::c_char; 128];
@@ -364,4 +478,26 @@ fn error(code: c_int) -> String {
     unsafe { CStr::from_ptr(buf.as_ptr()) }
         .to_string_lossy()
         .into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::narrow;
+
+    /// The ends of limited range and of the whole range land where eight bits
+    /// has them, and what rounds up past the top stays at the top.
+    #[test]
+    fn narrowing_keeps_the_ends() {
+        let ten = [0u16, 64, 512, 940, 1020, 1023];
+        let bytes: Vec<u8> = ten.iter().flat_map(|s| s.to_le_bytes()).collect();
+        let mut out = [0u8; 6];
+        narrow(&bytes, 10, &mut out);
+        assert_eq!(out, [0, 16, 128, 235, 255, 255]);
+
+        let twelve = [0u16, 256, 3760, 4095];
+        let bytes: Vec<u8> = twelve.iter().flat_map(|s| s.to_le_bytes()).collect();
+        let mut out = [0u8; 4];
+        narrow(&bytes, 12, &mut out);
+        assert_eq!(out, [0, 16, 235, 255]);
+    }
 }

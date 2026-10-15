@@ -264,6 +264,23 @@ fn h264_bt601_full_range() {
     );
 }
 
+/// Ten bits a sample, narrowed to eight on the way: a High 10 stream is
+/// something a peer's encoder can be set to, and refused it was a session
+/// with no picture from then on.
+#[test]
+fn h264_high10() {
+    clip(
+        Codec::H264,
+        &annex_b(&fixture("h264-high10.h264"), h264_aud),
+    );
+}
+
+/// The same for 4:4:4, whose chroma is not subsampled.
+#[test]
+fn vp9_444_ten_bits() {
+    clip(Codec::Vp9, &ivf(&fixture("vp9-444-10bit.ivf")));
+}
+
 /// A picture that is not the session's size, which is every frame between a
 /// resize being asked for and arriving: what the two have in common is
 /// written, and nothing outside either.

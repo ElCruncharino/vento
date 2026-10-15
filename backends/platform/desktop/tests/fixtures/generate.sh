@@ -27,7 +27,9 @@
 # fail on colour, and one H.264 clip is BT.601 full range to prove the same of
 # range. The two "untagged" clips are what a RustDesk peer actually sends:
 # BT.601 limited range (libyuv's ARGBToI420) with no colour description at all,
-# which a decoder has to take for BT.601 rather than assume BT.709.
+# which a decoder has to take for BT.601 rather than assume BT.709. Two more
+# are deeper than eight bits, which is narrowed rather than refused: H.264
+# High 10 (4:2:0) and VP9 profile 3 (4:4:4, ten bits).
 #
 # The encoders are asked for what a remote desktop asks for: no lookahead, no
 # reordering, one encoded frame per picture — no alt-ref frames hidden in a
@@ -39,8 +41,8 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-picture() { # matrix range
-    echo "color=c=0x3366cc:s=128x128:r=10:d=0.3,format=rgb24,drawbox=x=0:y=16:w=128:h=16:color=0xe0a030:t=fill:enable='gte(n,1)',scale=out_color_matrix=$1:out_range=$2,format=yuv420p"
+picture() { # matrix range [format]
+    echo "color=c=0x3366cc:s=128x128:r=10:d=0.3,format=rgb24,drawbox=x=0:y=16:w=128:h=16:color=0xe0a030:t=fill:enable='gte(n,1)',scale=out_color_matrix=$1:out_range=$2,format=${3:-yuv420p}"
 }
 bt709=(-colorspace bt709 -color_primaries bt709 -color_trc bt709 -color_range tv)
 bt601=(-colorspace smpte170m -color_primaries smpte170m -color_trc smpte170m)
@@ -73,3 +75,9 @@ ff "$(picture bt601 pc)" "${bt601[@]}" -color_range pc -frames:v 3 \
 ff "$(picture bt709 tv)" "${bt709[@]}" -frames:v 3 \
     -c:v libx265 -preset medium -tune zerolatency -crf 6 -x265-params aud=1:keyint=100:log-level=error \
     -f hevc h265.h265
+ff "$(picture bt709 tv yuv420p10le)" "${bt709[@]}" -frames:v 3 \
+    -c:v libx264 -preset medium -tune zerolatency -crf 6 -g 100 -x264-params aud=1 \
+    -f h264 h264-high10.h264
+ff "$(picture bt709 tv yuv444p10le)" "${bt709[@]}" -frames:v 3 \
+    -c:v libvpx-vp9 -deadline good -cpu-used 4 -lag-in-frames 0 -auto-alt-ref 0 -crf 4 -b:v 0 -g 100 \
+    -f ivf vp9-444-10bit.ivf
