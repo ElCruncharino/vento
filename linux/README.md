@@ -21,7 +21,9 @@ backend without one.
   `question`, `security_needed`, `message`) and the `Mailbox` a session pushes
   them onto, with a wake hook the window hands its repaint request to. Damage
   is coalesced into a dirty-rect list behind a mutex and delivered one
-  `Event::Frame` per update, never a message per rectangle.
+  `Event::Frame` per update, never a message per rectangle; a window that
+  falls behind finds one unread `Frame` per desktop size and the latest
+  cursor, pointer mode and clipboard, not a backlog.
 - **`src/options.rs`** — the per-backend option descriptions, ported from each
   `*Provider.java`, so `-o key=value` and the dialog's rows are generic.
 - **`src/backends/`** — the eight adapters. `rfb`, `ironrdp`, `rustdesk` and

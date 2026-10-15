@@ -14,9 +14,16 @@
 //! Damage is the one thing not delivered a message at a time. `damaged` runs
 //! hundreds of times a frame on a busy screen, so it marks a rectangle into a
 //! list behind the same mutex and sends nothing; `frame_end` turns the list
-//! into one [`Event::Frame`], and if the previous event in the queue is still
-//! an unread `Frame` the two are merged rather than queued — a window that
-//! fell behind sees one frame with everything that moved, not a backlog. A
+//! into one [`Event::Frame`], and if an unread `Frame` is still in the queue
+//! the two are merged rather than queued — a window that fell behind sees one
+//! frame with everything that moved, not a backlog. The merge reaches past
+//! whatever else is waiting, a cursor or a bell, since a frame's pixels are
+//! read when it is taken, but not past a change of the desktop's size: the
+//! rectangles of one size are not rectangles of the next. The events that
+//! say what something is now — the cursor's shape, the pointer mode, the far
+//! end's clipboard — are kept the same way, the latest unread one of each and
+//! no other, so that what waits for a window that stopped reading is a few
+//! events, however long it stopped for. A
 //! rectangle that repeats one already marked, lies inside one, or makes one
 //! rectangle with it is merged into it, so that a window that fell behind
 //! reads each pixel once. The list itself is capped: past [`Damage::LIMIT`]
@@ -216,6 +223,20 @@ pub enum Event {
     Closed { detail: String },
 }
 
+impl Event {
+    /// Whether this says how big the desktop is, which a frame's rectangles
+    /// are rectangles of.
+    fn is_size(&self) -> bool {
+        matches!(self, Event::Connected { .. } | Event::DesktopSize { .. })
+    }
+
+    /// Whether this says what something is now rather than that something
+    /// happened, so that only the latest of its kind is worth reading.
+    fn is_state(&self) -> bool {
+        matches!(self, Event::Cursor(_) | Event::PointerMode { .. } | Event::Clipboard(_))
+    }
+}
+
 /// The rectangles a frame has marked so far.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Damage {
@@ -317,6 +338,15 @@ impl Mailbox {
                 Event::Closed { .. } => inner.state = State::Closed,
                 _ => {}
             }
+            // An unread event that only says what something is now is
+            // superseded by the next of its kind: it goes, and the new one
+            // takes its turn at the back. There is at most one to find,
+            // since every one before it went the same way.
+            if event.is_state()
+                && let Some(i) = inner.queue.iter().position(|e| std::mem::discriminant(e) == std::mem::discriminant(&event))
+            {
+                inner.queue.remove(i);
+            }
             inner.queue.push_back(event);
         }
         self.notify();
@@ -401,8 +431,22 @@ impl Mailbox {
                 return;
             }
             let rects = inner.damage.take();
-            match inner.queue.back_mut() {
-                Some(Event::Frame(previous)) => {
+            // The unread Frame since the desktop last changed size, wherever
+            // it is in the queue: its rectangles are read when it is taken,
+            // so taking these with it reads the same pixels, only sooner,
+            // and the events in between are about other things. A change of
+            // size is the one thing a rectangle cannot be moved across.
+            let unread = inner
+                .queue
+                .iter_mut()
+                .rev()
+                .take_while(|e| !e.is_size())
+                .find_map(|e| match e {
+                    Event::Frame(rects) => Some(rects),
+                    _ => None,
+                });
+            match unread {
+                Some(previous) => {
                     let mut merged = Damage::default();
                     merged.extend(std::mem::take(previous));
                     merged.extend(rects);
@@ -668,16 +712,63 @@ mod tests {
     }
 
     #[test]
-    fn an_event_between_two_frames_keeps_them_apart() {
+    fn an_unread_frame_absorbs_the_next_past_other_events() {
         let mailbox = Mailbox::new(None);
         mailbox.on_damaged(0, 0, 1, 1);
         mailbox.on_frame_end();
         mailbox.on_bell();
         mailbox.on_damaged(2, 2, 1, 1);
         mailbox.on_frame_end();
-        assert!(matches!(mailbox.take(), Some(Event::Frame(r)) if r.len() == 1));
+        assert_eq!(mailbox.take(), Some(Event::Frame(vec![rect(0, 0, 1, 1), rect(2, 2, 1, 1)])));
         assert_eq!(mailbox.take(), Some(Event::Bell));
-        assert!(matches!(mailbox.take(), Some(Event::Frame(r)) if r == [rect(2, 2, 1, 1)]));
+        assert_eq!(mailbox.take(), None);
+    }
+
+    #[test]
+    fn a_change_of_size_keeps_the_frames_either_side_of_it_apart() {
+        let mailbox = Mailbox::new(None);
+        mailbox.on_connected(100, 100);
+        mailbox.on_damaged(90, 90, 10, 10);
+        mailbox.on_frame_end();
+        mailbox.on_desktop_size(50, 50);
+        mailbox.on_damaged(0, 0, 5, 5);
+        mailbox.on_frame_end();
+        mailbox.on_bell();
+        mailbox.on_damaged(10, 10, 5, 5);
+        mailbox.on_frame_end();
+        assert_eq!(mailbox.take(), Some(Event::Connected { width: 100, height: 100 }));
+        assert_eq!(mailbox.take(), Some(Event::Frame(vec![rect(90, 90, 10, 10)])));
+        assert_eq!(mailbox.take(), Some(Event::DesktopSize { width: 50, height: 50 }));
+        assert_eq!(mailbox.take(), Some(Event::Frame(vec![rect(0, 0, 5, 5), rect(10, 10, 5, 5)])));
+        assert_eq!(mailbox.take(), Some(Event::Bell));
+        assert_eq!(mailbox.take(), None);
+    }
+
+    #[test]
+    fn a_window_that_stops_reading_finds_a_few_events_waiting() {
+        // The far end's cursor changing shape between every two frames, 25
+        // times a second for thirty seconds, with nobody reading: what used
+        // to queue 750 frames and 750 cursors.
+        let mailbox = Mailbox::new(None);
+        mailbox.on_connected(1920, 1200);
+        for i in 0..750 {
+            mailbox.on_damaged(i, 0, 1, 1);
+            mailbox.on_frame_end();
+            let pixel = if i % 2 == 0 { 0xff00_00ff } else { 0xffff_0000 };
+            mailbox.on_cursor(&[pixel], 1, 1, 0, 0);
+            mailbox.on_clipboard(&format!("copy {i}"));
+            mailbox.on_pointer_mode(i % 2 == 0);
+        }
+        let waiting: Vec<Event> = std::iter::from_fn(|| mailbox.take()).collect();
+        assert_eq!(waiting.len(), 5, "{waiting:?}");
+        assert_eq!(waiting[0], Event::Connected { width: 1920, height: 1200 });
+        // One frame with every column in it, merged as it went.
+        assert_eq!(waiting[1], Event::Frame(vec![rect(0, 0, 750, 1)]));
+        // And the latest of each of the others, in the order they were last
+        // said.
+        assert!(matches!(&waiting[2], Event::Cursor(Some(c)) if c.rgba == [0x00, 0x00, 0xff, 0xff]));
+        assert_eq!(waiting[3], Event::Clipboard("copy 749".to_string()));
+        assert_eq!(waiting[4], Event::PointerMode { relative: false });
     }
 
     #[test]
@@ -701,11 +792,11 @@ mod tests {
     fn a_cursor_crosses_as_bytes_and_an_empty_one_as_none() {
         let mailbox = Mailbox::new(None);
         mailbox.on_cursor(&[0x4433_2211], 1, 1, 0, 0);
-        mailbox.on_cursor(&[], 0, 0, 0, 0);
         let Some(Event::Cursor(Some(cursor))) = mailbox.take() else {
             panic!("a cursor");
         };
         assert_eq!(cursor.rgba, [0x11, 0x22, 0x33, 0x44]);
+        mailbox.on_cursor(&[], 0, 0, 0, 0);
         assert_eq!(mailbox.take(), Some(Event::Cursor(None)));
     }
 }
