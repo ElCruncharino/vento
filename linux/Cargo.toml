@@ -84,3 +84,12 @@ bindgen = "0.73"
 # dependency, from the same tag.
 [patch.crates-io]
 winit = { path = "../third_party/winit" }
+
+# The conversion every decoded frame goes through (`common::video::convert`),
+# optimised even in a debug build, which is how `cargo run` runs it. Unoptimised
+# its row loop is most of a RustDesk session's processor, and the SSE2 one is
+# slower still, every intrinsic a call: 53 and 94 ms of a 1920×1200 frame,
+# where optimised they are 21 and 1. The crate is small, so this costs seconds
+# of a build, and its debug info is kept.
+[profile.dev.package.remotedesktop-common]
+opt-level = 3
