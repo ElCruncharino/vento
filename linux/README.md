@@ -8,28 +8,37 @@ SPDX-License-Identifier: GPL-3.0-or-later
 A native Linux client for the backends under `backends/`. One process that can
 hold a session on any of the eight protocols — the four Rust ones directly, the
 four C/C++ ones through the shared libraries this crate's `build.rs` has CMake
-build — written against the same seam the Android app's `Backend` is, minus the
-phone. It is an egui window over that seam, and a headless probe for proving a
-backend without one.
+build — written against the same seam the Android app is. It is an egui window
+over that seam, and a headless probe for proving a backend without one.
 
 ## What is here
 
-- **`src/backend.rs`** — the `Backend` trait (`Backend.java` without the
-  Android types) and the value types around it (`Facts`, `ConnectionFact`,
-  `Monitor`, `Traffic`, `Picture`).
-- **`src/events.rs`** — the `Event` enum (`common::Events` plus the C API's
-  `question`, `security_needed`, `message`) and the `Mailbox` a session pushes
-  them onto, with a wake hook the window hands its repaint request to. Damage
-  is coalesced into a dirty-rect list behind a mutex and delivered one
+The seam itself is not this crate's: it is `backends/session`
+(`remotedesktop-session`), which the phone's backends are written against too,
+and every backend's adapter to it is in that backend's own crate.
+
+- **`backends/session`** — the `Backend` trait and the value types around it
+  (`Facts`, `ConnectionFact`, `Monitor`, `Traffic`, `Picture`); the `Event`
+  enum (`common::Events` plus the C API's `question`, `security_needed`,
+  `message`) and the `Mailbox` a session pushes them onto, with a wake hook
+  the window hands its repaint request to; the option descriptions and the
+  catalog of the eight backends, so `-o key=value` and the dialog's rows are
+  generic; `Kind` and `Connect`; the credentials and known-hosts rules the
+  phone keeps too (held to `backends/vectors/` from both sides); and, under
+  its `c` feature, the one adapter over the vtable in `vento/backend.h`.
+  Damage is coalesced into a dirty-rect list behind a mutex and delivered one
   `Event::Frame` per update, never a message per rectangle; a window that
   falls behind finds one unread `Frame` per desktop size and the latest
-  cursor, pointer mode and clipboard, not a backlog.
-- **`src/options.rs`** — the per-backend option descriptions, ported from each
-  `*Provider.java`, so `-o key=value` and the dialog's rows are generic.
-- **`src/backends/`** — the eight adapters. `rfb`, `ironrdp`, `rustdesk` and
-  `spice` are the twins of each Rust crate's `bindings/mod.rs`; `c.rs` plus
-  `c/{libvnc,tigervnc,freerdp,realvnc}.rs` are the four C backends over the
-  vtable in `vento/backend.h`.
+  cursor, pointer mode and clipboard, not a backlog. This crate re-exports
+  its `backend`, `events` and `options` under those names.
+- **The adapters** — `src/backend.rs` in each Rust protocol crate
+  (`backends/modules/{rfb,ironrdp,rustdesk,spice}/src/main/rust`), and a small
+  crate beside each open C library (`backends/modules/{libvnc,tigervnc,
+  freerdp}/src/main/rust`) over the session crate's C adapter. RealVNC's is
+  the one still here, **`src/backends/realvnc.rs`**, since its library is the
+  viewer's own and hosted for this client alone.
+- **`src/backends/`** — the list of the eight as this binary has them, in the
+  catalog's order, and what a session here is told about this machine.
 - **`src/gui/`** — the window: `mod.rs` (the winit loop, the wgpu surface, egui
   drawn into it), `session.rs` (a live session: the desktop, the input, the
   toolbar, the prompts, the cursor), `desktop.rs` (the desktop as one
@@ -48,8 +57,9 @@ backend without one.
   with tests), `settings.rs` (the client's own settings and their rows),
   `dialog.rs` (the connection dialog), `panel.rs` (the connection-info panel,
   with the live controls), `prompts.rs` (the modal prompts).
-- **`src/known_hosts.rs`** — the pin store (`KnownHosts.java`) and RealVNC's
-  identities, as files under `$XDG_CONFIG_HOME/vento`, with tests.
+- **`src/known_hosts.rs`** — where this client keeps its pins (what they
+  mean is `session::trust`) and RealVNC's identities, as files under
+  `$XDG_CONFIG_HOME/vento`, with tests.
 - **`src/main.rs`** — the `vento` binary: the window, `--list`, and the
   headless probe.
 
