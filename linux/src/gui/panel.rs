@@ -12,8 +12,9 @@
 //! far end takes one, and which of its displays it is sending, where it
 //! sends one at a time — which are facts about the connection in front of
 //! you rather than descriptions of the backend; whether the desktop should
-//! follow this window's size; and the client's own settings (`settings.rs`),
-//! which a session runs with a copy of and takes a change to at once.
+//! follow this window's size; the client's own settings (`settings.rs`),
+//! which a session runs with a copy of and takes a change to at once; and
+//! the debug overlay.
 //!
 //! Then the desktop's name on top of what the backend has to say about the
 //! connection in its own words, with the rows only worth reading when
@@ -71,6 +72,8 @@ pub struct Controls<'a> {
     pub follow: bool,
     /// What the session is running with.
     pub settings: Settings,
+    /// Whether the debug overlay is showing.
+    pub debug: bool,
 }
 
 /// Something changed on the panel, to be done to the session.
@@ -82,6 +85,8 @@ pub enum Action {
     Follow(bool),
     /// The settings as they are now wanted, one of them changed.
     Settings(Settings),
+    /// The debug overlay on or off.
+    Debug(bool),
 }
 
 /// The panel's own state between frames.
@@ -227,6 +232,20 @@ impl Panel {
             if settings.rows(ui, true) {
                 actions.push(Action::Settings(settings));
             }
+
+            // The session's, not a setting: it is for whoever is looking
+            // into a problem with this connection, and is off again in the
+            // next. Ctrl+Alt+D toggles it as well.
+            let label = ui.label(RichText::new("Debug overlay").weak());
+            label.on_hover_text(
+                "The state, the pixel path, the cursor, the view and the input, in a corner of the \
+                 desktop. Ctrl+Alt+D toggles it too.",
+            );
+            let mut debug = controls.debug;
+            if ui.checkbox(&mut debug, "").changed() {
+                actions.push(Action::Debug(debug));
+            }
+            ui.end_row();
         });
         ui.add_space(8.0);
         ui.separator();

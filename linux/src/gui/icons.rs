@@ -69,7 +69,6 @@ macro_rules! symbols {
 }
 
 symbols! {
-    BUG_REPORT = "bug_report" "\u{e868}";
     FIT_PAGE_HEIGHT = "fit_page_height" "\u{f397}";
     FIT_PAGE_WIDTH = "fit_page_width" "\u{f396}";
     FULLSCREEN = "fullscreen" "\u{e5d0}";

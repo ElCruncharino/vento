@@ -228,7 +228,7 @@ It has no shadow, and its buttons are flat: an icon (Material Symbols
 Outlined, unfilled) and no frame at rest, egui's frame while the pointer is
 on one or pressing it. A button with a state shows it in its icon, and its
 tooltip names the button, its state and, for Scale, what a click goes to
-("Scale: fit width — click for fit height"). View only, Info and Debug, while
+("Scale: fit width — click for fit height"). View only and Info, while
 on, keep a frame at rest, a dim fill of the selection's blue with the icon in
 the selection's colour. There are no words on it: which monitor or display
 is showing is in the tooltip too. On it:
@@ -249,7 +249,6 @@ is showing is in the tooltip too. On it:
 - **View only** stops the mouse, the keyboard and the clipboard going to the
   far end, and tells the backend so: an eye while on, a mouse while off.
 - **Info** opens the connection panel, below.
-- **Debug** toggles the debug overlay, below; so does **Ctrl+Alt+D**.
 - **Fullscreen** fills the screen (winit's borderless fullscreen on the
   current monitor); the toolbar still slides in at the top edge, and the same
   button, or disconnecting, leaves it.
@@ -275,8 +274,9 @@ usual sizes, and asking `request_desktop_size` for the one picked — what
 arrives is what the far end granted, and the dropdown shows that rather than
 what was asked; and **Display**, where the far end sends one of several
 screens at a time (RustDesk), asking `request_display`. And **Follow window
-size**, below, and the four **settings**, below, which a running session
-takes a change to at once.
+size**, below, the four **settings**, below, which a running session
+takes a change to at once, and **Debug overlay**, the overlay below, which is
+the session's and not a setting (Ctrl+Alt+D toggles it too).
 
 Under them, the desktop's name, the facts the backend reports in its own words
 (the diagnostic ones folded away), the bytes transferred, the desktop size and
@@ -377,7 +377,8 @@ turning sending on offers the next copy and not an old one. Proven against
 `scripts/testvnc` with `wl-copy`/`wl-paste` and the far end's `xclip`, both
 directions, both ways round, and on X11 with `xclip` at both ends.
 
-**The debug overlay** (the **Debug** button, or **Ctrl+Alt+D**) is the
+**The debug overlay** (the connection panel's **Debug overlay**, or
+**Ctrl+Alt+D**) is the
 phone's `SessionHud`: a small monospace box in the bottom left of the
 desktop, with its lines in its order where they apply here, and sampled
 rates over a one-second window. The state, the desktop's size, frames a

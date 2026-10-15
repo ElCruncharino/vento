@@ -40,7 +40,8 @@
 //! either way is remembered, and is never sent back where it came from.
 //!
 //! The debug overlay (`hud.rs`) is the phone's `SessionHud`: every
-//! collaborator's state, in a corner, from the toolbar or Ctrl+Alt+D.
+//! collaborator's state, in a corner, from the connection panel or
+//! Ctrl+Alt+D.
 
 use super::cursor::{self as native, Key, Native};
 use super::desktop::Desktop;
@@ -949,6 +950,7 @@ impl Session {
                 window: Self::window_size(host),
                 follow: self.follower.enabled(),
                 settings: self.settings,
+                debug: self.hud.on,
             };
             let actions = self.panel.show(ctx, &self.snapshot, &controls, &title, &state);
             for action in actions {
@@ -961,6 +963,11 @@ impl Session {
                     Action::Display(index) => self.backend.request_display(index),
                     Action::Follow(follow) => self.set_follow(follow, host),
                     Action::Settings(settings) => self.set_settings(settings),
+                    Action::Debug(on) => {
+                        if on != self.hud.on {
+                            self.toggle_hud();
+                        }
+                    }
                 }
             }
         }
@@ -1357,7 +1364,7 @@ impl Session {
     /// name and its state in its tooltip. A button with a state shows it in
     /// its icon — one per scale mode, all monitors or one, view only on or
     /// off — and the tooltip says the rest (which monitor or display);
-    /// Info, Debug and view only are highlighted while they are on.
+    /// Info and view only are highlighted while they are on.
     fn toolbar_items(&mut self, ui: &mut egui::Ui, host: &mut Host) {
         let connected = self.connected();
         let mode = self.view.mode;
@@ -1434,18 +1441,6 @@ impl Session {
             .clicked()
         {
             self.panel.open = !self.panel.open;
-        }
-
-        if ui
-            .add(toggle(ui.visuals(), icons::BUG_REPORT, self.hud.on))
-            .on_hover_text(format!(
-                "Debug overlay ({}): the state, the pixel path, the cursor, the view and the input, in a \
-                 corner. Ctrl+Alt+D toggles it too.",
-                on_off(self.hud.on)
-            ))
-            .clicked()
-        {
-            self.toggle_hud();
         }
 
         let fullscreen = host.window.fullscreen().is_some();
