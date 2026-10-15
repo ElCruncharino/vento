@@ -283,7 +283,9 @@ impl App {
         self.shortcuts = Shortcuts::new(&window);
         match &self.shortcuts {
             Some(Shortcuts::Wayland(_)) => log::info!("Wayland: looking for the keyboard shortcuts inhibitor"),
-            Some(Shortcuts::X11(_)) => log::info!("X11: the keyboard is grabbed while a session has focus and takes input"),
+            Some(Shortcuts::X11(_)) => {
+                log::info!("X11: the keyboard is grabbed while a session has focus and takes input, and not over the toolbar")
+            }
             None => log::info!("no shortcuts inhibitor on this display server"),
         }
         self.window = Some(window);
@@ -347,9 +349,13 @@ impl App {
     /// held while the window has the focus and the session takes input,
     /// released otherwise. Not merely connected, as it was: in view only, or
     /// under a prompt, the keys go nowhere at the far end, and the grab kept
-    /// Alt+Tab and the rest from the window manager too.
+    /// Alt+Tab and the rest from the window manager too. Released while the
+    /// pointer is on the toolbar as well (`Session::holds_shortcuts`). This
+    /// runs after every frame and on focus changes, but the grab and the
+    /// inhibitor act only when what is wanted changes, so a pointer resting
+    /// on the toolbar costs nothing.
     fn sync_shortcuts(&mut self) {
-        let takes_input = matches!(&self.screen, Screen::Session(s) if s.accepts_input());
+        let takes_input = matches!(&self.screen, Screen::Session(s) if s.holds_shortcuts());
         if let Some(shortcuts) = &mut self.shortcuts {
             shortcuts.pump();
             if self.focused && takes_input {

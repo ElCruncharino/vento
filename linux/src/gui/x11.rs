@@ -3,7 +3,8 @@
 
 //! X11's stand-in for the keyboard shortcuts inhibitor: an active keyboard
 //! grab on the window while it has focus and a session takes input
-//! (connected, not view only, no prompt up), so the window manager's
+//! (connected, not view only, no prompt up) and the pointer is not on the
+//! toolbar, so the window manager's
 //! chords (Alt+Tab, Super+…) reach the far end.
 //!
 //! It is sent over winit's own connection — the Xlib display from the raw

@@ -141,6 +141,8 @@ pub struct Session {
     /// The toolbar's size as last drawn, which is where it would be when
     /// out, and so the span of the edge that brings it out.
     toolbar_size: Vec2,
+    /// The pointer is on the toolbar: it stays out, and the keyboard is
+    /// this end's meanwhile.
     toolbar_hovered: bool,
     panel: Panel,
     /// Every option's value as the session has it: what it connected with,
@@ -311,9 +313,20 @@ impl Session {
         self.connected() && !self.view_only && self.prompts.is_empty() && self.disconnecting.is_none()
     }
 
-    /// Whether a key event from winit is the far end's rather than egui's.
+    /// Whether the window should hold the compositor's or the window
+    /// manager's shortcuts off: while input has somewhere to go, and not
+    /// while the pointer is on the toolbar. The toolbar is this end's, so
+    /// while it is being used the keyboard is too — Alt+Tab included, which
+    /// is how a grabbed window is otherwise left only with the mouse.
+    pub fn holds_shortcuts(&self) -> bool {
+        self.accepts_input() && !self.toolbar_hovered
+    }
+
+    /// Whether a key event from winit is the far end's rather than egui's:
+    /// not while the pointer is on the toolbar, where the shortcuts are
+    /// this desktop's again and a key typed is not meant for the far end.
     pub fn takes_keys(&self, ctx: &egui::Context) -> bool {
-        self.accepts_input() && !ctx.egui_wants_keyboard_input()
+        self.accepts_input() && !self.toolbar_hovered && !ctx.egui_wants_keyboard_input()
     }
 
     /// Whether mouse events from winit go to the far end as raw input,
@@ -905,6 +918,13 @@ impl Session {
         }
 
         self.toolbar(ctx, host);
+        // The keyboard is this end's while the pointer is on the toolbar
+        // (see `holds_shortcuts`), so what the far end has down is let go
+        // of there, as for anything else that takes input away; the
+        // releases that follow are `key_elsewhere`'s.
+        if self.toolbar_hovered {
+            self.release_keys();
+        }
         if self.panel.open {
             let state = self.state_line();
             let title = self.request.address.clone();

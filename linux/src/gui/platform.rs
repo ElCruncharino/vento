@@ -49,7 +49,7 @@ pub fn centre(window: &Window) -> PhysicalPosition<i32> {
 
 /// The compositor's or the X server's own shortcuts, held off while the
 /// window has focus and a session takes input (connected, not view only,
-/// no prompt up): Wayland's inhibitor
+/// no prompt up) and the pointer is not on the toolbar: Wayland's inhibitor
 /// protocol (`wayland.rs`), or an X keyboard grab (`x11.rs`).
 pub enum Shortcuts {
     Wayland(wayland::Shortcuts),
