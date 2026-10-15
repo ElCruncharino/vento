@@ -1531,9 +1531,18 @@ void Session::run() {
         conn->setStreams(&sock->inStream(), &sock->outStream());
         conn->initialiseProtocol();
 
+        // Kept across passes so that a pass costs nothing it does not use:
+        // the swap below hands the empty one to the queue.
+        std::deque<Cmd> pending;
+        // Set when the last read stopped for want of bytes. What is buffered
+        // then is the front of a message, so the buffer's having data is no
+        // longer a reason to skip the wait: without this the thread went
+        // straight back to processMsg(), which tried the socket and gave up
+        // again, as fast as it could, for as long as the rest of a large
+        // rectangle took to arrive.
+        bool starved = false;
         for (;;) {
             bool paused;
-            std::deque<Cmd> pending;
             {
                 std::unique_lock<std::mutex> guard(lock_);
                 if (quit_) {
@@ -1551,6 +1560,7 @@ void Session::run() {
             for (Cmd &cmd : pending) {
                 runCmd(conn.get(), cmd);
             }
+            pending.clear();
             {
                 const std::lock_guard<std::mutex> guard(lock_);
                 if (quit_) {
@@ -1563,8 +1573,10 @@ void Session::run() {
                        (int64_t) conn->getOutStream()->length());
 
             // Anything already in the buffer is a message nobody is going to
-            // be told about by poll().
-            bool buffered = !paused && sock->inStream().hasData(1);
+            // be told about by poll(). The buffer asked is the one the
+            // messages are read from, which under TLS is the decrypted one
+            // and not the socket's.
+            const bool buffered = !paused && !starved && conn->getInStream()->hasData(1);
             if (!buffered) {
                 struct pollfd fds[2];
                 int n = 0;
@@ -1589,8 +1601,15 @@ void Session::run() {
             }
 
             // processMsg() handles at most one message, so this loops until the
-            // socket's buffer is empty or the queue needs draining.
-            while (conn->processMsg()) {
+            // socket's buffer is empty or the queue needs draining. Only the
+            // first says to wait for the socket before the next try; a queue
+            // drained leaves whatever is buffered to be read straight after.
+            starved = false;
+            for (;;) {
+                if (!conn->processMsg()) {
+                    starved = true;
+                    break;
+                }
                 core::Timer::checkTimeouts();
                 const std::lock_guard<std::mutex> guard(lock_);
                 if (quit_ || !queue_.empty()) {
