@@ -7,7 +7,8 @@
 //! winit, egui-winit and egui-wgpu are driven directly rather than through
 //! eframe. eframe is less code for an ordinary application, but this one
 //! needs what eframe wraps away: the window's raw handles for the shortcuts
-//! inhibitor (`wayland.rs`) and the X11 keyboard grab (`x11.rs`), device
+//! inhibitor (`wayland.rs`), the X11 keyboard grab (`x11.rs`) and the Wayland
+//! clipboard (`clipboard/`), device
 //! events for the raw motion a captured pointer sends, focus and keyboard events as winit delivers them (with
 //! the layout's logical key, which egui's events drop), and a say in when
 //! the loop wakes — the backend's mailbox wakes it through an event-loop
@@ -19,6 +20,7 @@
 //! connecting and asked questions that return at once, and everything it
 //! has to say arrives through the mailbox between frames.
 
+mod clipboard;
 mod cursor;
 mod desktop;
 mod dialog;
@@ -38,6 +40,7 @@ mod x11;
 
 use crate::backends::{Dirs, Kind};
 use crate::options::Options;
+use clipboard::Clipboard;
 use dialog::Dialog;
 pub use platform::Platform;
 use platform::Shortcuts;
@@ -100,6 +103,8 @@ pub struct Host<'a> {
     /// Where the pointer last was in the window, as the window saw it
     /// (not while the session holds it at the centre).
     pub pointer: Option<PhysicalPosition<f64>>,
+    /// The local clipboard, where there is one (see `clipboard/`).
+    pub clipboard: Option<&'a Clipboard>,
 }
 
 /// Runs the window until it is closed; the process's exit status.
@@ -136,6 +141,7 @@ pub fn run(launch: Launch) -> i32 {
         winit: None,
         screen: Screen::Dialog(Dialog::new()),
         shortcuts: None,
+        clipboard: None,
         platform: Platform::Other,
         pointer: None,
         focused: false,
@@ -229,6 +235,9 @@ struct App {
     winit: Option<egui_winit::State>,
     screen: Screen,
     shortcuts: Option<Shortcuts>,
+    /// The local clipboard: read when the window gets the focus, set when
+    /// the far end or egui copies (see `clipboard/`).
+    clipboard: Option<Clipboard>,
     /// Which display server the window is on, once it is open.
     platform: Platform,
     /// The last pointer position that was not swallowed (see `centred`).
@@ -328,6 +337,11 @@ impl App {
             // capturing, so having them unfocused costs nothing.
             event_loop.listen_device_events(DeviceEvents::Always);
         }
+        let proxy = self.proxy.clone();
+        let wake: Box<dyn Fn() + Send + Sync> = Box::new(move || {
+            let _ = proxy.send_event(Wake::Now);
+        });
+        self.clipboard = Clipboard::new(&window, self.platform, wake);
         self.shortcuts = Shortcuts::new(&window);
         match &self.shortcuts {
             Some(Shortcuts::Wayland(_)) => log::info!("Wayland: looking for the keyboard shortcuts inhibitor"),
@@ -474,6 +488,17 @@ impl App {
             shortcuts.pump();
         }
 
+        // A read of the local clipboard that has come back: egui's own
+        // clipboard follows it, so that Ctrl+V in a text field pastes what
+        // is really there, and the session offers it to the far end.
+        if let Some(text) = self.clipboard.as_ref().and_then(Clipboard::take) {
+            if let Some(text) = &text {
+                state.set_clipboard_text(text.clone());
+            }
+            if let Screen::Session(session) = &mut self.screen {
+                session.local_clipboard(text);
+            }
+        }
         let raw_input = state.take_egui_input(&window);
         let mut next: Option<Request> = None;
         let mut ended: Option<(String, bool)> = None;
@@ -485,6 +510,7 @@ impl App {
             inhibitor,
             platform: self.platform,
             pointer: self.pointer,
+            clipboard: self.clipboard.as_ref(),
         };
         let egui = self.egui.clone();
         let settings = &mut self.settings;
@@ -499,6 +525,15 @@ impl App {
                 }
             }
         });
+        // What egui copied (a text field's selection) becomes the local
+        // clipboard; egui-winit still keeps it as its own as well.
+        if let Some(clipboard) = &self.clipboard {
+            for command in &output.platform_output.commands {
+                if let egui::OutputCommand::CopyText(text) = command {
+                    clipboard.set(text.clone());
+                }
+            }
+        }
         // The window's cursor: egui-winit's icon, and the far end's shape
         // over it where the session wants that — put back before, applied
         // after, so the two never fight (see `cursor.rs`).
@@ -623,6 +658,7 @@ impl App {
                 inhibitor,
                 platform: self.platform,
                 pointer: self.pointer,
+                clipboard: self.clipboard.as_ref(),
             };
             self.settings = session.settings;
             self.placement = session.placement;
@@ -649,6 +685,7 @@ impl App {
                     inhibitor,
                     platform: self.platform,
                     pointer: self.pointer,
+                    clipboard: self.clipboard.as_ref(),
                 };
                 let teardown = session.shutdown(&self.egui, &mut host);
                 self.reap(teardown);
@@ -741,9 +778,16 @@ impl ApplicationHandler<Wake> for App {
                     inhibitor,
                     platform: self.platform,
                     pointer: self.pointer,
+                    clipboard: self.clipboard.as_ref(),
                 };
                 if let Screen::Session(session) = &mut self.screen {
                     session.focus(*focused, &mut host);
+                }
+                // What was copied elsewhere while the window was away: read
+                // on the clipboard's thread, and handled when it comes back
+                // (see `draw`), dialog or session.
+                if *focused && let Some(clipboard) = &self.clipboard {
+                    clipboard.read();
                 }
                 self.sync_shortcuts();
                 // A minimise usually takes the focus with it: seen now
@@ -824,6 +868,13 @@ impl ApplicationHandler<Wake> for App {
         if response.repaint {
             window.request_redraw();
         }
+    }
+
+    /// The clipboard goes before the event loop does: on Wayland its
+    /// thread is on winit's connection, which ends with the loop, and on
+    /// X11 it may have a clipboard manager to hand the text to.
+    fn exiting(&mut self, _: &ActiveEventLoop) {
+        self.clipboard = None;
     }
 
     fn device_event(&mut self, _: &ActiveEventLoop, _: DeviceId, event: DeviceEvent) {

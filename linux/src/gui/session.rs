@@ -437,7 +437,11 @@ impl Session {
                         log::debug!("clipboard from the far end: {} bytes, not taken", text.len());
                     } else if !text.is_empty() && self.clipboard_seen.as_deref() != Some(text.as_str()) {
                         log::debug!("clipboard from the far end: {} bytes", text.len());
+                        // egui's own as well, for a paste into a text field.
                         host.winit.set_clipboard_text(text.clone());
+                        if let Some(clipboard) = host.clipboard {
+                            clipboard.set(text.clone());
+                        }
                         self.clipboard_seen = Some(text);
                     }
                 }
@@ -587,33 +591,38 @@ impl Session {
     }
 
     /// The keyboard focus: the keys still down let go of when it leaves,
-    /// the clipboard offered when it comes back, and the capture and the
-    /// shortcuts (the window's) following it.
+    /// and the capture and the shortcuts (the window's) following it. The
+    /// clipboard is read when it comes back, by the window, and offered
+    /// when the read is in (`local_clipboard`).
     pub fn focus(&mut self, focused: bool, host: &mut Host) {
-        if focused {
-            // What was copied here while the window was away, offered once:
-            // `SessionClipboard.read`, which remembers what it saw whether
-            // or not the setting lets it be sent, so that turning sending
-            // on later offers the next copy and not an old one.
-            if self.accepts_input()
-                && let Some(text) = host.winit.clipboard_text()
-                && !text.is_empty()
-                && self.clipboard_seen.as_deref() != Some(text.as_str())
-            {
-                if self.settings.clipboard_out {
-                    log::debug!("clipboard to the far end: {} bytes", text.len());
-                    self.backend.clipboard(&text);
-                } else {
-                    log::debug!("clipboard to the far end: {} bytes, not sent", text.len());
-                }
-                self.clipboard_seen = Some(text);
-            }
-        } else {
+        if !focused {
             self.release_keys();
             self.down.clear();
         }
         // The capture follows the focus on the next frame.
         host.window.request_redraw();
+    }
+
+    /// What was copied here while the window was away, read when it got the
+    /// focus back, offered once: `SessionClipboard.read`, which remembers
+    /// what it saw whether or not the setting lets it be sent, so that
+    /// turning sending on later offers the next copy and not an old one.
+    /// `None` is a clipboard with no text, or one that could not be read in
+    /// time (see `clipboard/`).
+    pub fn local_clipboard(&mut self, text: Option<String>) {
+        if let Some(text) = text
+            && self.accepts_input()
+            && !text.is_empty()
+            && self.clipboard_seen.as_deref() != Some(text.as_str())
+        {
+            if self.settings.clipboard_out {
+                log::debug!("clipboard to the far end: {} bytes", text.len());
+                self.backend.clipboard(&text);
+            } else {
+                log::debug!("clipboard to the far end: {} bytes, not sent", text.len());
+            }
+            self.clipboard_seen = Some(text);
+        }
     }
 
     fn release_keys(&mut self) {
