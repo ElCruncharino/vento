@@ -64,7 +64,7 @@ use crate::known_hosts::{self, KnownHosts, Store, Verdict};
 use crate::options::Options;
 use egui::{
     Color32, CursorIcon, Frame, Id, LayerId, Margin, Order, PointerButton, Pos2, Rect, Response, RichText, Sense,
-    TextureHandle, TextureOptions, Vec2, pos2, vec2,
+    Stroke, TextureHandle, TextureOptions, Vec2, pos2, vec2,
 };
 use super::icons;
 use std::collections::{HashMap, VecDeque};
@@ -1311,10 +1311,21 @@ impl Session {
         // without the popup's shadow, so that hidden nothing but the peek
         // `hidden_y` leaves in a window shows, and shown nothing of it lies
         // over the desktop past its edge.
+        //
+        // Edged on three sides and not the top, which is the window's own
+        // edge: a line there would be a rule across the top of the screen
+        // and, hidden, all that peeked out. A frame's stroke goes all the
+        // way round, so the frame is drawn without one and the three sides
+        // are painted over it after, inside its rect as a frame's stroke is,
+        // with the margin keeping the stroke's width so that the buttons sit
+        // where they did.
+        let edge = style.visuals.window_stroke();
+        let edge_width = edge.width.round() as i8;
         let frame = Frame::popup(&style)
             .corner_radius(0)
             .shadow(egui::Shadow::NONE)
-            .inner_margin(Margin::symmetric(8, 6));
+            .stroke(Stroke::NONE)
+            .inner_margin(Margin::symmetric(8 + edge_width, 6 + edge_width));
         let hidden = toolbar::hidden_y(self.toolbar_size.y, fullscreen);
         let y = ctx.animate_value_with_time(Id::new("toolbar-y"), if show { 0.0 } else { hidden }, 0.2);
         if reveal {
@@ -1330,12 +1341,24 @@ impl Session {
             .interactable(true)
             .sense(Sense::drag())
             .show(ctx, |ui| {
-                frame.show(ui, |ui| {
-                    // A little taller than egui's buttons, which were made
-                    // for a menu rather than for a bar at a screen's edge.
-                    ui.spacing_mut().interact_size.y = TOOLBAR_BUTTON;
-                    ui.horizontal(|ui| self.toolbar_items(ui, host));
-                })
+                let rect = frame
+                    .show(ui, |ui| {
+                        // A little taller than egui's buttons, which were
+                        // made for a menu rather than for a bar at a
+                        // screen's edge.
+                        ui.spacing_mut().interact_size.y = TOOLBAR_BUTTON;
+                        ui.horizontal(|ui| self.toolbar_items(ui, host));
+                    })
+                    .response
+                    .rect;
+                let inner = rect.shrink(edge.width / 2.0);
+                let sides = vec![
+                    pos2(inner.min.x, rect.min.y),
+                    inner.left_bottom(),
+                    inner.right_bottom(),
+                    pos2(inner.max.x, rect.min.y),
+                ];
+                ui.painter().add(egui::Shape::line(sides, edge));
             });
         let response = &area.response;
         if response.drag_started() {

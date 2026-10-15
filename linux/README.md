@@ -216,8 +216,9 @@ backend keeps receiving. Checked on `scripts/testx11` for tigervnc, libvnc,
 rfb and freerdp: live with another window focused, paused minimised or
 covered, live again restored.
 
-**The toolbar** sits flush with the top edge, square-cornered, and stays out of
-the way: it slides off the top of the window when the pointer is elsewhere —
+**The toolbar** sits flush with the top edge, square-cornered, edged on its
+sides and bottom but not along the top, which is the window's edge, and stays
+out of the way: it slides off the top of the window when the pointer is elsewhere —
 in a window all but the lower 4 points of its background, the margin under its
 buttons, left showing along the edge as a mark of where it is, and in
 fullscreen wholly — and slides back when the pointer reaches the top edge within the toolbar's own

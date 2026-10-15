@@ -33,7 +33,8 @@ use super::settings::Settings;
 use crate::backend::{ConnectionFact, Facts, Field, Monitor, Traffic};
 use crate::options::{self, Kind, Options, Spec};
 use egui::{
-    Align, Align2, ComboBox, Grid, Layout, Response, RichText, ScrollArea, Sense, TextEdit, Ui, WidgetInfo, WidgetType, vec2,
+    Align, Align2, ComboBox, Grid, Layout, Response, RichText, ScrollArea, Sense, TextEdit, Ui, WidgetInfo,
+    WidgetType, vec2,
 };
 use std::collections::BTreeMap;
 
