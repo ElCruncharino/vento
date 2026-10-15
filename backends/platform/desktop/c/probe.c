@@ -30,6 +30,11 @@ typedef struct Probe {
     char *closed_detail;
     int width, height;
     unsigned damaged, frames; /* counted as well as printed */
+    /* Whether --password has been given to a credentials prompt, and whether
+       a second prompt came. It is given once: a second prompt is the far end
+       saying it was wrong, and the same password again is a loop that ends
+       as "no connection" rather than as the refusal it was. */
+    bool answered, refused;
 } Probe;
 
 static double elapsed(const Probe *p) {
@@ -145,7 +150,19 @@ static void cbCredentialsNeeded(void *user, bool needsUser) {
     if (!s) {
         return;
     }
+    pthread_mutex_lock(&p->lock);
+    const bool again = p->answered;
     if (o->password) {
+        p->answered = true;
+        p->refused = again;
+    }
+    pthread_mutex_unlock(&p->lock);
+    if (o->password && again) {
+        say(p, "credentials_needed (user %s) -> asked again, so the password was refused; "
+               "cancelling",
+            needsUser ? "wanted" : "not wanted");
+        vento_session_answer_credentials(s, NULL, NULL, NULL);
+    } else if (o->password) {
         say(p, "credentials_needed (user %s) -> answering user \"%s\"%s%s%s and the password",
             needsUser ? "wanted" : "not wanted", o->user ? o->user : "",
             o->domain ? " domain \"" : "", o->domain ? o->domain : "", o->domain ? "\"" : "");
@@ -483,8 +500,15 @@ int vento_probe_run(const vento_probe *o, vento_probe_create create, void *confi
 
     int status = 0;
     if (!waitFor(&p, &p.connected, o->connect_timeout_s)) {
-        say(&p, p.closed ? "ended before connecting" : "no connection in %d s",
-            o->connect_timeout_s);
+        pthread_mutex_lock(&p.lock);
+        const bool closed = p.closed, refused = p.refused;
+        pthread_mutex_unlock(&p.lock);
+        if (refused) {
+            say(&p, "authentication failed: the password was refused");
+        } else {
+            say(&p, closed ? "ended before connecting" : "no connection in %d s",
+                o->connect_timeout_s);
+        }
         status = 1;
     } else {
         /* A second for the first frame to land, so that a click or a key
@@ -500,10 +524,11 @@ int vento_probe_run(const vento_probe *o, vento_probe_create create, void *confi
         waitFor(&p, &never, rest);
 
         pthread_mutex_lock(&p.lock);
-        const bool closed = p.closed;
+        const bool closed = p.closed, refused = p.refused;
         pthread_mutex_unlock(&p.lock);
         if (closed) {
-            say(&p, "ended before the %d s were up", o->seconds);
+            say(&p, "ended before the %d s were up%s", o->seconds,
+                refused ? ": the password was refused" : "");
             status = 1;
         } else {
             say(&p, "%u damaged rectangles in %u frames", p.damaged, p.frames);

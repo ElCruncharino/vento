@@ -21,6 +21,7 @@ fn main() {
 }
 
 mod host {
+    use std::cell::Cell;
     use std::path::PathBuf;
     use std::sync::Arc;
     use std::time::{Duration, Instant};
@@ -60,6 +61,14 @@ mod host {
         out: Option<PathBuf>,
         thumb_step: usize,
         verbose: bool,
+        /// Whether `--password` has been given to a credentials prompt.
+        /// It is given once: a second prompt is the far end saying it was
+        /// wrong, and answering that with the same password again is a loop
+        /// (SPICE dials afresh for every refused ticket, nearly two hundred
+        /// times in five seconds) that ends as "no connection in time".
+        answered: Cell<bool>,
+        /// Whether a second prompt came, so the password was refused.
+        refused: Cell<bool>,
     }
 
     const USAGE: &str = "\
@@ -75,7 +84,8 @@ usage: vento                                   the connection dialog
   --user NAME            the user name; for RDP, DOMAIN\\user or user@domain
   --domain NAME          the RDP domain, if not folded into --user
   --password TEXT        the password; without one the credentials prompt is
-                         answered with a cancel
+                         answered with a cancel (the probe gives it to the
+                         first prompt only: a second means it was refused)
   -o KEY=VALUE           a backend option (repeatable); --list shows each
   --connect              connect at once instead of showing the dialog
   --no-clipboard-out     do not send locally copied text to the far end
@@ -308,6 +318,8 @@ headless, any of which selects the probe instead of the window:
             out,
             thumb_step,
             verbose: false,
+            answered: Cell::new(false),
+            refused: Cell::new(false),
         })))
     }
 
@@ -384,7 +396,9 @@ headless, any of which selects the probe instead of the window:
                 m.state() != State::Connecting
             });
             if mailbox.state() != State::Connected {
-                say(if connected {
+                say(if self.refused.get() {
+                    "authentication failed: the password was refused"
+                } else if connected {
                     "ended before connecting"
                 } else {
                     "no connection in time"
@@ -399,7 +413,11 @@ headless, any of which selects the probe instead of the window:
                     self.pump(&mailbox, &backend, &say, self.seconds.saturating_sub(1), |_| false);
                 }
                 if mailbox.state() != State::Connected {
-                    say("ended before the time was up");
+                    say(if self.refused.get() {
+                        "ended before the time was up: the password was refused"
+                    } else {
+                        "ended before the time was up"
+                    });
                     status = 1;
                 } else {
                     self.facts(&backend, &say);
@@ -519,12 +537,18 @@ headless, any of which selects the probe instead of the window:
             }
         }
 
-        /// Answers a prompt from the flags, as probe.c does: the password or a
-        /// cancel, and `--trust` to everything else.
+        /// Answers a prompt from the flags, as probe.c does: the password
+        /// once, then a cancel, and `--trust` to everything else.
         fn answer(&self, event: &Event, backend: &Arc<dyn Backend>, say: &dyn Fn(&str)) {
             match event {
                 Event::CredentialsNeeded { .. } => match &self.password {
+                    Some(_) if self.answered.get() => {
+                        say("  -> asked again, so the password was refused; cancelling");
+                        self.refused.set(true);
+                        backend.answer_credentials(None);
+                    }
                     Some(password) => {
+                        self.answered.set(true);
                         say("  -> answering with the password");
                         backend.answer_credentials(Some(Credentials {
                             user: self.user.clone(),
