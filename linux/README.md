@@ -241,8 +241,9 @@ modifiers did meanwhile; every key still down is released when the window
 loses focus. There is one local chord, **Ctrl+Alt+D** for the debug overlay
 (and Ctrl+Alt on its own in relative mode, below): the D stays here, and the
 chord's keys are let go of at the far end, as the escape does. Every other
-key is the far end's while a session has focus — including the compositor's
-or window manager's own chords, see below.
+key is the far end's while a session has focus and takes input (not in view
+only, nor under a prompt) — including the compositor's or window manager's own
+chords, see below.
 
 **The mouse** sends absolute desktop coordinates, mapped through the view and
 clamped to it — the desktop pixel drawn under the pointer, by the centre of
@@ -387,12 +388,14 @@ setup.
 What the window uses beyond `xdg_wm_base`:
 
 - `zwp_keyboard_shortcuts_inhibit_manager_v1` — while the window has focus
-  and a session is connected, the compositor's own shortcuts are inhibited so
+  and a session takes input (connected, not view only, no prompt up), the
+  compositor's own shortcuts are inhibited so
   that Alt+Tab and the like reach the far end. winit does not speak this
   protocol, so `src/gui/wayland.rs` borrows winit's connection and surface
   through the window's raw handles, binds the manager and a seat from the
   registry on an event queue of its own, and creates the inhibitor; it is
-  released on focus loss and on disconnect. The log says when it is created,
+  released on focus loss, on disconnect, in view only and under a prompt. The
+  log says when it is created,
   granted (`active`) and released. The compositor may show its own indicator
   while it is in force (niri does), and keeps one chord of its own to take
   focus away.
@@ -428,8 +431,11 @@ server with a GPU it takes the hardware's Vulkan or GL through the Xlib
 handles.
 
 - **The keyboard is grabbed** in place of the inhibitor: an active
-  `GrabKeyboard` on the window while it has focus and a session is connected,
-  released on focus loss and on disconnect (`src/gui/x11.rs`). It goes over
+  `GrabKeyboard` on the window while it has focus and a session takes input,
+  released on focus loss, on disconnect, in view only and while a prompt is
+  up (`src/gui/x11.rs`): there the keys go nowhere at the far end, so the
+  window manager has them — in view only, Super+Return reached Openbox's
+  witness and Alt+Tab moved the focus. It goes over
   winit's own connection — the Xlib display from the raw handle, as XCB through
   x11rb — because X reports a grabbed key only to the client that grabbed it;
   winit keeps receiving every key. On the rig, Super+Return, Ctrl+Alt+T and
@@ -443,7 +449,7 @@ handles.
   keyboard grabbed` and `released`, and the overlay's inhibitor line says
   `grabbed`.
 - **A refused grab is retried** every 250 ms while the window has focus and
-  a session is connected, with the loop woken for it; the overlay says why
+  a session takes input, with the loop woken for it; the overlay says why
   meanwhile (`refused (already grabbed)`). Tried with Openbox's Alt+Tab
   switcher holding the keyboard, and with another client's grab: the grab
   was taken 9 ms after the other one ended.

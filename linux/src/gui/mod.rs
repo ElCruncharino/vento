@@ -282,7 +282,7 @@ impl App {
         self.shortcuts = Shortcuts::new(&window);
         match &self.shortcuts {
             Some(Shortcuts::Wayland(_)) => log::info!("Wayland: looking for the keyboard shortcuts inhibitor"),
-            Some(Shortcuts::X11(_)) => log::info!("X11: the keyboard is grabbed while a session has focus"),
+            Some(Shortcuts::X11(_)) => log::info!("X11: the keyboard is grabbed while a session has focus and takes input"),
             None => log::info!("no shortcuts inhibitor on this display server"),
         }
         self.window = Some(window);
@@ -343,12 +343,15 @@ impl App {
     }
 
     /// Keep the shortcuts inhibitor in step with the focus and the session:
-    /// held while both, released otherwise.
+    /// held while the window has the focus and the session takes input,
+    /// released otherwise. Not merely connected, as it was: in view only, or
+    /// under a prompt, the keys go nowhere at the far end, and the grab kept
+    /// Alt+Tab and the rest from the window manager too.
     fn sync_shortcuts(&mut self) {
-        let connected = matches!(&self.screen, Screen::Session(s) if s.connected());
+        let takes_input = matches!(&self.screen, Screen::Session(s) if s.accepts_input());
         if let Some(shortcuts) = &mut self.shortcuts {
             shortcuts.pump();
-            if self.focused && connected {
+            if self.focused && takes_input {
                 shortcuts.inhibit();
                 // A refused X grab is asked for again when due, without
                 // waiting for input to wake the loop.

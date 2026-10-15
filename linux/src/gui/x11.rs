@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! X11's stand-in for the keyboard shortcuts inhibitor: an active keyboard
-//! grab on the window while it has focus and a session is connected, so the
-//! window manager's chords (Alt+Tab, Super+…) reach the far end.
+//! grab on the window while it has focus and a session takes input
+//! (connected, not view only, no prompt up), so the window manager's
+//! chords (Alt+Tab, Super+…) reach the far end.
 //!
 //! It is sent over winit's own connection — the Xlib display from the raw
 //! handle, as XCB — because X reports a grabbed key only to the client that

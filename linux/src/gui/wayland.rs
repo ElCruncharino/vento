@@ -3,7 +3,7 @@
 
 //! The one Wayland protocol winit does not speak for us: the keyboard
 //! shortcuts inhibitor, so that Alt+Tab and the compositor's other chords
-//! reach the far end while the window has focus.
+//! reach the far end while the window has focus and a session takes input.
 //!
 //! winit owns the connection and the surface; this module borrows both
 //! through the window's raw handles — the `wl_display` and `wl_surface`

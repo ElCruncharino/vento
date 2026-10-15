@@ -286,8 +286,11 @@ impl Session {
         self.mailbox.state() == State::Connected && self.closed.is_none()
     }
 
-    /// Whether input has somewhere to go.
-    fn accepts_input(&self) -> bool {
+    /// Whether input has somewhere to go. Also what the window holds the
+    /// compositor's or the window manager's shortcuts off for: while it is
+    /// not, there is nowhere at the far end for a chord to go, and it is
+    /// the window manager's.
+    pub fn accepts_input(&self) -> bool {
         self.connected() && !self.view_only && self.prompts.is_empty() && self.disconnecting.is_none()
     }
 
