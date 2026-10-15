@@ -777,8 +777,7 @@ impl Session {
                 let exact = (l.scale * pixels_per_point - 1.0).abs() < 1e-3;
                 let desktop = self.desktop.as_mut().expect("checked above");
                 desktop.set_exact(ctx, &*self.backend, exact);
-                ui.painter()
-                    .image(desktop.id(), l.rect, l.uv(width as f32, height as f32), Color32::WHITE);
+                desktop.paint(ui.painter(), &l, pixels_per_point);
                 response = Some(ui.interact(window, Id::new("desktop"), Sense::click_and_drag()));
                 layout = Some(l);
             });

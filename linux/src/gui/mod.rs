@@ -722,9 +722,13 @@ impl Gpu {
             })
             .await
             .map_err(|e| format!("adapter: {e}"))?;
+        // Everything the adapter can do rather than WebGPU's defaults, whose
+        // 8192-pixel textures are half of what most hardware has; a desktop
+        // past even the adapter's limit is tiled (see `desktop.rs`).
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("vento"),
+                required_limits: adapter.limits(),
                 ..Default::default()
             })
             .await

@@ -32,9 +32,10 @@ backend without one.
   vtable in `vento/backend.h`.
 - **`src/gui/`** — the window: `mod.rs` (the winit loop, the wgpu surface, egui
   drawn into it), `session.rs` (a live session: the desktop, the input, the
-  toolbar, the prompts, the cursor), `desktop.rs` (the desktop as one texture,
-  updated a damaged rectangle at a time), `view.rs` (scale modes, panning and
-  the pointer's mapping, pure arithmetic with tests), `follow.rs` (the desktop
+  toolbar, the prompts, the cursor), `desktop.rs` (the desktop as one
+  texture, or as tiles where it is bigger than the device's largest, updated
+  a damaged rectangle at a time), `view.rs` (scale modes, panning and the
+  pointer's mapping, pure arithmetic with tests), `follow.rs` (the desktop
   following the window's size: the phone's `WindowFollower`, pure logic with
   tests), `keys.rs` (winit keys to X11 keysyms), `platform.rs` (which display
   server the window is on, and the per-server shortcuts and capture choice),

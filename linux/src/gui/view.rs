@@ -14,7 +14,7 @@
 //! desktop pixel per *device* pixel, since a 1:1 mode drawn at a fraction of
 //! a pixel is neither sharp nor 1:1.
 
-use egui::{Pos2, Rect, Vec2, pos2, vec2};
+use egui::{Pos2, Rect, Vec2, vec2};
 
 /// How the desktop is scaled to the window. The five cycle in this order
 /// from the toolbar.
@@ -176,23 +176,12 @@ impl Layout {
             axis(pointer.y, self.window.min.y, self.window.max.y, self.pan.y, self.overflow.y),
         )
     }
-
-    /// The `source` rectangle's share of a texture `width × height`, as the
-    /// UV rectangle to draw it with.
-    pub fn uv(&self, width: f32, height: f32) -> Rect {
-        if width <= 0.0 || height <= 0.0 {
-            return Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0));
-        }
-        Rect::from_min_max(
-            pos2(self.source.min.x / width, self.source.min.y / height),
-            pos2(self.source.max.x / width, self.source.max.y / height),
-        )
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui::pos2;
 
     fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
         Rect::from_min_size(pos2(x, y), vec2(w, h))
@@ -245,7 +234,6 @@ mod tests {
         // A monitor's rectangle maps into its own coordinates.
         let layout = view.layout(rect(1920.0, 0.0, 1280.0, 800.0), rect(0.0, 0.0, 1280.0, 800.0), 1.0);
         assert_eq!(layout.desktop_at(pos2(10.0, 10.0)), (1930, 10));
-        assert_eq!(layout.uv(3200.0, 800.0), Rect::from_min_max(pos2(0.6, 0.0), pos2(1.0, 1.0)));
     }
 
     #[test]
