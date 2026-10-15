@@ -279,7 +279,7 @@ takes a change to at once, and **Debug overlay**, the overlay below, which is
 the session's and not a setting (Ctrl+Alt+D toggles it too).
 
 Under them, the desktop's name, the facts the backend reports in its own words
-(the diagnostic ones folded away), the bytes transferred, the desktop size and
+in the backend's order, the diagnostic ones among the rest, the bytes transferred, the desktop size and
 its monitors. Everything is refreshed once a second while the panel is open,
 without disturbing a control being used: an open dropdown stays open, and a
 field being typed in keeps its text until it is left, which is when its value

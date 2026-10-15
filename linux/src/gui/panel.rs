@@ -17,9 +17,8 @@
 //! the debug overlay.
 //!
 //! Then the desktop's name on top of what the backend has to say about the
-//! connection in its own words, with the rows only worth reading when
-//! hunting a problem folded under a heading, and the counts this client
-//! keeps itself. The session refreshes the [`Snapshot`] once a second while
+//! connection in its own words, all of it in the backend's order, and the
+//! counts this client keeps itself. The session refreshes the [`Snapshot`] once a second while
 //! the panel is open, which is fast enough that a change reads as a result
 //! and slow enough that the question costs the protocol nothing. Nothing is
 //! rebuilt by a refresh: egui redraws from the same ids every frame, so an
@@ -33,7 +32,7 @@
 use super::settings::Settings;
 use crate::backend::{ConnectionFact, Facts, Field, Monitor, Traffic};
 use crate::options::{self, Kind, Options, Spec};
-use egui::{Align2, CollapsingHeader, ComboBox, Grid, RichText, ScrollArea, TextEdit, Ui, vec2};
+use egui::{Align2, ComboBox, Grid, RichText, ScrollArea, TextEdit, Ui, vec2};
 use std::collections::BTreeMap;
 
 /// What the backend said at the last poll: one instant, so that no row is
@@ -344,17 +343,11 @@ fn display_label(i: i32, m: &Monitor) -> String {
 }
 
 /// The facts: the backend's rows, then the counts this client keeps.
+///
+/// All the backend's rows, in its order, its diagnostic ones among the
+/// rest rather than folded away under a heading of their own.
 fn facts(ui: &mut Ui, snapshot: &Snapshot) {
-    let plain: Vec<&ConnectionFact> = snapshot
-        .info
-        .iter()
-        .filter(|f| f.field != Field::DesktopName && !f.diagnostic)
-        .collect();
-    let diagnostics: Vec<&ConnectionFact> = snapshot
-        .info
-        .iter()
-        .filter(|f| f.field != Field::DesktopName && f.diagnostic)
-        .collect();
+    let plain: Vec<&ConnectionFact> = snapshot.info.iter().filter(|f| f.field != Field::DesktopName).collect();
 
     Grid::new("facts").num_columns(2).spacing([16.0, 4.0]).show(ui, |ui| {
         for fact in &plain {
@@ -380,17 +373,6 @@ fn facts(ui: &mut Ui, snapshot: &Snapshot) {
             );
         }
     });
-
-    if !diagnostics.is_empty() {
-        ui.add_space(8.0);
-        CollapsingHeader::new("Diagnostics").default_open(false).show(ui, |ui| {
-            Grid::new("diagnostics").num_columns(2).spacing([16.0, 4.0]).show(ui, |ui| {
-                for fact in &diagnostics {
-                    row(ui, fact.label, &fact.value);
-                }
-            });
-        });
-    }
 }
 
 /// A field the backend has but no answer for yet says so, rather than
