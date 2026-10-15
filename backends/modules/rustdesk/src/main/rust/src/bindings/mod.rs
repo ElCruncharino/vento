@@ -11,7 +11,7 @@
 //! `platform_android`; the session, the thread and the place to wait for a
 //! person are `common`'s and the same for every protocol.
 
-use crate::client::{Client, Config, PreferredCodec, Quality, Reach};
+use crate::client::{Client, Config, Platform, PreferredCodec, Quality, Reach};
 use common::{Bridge, Credentials, Session as CommonSession};
 use jni::EnvUnowned;
 use jni::errors::LogErrorAndDefault;
@@ -89,6 +89,7 @@ pub extern "system" fn Java_net_pgaskin_remotedesktop_backend_rustdesk_RustDeskN
             password: string(env, &password)?,
             connect_timeout: Duration::from_millis(connect_timeout_ms.max(1000) as u64),
             my_name: string(env, &my_name)?.unwrap_or_else(|| "Android".into()),
+            platform: Platform::Android,
             quality: quality_of(string(env, &quality)?.as_deref()),
             fps: fps.clamp(0, 120),
             codec: codec_of(string(env, &codec)?.as_deref()),

@@ -12,7 +12,7 @@
 //! protocol; and the protocol is the rest of this crate, which knows about
 //! none of this.
 
-use crate::{Client, Config, Credentials, Nla};
+use crate::{Client, Config, Credentials, Nla, Platform};
 use common::{Bridge, Session as CommonSession};
 use jni::EnvUnowned;
 use jni::errors::LogErrorAndDefault;
@@ -96,11 +96,12 @@ pub extern "system" fn Java_net_pgaskin_remotedesktop_backend_ironrdp_IronRdpNat
             experience: crate::experience(string(env, &experience)?.as_deref()),
             monitors: monitors.clamp(1, 16) as u8,
             client_name: string(env, &client_name)?.unwrap_or_else(|| "remotedesktop".into()),
+            platform: Platform::Android,
             keyboard_layout: keyboard_layout as u32,
             connect_timeout: Duration::from_millis(connect_timeout_ms.max(1000) as u64),
         };
         log::info!(
-            "connecting to {} as {:?} ({}x{} × {}, nla {:?}, compression {:?}, remotefx {}, experience {:?})",
+            "connecting to {} as {:?} ({}x{} × {}, nla {:?}, compression {:?}, remotefx {}, experience {:?}, platform {:?})",
             config.address,
             config.user_name,
             config.desktop_size.0,
@@ -109,7 +110,8 @@ pub extern "system" fn Java_net_pgaskin_remotedesktop_backend_ironrdp_IronRdpNat
             config.nla,
             config.compression,
             config.remote_fx,
-            config.experience
+            config.experience,
+            config.platform
         );
         let session = Session::start(Arc::new(Client::new()), config, Bridge::new(callbacks));
         Ok(Box::into_raw(Box::new(session)) as jlong)

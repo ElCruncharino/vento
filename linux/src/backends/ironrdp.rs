@@ -12,7 +12,7 @@ use crate::backend::{
 use crate::events::{Feed, Mailbox};
 use crate::options::{self, Options};
 use common::{Bridge, Session};
-use remotedesktop_ironrdp::{Client, Config, Nla};
+use remotedesktop_ironrdp::{Client, Config, Nla, Platform};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -96,11 +96,14 @@ fn create(c: &Connect) -> Result<Arc<dyn Backend>, String> {
         experience: remotedesktop_ironrdp::experience(Some(o.get("Experience"))),
         monitors: monitor_count(o),
         client_name: client_name(),
+        // `UNIX`, as IronRDP's own viewer says from Linux, not the phone's
+        // `ANDROID`.
+        platform: Platform::Linux,
         keyboard_layout: KEYBOARD_LAYOUT,
         connect_timeout: Duration::from_millis(CONNECT_TIMEOUT_MS as u64),
     };
     log::info!(
-        "connecting to {} as {:?} ({}x{} × {}, nla {:?}, compression {:?}, remotefx {}, experience {:?})",
+        "connecting to {} as {:?} ({}x{} × {}, nla {:?}, compression {:?}, remotefx {}, experience {:?}, platform {:?})",
         config.address,
         config.user_name,
         config.desktop_size.0,
@@ -109,7 +112,8 @@ fn create(c: &Connect) -> Result<Arc<dyn Backend>, String> {
         config.nla,
         config.compression,
         config.remote_fx,
-        config.experience
+        config.experience,
+        config.platform
     );
     let session = Session::start(
         Arc::new(Client::new()),

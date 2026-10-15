@@ -90,6 +90,8 @@ pub struct Config {
     pub monitors: u8,
     /// What the far end lists this connection as.
     pub client_name: String,
+    /// What this end runs on, as the capabilities say it.
+    pub platform: Platform,
     /// The layout the *server* should assume. `0x0409` is US English; it does
     /// not change what this client sends, only how the server reads it (see
     /// `keymap`).
@@ -111,10 +113,42 @@ impl Default for Config {
             experience: Experience::Balanced,
             monitors: 1,
             client_name: "remotedesktop".to_string(),
+            platform: Platform::host(),
             keyboard_layout: 0x0409,
             // The same twenty seconds both other backends wait: a mistyped
             // address must not be a spinner that never stops.
             connect_timeout: Duration::from_secs(20),
+        }
+    }
+}
+
+/// What the general capability set's major platform type says this end
+/// runs on: `ANDROID` from the phone and `UNIX` from Linux, which is what
+/// FreeRDP's X11 and Wayland clients and IronRDP's own viewer send there. A
+/// server may log it or show it, and a Linux client calling itself a phone
+/// there is simply wrong.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Platform {
+    Android,
+    Linux,
+}
+
+impl Platform {
+    /// The one this was built for, for a caller that does not say (the
+    /// probe); the Android bindings and the Linux adapter each name theirs.
+    pub fn host() -> Platform {
+        if cfg!(target_os = "android") {
+            Platform::Android
+        } else {
+            Platform::Linux
+        }
+    }
+
+    fn wire(self) -> ironrdp_pdu::rdp::capability_sets::MajorPlatformType {
+        use ironrdp_pdu::rdp::capability_sets::MajorPlatformType;
+        match self {
+            Platform::Android => MajorPlatformType::ANDROID,
+            Platform::Linux => MajorPlatformType::UNIX,
         }
     }
 }
@@ -1301,7 +1335,7 @@ fn connector_config(
 ) -> ironrdp_connector::Config {
     use ironrdp_connector::{BitmapConfig, Credentials as ConnectorCredentials};
     use ironrdp_pdu::gcc::{ConnectionType, KeyboardType};
-    use ironrdp_pdu::rdp::capability_sets::{MajorPlatformType, RailSupportLevel};
+    use ironrdp_pdu::rdp::capability_sets::RailSupportLevel;
     use ironrdp_pdu::rdp::client_info::{PerformanceFlags, TimezoneInfo};
 
     // The one codec worth choosing about. Everything else the list can hold is
@@ -1364,7 +1398,7 @@ fn connector_config(
         client_build: 0,
         client_name: config.client_name.clone(),
         client_dir: "C:\\Windows\\System32\\mstscax.dll".to_owned(),
-        platform: MajorPlatformType::ANDROID,
+        platform: config.platform.wire(),
         // The point of the whole stack: the pointer is drawn here, at the
         // position the gesture layer believes it is at, rather than arriving a
         // round trip later inside the picture.
@@ -1669,5 +1703,18 @@ mod tests {
         client.key_up(2);
         let input = client.shared.input.lock().unwrap();
         assert!(input.is_key_pressed(SHIFT), "still held by the row");
+    }
+
+    /// The platform is what the capabilities say, not the phone's always:
+    /// `UNIX` from Linux, as IronRDP's own viewer and FreeRDP send there.
+    #[test]
+    fn the_platform_is_the_clients_own() {
+        use ironrdp_pdu::rdp::capability_sets::MajorPlatformType;
+        let sent = |platform| {
+            let config = Config { platform, ..Config::default() };
+            connector_config(&config, &Credentials::default()).platform
+        };
+        assert_eq!(sent(Platform::Android), MajorPlatformType::ANDROID);
+        assert_eq!(sent(Platform::Linux), MajorPlatformType::UNIX);
     }
 }

@@ -84,6 +84,8 @@ pub struct Config {
     pub connect_timeout: Duration,
     /// What the far end calls this phone in its own log and its own screen.
     pub my_name: String,
+    /// What this end runs on, as the login says it.
+    pub platform: Platform,
     /// The live options' opening values. What they are afterwards is the
     /// session's, since each of them can be changed while it is running.
     pub quality: Quality,
@@ -94,6 +96,29 @@ pub struct Config {
     /// the login and never changed: what it asks for happens after the last
     /// message either end sends.
     pub lock_after: bool,
+}
+
+/// What the login tells the peer this end runs on. Not a cosmetic field:
+/// their peer keys features on it — a file clipboard only between two
+/// Windows or two macOS ends, a printer only for a Windows one, the multiple
+/// clipboard formats refused to an Android client older than 1.3.3 — and it
+/// is part of how a trusted device is recognised, so each client says what
+/// their own client would say on the same machine: `Android` from their
+/// Android build, `whoami::platform()` (`Linux`) from their desktop one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Platform {
+    Android,
+    Linux,
+}
+
+impl Platform {
+    /// Their spelling, which is `whoami::Platform`'s `Display`.
+    pub fn wire(self) -> &'static str {
+        match self {
+            Platform::Android => "Android",
+            Platform::Linux => "Linux",
+        }
+    }
 }
 
 /// The two ways to a peer, which are not two transports of one connection but
@@ -1135,7 +1160,7 @@ impl Client {
         // know which device is on their desktop.
         login.my_id = config.my_name.clone();
         login.my_name = config.my_name.clone();
-        login.my_platform = "Android".into();
+        login.my_platform = config.platform.wire().into();
         login.version = VERSION.into();
         login.session_id = 1;
         // **The far end paces itself to us.** Without this it captures and

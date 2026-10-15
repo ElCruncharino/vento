@@ -43,7 +43,7 @@ mod framebuffer;
 mod keymap;
 mod tls;
 
-pub use client::{Client, Config, Experience, Info, Nla, compression, experience};
+pub use client::{Client, Config, Experience, Info, Nla, Platform, compression, experience};
 pub use common::{Credentials, Handler};
 pub use error::{Error, Result};
 pub use framebuffer::Framebuffer;

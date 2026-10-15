@@ -13,7 +13,7 @@ use crate::backend::{
 use crate::events::{Feed, Mailbox};
 use crate::options::{self, Options};
 use common::{Bridge, Session};
-use remotedesktop_rustdesk::{Client, Config, PreferredCodec, Quality, Reach};
+use remotedesktop_rustdesk::{Client, Config, Platform, PreferredCodec, Quality, Reach};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -90,6 +90,8 @@ fn create(c: &Connect) -> Result<Arc<dyn Backend>, String> {
         connect_timeout: Duration::from_millis(CONNECT_TIMEOUT_MS as u64),
         // What the far end shows and logs while this session is up.
         my_name: client_name(),
+        // What their own Linux client says, rather than the phone's answer.
+        platform: Platform::Linux,
         quality: quality_of(o.get("Quality")),
         fps: fps(o),
         codec: codec_of(o.get("Codec")),
