@@ -53,6 +53,20 @@ fn fps(options: &Options) -> i32 {
     options.int("FrameRate", 0).clamp(0, 120) as i32
 }
 
+/// The rendezvous server an empty `RendezvousServer` means, which
+/// `RustDeskProvider.PUBLIC_NETWORK` names for the pin key.
+const PUBLIC_NETWORK: &str = "rs-ny.rustdesk.com";
+
+/// `RustDeskBackend.pinnedAs`: the id and the network it means something
+/// on. An id is handed out by a rendezvous server and re-issued when a
+/// machine's configuration is wiped, so the same digits on two networks are
+/// two machines, and one entry under the bare id would have them overwriting
+/// each other's identity.
+pub fn pinned_as(address: &str, o: &Options) -> String {
+    let server = o.get("RendezvousServer").trim();
+    format!("{address}@{}", if server.is_empty() { PUBLIC_NETWORK } else { server })
+}
+
 struct RustDesk {
     session: Session<Client>,
     mailbox: Arc<Mailbox>,

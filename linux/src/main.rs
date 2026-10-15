@@ -26,8 +26,9 @@ mod host {
     use std::time::{Duration, Instant};
     use vento::backend::{Backend, Credentials, thumbnail_step};
     use vento::backends::{self, Connect, Dirs, Kind};
-    use vento::events::{Event, Mailbox, State};
+    use vento::events::{Event, Identity, Mailbox, State};
     use vento::gui;
+    use vento::known_hosts::{KnownHosts, Verdict};
     use vento::options::{self, Options};
     use vento::ppm;
 
@@ -86,7 +87,8 @@ usage: vento                                   the connection dialog
   --x11, --wayland       open the window on that display server (default:
                          Wayland where WAYLAND_DISPLAY is set, X11 otherwise)
   --library-dir DIR      where RealVNC's two libraries are (XDG data dir)
-  --state-dir DIR        where backends keep per-host state (XDG state dir)
+  --state-dir DIR        where backends keep what they leave behind (XDG state
+                         dir); the known hosts are in $XDG_CONFIG_HOME/vento
   --verbose              let the backends' debug lines through
 
 headless, any of which selects the probe instead of the window:
@@ -94,7 +96,9 @@ headless, any of which selects the probe instead of the window:
   --connect-timeout N    how long to wait for the connection (30)
   --out FILE.ppm         write the framebuffer there, and FILE-thumb.ppm
   --thumb-step N         the thumbnail's scale, 1/N (8)
-  --trust                answer yes to every trust, security and message prompt
+  --trust                answer yes to every trust, security and message prompt,
+                         for this run: a certificate the known hosts match
+                         needs no --trust, and none is ever pinned from here
   --click X,Y            left-click there once connected
   --key KEYSYM           press and release this X keysym (0x61 is 'a')
   --clipboard TEXT       send this as the clipboard a second after connecting";
@@ -508,7 +512,38 @@ headless, any of which selects the probe instead of the window:
                         backend.answer_credentials(None);
                     }
                 },
-                Event::TrustNeeded { .. } | Event::Unverified { .. } | Event::Question { .. } => {
+                Event::TrustNeeded { fingerprint } => {
+                    // The known hosts first, as the window has them: read,
+                    // and never written — `--trust` is for this run.
+                    let pinned = backends::pinned_as(self.kind, &self.address, &self.options);
+                    let hosts = KnownHosts::in_dir(&self.dirs.config);
+                    let (yes, why) = match hosts.verdict(&pinned.key, fingerprint) {
+                        Verdict::Matches => (true, format!("matches the pin for {}", pinned.key)),
+                        Verdict::Ask { identity, .. }
+                            if pinned.first_sight_silent && identity != Identity::Changed =>
+                        {
+                            (true, format!("first sight of {}, taken without asking (not pinned)", pinned.key))
+                        }
+                        Verdict::Ask {
+                            identity,
+                            matching_address,
+                        } => (
+                            self.trust,
+                            format!(
+                                "{identity:?}{}, {}",
+                                if matching_address.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!(" (pinned for {matching_address})")
+                                },
+                                if self.trust { "yes (--trust, not pinned)" } else { "no" }
+                            ),
+                        ),
+                    };
+                    say(&format!("  -> {why}"));
+                    backend.answer_trust(yes);
+                }
+                Event::Unverified { .. } | Event::Question { .. } => {
                     say(&format!("  -> {}", if self.trust { "yes (--trust)" } else { "no" }));
                     backend.answer_trust(self.trust);
                 }

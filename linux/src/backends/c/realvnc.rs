@@ -9,12 +9,16 @@
 //! the two libraries come from the viewer's APK under `library_dir`, hashes
 //! verified by the session, and what the core persists goes under
 //! `state_dir` — both from [`Dirs`](crate::backends::Dirs), with XDG
-//! defaults, and overridable from the command line.
+//! defaults, and overridable from the command line. The identity the core
+//! asks to have remembered is the window's to keep, in
+//! [`realvnc_identities`](crate::known_hosts::realvnc_identities), and is
+//! handed back here.
 
 use super::{Behaviour, CSession, start};
 use crate::backend::{Backend, ConnectionFact, Field, Traffic};
 use crate::backends::{Connect, Kind};
 use crate::ffi;
+use crate::known_hosts;
 use crate::options::{self, Options};
 use std::ffi::CString;
 
@@ -61,6 +65,13 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
         .map_err(|_| "the library path has a NUL")?;
     let state_dir =
         CString::new(state.to_string_lossy().into_owned()).map_err(|_| "the state path has a NUL")?;
+    // What this server was last accepted as, as `RealVncBackend` hands it
+    // back: with it the core's security prompt is silent for a server it
+    // recognises. Read only; the window is what keeps a new one.
+    let identity = known_hosts::realvnc_identities(&c.dirs.config)
+        .read_or_empty()
+        .get(c.address)
+        .and_then(|i| CString::new(i).ok());
 
     config.address = address.as_ptr();
     config.user_name = user.as_ref().map_or(std::ptr::null(), |u| u.as_ptr());
@@ -80,6 +91,7 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
     config.keep_alive_response_timeout_s = o.int("KeepAliveResponseTimeout", 30) as i32;
     config.library_dir = library_dir.as_ptr();
     config.state_dir = state_dir.as_ptr();
+    config.identity = identity.as_ref().map_or(std::ptr::null(), |i| i.as_ptr());
     // 0 or less for the backend's own twenty seconds, which is what config_init
     // leaves; a RealVNC connection that fails reports nothing at all.
 

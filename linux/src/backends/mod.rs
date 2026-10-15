@@ -27,10 +27,13 @@ use std::sync::Arc;
 /// Where this client keeps things on disk, with the XDG defaults.
 #[derive(Clone, Debug)]
 pub struct Dirs {
-    /// What a session leaves behind that is not a setting: TigerVNC's
-    /// known-hosts file, FreeRDP's config directory (which keeps nothing),
-    /// RealVNC's key, identities and logs, each under a directory of its own
-    /// backend.
+    /// Where this client's own decisions are kept: the [known
+    /// hosts](crate::known_hosts) and RealVNC's identities, both of which
+    /// outlive every session.
+    pub config: PathBuf,
+    /// What a session leaves behind that is not a decision: FreeRDP's config
+    /// directory (which keeps nothing) and RealVNC's key, own identities and
+    /// logs, each under a directory of its own backend.
     pub state: PathBuf,
     /// Where `libvncviewer.so` and `libc++_shared.so` out of the RealVNC
     /// viewer's APK are, for the one backend whose library is not in any
@@ -49,6 +52,7 @@ impl Default for Dirs {
                 .join("vento")
         };
         Dirs {
+            config: xdg("XDG_CONFIG_HOME", ".config"),
             state: xdg("XDG_STATE_HOME", ".local/state"),
             realvnc_libs: xdg("XDG_DATA_HOME", ".local/share").join("realvnc"),
         }
@@ -132,6 +136,32 @@ pub fn rdp_identity(answer: &Credentials, domain: &str, user: &str) -> (String, 
     }
 }
 
+/// What a backend's certificates are pinned against in the [known
+/// hosts](crate::known_hosts), and how a first one is taken.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Pinned {
+    /// The address as written for all but RustDesk, whose key says which
+    /// network the id is on.
+    pub key: String,
+    /// Whether a fingerprint never seen is pinned without asking: RustDesk's
+    /// alone, since its key arrives signed by the rendezvous server for the
+    /// id that was dialled and a question would have nothing to check it by.
+    pub first_sight_silent: bool,
+}
+
+pub fn pinned_as(kind: &Kind, address: &str, options: &Options) -> Pinned {
+    if kind.id == rustdesk::KIND.id {
+        return Pinned {
+            key: rustdesk::pinned_as(address, options),
+            first_sight_silent: true,
+        };
+    }
+    Pinned {
+        key: address.to_string(),
+        first_sight_silent: false,
+    }
+}
+
 /// What the far end lists this machine as, where a phone says its model.
 pub fn client_name() -> String {
     std::fs::read_to_string("/etc/hostname")
@@ -208,6 +238,19 @@ mod tests {
         assert_eq!(id(&answer(".\\alice", "")), (".".into(), "alice".into()));
         assert_eq!(id(&answer("alice", "LAB")), ("LAB".into(), "alice".into()));
         assert_eq!(rdp_identity(&answer("alice", ""), "", "proto"), ("".into(), "alice".into()));
+    }
+
+    #[test]
+    fn a_pin_is_the_address_as_written_except_for_a_rustdesk_id() {
+        let rdp = pinned_as(&ironrdp::KIND, "Host:3389", &Options::defaults(ironrdp::KIND.options));
+        assert_eq!(rdp.key, "Host:3389");
+        assert!(!rdp.first_sight_silent);
+        let mut o = Options::defaults(rustdesk::KIND.options);
+        let id = pinned_as(&rustdesk::KIND, "123456789", &o);
+        assert_eq!(id.key, "123456789@rs-ny.rustdesk.com");
+        assert!(id.first_sight_silent);
+        o.set("RendezvousServer", " hbbs.example ");
+        assert_eq!(pinned_as(&rustdesk::KIND, "123456789", &o).key, "123456789@hbbs.example");
     }
 
     #[test]

@@ -350,6 +350,15 @@ pub trait Backend: Send + Sync {
         self.answer_trust(accept);
     }
 
+    /// An identity the library asked to have remembered, for the caller to
+    /// keep and hand back to the next session: RealVNC's opaque blob, which
+    /// its core sends after a security prompt answered with *remember*. The
+    /// caller decides whether to keep it — the window does, the probe never
+    /// asks.
+    fn saved_identity(&self) -> Option<String> {
+        None
+    }
+
     /// Ask for a graceful disconnect. `Closed` follows.
     fn disconnect(&self);
 

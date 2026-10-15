@@ -6,10 +6,10 @@
 //!
 //! Every one of them owes an answer — the backend's thread is blocked until
 //! it gets one — so closing a dialog by any route is a no, and the session
-//! queues what arrives while one is already up. Nothing is persisted from
-//! here: a trusted fingerprint is trusted for this session, and the one
-//! "remember" there is (RealVNC's) is handed to the backend, whose state
-//! directory is where it keeps such things.
+//! queues what arrives while one is already up. Nothing is written from here:
+//! a certificate is put as `KnownHosts.ask` puts it, with why it is being
+//! asked about and a *remember server* box, and the session pins what was
+//! accepted with the box ticked; RealVNC's own *remember* goes to its core.
 
 use crate::backend::Credentials;
 use crate::events::{Encryption, Event, Identity, Severity};
@@ -21,8 +21,12 @@ pub enum Prompt {
     Credentials {
         needs_user: bool,
     },
+    /// A certificate the [known hosts](crate::known_hosts) did not match,
+    /// with why: never seen, seen under another address, or changed.
     Trust {
         fingerprint: String,
+        identity: Identity,
+        matching_address: String,
     },
     Unverified {
         why: String,
@@ -47,13 +51,13 @@ pub enum Prompt {
 }
 
 impl Prompt {
+    /// The prompt an event asks for. Not a trust event, which is put to the
+    /// known hosts first and becomes a [`Prompt::Trust`] only if they do not
+    /// answer it.
     pub fn from_event(event: &Event) -> Option<Prompt> {
         Some(match event {
             Event::CredentialsNeeded { needs_user } => Prompt::Credentials {
                 needs_user: *needs_user,
-            },
-            Event::TrustNeeded { fingerprint } => Prompt::Trust {
-                fingerprint: fingerprint.clone(),
             },
             Event::Unverified { why } => Prompt::Unverified { why: why.clone() },
             Event::Question { title, text } => Prompt::Question {
@@ -94,6 +98,13 @@ impl Prompt {
 pub enum Answer {
     Credentials(Option<Credentials>),
     Trust(bool),
+    /// A [`Prompt::Trust`]'s: whether to go on, and whether to pin
+    /// `fingerprint` for the address.
+    Pin {
+        accept: bool,
+        remember: bool,
+        fingerprint: String,
+    },
     Security { accept: bool, remember: bool },
 }
 
@@ -123,7 +134,11 @@ impl Form {
         self.ready = true;
         match prompt {
             Prompt::Credentials { .. } => self.user = user.to_string(),
-            Prompt::Security { identity, .. } => self.remember = *identity != Identity::Changed,
+            // Ticked unless the identity has changed, as on the phone: a
+            // changed one is the case for saying yes once and looking again.
+            Prompt::Trust { identity, .. } | Prompt::Security { identity, .. } => {
+                self.remember = *identity != Identity::Changed
+            }
             _ => {}
         }
     }
@@ -138,13 +153,19 @@ pub fn show(ctx: &egui::Context, prompt: &Prompt, form: &mut Form, address: &str
         ui.set_width(380.0);
         match prompt {
             Prompt::Credentials { needs_user } => credentials(ui, form, address, *needs_user),
-            Prompt::Trust { fingerprint } => {
-                heading(ui, "Connect anyway?", address);
-                ui.label("This server's certificate is not signed by anyone this client trusts.");
-                ui.add_space(6.0);
-                ui.label("SHA-256 fingerprint:");
-                ui.monospace(fingerprint);
-                yes_no(ui, "Continue", "Cancel").map(Answer::Trust)
+            Prompt::Trust {
+                fingerprint,
+                identity,
+                matching_address,
+            } => {
+                // `KnownHosts.ask`'s prompt: encrypted, the fingerprint as
+                // the signature, and no catchphrase.
+                identity_prompt(ui, form, address, *identity, Encryption::Encrypted, fingerprint, "", matching_address)
+                    .map(|(accept, remember)| Answer::Pin {
+                        accept,
+                        remember,
+                        fingerprint: fingerprint.clone(),
+                    })
             }
             Prompt::Unverified { why } => {
                 heading(ui, "Connect anyway?", address);
@@ -164,49 +185,8 @@ pub fn show(ctx: &egui::Context, prompt: &Prompt, form: &mut Form, address: &str
                 signature,
                 catchphrase,
                 matching_address,
-            } => {
-                heading(ui, "Connect anyway?", address);
-                // OK, PRESHARED and ARD say nothing: this prompt is up
-                // because something else about the connection is worth
-                // asking about.
-                let why = match identity {
-                    Identity::Changed => {
-                        "This server's identity has changed since you last connected. It may not be the same machine."
-                            .to_string()
-                    }
-                    Identity::MatchesAnother => format!(
-                        "This server's identity belongs to {}, which you have connected to before.",
-                        if matching_address.is_empty() {
-                            "a different address"
-                        } else {
-                            matching_address
-                        }
-                    ),
-                    Identity::New => "You have not connected to this server before.".to_string(),
-                    Identity::Missing => "This server does not have a verifiable identity.".to_string(),
-                    Identity::Ok | Identity::Preshared | Identity::Ard => String::new(),
-                };
-                if !why.is_empty() {
-                    ui.label(why);
-                    ui.add_space(6.0);
-                }
-                if *encryption == Encryption::UnencryptedWarn {
-                    ui.label("The connection is not encrypted.");
-                    ui.add_space(6.0);
-                }
-                if !catchphrase.is_empty() {
-                    ui.label(format!("Catchphrase: {catchphrase}"));
-                }
-                if !signature.is_empty() {
-                    ui.label(format!("Signature: {signature}"));
-                }
-                ui.add_space(6.0);
-                ui.checkbox(&mut form.remember, "Remember server");
-                yes_no(ui, "Continue", "Cancel").map(|accept| Answer::Security {
-                    accept,
-                    remember: form.remember,
-                })
-            }
+            } => identity_prompt(ui, form, address, *identity, *encryption, signature, catchphrase, matching_address)
+                .map(|(accept, remember)| Answer::Security { accept, remember }),
             Prompt::Message {
                 text,
                 severity,
@@ -252,6 +232,11 @@ pub fn show(ctx: &egui::Context, prompt: &Prompt, form: &mut Form, address: &str
         form.reset();
         return Some(match prompt {
             Prompt::Credentials { .. } => Answer::Credentials(None),
+            Prompt::Trust { fingerprint, .. } => Answer::Pin {
+                accept: false,
+                remember: false,
+                fingerprint: fingerprint.clone(),
+            },
             Prompt::Security { .. } => Answer::Security {
                 accept: false,
                 remember: false,
@@ -268,6 +253,59 @@ fn heading(ui: &mut Ui, title: &str, address: &str) {
         ui.label(RichText::new(address).weak());
     }
     ui.add_space(8.0);
+}
+
+/// The identity question, `PromptDialogs.trust`: why it is asked, whether the
+/// link is encrypted, what identifies the far end, and *remember server*.
+/// Both RealVNC's security prompt and a certificate the known hosts did not
+/// match are this one; what was answered, and whether to remember it.
+#[allow(clippy::too_many_arguments)]
+fn identity_prompt(
+    ui: &mut Ui,
+    form: &mut Form,
+    address: &str,
+    identity: Identity,
+    encryption: Encryption,
+    signature: &str,
+    catchphrase: &str,
+    matching_address: &str,
+) -> Option<(bool, bool)> {
+    heading(ui, "Connect anyway?", address);
+    // OK, PRESHARED and ARD say nothing: this prompt is up because something
+    // else about the connection is worth asking about.
+    let why = match identity {
+        Identity::Changed => {
+            "This server's identity has changed since you last connected. It may not be the same machine.".to_string()
+        }
+        Identity::MatchesAnother => format!(
+            "This server's identity belongs to {}, which you have connected to before.",
+            if matching_address.is_empty() {
+                "a different address"
+            } else {
+                matching_address
+            }
+        ),
+        Identity::New => "You have not connected to this server before.".to_string(),
+        Identity::Missing => "This server does not have a verifiable identity.".to_string(),
+        Identity::Ok | Identity::Preshared | Identity::Ard => String::new(),
+    };
+    if !why.is_empty() {
+        ui.label(why);
+        ui.add_space(6.0);
+    }
+    if encryption == Encryption::UnencryptedWarn {
+        ui.label("The connection is not encrypted.");
+        ui.add_space(6.0);
+    }
+    if !catchphrase.is_empty() {
+        ui.label(format!("Catchphrase: {catchphrase}"));
+    }
+    if !signature.is_empty() {
+        ui.label(format!("Signature: {signature}"));
+    }
+    ui.add_space(6.0);
+    ui.checkbox(&mut form.remember, "Remember server");
+    yes_no(ui, "Continue", "Cancel").map(|accept| (accept, form.remember))
 }
 
 /// Only the fields the scheme actually has: a scheme with no user name gets

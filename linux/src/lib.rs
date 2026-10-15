@@ -10,6 +10,7 @@ pub mod backends;
 pub mod events;
 mod ffi;
 pub mod gui;
+pub mod known_hosts;
 pub mod options;
 pub mod ppm;
 

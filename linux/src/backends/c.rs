@@ -568,6 +568,20 @@ impl Backend for CBackend {
         }
     }
 
+    #[cfg(realvnc)]
+    fn saved_identity(&self) -> Option<String> {
+        self.answer_security?;
+        // Only RealVNC's sessions have an answer_security, and only theirs
+        // have this call.
+        let raw = unsafe { ffi::vento_realvnc_identity_saved(self.session.session) };
+        if raw.is_null() {
+            return None;
+        }
+        let identity = unsafe { string(raw) };
+        unsafe { ffi::free(raw as *mut c_void) };
+        (!identity.is_empty()).then_some(identity)
+    }
+
     fn disconnect(&self) {
         self.session.disconnect();
     }

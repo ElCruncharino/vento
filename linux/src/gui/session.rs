@@ -54,8 +54,9 @@ use super::settings::Settings;
 use super::view::{Layout, View};
 use super::{Host, Request};
 use crate::backend::Backend;
-use crate::backends::{Connect, Dirs};
-use crate::events::{Cursor, Event, Mailbox, State};
+use crate::backends::{self, Connect, Dirs, Pinned};
+use crate::events::{Cursor, Event, Identity, Mailbox, State};
+use crate::known_hosts::{self, KnownHosts, Store, Verdict};
 use crate::options::Options;
 use egui::{
     Align2, Color32, CursorIcon, Frame, Id, LayerId, Order, PointerButton, Pos2, Rect, Response, Sense,
@@ -134,6 +135,12 @@ pub struct Session {
     follower: Follower,
     prompts: VecDeque<Prompt>,
     form: Form,
+    /// The pins a certificate is checked against, and what this session's
+    /// are pinned as.
+    known_hosts: KnownHosts,
+    pinned: Pinned,
+    /// Where RealVNC's remembered identity is kept, by address.
+    identities: Store,
     cursor: Option<CursorShape>,
     /// The far end's cursor as the window's own, where that is wanted.
     native: Native,
@@ -213,6 +220,7 @@ impl Session {
         let backend = (request.kind.create)(&connect)?;
         let title = request.address.clone();
         let live = request.options.clone();
+        let pinned = backends::pinned_as(request.kind, &request.address, &request.options);
         Ok(Session {
             request,
             settings,
@@ -231,6 +239,9 @@ impl Session {
             follower: Follower::default(),
             prompts: VecDeque::new(),
             form: Form::default(),
+            known_hosts: KnownHosts::in_dir(&dirs.config),
+            pinned,
+            identities: known_hosts::realvnc_identities(&dirs.config),
             cursor: None,
             native: Native::default(),
             native_key: None,
@@ -366,6 +377,7 @@ impl Session {
                     // words the library closed with.
                     self.closed = Some(if self.disconnecting.is_some() { String::new() } else { detail });
                 }
+                Event::TrustNeeded { fingerprint } => self.trust_needed(fingerprint),
                 other => {
                     if let Some(prompt) = Prompt::from_event(&other) {
                         self.prompts.push_back(prompt);
@@ -1244,6 +1256,46 @@ impl Session {
 
     // ---- the prompts -------------------------------------------------------
 
+    /// A certificate, against what this address was accepted with before:
+    /// what each Java backend's `onTrustNeeded` does. A match is silent, a
+    /// RustDesk key never seen is pinned without asking, and anything else
+    /// is put to the person with why.
+    fn trust_needed(&mut self, fingerprint: String) {
+        let key = &self.pinned.key;
+        match self.known_hosts.verdict(key, &fingerprint) {
+            Verdict::Matches => {
+                log::info!("certificate matches the pin for {key}");
+                self.backend.answer_trust(true);
+            }
+            // Pinned under this key is the one case that is still asked.
+            Verdict::Ask { identity, .. } if self.pinned.first_sight_silent && identity != Identity::Changed => {
+                self.pin(&fingerprint);
+                self.backend.answer_trust(true);
+            }
+            Verdict::Ask {
+                identity,
+                matching_address,
+            } => {
+                log::info!("asking about the certificate for {key}: {identity:?}");
+                self.prompts.push_back(Prompt::Trust {
+                    fingerprint,
+                    identity,
+                    matching_address,
+                });
+            }
+        }
+    }
+
+    /// A store that cannot be written costs the next connection a question,
+    /// not this one its answer, so a failure is a line in the log.
+    fn pin(&self, fingerprint: &str) {
+        let key = &self.pinned.key;
+        match self.known_hosts.pin(key, fingerprint) {
+            Ok(()) => log::info!("pinned {key}"),
+            Err(e) => log::warn!("could not pin {key} in {}: {e}", self.known_hosts.path().display()),
+        }
+    }
+
     fn prompt(&mut self, ctx: &egui::Context) {
         let Some(prompt) = self.prompts.front().cloned() else {
             return;
@@ -1254,6 +1306,17 @@ impl Session {
             match answer {
                 Answer::Credentials(credentials) => self.backend.answer_credentials(credentials),
                 Answer::Trust(accept) => self.backend.answer_trust(accept),
+                Answer::Pin {
+                    accept,
+                    remember,
+                    fingerprint,
+                } => {
+                    // `KnownHosts.ask`'s deliver: pinned only when both.
+                    if accept && remember {
+                        self.pin(&fingerprint);
+                    }
+                    self.backend.answer_trust(accept);
+                }
                 Answer::Security { accept, remember } => self.backend.answer_security(accept, remember),
             }
         }
@@ -1277,6 +1340,15 @@ impl Session {
         }
         if self.closed.is_none() {
             self.backend.disconnect();
+        }
+        // `RealVncBackend.saveIdentity`: kept by the address as written, for
+        // the next session to hand back.
+        if let Some(identity) = self.backend.saved_identity() {
+            let address = &self.request.address;
+            match self.identities.set(address, &identity) {
+                Ok(()) => log::info!("remembered RealVNC's identity for {address}"),
+                Err(e) => log::warn!("could not keep the identity for {address} in {}: {e}", self.identities.path().display()),
+            }
         }
         self.backend.destroy();
     }
