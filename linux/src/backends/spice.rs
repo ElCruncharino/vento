@@ -102,6 +102,12 @@ impl Backend for Spice {
         self.session.client.set_clipboard(text.to_string());
     }
 
+    /// Only through the guest's agent, and only once it has said it takes
+    /// one; the panel's "Guest agent" row is the same fact in words.
+    fn carries_clipboard(&self) -> Option<bool> {
+        Some(self.session.client.has_clipboard())
+    }
+
     fn request_desktop_size(&self, width: u32, height: u32) {
         if width > 0 && height > 0 {
             self.session.client.request_desktop_size(width, height);

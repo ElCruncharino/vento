@@ -135,9 +135,21 @@ with a cancel, since a second prompt is the far end refusing the first answer
 authentication failed and leaves with 1. The clipboard settings hold in the
 probe too: under `--no-clipboard-in` what the far end copies is printed as its
 size alone, and `--clipboard` with `--no-clipboard-out` is refused as a
-contradiction (status 2). The probe's exit status is zero only
-if it connected and everything asked for happened. `--verbose` lets the backends' debug lines through (and not the GUI
-stack's, which would be tens of thousands a minute).
+contradiction (status 2).
+
+The probe's exit status is 0 only if it connected within `--connect-timeout`,
+stayed connected for the time asked, wrote the framebuffer and the thumbnail
+where `--out` asked for them, and closed within 10 s of disconnecting; it is 1
+otherwise, and 2 for a command line it refused. `--click`, `--key` and
+`--clipboard` are sent, not confirmed: no protocol here says input arrived, so
+0 says they went out on a live session and nothing more. What can be known in
+advance is refused (status 2): any of the three under `-o ViewOnly=true`,
+where every backend drops input. And `--clipboard` fails the run (1) where the
+backend can tell the text went nowhere, which today is SPICE without a guest
+agent that takes a clipboard.
+
+`--verbose` lets the backends' debug lines through (and not the GUI stack's,
+which would be tens of thousands a minute).
 
 ## The window
 

@@ -14,7 +14,10 @@
 //! each C session through the neutral API — which connects, prints every
 //! event, answers the prompts from the flags, writes the framebuffer and a
 //! thumbnail, prints the facts, and leaves with a status that is zero only
-//! if it connected and everything asked for happened.
+//! if it connected, stayed connected, wrote what `--out` asked for and
+//! closed when told to. Input is sent and not confirmed, since no protocol
+//! confirms it; what can be known — input asked for in view only, a
+//! clipboard the backend says has nowhere to go — fails it.
 
 fn main() {
     std::process::exit(host::run(std::env::args().skip(1).collect()));
@@ -310,6 +313,11 @@ headless, any of which selects the probe instead of the window:
         if clipboard.is_some() && !settings.clipboard_out {
             return Err("--clipboard sends text to the far end, which --no-clipboard-out says not to".into());
         }
+        // Nor can input be asked for in view only, where every backend drops
+        // it without a word: the probe would report a click it never sent.
+        if options.bool("ViewOnly") && (click.is_some() || key.is_some() || clipboard.is_some()) {
+            return Err("-o ViewOnly=true sends no input or clipboard, so --click, --key and --clipboard cannot happen".into());
+        }
         Ok(Mode::Probe(Box::new(Probe {
             kind,
             address: positional.remove(1),
@@ -432,6 +440,12 @@ headless, any of which selects the probe instead of the window:
                 } else {
                     self.facts(&backend, &say);
                     if self.out.is_some() && !self.write_pictures(&backend, &say) {
+                        status = 1;
+                    }
+                    // Asked at the end rather than when it was sent, since an
+                    // agent that comes up late still gets the offer.
+                    if self.clipboard.is_some() && backend.carries_clipboard() == Some(false) {
+                        say("clipboard not carried: the far end has nowhere to put it");
                         status = 1;
                     }
                 }

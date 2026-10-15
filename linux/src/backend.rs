@@ -284,6 +284,16 @@ pub trait Backend: Send + Sync {
     /// What this end has copied, offered to the far end.
     fn clipboard(&self, text: &str);
 
+    /// Whether a clipboard offered now has somewhere to go at the far end,
+    /// where the session can know: `Some(false)` is the backend saying it
+    /// would go nowhere, as SPICE does with no guest agent that takes one.
+    /// `None`, the default, is a protocol that carries the clipboard as a
+    /// message and is not told what became of it. Not in `Backend.java`,
+    /// whose app has no use for it; the probe's status does.
+    fn carries_clipboard(&self) -> Option<bool> {
+        None
+    }
+
     /// Ask the far end to make the desktop this size. A request: what
     /// actually happened arrives as a desktop size, or as nothing at all.
     fn request_desktop_size(&self, width: u32, height: u32) {

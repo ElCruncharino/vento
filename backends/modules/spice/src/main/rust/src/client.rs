@@ -111,6 +111,10 @@ pub struct Client {
     /// about this session rather than about the protocol — so the seam polls it
     /// and it can turn true seconds after the picture arrives.
     resizable: Arc<AtomicBool>,
+    /// Whether the guest's agent is there and takes a clipboard, the same
+    /// kind of fact: without it an offered clipboard goes nowhere, and only
+    /// this end can say so.
+    clipboard: Arc<AtomicBool>,
     /// What `close` rings. The command queue says the same, but only the
     /// running session reads it: everything before that — four dials, four
     /// links, a TLS handshake each — is a step with a deadline and nothing
@@ -132,6 +136,7 @@ impl Client {
             view_only: Arc::new(AtomicBool::new(false)),
             monitors: Arc::new(Mutex::new(Vec::new())),
             resizable: Arc::new(AtomicBool::new(false)),
+            clipboard: Arc::new(AtomicBool::new(false)),
             closing: tokio::sync::Notify::new(),
         }
     }
@@ -166,6 +171,12 @@ impl Client {
     /// protocol means a guest with the agent running in it.
     pub fn can_resize(&self) -> bool {
         self.resizable.load(Ordering::Relaxed)
+    }
+
+    /// Whether a clipboard offered now has somewhere to go, which for this
+    /// protocol means a guest whose agent has said it takes one.
+    pub fn has_clipboard(&self) -> bool {
+        self.clipboard.load(Ordering::Relaxed)
     }
 
     /// Ask the guest for a desktop this size. A request: what answers it is a
@@ -655,6 +666,7 @@ impl Session<'_> {
                 // do goes with it, so the panel and `canResize` both change.
                 self.agent.disconnected();
                 self.client.resizable.store(false, Ordering::Relaxed);
+                self.client.clipboard.store(false, Ordering::Relaxed);
                 self.client.info.lock().unwrap().agent = "Not running".into();
             }
             main_server::AGENT_TOKEN => {
@@ -715,6 +727,9 @@ impl Session<'_> {
     /// clipboard and one without — and the place somebody finds out why Paste
     /// does nothing.
     fn describe_agent(&self) {
+        self.client
+            .clipboard
+            .store(self.agent.has_clipboard(), Ordering::Relaxed);
         let mut what = Vec::new();
         if self.agent.has_clipboard() {
             what.push("clipboard");
