@@ -158,7 +158,9 @@ that ends goes back to the dialog, filled in with what it was connected to and,
 unless the disconnect was asked for, told why it ended — and to a window, if
 the session had gone fullscreen. The window's title is the desktop's name once
 the protocol has said it, and rings the bell by putting one in the title for a
-moment.
+moment — unless the backend's Bell option (`AcceptBell`, on the VNC backends)
+is off, in which case a bell is dropped before the window or the probe sees
+it.
 
 Disconnecting, or closing the window, ends a session at once, including one
 that is still connecting: every backend's dial and handshake give way to it,

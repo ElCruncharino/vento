@@ -233,7 +233,7 @@ impl Session {
             dirs,
             screen: Some(screen),
         };
-        let backend = (request.kind.create)(&connect)?;
+        let backend = request.kind.start(&connect)?;
         let title = request.address.clone();
         let live = request.options.clone();
         // What the backend was created with, which it already acts on: the

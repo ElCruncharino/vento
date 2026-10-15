@@ -293,6 +293,9 @@ struct Inner {
     height: usize,
     state: State,
     pointer_relative: bool,
+    /// `AcceptBell`, for the backends that have it; see
+    /// [`Mailbox::accept_bell`].
+    accept_bell: bool,
 }
 
 /// Where a session's events go, and what they have said so far.
@@ -315,6 +318,7 @@ impl Mailbox {
                 height: 0,
                 state: State::Connecting,
                 pointer_relative: false,
+                accept_bell: true,
             }),
             ready: Condvar::new(),
             wake,
@@ -482,7 +486,18 @@ impl Mailbox {
         self.push(Event::PointerMode { relative });
     }
 
+    /// Whether a bell from the far end is passed on at all. Off, it never
+    /// reaches the queue, which is the Java backends' `onBell` returning
+    /// early when `AcceptBell` is off — done once here, for every backend,
+    /// rather than in each adapter, the library ones included.
+    pub fn accept_bell(&self, accept: bool) {
+        self.inner.lock().unwrap().accept_bell = accept;
+    }
+
     pub fn on_bell(&self) {
+        if !self.inner.lock().unwrap().accept_bell {
+            return;
+        }
         self.push(Event::Bell);
     }
 
@@ -722,6 +737,17 @@ mod tests {
         assert_eq!(mailbox.take(), Some(Event::Frame(vec![rect(0, 0, 1, 1), rect(2, 2, 1, 1)])));
         assert_eq!(mailbox.take(), Some(Event::Bell));
         assert_eq!(mailbox.take(), None);
+    }
+
+    #[test]
+    fn a_bell_not_accepted_is_never_queued() {
+        let mailbox = Mailbox::new(None);
+        mailbox.accept_bell(false);
+        mailbox.on_bell();
+        assert_eq!(mailbox.take(), None);
+        mailbox.accept_bell(true);
+        mailbox.on_bell();
+        assert_eq!(mailbox.take(), Some(Event::Bell));
     }
 
     #[test]

@@ -399,7 +399,7 @@ headless, any of which selects the probe instead of the window:
                     screen: None,
                 };
                 say("create");
-                match (self.kind.create)(&connect) {
+                match self.kind.start(&connect) {
                     Ok(backend) => backend,
                     Err(why) => {
                         say(&format!("create failed: {why}"));

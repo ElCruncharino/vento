@@ -186,11 +186,29 @@ pub struct Kind {
     pub options: &'static [Spec],
     /// The one call that proves the whole path: what the library says it is.
     pub version: fn() -> String,
+    /// The backend's own constructor; sessions are started with
+    /// [`Kind::start`], which wraps it.
     pub create: fn(&Connect) -> Result<Arc<dyn Backend>, String>,
 }
 
 /// Every backend this binary has, in the picker's order. RealVNC is here
 /// only when `build.rs` found clang to build its hosting layer with.
+impl Kind {
+    /// Starts a session on this backend: its `create`, after what is the
+    /// same for every backend that has the option. `AcceptBell` is that: the
+    /// adapters and the libraries behind the vtable hand a bell over whatever
+    /// the option says, so it is dropped at the mailbox instead, once for
+    /// all of them. (RealVNC's core is told as well, since its library has a
+    /// switch of its own.) The option is not live, as the Providers have it,
+    /// so this is once per session.
+    pub fn start(&self, connect: &Connect) -> Result<Arc<dyn Backend>, String> {
+        if self.options.iter().any(|s| s.key == "AcceptBell") {
+            connect.mailbox.accept_bell(connect.options.bool("AcceptBell"));
+        }
+        (self.create)(connect)
+    }
+}
+
 pub fn all() -> Vec<&'static Kind> {
     let mut kinds = vec![
         &rfb::KIND,
