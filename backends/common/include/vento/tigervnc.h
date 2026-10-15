@@ -32,6 +32,14 @@ typedef struct vento_tigervnc_config {
     bool h264;               /* whether to offer H.264 at all */
     bool audio;              /* whether to ask for the server's sound, for the session */
     int connect_timeout_ms;  /* 0 or less for no deadline */
+    /* Whether the caller keeps the pins. False (the phone): a certificate is
+       checked the way TigerVNC's viewer checks it, against its known-hosts
+       file under the state directory, and asked about through `question`.
+       True (the Linux client): that file is neither read nor written, and a
+       certificate that did not verify goes to `trust_needed` as its SHA-256
+       fingerprint, in `openssl x509 -fingerprint -sha256`'s form, as libvnc's
+       does — the caller's store has the answer, or a person does. */
+    bool caller_pins;
 } vento_tigervnc_config;
 
 /* "TigerVNC x.y.z" — the one call that proves the whole path. */
@@ -40,7 +48,8 @@ const char *vento_tigervnc_version(void);
 /* Where the client may keep the certificates a person has accepted: the
    directory TigerVNC's own `tigervnc/` goes under, found the way its viewer
    finds it, through the environment. Process-wide, and before any session —
-   the library reads it when the first certificate arrives. */
+   the library reads it when the first certificate arrives. Not needed by a
+   caller that sets `caller_pins`, for whom nothing is kept there. */
 void vento_tigervnc_set_state_dir(const char *path);
 
 /* Starts connecting and returns at once; everything after arrives through

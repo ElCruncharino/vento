@@ -3,8 +3,11 @@
 
 //! TigerVNC's `vento_tigervnc` as a [`Backend`](crate::backend::Backend):
 //! `TigerVncNative.nativeCreate`'s parameters and `TigerVncBackend`'s option
-//! handling and rows. Its state directory — where the known-hosts file goes —
-//! is set process-wide before the first session.
+//! handling and rows. Unlike the phone's, its certificates are this client's
+//! to judge: `caller_pins` has the session hand them to `trust_needed`, so
+//! they meet the [known hosts](crate::known_hosts) as every other backend's
+//! do, and TigerVNC's own known-hosts file is never read or written — which is
+//! why no state directory is given it.
 
 use super::{Behaviour, CSession, start};
 use crate::backend::{Backend, ConnectionFact, Field, Traffic};
@@ -12,7 +15,6 @@ use crate::backends::{CONNECT_TIMEOUT_MS, Connect, Kind};
 use crate::ffi;
 use crate::options::{self, Options};
 use std::ffi::CString;
-use std::sync::Once;
 
 pub static KIND: Kind = Kind {
     id: "tigervnc",
@@ -73,21 +75,8 @@ fn colour(value: &str) -> i32 {
     }
 }
 
-/// Where the client may keep accepted certificates: process-wide, once,
-/// before any session, as the C API says.
-fn set_state_dir(dir: &std::path::Path) {
-    static ONCE: Once = Once::new();
-    ONCE.call_once(|| {
-        let _ = std::fs::create_dir_all(dir);
-        if let Ok(c) = CString::new(dir.to_string_lossy().into_owned()) {
-            unsafe { ffi::vento_tigervnc_set_state_dir(c.as_ptr()) }
-        }
-    });
-}
-
 fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
     let o = c.options;
-    set_state_dir(&c.dirs.state.join("tigervnc"));
     let address = CString::new(c.address).map_err(|_| "address has a NUL")?;
     let user = (!c.user.is_empty()).then(|| CString::new(c.user).unwrap_or_default());
     let password = c.password.and_then(|p| CString::new(p).ok());
@@ -104,6 +93,7 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
         h264: o.bool("H264"),
         audio: o.bool("Audio"),
         connect_timeout_ms: CONNECT_TIMEOUT_MS,
+        caller_pins: true,
     };
     log::info!("connecting to {}", c.address);
     let backend = start(
