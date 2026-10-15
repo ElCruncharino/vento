@@ -106,11 +106,11 @@ cargo run -- rdp
 # The client's own settings, which are every connection's rather than this
 # one's: the clipboard in each direction (both on unless told otherwise), the
 # keyboard grab that sends Alt+Tab and the rest on (on unless told), and the
-# far end's cursor as the window's own (off unless told). The dialog's
-# "Settings" section has the same four.
+# far end's cursor drawn into the picture rather than made the window's own
+# (off unless told). The dialog's "Settings" section has the same four.
 cargo run -- tigervnc 127.0.0.1:5901 --no-clipboard-out --no-clipboard-in
 cargo run -- tigervnc 127.0.0.1:5901 --no-grab-keyboard
-cargo run -- tigervnc 127.0.0.1:5901 --native-cursor
+cargo run -- tigervnc 127.0.0.1:5901 --software-cursor
 
 # Straight into a session, with --connect. Without --password the credentials
 # prompt asks. Disconnecting it quits; if the far end ends it instead, the
@@ -301,8 +301,8 @@ SPICE agent.
 **Settings** are the client's own, one answer for every connection, as the
 phone's `AppSettings` has them: **Send clipboard** and **Receive clipboard**
 (both on by default; `--no-clipboard-out`, `--no-clipboard-in`), **Grab
-keyboard** (on by default; `--no-grab-keyboard`), and **Native cursor** (off
-by default; `--native-cursor`), below. Grab keyboard is whether the window
+keyboard** (on by default; `--no-grab-keyboard`), and **Software cursor** (off
+by default; `--software-cursor`), below. Grab keyboard is whether the window
 holds the window manager's or the compositor's shortcuts off at all — the X11
 keyboard grab, or Wayland's shortcuts inhibitor, below — so that Alt+Tab,
 Super and the rest reach the far end; off, neither is ever taken, and a
@@ -342,11 +342,11 @@ the device pixel it is in, so that a scaled desktop's last row and column can
 be pointed at — with an RFB button mask (left 1, middle 2, right 4) and the
 wheel as momentary presses of 8/16/32/64 (up, down, left, right); smooth
 scrolling is turned into notches of fifty points. The far end's cursor shape,
-where the protocol sends one, is drawn under the local pointer with the OS
-cursor hidden over the desktop, as the Android app does.
+where the protocol sends one, is the window's own pointer, below, unless
+**Software cursor** is on.
 
-**Native cursor** (a setting, off by default) makes that shape the window's
-own pointer instead — winit's custom cursor, created through the event loop
+**The native cursor** (the default) makes that shape the window's own
+pointer — winit's custom cursor, created through the event loop
 from the shape's pixels and hotspot and set on the window — so the
 compositor moves it, and it is as sharp as the compositor's own. It is used
 only where this end owns the pointer: in relative mode the far end draws its
@@ -358,6 +358,10 @@ or has sent none. Where the desktop is not drawn one to one the shape is
 resampled to the view's scale, nearest neighbour, and its hotspot with it;
 the log says the size and hotspot of each one set. `cursor.rs` says how this
 shares the window's cursor with egui-winit, which sets it from egui's icon.
+**Software cursor** (a setting, off by default; `--software-cursor`) draws
+the shape into the picture under the local pointer instead, with the OS
+cursor hidden over the desktop, as the Android app does; in relative mode it
+changes nothing, as there the far end draws its own.
 
 **Relative pointer mode** — the far end owning the cursor (QEMU's VNC, SPICE in
 server mode) — locks (Wayland) or hides and centres (X11) the local pointer
@@ -390,8 +394,8 @@ held, the scale mode and scale in device pixels per desktop pixel, the
 desktop's origin and size on screen; whether the mouse is captured or
 hovering, the buttons, how many keys are held at the far end, and VIEW ONLY
 when it is; the shortcuts inhibitor's state, the follower's (off, waiting
-for the far end, or the size it asked for), the cursor shape (drawn or
-native, its size and hotspot) and the two clipboard switches. The counters
+for the far end, or the size it asked for), the cursor shape (native, or
+software when that setting is on, its size and hotspot) and the two clipboard switches. The counters
 are kept whether or not it is on, and the box is a few labels a frame while
 it is.
 

@@ -23,10 +23,10 @@
 //! events do not carry the layout's idea of a key.
 //!
 //! The cursor is the one place the two pointer modes differ on screen. In
-//! absolute mode the far end sends its cursor's shape and this draws it
-//! under the local pointer, hiding the OS cursor over the desktop, as the
-//! Android app does — or, with the native cursor setting, makes it the
-//! window's own pointer (`cursor.rs`). In relative mode the far end draws
+//! absolute mode the far end sends its cursor's shape and this makes it the
+//! window's own pointer (`cursor.rs`) — or, with the software cursor
+//! setting, draws it under the local pointer, hiding the OS cursor over the
+//! desktop, as the Android app does. In relative mode the far end draws
 //! its own cursor into the picture and owns the motion, so the local
 //! pointer is captured and hidden while the window has focus and its raw
 //! motion is sent as deltas; Ctrl+Alt held together lets it go, and a click
@@ -172,8 +172,8 @@ pub struct Session {
     /// The far end's cursor as the window's own, where that is wanted.
     native: Native,
     /// The shape the window's cursor should be this frame, if the far
-    /// end's: the native cursor setting, absolute mode, the pointer over
-    /// the desktop, and a shape to show.
+    /// end's: the software cursor setting off, absolute mode, the pointer
+    /// over the desktop, and a shape to show.
     native_key: Option<Key>,
     /// What the far end said about who owns the pointer.
     relative: bool,
@@ -834,11 +834,11 @@ impl Session {
             return;
         }
         log::info!(
-            "settings: send clipboard {}, receive clipboard {}, grab keyboard {}, native cursor {}",
+            "settings: send clipboard {}, receive clipboard {}, grab keyboard {}, software cursor {}",
             on_off(settings.clipboard_out),
             on_off(settings.clipboard_in),
             on_off(settings.grab_keyboard),
-            on_off(settings.native_cursor)
+            on_off(settings.software_cursor)
         );
         self.settings = settings;
     }
@@ -920,15 +920,15 @@ impl Session {
         self.native_key = None;
         if let (Some(layout), Some(response)) = (layout, response) {
             self.pointer(ctx, &response, &layout, dt);
-            if self.settings.native_cursor {
+            if self.settings.software_cursor {
+                self.draw_cursor(ctx, &response);
+            } else {
                 // Device pixels per desktop pixel: what the shape is
                 // resampled by so that its hotspot lands where the pointer is.
                 let factor = layout.scale * pixels_per_point;
                 self.native_key = (self.hovered && !self.relative && self.connected())
                     .then(|| self.cursor.as_ref().map(|c| Key::new(c.hash, factor)))
                     .flatten();
-            } else {
-                self.draw_cursor(ctx, &response);
             }
         }
 
@@ -1081,10 +1081,10 @@ impl Session {
             Some(c) => {
                 let how = if self.native.shown().is_some() {
                     "native"
-                } else if self.settings.native_cursor {
+                } else if !self.settings.software_cursor {
                     "native (off desktop)"
                 } else {
-                    "drawn"
+                    "software"
                 };
                 format!("{how} {}x{} hot {},{}", c.source.width, c.source.height, c.source.hot_x, c.source.hot_y)
             }

@@ -21,9 +21,10 @@ pub struct Settings {
     /// Update the local clipboard with what the far end copies:
     /// `KEY_CLIPBOARD_IN`.
     pub clipboard_in: bool,
-    /// In absolute mode, make the far end's cursor shape the window's own
-    /// cursor rather than drawing it under the local pointer.
-    pub native_cursor: bool,
+    /// In absolute mode, draw the far end's cursor shape into the picture
+    /// under the local pointer, with the OS cursor hidden over the desktop,
+    /// as the phone does, rather than making it the window's own cursor.
+    pub software_cursor: bool,
     /// Hold the window manager's or the compositor's shortcuts off while a
     /// session has the focus and takes input — the X11 keyboard grab, or
     /// Wayland's shortcuts inhibitor — so that Alt+Tab and the rest reach
@@ -37,7 +38,7 @@ impl Default for Settings {
         Settings {
             clipboard_out: true,
             clipboard_in: true,
-            native_cursor: false,
+            software_cursor: false,
             grab_keyboard: true,
         }
     }
@@ -79,11 +80,11 @@ impl Settings {
         );
         row(
             ui,
-            &mut self.native_cursor,
-            "Native cursor",
-            "Use the far end's cursor shape as this window's own pointer, with its hotspot, instead of \
-             drawing it under the local one. Only where this end owns the pointer; in relative mode \
-             the far end draws its cursor into the picture.",
+            &mut self.software_cursor,
+            "Software cursor",
+            "Draw the far end's cursor shape into the picture under the pointer, hiding this desktop's \
+             own, instead of making it this window's pointer. Only where this end owns the pointer; in \
+             relative mode the far end draws its cursor into the picture either way.",
         );
         changed
     }
