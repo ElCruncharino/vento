@@ -23,6 +23,14 @@
 //   * The JNI env is per thread. The core's own thread has one from the
 //     start; the drawing thread, which calls `setScaleBufferSize` and
 //     `copyScaledRegion`, attaches itself on first use, as a JVM would ask.
+//   * Every call into the core runs in a local frame of its own. A JVM drops
+//     a native's local references when it returns, and the core relies on
+//     that: it never deletes one. Its natives here are called from C++, not
+//     from a JVM, and the looper's callbacks are not natives at all, so
+//     without a frame popped around each every local the core or a hook
+//     made stayed in the thread's top frame, which grew for the life of the
+//     process: strings, map entries and arrays, hundreds to thousands of
+//     them a minute.
 
 #include "HostedCore.h"
 
@@ -135,6 +143,20 @@ struct Natives {
 class DesktopCore;
 DesktopCore *theCore = nullptr;
 
+/* A local frame for the length of a scope, which is what a JVM gives every
+   native call. Whatever has to outlive it is held by a `shared_ptr` of our
+   own (the session's handle and buffer) or copied out (a string). */
+class LocalFrame {
+public:
+    explicit LocalFrame(JNIEnv *env) : env_(env) { env_->PushLocalFrame(16); }
+    ~LocalFrame() { env_->PopLocalFrame(nullptr); }
+    LocalFrame(const LocalFrame &) = delete;
+    LocalFrame &operator=(const LocalFrame &) = delete;
+
+private:
+    JNIEnv *env_;
+};
+
 class DesktopSession : public HostedSession {
 public:
     DesktopSession(DesktopCore *core, jobject handle, std::shared_ptr<SessionHandle> object)
@@ -164,6 +186,8 @@ public:
     bool open(const std::string &libraryDir, const Bootstrap &bootstrap, std::string *why);
 
     void pollOnce(int timeoutMs) override {
+        // The looper's callbacks are the core's, and call back into the hooks.
+        const LocalFrame frame(jenv_);
         looper_->pollOnce(timeoutMs, nullptr, nullptr, nullptr);
     }
 
@@ -172,6 +196,7 @@ public:
     HostedSession *createSession(Listener *listener, const std::string &address,
                                  const char *password, const Options &options) override {
         JNIEnv *env = jenv_;
+        const LocalFrame frame(env);
         auto scb = std::make_shared<SessionCallback>();
         scb->listener = listener;
         auto dcb = std::make_shared<DesktopCallback>();
@@ -196,21 +221,26 @@ public:
         }
         auto shared = std::static_pointer_cast<SessionHandle>(object->shared_from_this());
         owners_[object->token] = listener;
-        auto *s = new DesktopSession(this, handle, shared);
+        // The object itself rather than `handle`, which is a local reference
+        // and gone with the frame; `shared` keeps the object alive.
+        auto *s = new DesktopSession(this, (jobject) static_cast<jnivm::Object *>(object), shared);
         sessions_.push_back(s);
         return s;
     }
 
     void passwdResult(int64_t cookie, bool ok, const char *userName, const char *password) override {
+        const LocalFrame frame(jenv_);
         natives_.passwdResult(jenv_, nullptr, cookie, ok, userName ? jenv_->NewStringUTF(userName) : nullptr,
                               password ? jenv_->NewStringUTF(password) : nullptr);
     }
 
     void securityResult(int64_t cookie, bool accept, bool saveIdentity, bool saveEncryption) override {
+        const LocalFrame frame(jenv_);
         natives_.securityResult(jenv_, nullptr, cookie, accept, saveIdentity, saveEncryption);
     }
 
     void msgBoxResult(int64_t cookie, bool ok) override {
+        const LocalFrame frame(jenv_);
         natives_.msgBoxResult(jenv_, nullptr, cookie, ok);
     }
 
@@ -263,14 +293,17 @@ private:
 // ---- the session's natives -------------------------------------------------------------
 
 void DesktopSession::focusEvent(bool focused) {
+    const LocalFrame frame(core_->env());
     core_->natives().focusEvent(core_->env(), nullptr, handle_, focused);
 }
 
 void DesktopSession::pointerEvent(int x, int y, int buttonMask) {
+    const LocalFrame frame(core_->env());
     core_->natives().pointerEvent(core_->env(), nullptr, handle_, x, y, buttonMask);
 }
 
 void DesktopSession::keyDownEvent(int64_t keysym, int keycode) {
+    const LocalFrame frame(core_->env());
     core_->natives().keyDownEvent(core_->env(), nullptr, handle_, keysym, keycode);
     if (core_->env()->ExceptionCheck()) {
         // A keysym that does not fit in 31 bits, which the core throws about.
@@ -280,24 +313,30 @@ void DesktopSession::keyDownEvent(int64_t keysym, int keycode) {
 }
 
 void DesktopSession::keyUpEvent(int keycode) {
+    const LocalFrame frame(core_->env());
     core_->natives().keyUpEvent(core_->env(), nullptr, handle_, keycode);
 }
 
 void DesktopSession::setOption(const std::string &name, const std::string &value) {
     JNIEnv *env = core_->env();
+    const LocalFrame frame(env);
     core_->natives().setOption(env, nullptr, handle_, env->NewStringUTF(name.c_str()),
                                env->NewStringUTF(value.c_str()));
 }
 
 void DesktopSession::applyOptions() {
+    const LocalFrame frame(core_->env());
     core_->natives().applyOptions(core_->env(), nullptr, handle_);
 }
 
 void DesktopSession::closeSession() {
+    const LocalFrame frame(core_->env());
     core_->natives().closeSession(core_->env(), nullptr, handle_);
 }
 
 std::string DesktopSession::info(Info which) {
+    // Copied out before the frame goes, which takes the string with it.
+    const LocalFrame frame(core_->env());
     jstring s = core_->natives().info[(int) which](core_->env(), nullptr, handle_);
     auto *str = unwrap<jnivm::String>(s);
     return str ? std::string(*str) : std::string();
@@ -305,6 +344,7 @@ std::string DesktopSession::info(Info which) {
 
 uint8_t *DesktopSession::setScaleBufferSize(int width, int height) {
     JNIEnv *env = core_->envForThisThread();
+    const LocalFrame frame(env);
     jobject bb = core_->natives().setScaleBufferSize(env, nullptr, handle_, width, height);
     auto *buffer = unwrap<jnivm::ByteBuffer>(bb);
     if (!buffer || !buffer->buffer || buffer->capacity < (jlong) width * height * 4) {
@@ -316,6 +356,7 @@ uint8_t *DesktopSession::setScaleBufferSize(int width, int height) {
 
 bool DesktopSession::copyScaledRegion(int x, int y, int width, int height, float scale) {
     JNIEnv *env = core_->envForThisThread();
+    const LocalFrame frame(env);
     core_->natives().copyScaledRegion(env, nullptr, handle_, x, y, width, height, scale);
     if (env->ExceptionCheck()) {
         env->ExceptionClear();
