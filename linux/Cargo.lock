@@ -3925,7 +3925,6 @@ name = "remotedesktop-spice"
 version = "0.0.1"
 dependencies = [
  "flate2",
- "jni",
  "log",
  "remotedesktop-common",
  "remotedesktop-platform-android",

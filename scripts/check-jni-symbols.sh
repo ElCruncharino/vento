@@ -44,7 +44,7 @@ MODULES=(
     "freerdp:net/pgaskin/remotedesktop/backend/freerdp/FreeRdpNative:remotedesktop_freerdp:cmake:exported"
     "realvnc:net/pgaskin/remotedesktop/backend/realvnc/RealVncTraffic:remotedesktop_realvnc:cmake:exported"
     "rustdesk:net/pgaskin/remotedesktop/backend/rustdesk/RustDeskNative:remotedesktop_rustdesk:cargo:exported"
-    "spice:net/pgaskin/remotedesktop/backend/spice/SpiceNative:remotedesktop_spice:cargo:exported"
+    "spice:net/pgaskin/remotedesktop/backend/spice/SpiceNatives:remotedesktop_spice:cargo:registered"
 )
 
 # The class every registered library calls back, compiled once in :backends.

@@ -8,6 +8,7 @@ import android.content.Context;
 import net.pgaskin.remotedesktop.backend.Backend;
 import net.pgaskin.remotedesktop.backend.BackendOption;
 import net.pgaskin.remotedesktop.backend.BackendProvider;
+import net.pgaskin.remotedesktop.backend.NativeBackend;
 
 import java.util.List;
 import java.util.Map;
@@ -17,12 +18,14 @@ import java.util.Map;
  * called and what it can be told are the catalog's, which the Linux client
  * reads too: {@link SpiceCatalog}, generated from {@code backends/session} at
  * build time, holds the words and the option keys.
+ *
+ * <p>A session is a {@link NativeBackend} on {@link SpiceNatives}, generated
+ * too: the client in {@code src/main/rust} as a {@code session::Backend}.
+ * Nothing about SPICE on this side of the boundary needs a hook — a ticket
+ * prompt has no user name because the session says so, and a pin exists only
+ * for a TLS session because only a TLS session asks.
  */
 public final class SpiceProvider implements BackendProvider {
-
-    /** {@code Security}'s two values, which are two different ports. */
-    public static final String PLAIN = "plain";
-    public static final String TLS = "tls";
 
     @Override
     public String id() {
@@ -57,6 +60,7 @@ public final class SpiceProvider implements BackendProvider {
     @Override
     public Backend create(Context context, String address, String userName, String password,
                           Map<String, String> options) {
-        return new SpiceBackend(context, address, userName, password, options);
+        return new NativeBackend(context, "Spice", SpiceCatalog.OPTIONS, new SpiceNatives(),
+                NativeBackend.Hooks.NONE, address, userName, password, options);
     }
 }

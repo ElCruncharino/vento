@@ -33,17 +33,19 @@
 //! decoder produces was compared with `remote-viewer`'s own picture, pixel for
 //! pixel, before any of this was written.
 
-/// The JNI half: the entry points the Java in this module declares, in front
-/// of a `common::Session`. Android only — everything above is the protocol,
-/// and it builds and tests on the host with none of this compiled.
 // The protocol as the clients hold it: a `session::Backend`, with this
-// backend's options read into its config and its rows. The Linux client's for
-// now; the phone still has `bindings` and its Java twin.
-#[cfg(not(target_os = "android"))]
+// backend's options read into its config and its rows — the window's on
+// Linux, and the phone's through the one JNI layer below.
 pub mod backend;
 
+// The library the app loads: this backend, registered on the module's
+// generated natives class. Android only — everything else is the protocol, and
+// it builds and tests on the host with none of this compiled.
 #[cfg(target_os = "android")]
-mod bindings;
+platform_android::natives!(
+    class = c"net/pgaskin/remotedesktop/backend/spice/SpiceNatives",
+    kind = backend::KIND,
+);
 
 mod agent;
 mod channel;
