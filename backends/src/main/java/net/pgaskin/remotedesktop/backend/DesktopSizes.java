@@ -58,26 +58,6 @@ public final class DesktopSizes {
         prefs(ctx).edit().putString(key(address), width + "x" + height).apply();
     }
 
-    /**
-     * The hooks a backend that asks for a size gives {@link NativeBackend}:
-     * the last size as what {@code DesktopSize=remote} asks for, and every size
-     * the far end reports remembered for next time.
-     */
-    public static NativeBackend.Hooks hooks(Context ctx, String address) {
-        final Context app = ctx.getApplicationContext();
-        return new NativeBackend.Hooks() {
-            @Override
-            public int[] lastDesktopSize() {
-                return remembered(app, address);
-            }
-
-            @Override
-            public void desktopSize(int width, int height) {
-                remember(app, address, width, height);
-            }
-        };
-    }
-
     /** {@code 1920x1200} as its two numbers, or null. */
     public static int[] parse(String value) {
         if (value == null) {

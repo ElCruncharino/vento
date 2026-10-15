@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The IronRDP client as a [`Backend`](session::backend::Backend): the twin
-//! of this crate's `bindings/mod.rs`, with `IronRdpBackend.java`'s option
-//! handling and its rows.
+//! The IronRDP client as a [`Backend`](session::backend::Backend), with this
+//! backend's option handling and its rows: what the Linux client holds, and
+//! what the phone reaches through `platform_android`'s JNI layer.
 
 use crate::{Client, Config, Nla, Platform};
 use common::{Bridge, Session};

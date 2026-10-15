@@ -12,6 +12,7 @@ import android.util.Log;
 import net.pgaskin.remotedesktop.backend.Backend;
 import net.pgaskin.remotedesktop.backend.ConnectionFact;
 import net.pgaskin.remotedesktop.backend.CursorCache;
+import net.pgaskin.remotedesktop.backend.DesktopSizes;
 import net.pgaskin.remotedesktop.backend.KnownHosts;
 import net.pgaskin.remotedesktop.backend.Monitor;
 import net.pgaskin.remotedesktop.backend.Prompt;
@@ -33,7 +34,7 @@ import java.util.function.Consumer;
  * pipeline to be built against that one, fail, and be rolled back with nothing
  * able to say whether the library or the server was wrong.
  *
- * <p>Where it differs from {@code IronRdpBackend}, the library is why:
+ * <p>Where it differs from the IronRDP backend, the library is why:
  *
  * <ul>
  *   <li><b>Credentials are asked for by the library.</b> The other client is

@@ -3840,7 +3840,6 @@ dependencies = [
  "ironrdp-pdu",
  "ironrdp-session",
  "ironrdp-svc",
- "jni",
  "log",
  "remotedesktop-common",
  "remotedesktop-platform-android",

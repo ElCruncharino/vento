@@ -40,7 +40,7 @@ MODULES=(
     "rfb:net/pgaskin/remotedesktop/backend/rfb/RfbNatives:remotedesktop_rfb:cargo:registered"
     "libvnc:net/pgaskin/remotedesktop/backend/libvnc/LibVncNative:remotedesktop_libvnc:cmake:exported"
     "tigervnc:net/pgaskin/remotedesktop/backend/tigervnc/TigerVncNative:remotedesktop_tigervnc:cmake:exported"
-    "ironrdp:net/pgaskin/remotedesktop/backend/ironrdp/IronRdpNative:remotedesktop_ironrdp:cargo:exported"
+    "ironrdp:net/pgaskin/remotedesktop/backend/ironrdp/IronRdpNatives:remotedesktop_ironrdp:cargo:registered"
     "freerdp:net/pgaskin/remotedesktop/backend/freerdp/FreeRdpNative:remotedesktop_freerdp:cmake:exported"
     "realvnc:net/pgaskin/remotedesktop/backend/realvnc/RealVncTraffic:remotedesktop_realvnc:cmake:exported"
     "rustdesk:net/pgaskin/remotedesktop/backend/rustdesk/RustDeskNative:remotedesktop_rustdesk:cargo:exported"
