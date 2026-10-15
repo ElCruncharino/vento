@@ -34,11 +34,13 @@ typedef struct vento_tigervnc_config {
     int connect_timeout_ms;  /* 0 or less for no deadline */
     /* Whether the caller keeps the pins. False (the phone): a certificate is
        checked the way TigerVNC's viewer checks it, against its known-hosts
-       file under the state directory, and asked about through `question`.
-       True (the Linux client): that file is neither read nor written, and a
-       certificate that did not verify goes to `trust_needed` as its SHA-256
-       fingerprint, in `openssl x509 -fingerprint -sha256`'s form, as libvnc's
-       does — the caller's store has the answer, or a person does. */
+       file under the state directory, and asked about through `question` —
+       one that verified as well, once, where their viewer would not ask.
+       True (the Linux client): that file is neither read nor written, and
+       every certificate, one that verified included, goes to `trust_needed`
+       as its SHA-256 fingerprint, in `openssl x509 -fingerprint -sha256`'s
+       form, as libvnc's does — the caller's store has the answer, or a
+       person does. */
     bool caller_pins;
 } vento_tigervnc_config;
 

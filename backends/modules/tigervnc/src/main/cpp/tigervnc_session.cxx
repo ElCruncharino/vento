@@ -31,7 +31,8 @@
 //      a spinner for as long as the kernel keeps retrying. TcpSocket adopts the
 //      descriptor afterwards, so everything above that is theirs.
 //   5. The certificate check. Their library hands a certificate that did not
-//      verify to the client and stops there, and the known-hosts file, the
+//      verify to the client and stops there (and, patched, one that did, so
+//      that it can be asked about too), and the known-hosts file, the
 //      exceptions and the questions are their viewer's — so they are here as
 //      their viewer has them, the same file in the same place and the same
 //      questions in the same words, and a person upgrading the app keeps every
@@ -1113,13 +1114,16 @@ std::string describeCertificate(const gnutls_datum_t *certificate) {
     return out;
 }
 
-// Only ever reached for a certificate that did not verify: one that did never
-// gets here, and a name that does not match is one of the problems it arrives
-// with. The rest is their viewer's trust-on-first-use, carried over whole —
-// an exception is a certificate pinned to a name in their known-hosts file,
-// one that is there already is accepted without a word, and a new one is
-// asked about once per problem and written there only when every answer was
-// yes. With `caller_pins`, everything past the refusal of what cannot be
+// Reached for every certificate, one that verified included (status 0): the
+// patch on their checkSession hands it over too, because an authority's word
+// is who the server says it is and not that it is the one reached last time,
+// so it is asked about like any other, as the other backends ask. A name that
+// does not match is one of the problems a certificate arrives with. The rest
+// is their viewer's trust-on-first-use, carried over whole — an exception is
+// a certificate pinned to a name in their known-hosts file, one that is there
+// already is accepted without a word, and a new one is asked about once per
+// problem (once, for one with none) and written there only when every answer
+// was yes. With `caller_pins`, everything past the refusal of what cannot be
 // excused is the caller's instead.
 bool Conn::verifyCertificate(unsigned int status, const uint8_t *certificate,
                              size_t length) {
@@ -1181,6 +1185,24 @@ bool Conn::verifyCertificate(unsigned int status, const uint8_t *certificate,
     const bool changed = known == GNUTLS_E_CERTIFICATE_KEY_MISMATCH;
 
     const std::string info = describeCertificate(&cert);
+    if (status == 0) {
+        // Their viewer never asks this, since their library never asked it;
+        // the words are theirs where they fit.
+        const std::string text =
+                std::string(changed ? "This host is previously known with a different certificate,"
+                                      " and the new certificate has been signed by a trusted"
+                                      " authority:"
+                                    : "This certificate has been signed by a trusted authority,"
+                                      " and this host has not been connected to before:")
+                + "\n\n" + info + "\n\n"
+                + (changed ? "Someone could be trying to impersonate the site and you should not"
+                             " continue.\n\nDo you want to make an exception for this server?"
+                           : "Do you want to connect to this server and remember its certificate?");
+        if (!s->askQuestion(changed ? "Unexpected server certificate" : "New server certificate",
+                            text.c_str())) {
+            return false;
+        }
+    }
     for (const CertificateProblem &problem : CERTIFICATE_PROBLEMS) {
         if ((status & problem.mask) == 0) {
             continue;

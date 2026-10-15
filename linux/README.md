@@ -370,11 +370,11 @@ directory (`--state-dir`, by default `$XDG_STATE_HOME/vento`):
 RealVNC's identity is the core's opaque blob rather than a fingerprint, and
 only the core can compare one, so it is not a pin and the phone does not make
 it one: the core asks its own security question, and the phone and this client
-both leave the core's store where it is. One thing is not this client's to
-judge: TigerVNC's library accepts a certificate that verifies against the
-system's certificate authorities (or TigerVNC's own
-`~/.config/tigervnc/x509_ca.pem`) and matches the name, without handing it
-over, so such a server is not asked about and not pinned.
+both leave the core's store where it is. TigerVNC's library used to accept a
+certificate that verified against the system's certificate authorities (or
+TigerVNC's own `~/.config/tigervnc/x509_ca.pem`) and matched the name without
+handing it over; a patch in `patches/tigervnc` hands it over too, so it is
+asked about and pinned like any other, here and on the phone.
 
 ### Display servers
 

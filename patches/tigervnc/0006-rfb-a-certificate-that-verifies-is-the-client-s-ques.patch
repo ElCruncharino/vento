@@ -1,0 +1,71 @@
+From afce86889456ca50bf8f82ec7c6f9d9d4cc6d3df Mon Sep 17 00:00:00 2001
+From: "Claude Opus 5.5" <noreply@anthropic.com>
+Date: Thu, 15 Oct 2026 00:44:47 -0400
+Subject: [PATCH 6/6] rfb: a certificate that verifies is the client's question
+ too
+
+checkSession returned as soon as GnuTLS said the certificate verified,
+so verifyCertificate only ever saw a certificate with something wrong
+with it. A certificate an authority vouches for, with the right name
+in it, went through without the client hearing of it: nothing checked
+against what the client has seen before, nothing remembered, and
+nothing asked.
+
+That an authority vouches for a certificate says who the server claims
+to be, not that it is the server the client reached last time, and a
+client that pins certificates has to see every one to keep that
+promise. So verifyCertificate is now called for every certificate,
+with a status of 0 for one that verified, and the viewer's own accepts
+such a certificate at once, as it always has.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/common/rfb/CConnection.h b/common/rfb/CConnection.h
+index 2408153a..3bbac241 100644
+--- a/common/rfb/CConnection.h
++++ b/common/rfb/CConnection.h
+@@ -188,8 +188,9 @@ namespace rfb {
+                                std::string* password) = 0;
+ 
+     // verifyCertificate() is called when a certificate is received from
+-    // the server. Return true if the certificate should be accepted,
+-    // and false if it should be rejected.
++    // the server, whether it verified (status is then 0) or not (status
++    // is GnuTLS's verification status). Return true if the certificate
++    // should be accepted, and false if it should be rejected.
+     virtual bool verifyCertificate(unsigned int status,
+                                    const uint8_t* certificate,
+                                    size_t length) = 0;
+diff --git a/common/rfb/CSecurityTLS.cxx b/common/rfb/CSecurityTLS.cxx
+index 9faa918f..37c5b24d 100644
+--- a/common/rfb/CSecurityTLS.cxx
++++ b/common/rfb/CSecurityTLS.cxx
+@@ -325,9 +325,10 @@ void CSecurityTLS::checkSession()
+                          err);
+   }
+ 
+-  /* Everything green? */
+-  if (status == 0)
+-    return;
++  /* A certificate that verified is handed over too, with a status of 0:
++     that an authority vouches for it says who the server claims to be, not
++     that it is the one the client reached last time, and a client that pins
++     certificates has to see every one to keep that promise. */
+ 
+   cert_list = gnutls_certificate_get_peers(session, &cert_list_size);
+   if (!cert_list_size) {
+diff --git a/vncviewer/CConn.cxx b/vncviewer/CConn.cxx
+index 8934715a..28f99832 100644
+--- a/vncviewer/CConn.cxx
++++ b/vncviewer/CConn.cxx
+@@ -473,7 +473,9 @@ bool CConn::verifyCertificate(unsigned int status,
+   std::string info;
+   size_t len;
+ 
+-  assert(status != 0);
++  /* A certificate that verified is accepted as it always was here. */
++  if (status == 0)
++    return true;
+ 
+   fatal_status = status & (~allowed_errors);
+ 
