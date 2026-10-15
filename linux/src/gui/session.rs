@@ -1361,11 +1361,11 @@ impl Session {
         self.toolbar_hovered = response.contains_pointer() || self.drag_from.is_some();
     }
 
-    /// The toolbar's buttons: Material Symbols, each with its name and its
-    /// state in its tooltip. A button with a state shows it in its icon —
-    /// one per scale mode, one each for view only on and off — and the
-    /// monitor's carries a word, the monitor or display it is on; Info,
-    /// Debug and view only are highlighted while they are on.
+    /// The toolbar's buttons: Material Symbols and no words, each with its
+    /// name and its state in its tooltip. A button with a state shows it in
+    /// its icon — one per scale mode, all monitors or one, view only on or
+    /// off — and the tooltip says the rest (which monitor or display);
+    /// Info, Debug and view only are highlighted while they are on.
     fn toolbar_items(&mut self, ui: &mut egui::Ui, host: &mut Host) {
         let connected = self.connected();
         let mode = self.view.mode;
@@ -1383,31 +1383,37 @@ impl Session {
         }
 
         let facts = &self.snapshot.facts;
+        // Several screens while showing them all, one while showing one;
+        // which one is the tooltip's to say, since a number on the icon
+        // would be the word again.
         if facts.monitors.len() > 1 {
-            let label = match self.monitor {
-                None => "All".to_string(),
-                Some(i) => format!("{}", i + 1),
-            };
+            let count = facts.monitors.len();
+            let symbol = if self.monitor.is_some() { icons::MONITOR } else { icons::TV_DISPLAYS };
             if ui
-                .add_enabled(connected, labelled(icons::MONITOR, label))
-                .on_hover_text("Monitor: show the whole desktop, or one of its monitors")
+                .add_enabled(connected, icon_only(symbol))
+                .on_hover_text(format!(
+                    "Monitor: {} — click for {}.\nThe whole desktop, or one of its monitors.",
+                    monitor_name(self.monitor, count),
+                    monitor_name(next_monitor(self.monitor, count), count),
+                ))
                 .clicked()
             {
-                self.monitor = match self.monitor {
-                    None => Some(0),
-                    Some(i) if i + 1 < facts.monitors.len() => Some(i + 1),
-                    Some(_) => None,
-                };
+                self.monitor = next_monitor(self.monitor, count);
                 self.view.pan = Vec2::ZERO;
             }
         } else if facts.displays.len() > 1 {
-            let label = format!("{} of {}", facts.display + 1, facts.displays.len());
+            let count = facts.displays.len();
+            let next = (facts.display + 1).rem_euclid(count as i32);
             if ui
-                .add_enabled(connected, labelled(icons::DESKTOP_WINDOWS, label))
-                .on_hover_text("Display: ask the far end for its next display")
+                .add_enabled(connected, icon_only(icons::MONITOR))
+                .on_hover_text(format!(
+                    "Display: {} of {count} — click for display {}.\nThe far end sends one display at a \
+                     time; a click asks it for the next.",
+                    facts.display + 1,
+                    next + 1,
+                ))
                 .clicked()
             {
-                let next = (facts.display + 1).rem_euclid(facts.displays.len() as i32);
                 self.backend.request_display(next);
             }
         }
@@ -1685,11 +1691,23 @@ fn toggle(visuals: &egui::Visuals, symbol: &'static str, on: bool) -> egui::Butt
     if on { button.fill(visuals.selection.bg_fill.gamma_multiply(0.5)) } else { button }
 }
 
-/// A toolbar button of an icon and a word, flat as the others.
-fn labelled(symbol: &'static str, label: impl Into<String>) -> egui::Button<'static> {
-    egui::Button::new((icon(symbol), label.into()))
-        .min_size(Vec2::splat(TOOLBAR_BUTTON))
-        .frame_when_inactive(false)
+/// The Monitor button's next choice after `current` of `count` monitors:
+/// the whole desktop (`None`), then each monitor in turn, then the whole
+/// desktop again.
+fn next_monitor(current: Option<usize>, count: usize) -> Option<usize> {
+    match current {
+        None if count > 0 => Some(0),
+        Some(i) if i + 1 < count => Some(i + 1),
+        _ => None,
+    }
+}
+
+/// A Monitor choice in words, for the tooltip.
+fn monitor_name(monitor: Option<usize>, count: usize) -> String {
+    match monitor {
+        None => format!("all {count}"),
+        Some(i) => format!("{} of {count}", i + 1),
+    }
 }
 
 fn on_off(on: bool) -> &'static str {
@@ -1711,5 +1729,19 @@ mod tests {
             mode = mode.next();
         }
         assert_eq!(mode, ScaleMode::FitWidth);
+    }
+
+    #[test]
+    fn the_monitor_button_goes_round_all_then_each() {
+        let mut monitor = None;
+        let mut seen = Vec::new();
+        for _ in 0..4 {
+            seen.push(monitor_name(monitor, 3));
+            monitor = next_monitor(monitor, 3);
+        }
+        assert_eq!(seen, ["all 3", "1 of 3", "2 of 3", "3 of 3"]);
+        assert_eq!(monitor, None);
+        // A monitor gone from under the choice goes back to all of them.
+        assert_eq!(next_monitor(Some(5), 2), None);
     }
 }

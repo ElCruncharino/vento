@@ -222,8 +222,8 @@ on one or pressing it. A button with a state shows it in its icon, and its
 tooltip names the button, its state and, for Scale, what a click goes to
 ("Scale: fit width — click for fit height"). View only, Info and Debug, while
 on, keep a frame at rest, a dim fill of the selection's blue with the icon in
-the selection's colour. The monitor button keeps a word beside its icon,
-the monitor or display it is on. A grip at the left end shows where to take
+the selection's colour. There are no words on it: which monitor or display
+is showing is in the tooltip too. A grip at the left end shows where to take
 hold. On it:
 
 - **Scale** cycles fit width → fit height → fill width → fill height → 1:1,
@@ -235,9 +235,10 @@ hold. On it:
   panned — move the pointer within 48 points of a window edge, over the
   desktop, and it moves that way, faster the nearer the edge.
 - **Monitor** (when the far end reports more than one) shows the whole desktop
-  or one monitor's rectangle, with the scale modes applied to that. Where a
+  (`tv_displays`, several screens) or one monitor's rectangle (`monitor`, one
+  screen), with the scale modes applied to that. Where a
   backend offers *displays* instead (RustDesk sends one screen at a time) the
-  button asks the far end for the next one.
+  button (`monitor`) asks the far end for the next one.
 - **View only** stops the mouse, the keyboard and the clipboard going to the
   far end, and tells the backend so: an eye while on, a mouse while off.
 - **Info** opens the connection panel, below.

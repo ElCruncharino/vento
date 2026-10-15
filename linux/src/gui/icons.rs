@@ -70,7 +70,6 @@ macro_rules! symbols {
 
 symbols! {
     BUG_REPORT = "bug_report" "\u{e868}";
-    DESKTOP_WINDOWS = "desktop_windows" "\u{e30c}";
     DRAG_INDICATOR = "drag_indicator" "\u{e945}";
     FIT_PAGE_HEIGHT = "fit_page_height" "\u{f397}";
     FIT_PAGE_WIDTH = "fit_page_width" "\u{f396}";
@@ -81,6 +80,7 @@ symbols! {
     LINK_OFF = "link_off" "\u{e16f}";
     MONITOR = "monitor" "\u{ef5b}";
     MOUSE = "mouse" "\u{e323}";
+    TV_DISPLAYS = "tv_displays" "\u{f3ec}";
     VIEW_REAL_SIZE = "view_real_size" "\u{f4c2}";
     VISIBILITY = "visibility" "\u{e8f4}";
     WIDTH = "width" "\u{f730}";
