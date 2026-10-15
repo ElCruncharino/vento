@@ -15,18 +15,31 @@ use egui::{Pos2, Rect};
 /// edge by itself, and there it is the top row alone (see [`reveals`]).
 pub const WINDOWED_REACH: f32 = 8.0;
 
-/// How much of a hidden toolbar a window leaves showing at its top edge:
-/// the lower edge of the toolbar's background, under its buttons' margin
-/// (six points) so that no button shows, as a mark of where along the edge
-/// to put the pointer now that only the toolbar's own span brings it out.
-/// Fullscreen leaves nothing, as the screen is the desktop's there.
-pub const WINDOWED_PEEK: f32 = 4.0;
+/// How much of a hidden toolbar is left showing at the top edge while it
+/// peeks: the lower edge of the toolbar's background, under its buttons'
+/// margin (six points) so that no button shows, as a mark of where along
+/// the edge to put the pointer now that only the toolbar's own span brings
+/// it out. A window always leaves it showing; fullscreen only while the
+/// pointer is at the top edge (see [`peeks`]), as the screen is otherwise
+/// the desktop's there.
+pub const PEEK: f32 = 4.0;
+
+/// Whether a hidden toolbar peeks, [`PEEK`] of it showing: always in a
+/// window, and in fullscreen while the pointer is on the top row of device
+/// pixels anywhere across the screen. The top row because it is the same
+/// row that brings the toolbar out within its span (see [`reveals`]), so
+/// that the pointer stopped by the screen's edge and run along it finds the
+/// toolbar where the mark is, and any lower the desktop has the screen to
+/// itself again, a menu bar at its top included.
+pub fn peeks(window: Rect, fullscreen: bool, pixels_per_point: f32, pointer: Option<Pos2>) -> bool {
+    !fullscreen || pointer.is_some_and(|p| within_reach(window, 1.0 / pixels_per_point, p))
+}
 
 /// Where the top of a toolbar `height` tall is, relative to the window's
-/// top edge, while it is hidden: wholly off the top in fullscreen, and
-/// [`WINDOWED_PEEK`] short of that in a window. Shown, it is at zero.
-pub fn hidden_y(height: f32, fullscreen: bool) -> f32 {
-    if fullscreen { -height } else { -height + WINDOWED_PEEK.min(height) }
+/// top edge, while it is hidden: [`PEEK`] short of wholly off the top while
+/// it `peeks`, and wholly off it otherwise. Shown, it is at zero.
+pub fn hidden_y(height: f32, peeks: bool) -> f32 {
+    if peeks { -height + PEEK.min(height) } else { -height }
 }
 
 /// Where the toolbar sits along the top edge: how far along the room the
@@ -80,7 +93,14 @@ impl Placement {
 /// and not two.
 pub fn reveals(window: Rect, left: f32, width: f32, fullscreen: bool, pixels_per_point: f32, pointer: Pos2) -> bool {
     let reach = if fullscreen { 1.0 / pixels_per_point } else { WINDOWED_REACH };
-    (left..left + width).contains(&pointer.x) && (window.min.y..window.min.y + reach).contains(&pointer.y)
+    (left..left + width).contains(&pointer.x) && within_reach(window, reach, pointer)
+}
+
+/// Whether `pointer` is less than `reach` below the top of `window`, and
+/// not above it. Half-open, so that a reach of one pixel is one row and
+/// not two.
+fn within_reach(window: Rect, reach: f32, pointer: Pos2) -> bool {
+    (window.min.y..window.min.y + reach).contains(&pointer.y)
 }
 
 #[cfg(test)]
@@ -164,19 +184,48 @@ mod tests {
     }
 
     #[test]
-    fn hidden_a_window_leaves_its_lower_edge_and_fullscreen_nothing() {
+    fn hidden_a_peek_leaves_its_lower_edge_and_otherwise_nothing() {
         // 28-point buttons in a 6-point margin either side.
         let height = 40.0;
-        assert_eq!(hidden_y(height, true), -40.0);
-        assert_eq!(hidden_y(height, false), -36.0);
-        // What shows is inside the strip that brings it out, so the
-        // pointer on it brings it out.
-        let showing = hidden_y(height, false) + height;
-        assert_eq!(showing, WINDOWED_PEEK);
+        assert_eq!(hidden_y(height, false), -40.0);
+        assert_eq!(hidden_y(height, true), -36.0);
+        // What shows is inside the strip that brings it out in a window,
+        // so the pointer on it brings it out.
+        let showing = hidden_y(height, true) + height;
+        assert_eq!(showing, PEEK);
         assert!(showing <= WINDOWED_REACH);
         // Before it has been measured it is nothing tall, and nothing of
         // it shows.
-        assert_eq!(hidden_y(0.0, false), 0.0);
+        assert_eq!(hidden_y(0.0, true), 0.0);
+    }
+
+    #[test]
+    fn a_window_always_peeks_and_fullscreen_at_the_top_row_anywhere() {
+        let w = window(1280.0, 800.0);
+        // A window peeks wherever the pointer is, or with none.
+        assert!(peeks(w, false, 1.0, None));
+        assert!(peeks(w, false, 1.0, Some(pos2(640.0, 400.0))));
+        // Fullscreen peeks with the pointer on the top row, across the
+        // whole width, far outside the toolbar's span as well as in it.
+        let at = |x, y, ppp| peeks(w, true, ppp, Some(pos2(x, y)));
+        assert!(at(0.0, 0.0, 1.0));
+        assert!(at(20.0, 0.0, 1.0));
+        assert!(at(640.0, 0.0, 1.0));
+        assert!(at(1279.5, 0.0, 1.0));
+        assert!(at(640.0, 0.9, 1.0));
+        // One row down, and anywhere lower, it does not.
+        assert!(!at(20.0, 1.0, 1.0));
+        assert!(!at(640.0, 4.0, 1.0));
+        assert!(!at(640.0, 400.0, 1.0));
+        assert!(!peeks(w, true, 1.0, None));
+        // At 2 pixels per point the top row is half a point.
+        assert!(at(20.0, 0.0, 2.0));
+        assert!(!at(20.0, 0.5, 2.0));
+        // Outside the span the top row peeks but does not bring it out;
+        // inside the span the same row does both.
+        let (left, width) = (400.0, 480.0);
+        assert!(at(20.0, 0.0, 1.0) && !reveals(w, left, width, true, 1.0, pos2(20.0, 0.0)));
+        assert!(at(640.0, 0.0, 1.0) && reveals(w, left, width, true, 1.0, pos2(640.0, 0.0)));
     }
 
     #[test]

@@ -1344,7 +1344,9 @@ impl Session {
 
     /// Slid down from the top edge, flush with it, while the pointer is at
     /// the edge within the toolbar's own span or on the toolbar itself, and
-    /// back up out of sight otherwise. Only its own span, because the rest
+    /// back up otherwise, to a peek of its lower edge in a window or with
+    /// the pointer on fullscreen's top row, and out of sight in fullscreen
+    /// with the pointer anywhere else. Only its own span, because the rest
     /// of the top edge is the desktop's: a pointer heading for something at
     /// the top of the far end's screen, a menu bar or a tab, had the toolbar
     /// come down over it wherever it touched the edge.
@@ -1370,7 +1372,7 @@ impl Session {
         // Square, and flush with the top edge: nothing between it and the
         // edge for the pointer to fall into. Flat, too: a popup's frame
         // without the popup's shadow, so that hidden nothing but the peek
-        // `hidden_y` leaves in a window shows, and shown nothing of it lies
+        // `hidden_y` leaves shows, and shown nothing of it lies
         // over the desktop past its edge.
         //
         // Edged on three sides and not the top, which is the window's own
@@ -1387,7 +1389,11 @@ impl Session {
             .shadow(egui::Shadow::NONE)
             .stroke(Stroke::NONE)
             .inner_margin(Margin::symmetric(8 + edge_width, 6 + edge_width));
-        let hidden = toolbar::hidden_y(self.toolbar_size.y, fullscreen);
+        // Hidden, it peeks in a window always and in fullscreen while the
+        // pointer is on the screen's top row anywhere along it; the slide
+        // to and from the peek is the same slide, the same 0.2 s.
+        let peeks = toolbar::peeks(screen, fullscreen, ctx.pixels_per_point(), pointer);
+        let hidden = toolbar::hidden_y(self.toolbar_size.y, peeks);
         let y = ctx.animate_value_with_time(Id::new("toolbar-y"), if show { 0.0 } else { hidden }, 0.2);
         if reveal {
             ctx.request_repaint_after(TOOLBAR_REVEAL.saturating_sub(self.started.elapsed()));

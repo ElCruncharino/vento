@@ -221,7 +221,9 @@ sides and bottom but not along the top, which is the window's edge, and stays
 out of the way: it slides off the top of the window when the pointer is elsewhere —
 in a window all but the lower 4 points of its background, the margin under its
 buttons, left showing along the edge as a mark of where it is, and in
-fullscreen wholly — and slides back when the pointer reaches the top edge within the toolbar's own
+fullscreen wholly, except that the pointer on the screen's top row anywhere
+across it slides out the same 4-point peek, no buttons showing, until the
+pointer leaves that row — and slides back when the pointer reaches the top edge within the toolbar's own
 span — the rest of the edge is the desktop's, for whatever the far end has at
 the top of its screen — and for the first three seconds of a session, so that
 it is seen once. In a window that strip reaches 8 points down, since a pointer
