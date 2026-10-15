@@ -31,6 +31,7 @@
 
 use super::settings::Settings;
 use crate::backend::{ConnectionFact, Facts, Field, Monitor, Traffic};
+use crate::backends::Platform;
 use crate::options::{self, Kind, Options, Spec};
 use egui::{
     Align, Align2, ComboBox, Grid, Layout, Response, RichText, ScrollArea, Sense, TextEdit, Ui, WidgetInfo,
@@ -273,7 +274,7 @@ impl Panel {
     /// is set to now.
     fn option_row(&mut self, ui: &mut Ui, spec: &'static Spec, values: &Options, actions: &mut Vec<Action>) {
         let label = ui.label(RichText::new(spec.label).weak());
-        if let Some(summary) = spec.summary {
+        if let Some(summary) = spec.summary_on(Platform::Linux) {
             label.on_hover_text(summary);
         }
         let current = values.get(spec.key);
@@ -291,11 +292,11 @@ impl Panel {
                     .filter(|c| c.requires.is_none_or(|key| values.bool(key)))
                     .collect();
                 ComboBox::from_id_salt(("live", spec.key))
-                    .selected_text(spec.label_for(current).to_string())
+                    .selected_text(spec.label_for(current, Platform::Linux).to_string())
                     .width(ui.available_width())
                     .show_ui(ui, |ui| {
                         for choice in offered {
-                            let mut row = ui.selectable_label(choice.value == current, choice.label);
+                            let mut row = ui.selectable_label(choice.value == current, choice.label_on(Platform::Linux));
                             if let Some(summary) = choice.summary {
                                 row = row.on_hover_text(summary);
                             }

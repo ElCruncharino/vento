@@ -129,7 +129,7 @@ impl Kind {
     /// adapters and the libraries behind the vtable hand a bell over whatever
     /// the option says, so it is dropped at the mailbox instead, once for
     /// all of them. (RealVNC's core is told as well, since its library has a
-    /// switch of its own.) The option is not live, as the Providers have it,
+    /// switch of its own.) The option is not live, as the catalog has it,
     /// so this is once per session.
     pub fn start(&self, connect: &Connect) -> Result<Arc<dyn Backend>, String> {
         if self.options.iter().any(|s| s.key == "AcceptBell") {

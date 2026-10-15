@@ -118,6 +118,7 @@ fn spec(value: &Value) -> Spec {
                 .map(|c| Choice {
                     value: leak(str(c, "value")),
                     label: leak(str(c, "value")),
+                    desktop_label: None,
                     summary: None,
                     requires: c["requires"].as_str().map(leak),
                 })
@@ -128,6 +129,7 @@ fn spec(value: &Value) -> Spec {
         key: leak(str(value, "key")),
         label: leak(str(value, "key")),
         summary: None,
+        desktop_summary: None,
         kind: match str(value, "type") {
             "choice" => Kind::Choice,
             "bool" => Kind::Bool,

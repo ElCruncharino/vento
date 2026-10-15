@@ -2,8 +2,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! What each backend can be told, described well enough to offer without
-//! knowing what it means: `BackendOption` in Java, and the eight lists the
-//! `*Provider` classes hold, ported row for row.
+//! knowing what it means: `BackendOption` in Java, and the eight lists
+//! themselves, which are the one copy. The phone's are generated from these
+//! (`vento-codegen`, as a generated source of each backend's module), in the
+//! phone's words; where a desktop needs other words — a phone vibrates for a
+//! bell, a window cannot — a row says so beside them
+//! ([`Spec::desktop_summary`], [`Choice::desktop_label`]).
 //!
 //! The values are strings, because that is what the backends' own
 //! configuration layers take; [`Kind`] says how to ask for one, not how to
@@ -17,6 +21,7 @@
 //! compression level, an encodings string) are in that backend's adapter,
 //! beside the call that takes it.
 
+use crate::kind::Platform;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Which control to offer.
@@ -48,9 +53,23 @@ pub enum Scope {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Choice {
     pub value: &'static str,
+    /// What to call it, as the phone words it.
     pub label: &'static str,
+    /// What a desktop calls it where the phone's word is the phone's — "this
+    /// phone" — or `None`. See [`Choice::label_on`].
+    pub desktop_label: Option<&'static str>,
     pub summary: Option<&'static str>,
     pub requires: Option<&'static str>,
+}
+
+impl Choice {
+    /// What to call it in the client it is shown by.
+    pub fn label_on(&self, platform: Platform) -> &'static str {
+        match platform {
+            Platform::Android => self.label,
+            Platform::Linux => self.desktop_label.unwrap_or(self.label),
+        }
+    }
 }
 
 /// What another option must say for this one to be offered at all.
@@ -73,8 +92,12 @@ pub struct Spec {
     pub key: &'static str,
     /// One line, for a preference title.
     pub label: &'static str,
-    /// The longer explanation.
+    /// The longer explanation, as the phone words it.
     pub summary: Option<&'static str>,
+    /// The same explanation where a desktop needs other words — a phone
+    /// vibrates for a bell and a window cannot — or `None` where the phone's
+    /// words do for both. See [`Spec::summary_on`].
+    pub desktop_summary: Option<&'static str>,
     pub kind: Kind,
     /// For `Choice`, in display order; empty otherwise.
     pub choices: &'static [Choice],
@@ -87,13 +110,22 @@ pub struct Spec {
 }
 
 impl Spec {
+    /// The explanation in the words of the client it is shown by.
+    pub fn summary_on(&self, platform: Platform) -> Option<&'static str> {
+        match platform {
+            Platform::Android => self.summary,
+            Platform::Linux => self.desktop_summary.or(self.summary),
+        }
+    }
+
     /// For a `Choice`: what to show for `value` (a `&'static str` from the
-    /// list), or the value itself when it is not one of the choices.
-    pub fn label_for<'a>(&self, value: &'a str) -> &'a str {
+    /// list) in the client it is shown by, or the value itself when it is not
+    /// one of the choices.
+    pub fn label_for<'a>(&self, value: &'a str, platform: Platform) -> &'a str {
         self.choices
             .iter()
             .find(|c| c.value == value)
-            .map(|c| c.label)
+            .map(|c| c.label_on(platform))
             .unwrap_or(value)
     }
 
@@ -156,6 +188,7 @@ const fn choice(value: &'static str, label: &'static str) -> Choice {
     Choice {
         value,
         label,
+        desktop_label: None,
         summary: None,
         requires: None,
     }
@@ -165,6 +198,7 @@ const fn described(value: &'static str, label: &'static str, summary: &'static s
     Choice {
         value,
         label,
+        desktop_label: None,
         summary: Some(summary),
         requires: None,
     }
@@ -174,6 +208,7 @@ const fn requiring(value: &'static str, label: &'static str, requires: &'static 
     Choice {
         value,
         label,
+        desktop_label: None,
         summary: None,
         requires: Some(requires),
     }
@@ -196,6 +231,7 @@ const fn spec(
         key,
         label,
         summary,
+        desktop_summary: None,
         kind,
         choices,
         default,
@@ -276,14 +312,17 @@ const VIEW_ONLY: Spec = bool(
     true,
 );
 
-const BELL: Spec = bool(
-    "AcceptBell",
-    "Bell",
-    "Vibrate when the remote servers rings the bell.",
-    true,
-    Scope::Global,
-    false,
-);
+const BELL: Spec = Spec {
+    desktop_summary: Some("Show a bell in the window's title when the remote server rings the bell."),
+    ..bool(
+        "AcceptBell",
+        "Bell",
+        "Vibrate when the remote servers rings the bell.",
+        true,
+        Scope::Global,
+        false,
+    )
+};
 
 const SHARED: Spec = bool(
     "Shared",
@@ -328,7 +367,19 @@ const MONITOR_COUNTS: &[Choice] = &[
     choice("3", "Three"),
 ];
 
-/// `RfbProvider`.
+/// What the RFB backend can be told.
+///
+/// Deliberately shorter than [`REALVNC`]. That list is long because it is a
+/// selection from somebody else's parameter registry, most of which exists for
+/// their own transports and identity system; this one is the whole of what the
+/// protocol has to offer, and an option nobody can describe is worse than no
+/// option (the same rule, from the other end).
+///
+/// Two of these are **live in a way RealVNC's are not**, and that is the
+/// protocol rather than a nicety: `SetEncodings` may be sent at any point in a
+/// session, so changing the encoding or the compression acts on the picture in
+/// front of you. RealVNC's equivalent needs a *changed* quality and carries
+/// the group with it.
 pub static RFB: &[Spec] = &[
     choices(
         "Security",
@@ -343,6 +394,12 @@ pub static RFB: &[Spec] = &[
             choice("plain", "Never"),
         ],
     ),
+    // The two below are the connection's with the backend's as their default,
+    // since which encoding and how hard to compress is mostly a fact about the
+    // link the phone is on. There is no colour row: this client works in one
+    // pixel format on purpose, which is what makes a region read a row copy,
+    // and a reduced one would put a conversion back in the path for every
+    // decoder it has.
     choices(
         "Encoding",
         "Encoding",
@@ -372,7 +429,25 @@ pub static RFB: &[Spec] = &[
     BELL,
 ];
 
-/// `LibVncProvider`.
+/// What the libvncclient backend can be told.
+///
+/// The option list is the same shape as the RFB one and differs where the two
+/// clients differ, which is the point of having both: **Tight is here**, with
+/// a JPEG quality beside it, and **the encryption choice is not** — this
+/// client does VeNCrypt, but it takes whatever the server offers and there is
+/// no call to prefer, require or refuse it.
+///
+/// The one row about encryption here asks something else: whether a tunnel
+/// with no certificate in it may be taken at all. That is not a preference
+/// between encrypted and not, it is whether a question gets asked or the
+/// session ends, and the same row is on the TigerVNC backend for the same
+/// reason.
+///
+/// The colour row is the same question the RealVNC and TigerVNC backends ask,
+/// asked in the same words, and it is the only one of the three that cannot
+/// change mid-session: libvncclient sends a pixel format and reallocates
+/// around it with no point at which nothing is in flight, so a change here
+/// would be decoding whatever is already on its way at the wrong width.
 pub static LIBVNC: &[Spec] = &[
     choices(
         "Encoding",
@@ -417,6 +492,7 @@ pub static LIBVNC: &[Spec] = &[
             choice("0", "0 (smallest)"),
         ],
     ),
+    // The same key and values as the RealVNC backend's colour row.
     choices(
         "ColorLevel",
         "Colour depth",
@@ -436,7 +512,18 @@ pub static LIBVNC: &[Spec] = &[
     BELL,
 ];
 
-/// `TigerVncProvider`.
+/// What the TigerVNC backend can be told.
+///
+/// The option list is the libvncclient one with a different meaning under the
+/// encoding row: TigerVNC's client always offers every encoding it can decode
+/// and names one of them preferred, so this is a hint rather than a
+/// restriction and there is no "automatic" to choose — the server chooses
+/// either way.
+///
+/// Where there *is* an automatic to offer is the picture quality and the
+/// colour depth, and only here: this is the one client in the repository that
+/// measures its own throughput, so it is the one that can move a setting on
+/// somebody's behalf. Both rules are the viewer's own, thresholds included.
 pub static TIGERVNC: &[Spec] = &[
     choices(
         "Encoding",
@@ -480,6 +567,7 @@ pub static TIGERVNC: &[Spec] = &[
             choice("0", "0 (smallest)"),
         ],
     ),
+    // The same key and values as the RealVNC backend's colour row.
     choices(
         "ColorLevel",
         "Colour depth",
@@ -494,6 +582,9 @@ pub static TIGERVNC: &[Spec] = &[
             choice("rgb111", "3-bit (rgb111)"),
         ],
     ),
+    // Their viewer's own parameter. QEMU's audio extension, which only
+    // servers that speak it offer — QEMU's own, and the ones built the same
+    // way — so against anything else this row changes nothing at all.
     bool(
         "Audio",
         "Sound",
@@ -516,7 +607,51 @@ pub static TIGERVNC: &[Spec] = &[
     BELL,
 ];
 
-/// `IronRdpProvider`.
+/// What the IronRDP backend can be told.
+///
+/// Shorter than [`RFB`], and shorter for a different reason. RFB's list is
+/// short because the protocol has little to say; this one is short because
+/// almost everything RDP negotiates is negotiated *well* — the codec, the
+/// compression, the colour depth — and an option that re-decides what the two
+/// ends already agreed on is a way to make a session worse.
+///
+/// Five things are deliberately **not** here:
+///
+/// - **The keyboard layout.** RDP sends key *positions*, and `rdp::keymap`
+///   maps keysyms onto a US layout, so the layout named at connect time has to
+///   be the one that table was written for. Offering a choice would let
+///   someone pick a layout that turns every letter into a different letter.
+/// - **The clipboard.** The channel is open in both directions, but whether to
+///   share this phone's clipboard is a question about the phone and is
+///   answered once for every protocol, in the app's own settings.
+/// - **The domain**, RDP's third credential, which is not a row because it is
+///   already a field: `DOMAIN\user` and `user@domain` are split out of the
+///   user name, which is what every RDP client takes and what anyone who has
+///   one will type.
+/// - **The colour depth**, which the three VNC backends do offer. There it is
+///   a wire format the server encodes into; here the picture arrives as
+///   RemoteFX or as bitmaps, and the codec has already decided what a pixel
+///   costs — 16-bit would apply to one of those two paths, save nothing where
+///   the codec is on, and put a conversion in front of a framebuffer that is
+///   32 bits either way.
+/// - **The graphics pipeline (MS-RDPEGFX)**, which is how a machine since
+///   Windows 8 would rather send a desktop and the only path that carries
+///   H.264. It was built, driven against both servers and taken out again,
+///   because IronRDP's implementation was then incomplete and, where it was
+///   complete, wrong. Nothing in the library set the capability flag a server
+///   needs before it will open the channel; the client received RFX
+///   Progressive and discarded it, though a finished decoder for it sat unused
+///   one crate away; and the ClearCodec that Windows sends for most of an
+///   interface was rejected outright — fifteen ClearCodec and twelve
+///   progressive failures in one short session, which is a desktop with solid
+///   rectangles of the wrong colour through it. Patched, all of that got as
+///   far as working against xrdp and no further. The library has since grown
+///   all three missing pieces — the flag and both decoders, and a session that
+///   composites what the pipeline draws — but upstream's own client still
+///   ships with the flag off, and none of it has been driven against a Windows
+///   host from here since. Until it has, offering it would be the same bet as
+///   before: a choice known to be right on one server and not known to be
+///   right on the one the protocol belongs to.
 pub static IRONRDP: &[Spec] = &[
     choices(
         "Nla",
@@ -582,7 +717,41 @@ pub static IRONRDP: &[Spec] = &[
     VIEW_ONLY,
 ];
 
-/// `FreeRdpProvider`.
+/// What the FreeRDP backend can be told.
+///
+/// It began as the other RDP backend's rows copied so the two would be
+/// comparable, and three of these are now things that client cannot be asked
+/// at all: **EGFX**, the graphics pipeline, which is how a machine since
+/// Windows 8 would rather send a desktop and the only path that carries H.264;
+/// the **sound**, which is the one whole subsystem no backend behind this seam
+/// has ever had; and the **interface size**, which is the only answer this app
+/// has to a desktop whose text is sized for a monitor and is being read on a
+/// phone.
+///
+/// What is deliberately **not** here:
+///
+/// - **The keyboard layout.** Every key goes as a position against a US table,
+///   and the phone's own layout has already turned a press into a character
+///   before the backend sees it — so the layout named at connect time is what
+///   turns those positions back into the characters that were typed, and
+///   naming another one makes every letter a different letter.
+/// - **The codecs one at a time.** Progressive and planar cost nothing and are
+///   decoded in software either way; the two H.264 switches are one switch,
+///   since the pair also selects every capability version above 8.1. What is
+///   left is video or no video, which is a value on the picture row.
+/// - **Small cache and thin client.** Both are a phone telling a server to
+///   expect less of it. The cache they shrink is the server's, the memory it
+///   costs is the server's, and the one part that reaches the picture asks for
+///   a cheaper H.264 profile on a phone that decodes in hardware.
+/// - **Drives, printers and smartcards.** A printer needs CUPS and a smartcard
+///   needs PC/SC, neither of which is in this build; a drive needs a POSIX
+///   path, and what a person can grant on Android is a document tree with no
+///   path at all.
+/// - **The clipboard** (a question about this phone, answered once for every
+///   protocol in the app's own settings), **the domain** (already a field,
+///   split out of the user name) and **the colour depth** (the codec has
+///   decided what a pixel costs long before it reaches a framebuffer that is
+///   32 bits either way).
 pub static FREERDP: &[Spec] = &[
     choices(
         "Nla",
@@ -672,7 +841,10 @@ pub static FREERDP: &[Spec] = &[
         false,
         &[
             choice("off", "Off"),
-            choice("local", "This computer"),
+            Choice {
+                desktop_label: Some("This computer"),
+                ..choice("local", "This phone")
+            },
             choice("remote", "The remote machine"),
         ],
     ),
@@ -687,7 +859,21 @@ pub static FREERDP: &[Spec] = &[
     VIEW_ONLY,
 ];
 
-/// `SpiceProvider`.
+/// What the SPICE backend can be told.
+///
+/// A short list, and the reason is the protocol rather than restraint. There
+/// is no security to negotiate — a plain port and a TLS port are different
+/// ports, which is why the first row is a fact about the address rather than a
+/// preference. There is no colour depth, since a surface is 32-bit and the
+/// server compresses it. And there is no resize and no clipboard switch,
+/// because both of those live in the guest's own agent rather than in the
+/// protocol.
+///
+/// What is **not** here and could have been: which end owns the pointer. SPICE
+/// has two mouse modes and lets a client ask for one, but which are on offer
+/// is the far end's answer — a guest with a tablet attached offers both and
+/// one without offers neither — so it is a fact about a live session and is
+/// announced through the seam rather than chosen in a form.
 pub static SPICE: &[Spec] = &[
     choices(
         "Security",
@@ -701,6 +887,9 @@ pub static SPICE: &[Spec] = &[
             described("tls", "TLS", "Encrypted."),
         ],
     ),
+    // Live in the way RFB's encoding is: the message is read on the next image
+    // the server encodes. Automatic is what a hypervisor does without being
+    // asked, which for QEMU is GLZ where it helps.
     choices(
         "Compression",
         "Image compression",
@@ -729,8 +918,32 @@ pub static SPICE: &[Spec] = &[
     ),
 ];
 
-/// `RustDeskProvider`.
+/// What the RustDesk backend can be told.
+///
+/// A short list, and the reason is the protocol rather than restraint: no
+/// security to choose, since each way to a machine has exactly one answer to
+/// that, and no colour depth, since the picture is a video stream. The codec
+/// is the nearest thing to an encoding here and behaves nothing like one — it
+/// is a preference between whole video codecs, answered by whichever of them
+/// that machine has an encoder for.
+///
+/// The first three rows are how a machine is reached, and they are here rather
+/// than beside the address because only one protocol here has more than one
+/// answer to it. The server and its key are [`Scope::Layered`]: somebody
+/// running their own rendezvous server has every machine on it, so the answer
+/// belongs to the backend with a connection able to disagree.
+///
+/// What is **not** here and could have been: the peer's other displays. This
+/// protocol captures one at a time and switches with a message, so a chooser
+/// is a row whose contents depend on the connection that is running — a live
+/// fact rather than a static description, and it is in the connection panel
+/// with the desktop size, which is there for the same reason.
 pub static RUSTDESK: &[Spec] = &[
+    // The first row of the connection, because it says what the box above it
+    // holds and because the two are not one transport with a switch on it: one
+    // reaches a machine somebody can already address and encrypts nothing, and
+    // the other reaches a machine nothing on this network can address and is
+    // encrypted because of how it got there.
     choices(
         "ConnectBy",
         "Connect by",
@@ -767,6 +980,8 @@ pub static RUSTDESK: &[Spec] = &[
         "ConnectBy",
         &["id"],
     ),
+    // Both of these are live in the way RFB's encoding is: their option
+    // message is read on the next frame the peer encodes.
     choices(
         "Quality",
         "Quality",
@@ -795,6 +1010,9 @@ pub static RUSTDESK: &[Spec] = &[
             choice("60", "60"),
         ],
     ),
+    // Live like the two above it, and the one that is not free: the far end
+    // answers a codec it is not already using by building an encoder and
+    // starting again with a key frame.
     choices(
         "Codec",
         "Codec",
@@ -822,8 +1040,22 @@ pub static RUSTDESK: &[Spec] = &[
     VIEW_ONLY,
 ];
 
-/// `RealVncProvider`.
+/// Which of RealVNC's parameters the clients offer.
+///
+/// Every name here is one of two things: a parameter recovered from the
+/// binary's own registry, or one the original itself sets on `createSession`.
+/// The registry holds a great many more — the whole underscore-prefixed
+/// `_Hosted*` / `_Udp*` / `_Opus*` transport surface — and none is offered
+/// until there is a reason to, because an option nobody can describe is worse
+/// than no option.
+///
+/// [`Scope::Connection`] versus [`Scope::Global`] is a question about the
+/// setting, not about the protocol: does one server want a different answer
+/// from another? Quality does, encryption policy does not.
 pub static REALVNC: &[Spec] = &[
+    // Auto, not the core's own default of High: Auto follows the measured line
+    // speed, and pinning High on every connection is deciding for a network
+    // nobody has seen yet.
     choices(
         "Quality",
         "Picture quality",
@@ -839,6 +1071,19 @@ pub static REALVNC: &[Spec] = &[
             choice("Custom", "Custom"),
         ],
     ),
+    // The one row every other RFB backend has and this one did not. All eight
+    // values of the enum the core registers, in the order it registers them,
+    // rather than a guess or a subset — including the two that are lossy,
+    // since the quality dial that would otherwise be how lossiness is asked
+    // for is by definition out of the way here.
+    //
+    // Only a Custom quality reaches it, which is why the row is not
+    // offered at any other. The picture policy builds its own list of
+    // encodings for each of the three fixed classes and consults this
+    // parameter only for the fourth, and that is the library rather than an
+    // interface decision: it was read out of the class switch and driven both
+    // ways — Automatic, High and Low all sent ZRLE with Hextile asked for, and
+    // Custom sent Hextile.
     when(
         choices(
             "PreferredEncoding",
@@ -861,6 +1106,23 @@ pub static REALVNC: &[Spec] = &[
         "Quality",
         &["Custom"],
     ),
+    // The colour depth, offered where the core reads it and nowhere else.
+    //
+    // Low and Custom are the qualities that consult it. The picture policy
+    // resolves a quality to one of four classes and picks the pixel format
+    // from that: High and Medium ask for full colour whatever this says, Low
+    // and Custom use it, and Automatic is whichever class the measured line
+    // speed puts it in. Their own published reference says the parameter is
+    // ignored unless the quality is Custom, and the library disagrees with the
+    // documentation — the Low case is real, and was read out of the picture
+    // policy and then driven: at High a connection with `rgb111` asks for
+    // 24-bit colour, at Low and at Custom it asks for 3-bit.
+    //
+    // The default is full colour where the original forces `rgb222` at every
+    // quality but Custom. That difference is smaller than it looked when it
+    // was made: at High and Medium the core asks for full colour whatever
+    // either of us says, so what it actually buys is a Low quality that keeps
+    // its colour, and an Automatic one that keeps it on a slow line.
     when(
         choices(
             "ColorLevel",
@@ -927,6 +1189,12 @@ pub static REALVNC: &[Spec] = &[
         false,
     ),
     BELL,
+    // The three clipboard parameters this core has are deliberately not rows.
+    // Whether a phone's clipboard goes to a remote machine and comes back is a
+    // question about the phone, asked once in the app's own settings and
+    // enforced there — the core's copies would be a second answer to it, in a
+    // second screen, one layer down. Left at their defaults, which is on, so
+    // the app's answer is the only one.
     integer(
         "KeepAliveInterval",
         "Keep-alive interval",
@@ -1064,8 +1332,14 @@ mod tests {
         let encoding = find(RFB, "Encoding").unwrap();
         assert!(encoding.check("zrle").is_ok());
         assert!(encoding.check("tight").unwrap_err().contains("one of"));
-        assert_eq!(encoding.label_for("rre"), "RRE");
-        assert_eq!(encoding.label_for("nonsense"), "nonsense");
+        assert_eq!(encoding.label_for("rre", Platform::Linux), "RRE");
+        assert_eq!(encoding.label_for("nonsense", Platform::Linux), "nonsense");
+        let sound = find(FREERDP, "Sound").unwrap();
+        assert_eq!(sound.label_for("local", Platform::Android), "This phone");
+        assert_eq!(sound.label_for("local", Platform::Linux), "This computer");
+        let bell = find(RFB, "AcceptBell").unwrap();
+        assert!(bell.summary_on(Platform::Android).unwrap().starts_with("Vibrate"));
+        assert!(bell.summary_on(Platform::Linux).unwrap().starts_with("Show a bell"));
         let shared = find(RFB, "Shared").unwrap();
         assert!(shared.check("true").is_ok());
         assert!(shared.check("yes").is_err());
@@ -1129,10 +1403,11 @@ mod tests {
         }
     }
 
-    /// Every list has the keys its Java twin has, in the same order, with the
-    /// same defaults — the probe that the port is a port.
+    /// Every list has the keys it had when the phone's lists became these, in
+    /// the same order: a key is stored in connection records and preference
+    /// files, so one renamed is a setting forgotten.
     #[test]
-    fn the_lists_are_the_providers_lists() {
+    fn the_keys_are_the_ones_records_hold() {
         let keys = |specs: &[Spec]| specs.iter().map(|s| s.key).collect::<Vec<_>>();
         assert_eq!(
             keys(RFB),

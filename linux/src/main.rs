@@ -169,7 +169,7 @@ headless, any of which selects the probe instead of the window:
                     spec.default,
                     kind_note,
                     gate,
-                    spec.summary.unwrap_or(spec.label)
+                    spec.summary_on(Platform::Linux).unwrap_or(spec.label)
                 );
             }
             println!();

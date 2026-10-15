@@ -15,7 +15,7 @@
 
 use super::settings::Settings;
 use super::Request;
-use crate::backends::{self, Kind};
+use crate::backends::{self, Kind, Platform};
 use crate::options::{self, Kind as OptionKind, Options, Spec};
 use egui::{Align, ComboBox, Grid, Layout, RichText, ScrollArea, TextEdit, Ui};
 use std::collections::BTreeMap;
@@ -267,7 +267,7 @@ fn defaults(specs: &[Spec]) -> BTreeMap<&'static str, String> {
 /// One option as the control its kind calls for.
 fn option_row(ui: &mut Ui, spec: &'static Spec, values: &mut BTreeMap<&'static str, String>) {
     let label = ui.label(spec.label);
-    if let Some(summary) = spec.summary {
+    if let Some(summary) = spec.summary_on(Platform::Linux) {
         label.on_hover_text(summary);
     }
     let value = values.entry(spec.key).or_insert_with(|| spec.default.to_string());
@@ -290,11 +290,11 @@ fn option_row(ui: &mut Ui, spec: &'static Spec, values: &mut BTreeMap<&'static s
                 .collect();
             let value = values.entry(spec.key).or_insert_with(|| spec.default.to_string());
             ComboBox::from_id_salt(spec.key)
-                .selected_text(spec.label_for(value).to_string())
+                .selected_text(spec.label_for(value, Platform::Linux).to_string())
                 .width(ui.available_width())
                 .show_ui(ui, |ui| {
                     for choice in offered {
-                        let row = ui.selectable_value(value, choice.value.to_string(), choice.label);
+                        let row = ui.selectable_value(value, choice.value.to_string(), choice.label_on(Platform::Linux));
                         if let Some(summary) = choice.summary {
                             row.on_hover_text(summary);
                         }
