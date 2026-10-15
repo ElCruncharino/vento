@@ -705,7 +705,8 @@ jboolean vento_jni_read_region(JNIEnv *env, jlong handle, jint x, jint y, jint w
     }
     AndroidBitmapInfo info;
     if (AndroidBitmap_getInfo(env, bitmap, &info) != ANDROID_BITMAP_RESULT_SUCCESS
-            || (uint32_t) (dstX + w) > info.width || (uint32_t) (dstY + h) > info.height) {
+            || (uint64_t) dstX + (uint64_t) w > info.width
+            || (uint64_t) dstY + (uint64_t) h > info.height) {
         return JNI_FALSE;
     }
     void *dst;

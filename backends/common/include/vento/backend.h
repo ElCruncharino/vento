@@ -271,8 +271,9 @@ typedef struct vento_session_ops {
     /* Copy the desktop rectangle into `dst` at `(dst_x, dst_y)`, 1:1, where
        `dst` is rows of `R, G, B, A` bytes `dst_stride_bytes` apart. The
        caller guarantees the destination holds the region; the session checks
-       only that the source does, and returns false where it does not or
-       there is no framebuffer yet. */
+       only that the source does — for any int, without overflowing — and
+       that `dst_x` and `dst_y` are not negative, and returns false where
+       either fails or there is no framebuffer yet. */
     bool (*read_region)(vento_session *s, int x, int y, int width, int height, void *dst,
                         size_t dst_stride_bytes, int dst_x, int dst_y);
     /* The whole desktop at `1/step`, nearest neighbour, into the top left of

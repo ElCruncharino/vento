@@ -282,19 +282,25 @@ impl CSession {
         dst_x: usize,
         dst_y: usize,
     ) -> bool {
-        // The library writes at (dst_y, dst_x) into `dst` itself; the caller
-        // guarantees the destination holds the region, as the header says.
+        // The library writes at (dst_y, dst_x) into `dst` itself and checks
+        // only the source, so the destination is this side's to check, as
+        // the header leaves it to the caller.
+        let Some([x, y, width, height, dst_x, dst_y]) =
+            region_args(dst.len(), [x, y, width, height], dst_stride, dst_x, dst_y)
+        else {
+            return false;
+        };
         unsafe {
             (self.ops().read_region.unwrap())(
                 self.session,
-                x as c_int,
-                y as c_int,
-                width as c_int,
-                height as c_int,
+                x,
+                y,
+                width,
+                height,
                 dst.as_mut_ptr() as *mut c_void,
                 dst_stride,
-                dst_x as c_int,
-                dst_y as c_int,
+                dst_x,
+                dst_y,
             )
         }
     }
@@ -355,6 +361,39 @@ impl CSession {
             drop(Arc::from_raw(self.user));
         }
     }
+}
+
+/// `read_region`'s numbers as the C call takes them — `x, y, width, height,
+/// dst_x, dst_y` — or `None` where the call must not be made: a number, or a
+/// far edge, that an `int` cannot hold (passed on, it would wrap to some
+/// other rectangle), an empty rectangle, or a destination of `len` bytes
+/// that does not hold every row of it at `stride`. The last row is the one
+/// that has to fit, and a row wider than the stride is not a rectangle of
+/// `dst` either.
+fn region_args(
+    len: usize,
+    [x, y, width, height]: [usize; 4],
+    stride: usize,
+    dst_x: usize,
+    dst_y: usize,
+) -> Option<[c_int; 6]> {
+    let int = |v: usize| c_int::try_from(v).ok();
+    if width == 0 || height == 0 {
+        return None;
+    }
+    int(x.checked_add(width)?)?;
+    int(y.checked_add(height)?)?;
+    int(dst_x.checked_add(width)?)?;
+    int(dst_y.checked_add(height)?)?;
+    let row = dst_x.checked_add(width)?.checked_mul(4)?;
+    if row > stride {
+        return None;
+    }
+    let end = (dst_y + height - 1).checked_mul(stride)?.checked_add(row)?;
+    if end > len {
+        return None;
+    }
+    Some([int(x)?, int(y)?, int(width)?, int(height)?, int(dst_x)?, int(dst_y)?])
 }
 
 /// What differs between the four C backends.
@@ -559,4 +598,43 @@ fn start(
         #[cfg(realvnc)]
         answer_security,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_region_is_passed_on_only_when_the_destination_holds_it() {
+        // 64x64 at the origin of a 256-byte stride: 63 rows and one more row.
+        let need = 63 * 256 + 256;
+        assert_eq!(
+            region_args(need, [0, 0, 64, 64], 256, 0, 0),
+            Some([0, 0, 64, 64, 0, 0])
+        );
+        assert_eq!(region_args(need - 1, [0, 0, 64, 64], 256, 0, 0), None);
+        assert_eq!(region_args(16, [0, 0, 64, 64], 256, 0, 0), None);
+        // Placed at (2, 3) in a bigger picture: the last row ends further in.
+        let need = (3 + 63) * 1024 + (2 + 64) * 4;
+        assert_eq!(
+            region_args(need, [5, 6, 64, 64], 1024, 2, 3),
+            Some([5, 6, 64, 64, 2, 3])
+        );
+        assert_eq!(region_args(need - 1, [5, 6, 64, 64], 1024, 2, 3), None);
+        // A row wider than the stride.
+        assert_eq!(region_args(1 << 20, [0, 0, 65, 1], 256, 0, 0), None);
+        assert_eq!(region_args(1 << 20, [0, 0, 0, 1], 256, 0, 0), None);
+    }
+
+    #[test]
+    fn a_region_an_int_cannot_hold_is_not_passed_on() {
+        let big = usize::MAX;
+        let max = c_int::MAX as usize;
+        assert_eq!(region_args(big, [0x7fff_ff00, 0, 0x200, 1], 0x800, 0, 0), None);
+        assert_eq!(region_args(big, [max, 0, 1, 1], 4, 0, 0), None);
+        assert_eq!(region_args(big, [0, max + 1, 1, 1], 4, 0, 0), None);
+        assert_eq!(region_args(big, [0, 0, 1, 1], big, 0, big), None);
+        assert_eq!(region_args(big, [0, 0, big, 1], big, 0, 0), None);
+        assert_eq!(region_args(big, [0, 0, 1, 2], big, 0, 0), None);
+    }
 }

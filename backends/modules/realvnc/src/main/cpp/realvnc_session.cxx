@@ -683,7 +683,7 @@ public:
        and the rows are copied out into place, with the alpha byte filled in
        as the seam promises. */
     bool readRegion(int x, int y, int w, int h, void *dst, size_t stride, int dstX, int dstY) {
-        if (w <= 0 || h <= 0 || x < 0 || y < 0) {
+        if (w <= 0 || h <= 0 || x < 0 || y < 0 || dstX < 0 || dstY < 0) {
             return false;
         }
         const std::lock_guard<std::mutex> guard(pixels_);
@@ -694,7 +694,8 @@ public:
             dw = width_;
             dh = height_;
         }
-        if (!hs || dead_.load() || dw <= 0 || x + w > dw || y + h > dh) {
+        // Subtracted rather than added, so that `x + w` cannot overflow.
+        if (!hs || dead_.load() || dw <= 0 || x > dw || y > dh || w > dw - x || h > dh - y) {
             return false;
         }
         if (!ensureBuffer(hs, w, h) || !hs->copyScaledRegion(x, y, w, h, 1.0f)) {
