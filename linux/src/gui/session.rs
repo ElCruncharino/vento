@@ -730,10 +730,19 @@ impl Session {
         }
         if let Some(since) = self.disconnecting
             && self.closed.is_none()
-            && since.elapsed() > DISCONNECT_PATIENCE
         {
-            log::warn!("no close within {DISCONNECT_PATIENCE:?} of the disconnect; giving up on it");
-            self.closed = Some(String::new());
+            match DISCONNECT_PATIENCE.checked_sub(since.elapsed()) {
+                // A frame at the deadline, asked for here because nothing
+                // else may ask: a session that never connected has no poll
+                // ticking, and a backend that will not close sends nothing.
+                // Without it "Disconnecting…" stayed up until the pointer
+                // moved.
+                Some(left) if !left.is_zero() => ctx.request_repaint_after(left),
+                _ => {
+                    log::warn!("no close within {DISCONNECT_PATIENCE:?} of the disconnect; giving up on it");
+                    self.closed = Some(String::new());
+                }
+            }
         }
         self.sync_capture(host);
 
