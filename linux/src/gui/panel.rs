@@ -32,7 +32,9 @@
 use super::settings::Settings;
 use crate::backend::{ConnectionFact, Facts, Field, Monitor, Traffic};
 use crate::options::{self, Kind, Options, Spec};
-use egui::{Align2, ComboBox, Grid, RichText, ScrollArea, TextEdit, Ui, vec2};
+use egui::{
+    Align, Align2, ComboBox, Grid, Layout, Response, RichText, ScrollArea, Sense, TextEdit, Ui, WidgetInfo, WidgetType, vec2,
+};
 use std::collections::BTreeMap;
 
 /// What the backend said at the last poll: one instant, so that no row is
@@ -122,10 +124,16 @@ impl Panel {
         state: &str,
     ) -> Vec<Action> {
         let mut actions = Vec::new();
-        let mut open = self.open;
+        if !self.open {
+            return actions;
+        }
         let room = (ctx.content_rect().height() - 48.0).max(120.0);
         egui::Window::new("Connection")
-            .open(&mut open)
+            // No title bar: the desktop's name heads the panel, and a bar
+            // above it saying "Connection" was a second heading and a strip
+            // of the desktop lost for it. The close button sits at the end
+            // of the name's row instead.
+            .title_bar(false)
             .collapsible(false)
             .resizable(false)
             .default_width(360.0)
@@ -139,8 +147,18 @@ impl Panel {
             .max_height(room)
             .anchor(Align2::RIGHT_TOP, vec2(-16.0, 16.0))
             .show(ctx, |ui| {
-                ui.heading(snapshot.desktop_name().unwrap_or(title));
-                ui.label(RichText::new(state).weak());
+                // The close button first, from the right, so that the name
+                // and the state are given what is left of the row and wrap
+                // there rather than pushing the button out of the panel.
+                ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                    if close_button(ui).on_hover_text("Close the panel").clicked() {
+                        self.open = false;
+                    }
+                    ui.with_layout(Layout::top_down(Align::Min), |ui| {
+                        ui.heading(snapshot.desktop_name().unwrap_or(title));
+                        ui.label(RichText::new(state).weak());
+                    });
+                });
                 ui.add_space(8.0);
                 ScrollArea::vertical().show(ui, |ui| {
                     ui.add_enabled_ui(controls.connected, |ui| {
@@ -149,7 +167,6 @@ impl Panel {
                     facts(ui, snapshot);
                 });
             });
-        self.open = open;
         actions
     }
 
@@ -313,6 +330,24 @@ impl Panel {
 /// its own; the far end's own screens, where it has said how it is divided;
 /// then the ordinary ones. No backend here lists the sizes its far end would
 /// take — RFB, RDP and SPICE all take any — so there is nothing to ask.
+/// An egui window's close button, the cross its title bar draws, as a
+/// widget of its own: a square the height of a button, with the cross in
+/// the text colour of its state, so that it lights up under the pointer as
+/// the title bar's does.
+fn close_button(ui: &mut Ui) -> Response {
+    let side = ui.spacing().interact_size.y;
+    let (rect, response) = ui.allocate_exact_size(vec2(side, side), Sense::click());
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, ui.is_enabled(), "Close"));
+    if ui.is_rect_visible(rect) {
+        let visuals = ui.style().interact(&response);
+        let rect = rect.shrink(4.0).expand(visuals.expansion);
+        let stroke = visuals.fg_stroke;
+        ui.painter().line_segment([rect.left_top(), rect.right_bottom()], stroke);
+        ui.painter().line_segment([rect.right_top(), rect.left_bottom()], stroke);
+    }
+    response
+}
+
 fn size_choices(have: (u32, u32), window: Option<(u32, u32)>, monitors: &[Monitor]) -> Vec<((u32, u32), String)> {
     let mut choices: Vec<((u32, u32), String)> = Vec::new();
     let mut offer = |size: (u32, u32), label: String| {

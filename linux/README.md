@@ -262,7 +262,10 @@ is showing is in the tooltip too. On it:
 - **Disconnect**.
 
 **The connection panel** is the phone's `ConnectionPanel`: controls above
-facts. The controls are the backend's *live* options from the registry — the
+facts, in the top right corner, where it stays. It has no title bar: its first
+row is the desktop's name (the address until the protocol has said one) over
+the session's state line, with the close button, a cross, at that row's right
+end; the toolbar's Info closes it as well. The controls are the backend's *live* options from the registry — the
 ones `set_option` acts on mid-session, such as the VNC encodings' quality and
 compression, SPICE's image compression, RustDesk's codec and frame rate — as
 a control per kind (a dropdown for a choice, a box for a switch, a field for a
