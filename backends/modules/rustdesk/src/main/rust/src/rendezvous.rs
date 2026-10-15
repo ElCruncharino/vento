@@ -38,6 +38,7 @@ use crate::protos::rendezvous::{
     rendezvous_message,
 };
 use crate::wire::{self, Traffic};
+use common::Hangup;
 
 /// Their default ports (`libs/hbb_common/src/config.rs`): the rendezvous
 /// server, the relay beside it, and direct access two above.
@@ -88,10 +89,15 @@ impl How {
 /// happens is the network's choice rather than a setting: either the server
 /// tells both ends to dial each other and this end dials, or the peer asks for
 /// a relay and this end meets it there.
-pub fn reach(id: &str, server: &str, key: &str, timeout: Duration) -> Result<Reached> {
+///
+/// Every socket it opens is dialled through `hangup` and held there while it
+/// is being waited on, so that the session's close ends this at whichever step
+/// it has reached.
+pub fn reach(hangup: &Hangup, id: &str, server: &str, key: &str, timeout: Duration) -> Result<Reached> {
     let server_addr = resolve(server, RENDEZVOUS_PORT)?;
     log::info!("rendezvous: asking {server_addr} for {id}");
-    let sock = connect_reusable(server_addr, None, timeout)?;
+    let sock = connect_reusable(hangup, server_addr, None, timeout)?;
+    let _holding = hangup.hold(&sock)?;
     // The hole the peer is told to expect a packet on is the one this socket
     // opened, so the peer is dialled from this socket's own address.
     let local = sock.local_addr()?;
@@ -151,7 +157,7 @@ pub fn reach(id: &str, server: &str, key: &str, timeout: Duration) -> Result<Rea
                 } else {
                     (started.elapsed() * 6).clamp(Duration::from_secs(1), timeout)
                 };
-                return match connect_reusable(peer, Some(local), punch) {
+                return match connect_reusable(hangup, peer, Some(local), punch) {
                     Ok(sock) => Ok(Reached {
                         sock,
                         signed_id_pk,
@@ -161,10 +167,16 @@ pub fn reach(id: &str, server: &str, key: &str, timeout: Duration) -> Result<Rea
                     // than a fault, and asking for a relay is what this end
                     // does about it — the peer is at the server waiting to be
                     // told where to meet.
-                    Err(e) if !response.relay_server.is_empty() => {
+                    Err(e) if !response.relay_server.is_empty() && !hangup.is_hung_up() => {
                         log::info!("rendezvous: no way through to {peer} ({e}), asking for a relay");
-                        let sock =
-                            ask_for_relay(id, server_addr, &response.relay_server, key, timeout)?;
+                        let sock = ask_for_relay(
+                            hangup,
+                            id,
+                            server_addr,
+                            &response.relay_server,
+                            key,
+                            timeout,
+                        )?;
                         Ok(Reached {
                             sock,
                             signed_id_pk,
@@ -184,7 +196,7 @@ pub fn reach(id: &str, server: &str, key: &str, timeout: Duration) -> Result<Rea
                     response.relay_server.clone()
                 };
                 log::info!("rendezvous: {id} asked for a relay at {relay}");
-                let sock = meet_relay(id, &response.uuid, &relay, key, timeout)?;
+                let sock = meet_relay(hangup, id, &response.uuid, &relay, key, timeout)?;
                 return Ok(Reached {
                     sock,
                     signed_id_pk: response.pk().to_vec(),
@@ -209,6 +221,7 @@ pub fn reach(id: &str, server: &str, key: &str, timeout: Duration) -> Result<Rea
 /// in use however the second socket is set up — which is what it did, against a
 /// peer on the same machine, before this was the way both are opened.
 fn connect_reusable(
+    hangup: &Hangup,
     peer: SocketAddr,
     local: Option<SocketAddr>,
     timeout: Duration,
@@ -231,12 +244,10 @@ fn connect_reusable(
         SocketAddr::from(([0u16; 8], 0))
     });
     sock.bind(&SockAddr::from(local))?;
-    sock.connect_timeout(&SockAddr::from(peer), timeout)?;
-    let stream: TcpStream = sock.into();
+    // Blocking when it comes back, which everything above expects: it reads
+    // with timeouts of its own.
+    let stream = hangup.dial_from(sock, peer, timeout)?;
     stream.set_nodelay(true)?;
-    // `connect_timeout` leaves the socket non-blocking; everything above reads
-    // with timeouts of its own and expects a blocking one.
-    stream.set_nonblocking(false)?;
     Ok(stream)
 }
 
@@ -248,6 +259,7 @@ fn connect_reusable(
 /// requirement rather than a choice — it tells attempts apart by the address
 /// they came from.
 fn ask_for_relay(
+    hangup: &Hangup,
     id: &str,
     server: SocketAddr,
     relay: &str,
@@ -255,7 +267,8 @@ fn ask_for_relay(
     timeout: Duration,
 ) -> Result<TcpStream> {
     let uuid = uuid();
-    let sock = TcpStream::connect_timeout(&server, timeout)?;
+    let sock = hangup.dial(server, timeout)?;
+    let _holding = hangup.hold(&sock)?;
     sock.set_nodelay(true)?;
     let (mut reader, mut writer, _) = wire::split(sock, Arc::new(Traffic::default()))?;
     let mut request = RequestRelay::new();
@@ -281,7 +294,7 @@ fn ask_for_relay(
             } else {
                 response.relay_server
             };
-            meet_relay(id, &uuid, &relay, key, timeout)
+            meet_relay(hangup, id, &uuid, &relay, key, timeout)
         }
         // Worth naming rather than reporting silence: a rendezvous server that
         // answers this with anything else is one that has decided not to relay,
@@ -333,6 +346,7 @@ fn named(union: &Option<rendezvous_message::Union>) -> &'static str {
 /// is the session, and the relay copies it without being able to read a byte —
 /// the key was agreed with the peer and never went near this machine.
 fn meet_relay(
+    hangup: &Hangup,
     id: &str,
     uuid: &str,
     relay: &str,
@@ -351,7 +365,7 @@ fn meet_relay(
     // paired. Arriving deliberately late costs a quarter of a second once and
     // makes the two orderable.
     std::thread::sleep(RELAY_PAIR_DELAY);
-    let sock = TcpStream::connect_timeout(&addr, timeout)?;
+    let sock = hangup.dial(addr, timeout)?;
     sock.set_nodelay(true)?;
     let session = sock.try_clone()?;
     let (_, mut writer, _) = wire::split(sock, Arc::new(Traffic::default()))?;

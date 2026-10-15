@@ -251,7 +251,10 @@ fn connect_direct(args: &Args) -> Result<Stream, String> {
 /// What the probe adds is that it says each step out loud, which is why it is
 /// still the thing to reach for when a far end will not answer.
 fn connect_by_id(args: &Args) -> Result<Stream, String> {
-    let reached = rendezvous::reach(&args.peer, &args.server, key_of(args), Duration::from_secs(10))
+    // Nothing hangs a probe up but the process ending, so its hangup is never
+    // rung.
+    let hangup = common::Hangup::new();
+    let reached = rendezvous::reach(&hangup, &args.peer, &args.server, key_of(args), Duration::from_secs(10))
         .map_err(|e| e.to_string())?;
     println!(
         "== {} ({} bytes of peer key)",
