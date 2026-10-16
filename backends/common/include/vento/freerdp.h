@@ -46,6 +46,12 @@ typedef struct vento_freerdp_config {
        of. */
     const char *config_path;
     int connect_timeout_ms;  /* 0 or less for the library's default */
+    /* The person's hardware decoding, as `vento_video_decoders.mode` numbers
+       it (0 off, 1 VAAPI, 2 Vulkan, 3 either), at connect: the library's H.264
+       decoder is asked for the GPU on 1 and 3, and decodes on VAAPI where it
+       can and in software where it cannot. It has no Vulkan decoder, so 2 is
+       software. The phone's MediaCodec decodes where the platform puts it. */
+    int hardware;
 } vento_freerdp_config;
 
 /* "FreeRDP x.y.z" — the one call that proves the whole path. */

@@ -151,6 +151,12 @@ else()
             unset(${lib}_LIBRARIES CACHE)
             unset(${lib}_INCLUDE_DIRS CACHE)
         endforeach()
+        # That FFmpeg has VAAPI, through a shim that loads libva only when a
+        # device is opened, so their hardware decoding costs nothing until it
+        # is asked for: the session asks (FreeRDP_SoftwareGdi off) when the
+        # person has hardware decoding on at connect, and patches/freerdp
+        # makes it fall back to software wherever the device cannot decode.
+        set(WITH_FFMPEG_HWACCEL ON CACHE BOOL "" FORCE)
     endif()
 endif()
 

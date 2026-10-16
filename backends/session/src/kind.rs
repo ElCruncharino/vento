@@ -106,8 +106,8 @@ impl Connect<'_> {
     }
 
     /// How video may be decoded, as the [`decoders`](Connect::decoders) say
-    /// at connect: what a library with decoders of its own would be handed
-    /// (none is yet), where a backend that decodes through `decoders` —
+    /// at connect: what a library with decoders of its own is handed
+    /// (FreeRDP's, for its H.264), where a backend that decodes through `decoders` —
     /// RustDesk, TigerVNC — asks them instead, and again whenever it makes a
     /// decoder.
     pub fn hardware(&self) -> Hardware {

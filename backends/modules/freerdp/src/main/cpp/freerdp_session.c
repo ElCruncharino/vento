@@ -50,6 +50,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include <freerdp/freerdp.h>
 #include <freerdp/client.h>
@@ -59,6 +60,7 @@
 #include <freerdp/crypto/certificate.h>
 #include <freerdp/client/disp.h>
 #include <freerdp/channels/rdpgfx.h>
+#include <freerdp/codec/h264.h>
 #include <freerdp/gdi/gdi.h>
 #include <freerdp/gdi/gfx.h>
 #include <freerdp/graphics.h>
@@ -169,6 +171,18 @@ struct Session {
     /* The GDI's handler for the pipeline's reset, chained through: the reset
        is where a server on the pipeline states its monitors. */
     pcRdpgfxResetGraphics gdiResetGraphics;
+    /* And its handler for every surface command, chained through for the
+       H.264 ones: whether the library decoded the last of them on the GPU
+       (1), in software (0) or has not said (-1), in its own words — the
+       surface's H.264 context answers H264_CONTEXT_OPTION_HW_ACCEL with what
+       the last picture was — and what one costs, smoothed, in microseconds. */
+    pcRdpgfxSurfaceCommand gdiSurfaceCommand;
+    _Atomic int h264Hardware;
+    _Atomic UINT32 h264Micros;
+    /* The capability set the server confirmed, to advertise again, and
+       whether that was done because the GPU failed mid-stream. */
+    RDPGFX_CAPSET gfxCaps;
+    _Atomic int h264Failed;
 
     /* The desktop's monitors, x, y, width, height each, under `lock`: as the
        server last stated them (`serverCount`, -1 before it has), and as this
@@ -222,6 +236,7 @@ struct Session {
     int scale; /* percent; what the far end is asked to draw its own interface at */
     int compression;
     int connectTimeoutMs;
+    int hardware; /* vento_freerdp_config's: 0 off, 1 VAAPI, 2 Vulkan, 3 either */
 };
 
 static const vento_session_ops OPS;
@@ -863,8 +878,66 @@ static UINT onGfxCapsConfirm(RdpgfxClientContext *gfx, const RDPGFX_CAPS_CONFIRM
     }
     s->gfxH264 = h264;
     s->gfxVersion = version;
+    s->gfxCaps = *confirm->capsSet;
     LOGI("graphics pipeline: server confirmed caps 0x%08x, flags 0x%08x", version, flags);
     return CHANNEL_RC_OK;
+}
+
+static UINT64 nowMicros(void) {
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (UINT64) t.tv_sec * 1000000u + (UINT64) t.tv_nsec / 1000u;
+}
+
+/* How the library decoded an H.264 command, read off the surface it went to
+   after the GDI's handler has decoded it. The phone's H.264 is MediaCodec's,
+   which decodes where the platform puts it and does not answer the option,
+   so there it stays unsaid. */
+static UINT onGfxSurfaceCommand(RdpgfxClientContext *context, const RDPGFX_SURFACE_COMMAND *cmd) {
+    rdpGdi *gdi = (rdpGdi *) context->custom;
+    Session *s = sessionOf(gdi->context);
+    const int h264 = cmd->codecId == RDPGFX_CODECID_AVC420 || cmd->codecId == RDPGFX_CODECID_AVC444
+                     || cmd->codecId == RDPGFX_CODECID_AVC444v2;
+    const UINT64 start = h264 ? nowMicros() : 0;
+    const UINT rc = s->gdiSurfaceCommand(context, cmd);
+    if (!h264) {
+        return rc;
+    }
+    const UINT64 took = nowMicros() - start;
+    const UINT32 was = s->h264Micros;
+    s->h264Micros = was ? (UINT32) ((was * 7u + took) / 8u) : (UINT32) took;
+#ifndef __ANDROID__
+    const gdiGfxSurface *surface =
+            (const gdiGfxSurface *) context->GetSurfaceData(context, (UINT16) cmd->surfaceId);
+    if (surface && surface->h264) {
+        const int hardware =
+                h264_context_get_option(surface->h264, H264_CONTEXT_OPTION_HW_ACCEL) != 0;
+        if (s->h264Hardware != hardware) {
+            LOGI("H.264 is being decoded in %s", hardware ? "hardware (VAAPI)" : "software");
+        }
+        /* From the GPU to software mid-stream is a decoder that failed and was
+           replaced (patches/freerdp), and the new one has none of the pictures
+           the stream refers back to: until the next key frame every command
+           fails and nothing is drawn, and Windows sends one only when it has
+           to — not for a Refresh Rect, nor for output suppressed and allowed
+           again. The capabilities advertised again are what it answers with
+           new surfaces and a new stream, which the setting makes software,
+           so that a device that fails once is not tried again. */
+        if (s->h264Hardware == 1 && !hardware && !s->h264Failed) {
+            s->h264Failed = 1;
+            LOGW("hardware decoding failed mid-stream: restarting the graphics pipeline in software");
+            freerdp_settings_set_bool(gdi->context->settings, FreeRDP_SoftwareGdi, TRUE);
+            RDPGFX_CAPSET caps = s->gfxCaps;
+            const RDPGFX_CAPS_ADVERTISE_PDU pdu = {.capsSetCount = 1, .capsSets = &caps};
+            const UINT error = context->CapsAdvertise(context, &pdu);
+            if (error != CHANNEL_RC_OK) {
+                LOGW("the capabilities could not be sent again: 0x%08x", error);
+            }
+        }
+        s->h264Hardware = hardware;
+    }
+#endif
+    return rc;
 }
 
 /* A channel's interface arrives on an event rather than from a call, so the
@@ -882,6 +955,8 @@ static void onChannelConnected(void *context, const ChannelConnectedEventArgs *e
         /* Chained, as SurfaceBits is: the GDI's handler is what resizes. */
         s->gdiResetGraphics = gfx->ResetGraphics;
         gfx->ResetGraphics = onGfxResetGraphics;
+        s->gdiSurfaceCommand = gfx->SurfaceCommand;
+        gfx->SurfaceCommand = onGfxSurfaceCommand;
         s->gfxOpen = 1;
     } else if (strcmp(e->name, CLIPRDR_SVC_CHANNEL_NAME) == 0) {
         wireCliprdr(s, (CliprdrClientContext *) e->pInterface);
@@ -902,6 +977,8 @@ static void onChannelDisconnected(void *context, const ChannelDisconnectedEventA
         s->gfxOpen = 0;
         s->gfxVersion = 0;
         s->gfxH264 = 0;
+        s->h264Hardware = -1;
+        s->h264Micros = 0;
     } else if (strcmp(e->name, CLIPRDR_SVC_CHANNEL_NAME) == 0) {
         s->cliprdr = NULL;
     } else if (strcmp(e->name, DISP_DVC_CHANNEL_NAME) == 0) {
@@ -1532,7 +1609,13 @@ static void applySettings(Session *s, rdpSettings *settings) {
     freerdp_settings_set_uint32(settings, FreeRDP_DesktopWidth, (UINT32) s->width);
     freerdp_settings_set_uint32(settings, FreeRDP_DesktopHeight, (UINT32) s->height);
     freerdp_settings_set_uint32(settings, FreeRDP_ColorDepth, 32);
-    freerdp_settings_set_bool(settings, FreeRDP_SoftwareGdi, TRUE);
+    /* The GDI is software whatever this says — it draws into a buffer of
+       ours — and what the library reads it for is whether to ask its H.264
+       decoder for the GPU (patches/freerdp: off asks), which is the person's
+       hardware decoding at connect. Its decoder is FFmpeg's on VAAPI, or
+       nothing: Vulkan alone is software here. */
+    freerdp_settings_set_bool(settings, FreeRDP_SoftwareGdi,
+                              !(s->hardware == 1 || s->hardware == 3));
     freerdp_settings_set_uint32(settings, FreeRDP_TcpConnectTimeout,
                                 (UINT32) (s->connectTimeoutMs > 0 ? s->connectTimeoutMs : 20000));
 
@@ -1903,6 +1986,8 @@ vento_session *vento_freerdp_create(const vento_freerdp_config *cfg, const vento
     s->serverCount = -1;
     s->keyboardLayout = cfg->keyboard_layout;
     s->connectTimeoutMs = cfg->connect_timeout_ms;
+    s->hardware = cfg->hardware;
+    s->h264Hardware = -1;
 
     /* WinPR reads $HOME through GetKnownPath, and an app's process has no HOME
        at all — which is not a missing feature but a session that cannot start:
@@ -2189,8 +2274,10 @@ static bool op_info(vento_session *base, vento_strings *out) {
     if (s->gfxOpen) {
         const UINT32 version = s->gfxVersion;
         if (version) {
-            snprintf(encoding, sizeof(encoding), "EGFX %u.%u%s", (version >> 16) & 0xFFFFu,
-                     (version >> 8) & 0xFFu, s->gfxH264 ? ", H.264" : "");
+            const int hardware = s->h264Hardware;
+            snprintf(encoding, sizeof(encoding), "EGFX %u.%u%s%s", (version >> 16) & 0xFFFFu,
+                     (version >> 8) & 0xFFu, s->gfxH264 ? ", H.264" : "",
+                     !s->gfxH264 || hardware < 0 ? "" : hardware ? " (hardware)" : " (software)");
         } else {
             snprintf(encoding, sizeof(encoding), "EGFX");
         }
@@ -2205,6 +2292,30 @@ static bool op_info(vento_session *base, vento_strings *out) {
     const char *values[] = {protocol, connection, security, encoding, lineSpeed,
                             server, viewer};
     return vento_strings_set(out, values, sizeof(values) / sizeof(values[0]));
+}
+
+/* The overlay's line for the H.264 the library decodes: how, and what a
+   surface command of it costs, decoded and converted into the surface. Where
+   hardware was asked for and the library decodes in software, why, as far as
+   this end knows it. */
+static bool op_decoder_status(vento_session *base, char *out, size_t len) {
+    Session *s = sessionOfBase(base);
+    const UINT32 micros = s->h264Micros;
+    const int hardware = s->h264Hardware;
+    if (!micros) {
+        return false;
+    }
+    const char *why = "";
+    if (hardware == 0 && s->h264Failed) {
+        why = " (vaapi: failed mid-stream)";
+    } else if (hardware == 0 && s->hardware == 2) {
+        why = " (vulkan: FreeRDP decodes on VAAPI only)";
+    } else if (hardware == 0 && s->hardware) {
+        why = " (vaapi: the library fell back, and its log says why)";
+    }
+    snprintf(out, len, "H.264%s %u.%u ms%s", hardware > 0 ? " vaapi" : hardware == 0 ? " sw" : "",
+             micros / 1000u, (micros % 1000u) / 100u, why);
+    return true;
 }
 
 /* Both directions out of the library's own statistics, which are counted where
@@ -2297,4 +2408,5 @@ static const vento_session_ops OPS = {
         .disconnect = op_disconnect,
         .destroy = op_destroy,
         .request_layout = op_request_layout,
+        .decoder_status = op_decoder_status,
 };

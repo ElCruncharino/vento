@@ -104,6 +104,9 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
         platform: platform.as_ptr(),
         config_path: config_path.as_ptr(),
         connect_timeout_ms: CONNECT_TIMEOUT_MS,
+        // The library decodes its H.264 itself, so it is told the mode once,
+        // and a change takes effect at the next connection.
+        hardware: session::c::video::mode_number(c.hardware()),
     };
     log::info!("connecting to {} ({}x{})", c.address, width, height);
     let backend = start(

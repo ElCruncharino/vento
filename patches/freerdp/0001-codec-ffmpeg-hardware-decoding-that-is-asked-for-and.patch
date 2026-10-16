@@ -1,0 +1,303 @@
+From 6249c86f57ca5112a7320daf2ac9b86cadefca0c Mon Sep 17 00:00:00 2001
+From: "Claude Opus 5.5" <noreply@anthropic.com>
+Date: Fri, 16 Oct 2026 16:42:29 -0400
+Subject: [PATCH 1/1] codec,ffmpeg: hardware decoding that is asked for and
+ falls back
+
+The graphics pipeline and the video channel asked their H.264 contexts
+for hardware decoding with FreeRDP_SoftwareGdi itself, so a client that
+keeps the default software GDI got it and /gdi:hw turned it off: the
+request is now !FreeRDP_SoftwareGdi, which is what /gdi:hw says.
+
+With WITH_FFMPEG_HWACCEL the decoder now falls back to software instead
+of failing wherever the device cannot decode:
+
+- get_format chooses software (avcodec_default_get_format) instead of
+  AV_PIX_FMT_NONE when the hardware format is not offered, which is also
+  what FFmpeg asks again with after a hardware decoder fails to start;
+  before, the stream did not decode at all.
+- a software picture from a context with a device is used as one,
+  instead of being taken for a hardware frame (which asserted on the
+  missing hw_frames_ctx in hw_supports_target_format).
+- a send, receive or transfer that fails while a device is in use
+  replaces the decoder with a software one and gives it the packet
+  again; the picture may be damaged until the next key frame.
+- H264_CONTEXT_OPTION_HW_ACCEL answers whether the last picture came
+  from the device, and is cleared where no device could be opened, where
+  none is configured and in a build without hardware decoding, so that a
+  caller can say how the stream is being decoded.
+
+A picture is copied off the device in the surface's own format and
+converted with swscale, rather than into I420 by the driver where it
+lists I420 among its transfer formats: iHD's vaGetImage into I420 is
+several times slower than its copy of NV12 (a 1920x1200 AVC444 frame
+took 60 ms to decode and convert, against 12-14 ms now and 9-11 ms in
+software).
+
+And one device is opened for every decoder in the process, by the first
+to ask, and kept until the process exits, rather than one per context:
+each costs tens of milliseconds to open (19-34 ms with VAAPI on Intel),
+and a context is made for every surface, which a server replaces on
+every reset of the graphics pipeline.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/channels/video/client/video_main.c b/channels/video/client/video_main.c
+index a79bbcfee..e4ce8bb4a 100644
+--- a/channels/video/client/video_main.c
++++ b/channels/video/client/video_main.c
+@@ -244,7 +244,7 @@ static PresentationContext* PresentationContext_new(VideoClientContext* video, B
+ 	WINPR_ASSERT(plugin->rdpcontext);
+ 	if (!h264_context_set_option(
+ 	        ret->h264, H264_CONTEXT_OPTION_HW_ACCEL,
+-	        (UINT32)freerdp_settings_get_bool(plugin->rdpcontext->settings, FreeRDP_SoftwareGdi)))
++	        (UINT32)!freerdp_settings_get_bool(plugin->rdpcontext->settings, FreeRDP_SoftwareGdi)))
+ 		goto fail;
+ 	if (!h264_context_reset(ret->h264, width, height))
+ 		goto fail;
+diff --git a/libfreerdp/codec/h264_ffmpeg.c b/libfreerdp/codec/h264_ffmpeg.c
+index b64d0b48a..a55571ca4 100644
+--- a/libfreerdp/codec/h264_ffmpeg.c
++++ b/libfreerdp/codec/h264_ffmpeg.c
+@@ -22,6 +22,7 @@
+ 
+ #include <winpr/wlog.h>
+ #include <winpr/json.h>
++#include <winpr/synch.h>
+ 
+ #include <freerdp/log.h>
+ #include <freerdp/codec/h264.h>
+@@ -462,6 +463,42 @@ static const char* get_hwctx_device(H264_CONTEXT_LIBAVCODEC* sys)
+ 
+ 	return sys->device;
+ }
++
++/* One decoding device for every context in the process, opened by the first to ask and kept
++ * until the process exits: opening one takes tens of milliseconds, and a context is made for
++ * every surface, which a server replaces on every reset of the graphics pipeline. */
++static INIT_ONCE hwdevice_once = INIT_ONCE_STATIC_INIT;
++static CRITICAL_SECTION hwdevice_lock;
++static AVBufferRef* hwdevice = nullptr;
++
++static BOOL CALLBACK hwdevice_init(WINPR_ATTR_UNUSED PINIT_ONCE once,
++                                   WINPR_ATTR_UNUSED PVOID param,
++                                   WINPR_ATTR_UNUSED PVOID* context)
++{
++	return InitializeCriticalSectionAndSpinCount(&hwdevice_lock, 0);
++}
++
++WINPR_ATTR_NODISCARD
++static int hwdevice_acquire(H264_CONTEXT_LIBAVCODEC* sys)
++{
++	WINPR_ASSERT(sys);
++	if (!InitOnceExecuteOnce(&hwdevice_once, hwdevice_init, nullptr, nullptr))
++		return AVERROR(ENOMEM);
++
++	int rc = 0;
++	EnterCriticalSection(&hwdevice_lock);
++	if (hwdevice && (((const AVHWDeviceContext*)hwdevice->data)->type != sys->type))
++		rc = av_hwdevice_ctx_create(&sys->hwctx, sys->type, get_hwctx_device(sys), nullptr, 0);
++	else
++	{
++		if (!hwdevice)
++			rc = av_hwdevice_ctx_create(&hwdevice, sys->type, get_hwctx_device(sys), nullptr, 0);
++		if ((rc >= 0) && !(sys->hwctx = av_buffer_ref(hwdevice)))
++			rc = AVERROR(ENOMEM);
++	}
++	LeaveCriticalSection(&hwdevice_lock);
++	return rc;
++}
+ #endif
+ 
+ #ifdef WITH_FFMPEG_HWACCEL
+@@ -594,26 +631,24 @@ EXCEPTION:
+ }
+ 
+ #if defined(WITH_FFMPEG_HWACCEL)
+-static int hw_supports_target_format(AVBufferRef* hwframectx, enum AVPixelFormat target)
++/* A hardware decoder that failed mid-stream is replaced by a software one, which the packet
++ * is given to again: the picture may be damaged until the next key frame, but it goes on. */
++WINPR_ATTR_NODISCARD
++static BOOL libavcodec_reopen_in_software(H264_CONTEXT* WINPR_RESTRICT h264)
+ {
+-	WINPR_ASSERT(hwframectx);
++	H264_CONTEXT_LIBAVCODEC* sys = (H264_CONTEXT_LIBAVCODEC*)h264->pSystemData;
++	WINPR_ASSERT(sys);
+ 
+-	enum AVPixelFormat* formats = nullptr;
+-	int rc = av_hwframe_transfer_get_formats(hwframectx, AV_HWFRAME_TRANSFER_DIRECTION_FROM,
+-	                                         &formats, 0);
+-	if (rc == 0)
+-	{
+-		enum AVPixelFormat* it = formats;
+-		while ((rc == 0) && (*it != AV_PIX_FMT_NONE))
+-		{
+-			enum AVPixelFormat cur = *it++;
+-			if (cur == target)
+-				rc = 1;
+-		}
+-	}
++	WLog_Print(h264->log, WLOG_WARN, "%s decoding failed, continuing in software",
++	           av_hwdevice_get_type_name(sys->type));
++	avcodec_free_context(&sys->codecDecoderContext);
++	av_buffer_unref(&sys->hwctx);
++	h264->hwAccel = FALSE;
+ 
+-	av_free(formats);
+-	return rc;
++	sys->codecDecoderContext = avcodec_alloc_context3(sys->codecDecoder);
++	if (!sys->codecDecoderContext)
++		return FALSE;
++	return avcodec_open2(sys->codecDecoderContext, sys->codecDecoder, nullptr) >= 0;
+ }
+ #endif
+ 
+@@ -656,6 +691,9 @@ static int libavcodec_decompress(H264_CONTEXT* WINPR_RESTRICT h264,
+ 	packet->data = cnv.pv;
+ 	packet->size = (int)MIN(SrcSize, INT32_MAX);
+ 
++#if defined(WITH_FFMPEG_HWACCEL)
++retry:
++#endif
+ 	WINPR_ASSERT(sys->codecDecoderContext);
+ 	/* avcodec_decode_video2 is deprecated with libavcodec 57.48.101 */
+ #if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(57, 48, 101)
+@@ -701,25 +739,36 @@ static int libavcodec_decompress(H264_CONTEXT* WINPR_RESTRICT h264,
+ 
+ #if defined(WITH_FFMPEG_HWACCEL)
+ 
+-	if (sys->hwctx)
++	/* What the getter answers is what the last picture was. */
++	if (sys->hwctx && gotFrame)
++		h264->hwAccel = (sys->hwVideoFrame->hw_frames_ctx != nullptr);
++
++	if (sys->hwctx && gotFrame && !sys->hwVideoFrame->hw_frames_ctx)
++	{
++		/* A software picture from a decoder with a device, which get_format chose for a
++		 * stream the device has no decoder for. */
++		av_frame_unref(sys->videoFrame);
++		av_frame_move_ref(sys->videoFrame, sys->hwVideoFrame);
++	}
++	else if (sys->hwctx)
+ 	{
+ 		AVFrame* target = sys->videoFrame;
+ 		if (sys->hwFrameSupportsNativeFormat < 0)
+ 		{
+-			const int res = hw_supports_target_format(sys->codecDecoderContext->hw_frames_ctx,
+-			                                          sys->videoFrame->format);
+-			if (res < 0)
+-				status = res;
+-			else
+-			{
+-				sys->hwFrameSupportsNativeFormat = res;
+-				const char* msg = "hardware supported copy";
+-				if (res == 0)
+-					msg = "swscale format conversion";
+-				WLog_Print(h264->log, WLOG_DEBUG, "formats: { src:%s, dst:%s } using %s",
+-				           av_format_str(sys->hwVideoFrame->format),
+-				           av_format_str(sys->videoFrame->format), msg);
+-			}
++			/* Copied off the device as the surface is and converted with swscale, rather than
++			 * converted by the driver where it offers to: iHD's vaGetImage into I420 is several
++			 * times slower than its copy of NV12 (a 1920x1200 AVC444 frame took 60 ms to decode
++			 * and convert that way, against 12 ms this way). */
++			const AVHWFramesContext* frames =
++			    (const AVHWFramesContext*)sys->hwVideoFrame->hw_frames_ctx->data;
++			const int res = (frames->sw_format == sys->videoFrame->format);
++			sys->hwFrameSupportsNativeFormat = res;
++			const char* msg = "hardware supported copy";
++			if (res == 0)
++				msg = "swscale format conversion";
++			WLog_Print(h264->log, WLOG_DEBUG, "formats: { src:%s, dst:%s } using %s",
++			           av_format_str(frames->sw_format), av_format_str(sys->videoFrame->format),
++			           msg);
+ 		}
+ 
+ 		if (sys->hwFrameSupportsNativeFormat == 0)
+@@ -793,6 +842,10 @@ static int libavcodec_decompress(H264_CONTEXT* WINPR_RESTRICT h264,
+ 		rc = -2;
+ 
+ fail:
++#if defined(WITH_FFMPEG_HWACCEL)
++	if ((rc < 0) && packet && sys->hwctx && libavcodec_reopen_in_software(h264))
++		goto retry;
++#endif
+ #if LIBAVCODEC_VERSION_INT < AV_VERSION_INT(58, 133, 100)
+ 	av_packet_unref(packet);
+ #else
+@@ -1129,7 +1182,11 @@ static enum AVPixelFormat libavcodec_get_format(struct AVCodecContext* ctx,
+ 		}
+ 	}
+ 
+-	return AV_PIX_FMT_NONE;
++	/* The device has no decoder for this stream (or its decoder failed to start, and FFmpeg
++	 * asks again without it): decode in software rather than not at all. */
++	WLog_Print(h264->log, WLOG_WARN, "%s cannot decode this stream, decoding in software",
++	           av_hwdevice_get_type_name(sys->type));
++	return avcodec_default_get_format(ctx, fmts);
+ }
+ 
+ WINPR_ATTR_MALLOC(WINPR_JSON_Delete, 1)
+@@ -1313,6 +1370,9 @@ static BOOL libavcodec_init(H264_CONTEXT* h264)
+ 
+ 	if (!load_config(sys, h264->hwAccel > 0, h264->log))
+ 		goto EXCEPTION;
++#if !defined(WITH_FFMPEG_HWACCEL)
++	h264->hwAccel = FALSE; /* not supported */
++#endif
+ 
+ 	h264->pSystemData = (void*)sys;
+ 
+@@ -1351,9 +1411,12 @@ static BOOL libavcodec_init(H264_CONTEXT* h264)
+ 			           "Trying to initialize hardware backed decoder of type %s",
+ 			           av_hwdevice_get_type_name(sys->type));
+ 		else
++		{
+ 			WLog_Print(h264->log, WLOG_DEBUG,
+ 			           "Skipping hardware backed decoder (useHwDecoder=%s, type=%s)",
+ 			           bool_to_string(sys->useHwDecoder), av_hwdevice_get_type_name(sys->type));
++			h264->hwAccel = FALSE;
++		}
+ 
+ 		if (sys->useHwDecoder && (sys->type != AV_HWDEVICE_TYPE_NONE))
+ 		{
+@@ -1361,8 +1424,7 @@ static BOOL libavcodec_init(H264_CONTEXT* h264)
+ 			enum AVHWDeviceType type = sys->type;
+ 			if (!sys->hwctx)
+ 			{
+-				int ret =
+-				    av_hwdevice_ctx_create(&sys->hwctx, type, get_hwctx_device(sys), nullptr, 0);
++				int ret = hwdevice_acquire(sys);
+ 
+ 				if (ret < 0)
+ 				{
+@@ -1371,6 +1433,7 @@ static BOOL libavcodec_init(H264_CONTEXT* h264)
+ 					           "software: %s",
+ 					           get_hwctx_device(sys), av_err2str(ret));
+ 					sys->hwctx = nullptr;
++					h264->hwAccel = FALSE;
+ 					goto fail_hwdevice_create;
+ 				}
+ 			}
+diff --git a/libfreerdp/gdi/gfx.c b/libfreerdp/gdi/gfx.c
+index 8d9d70895..96ed8d2c1 100644
+--- a/libfreerdp/gdi/gfx.c
++++ b/libfreerdp/gdi/gfx.c
+@@ -711,7 +711,7 @@ static UINT gdi_SurfaceCommand_AVC420(rdpGdi* gdi, RdpgfxClientContext* context,
+ 
+ 		if (!h264_context_set_option(
+ 		        surface->h264, H264_CONTEXT_OPTION_HW_ACCEL,
+-		        (UINT32)freerdp_settings_get_bool(gdi->context->settings, FreeRDP_SoftwareGdi)))
++		        (UINT32)!freerdp_settings_get_bool(gdi->context->settings, FreeRDP_SoftwareGdi)))
+ 			return ERROR_INTERNAL_ERROR;
+ 
+ 		if (!h264_context_reset(surface->h264, surface->width, surface->height))
+@@ -805,7 +805,7 @@ static UINT gdi_SurfaceCommand_AVC444(rdpGdi* gdi, RdpgfxClientContext* context,
+ 
+ 		if (!h264_context_set_option(
+ 		        surface->h264, H264_CONTEXT_OPTION_HW_ACCEL,
+-		        (UINT32)freerdp_settings_get_bool(gdi->context->settings, FreeRDP_SoftwareGdi)))
++		        (UINT32)!freerdp_settings_get_bool(gdi->context->settings, FreeRDP_SoftwareGdi)))
+ 			return ERROR_INTERNAL_ERROR;
+ 		if (!h264_context_reset(surface->h264, surface->width, surface->height))
+ 			return ERROR_INTERNAL_ERROR;
