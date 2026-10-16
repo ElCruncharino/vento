@@ -112,59 +112,43 @@ configured `--disable-everything`, `--disable-autodetect`, without programs,
 network or the format, filter and device libraries, with exactly these
 decoders: H.264, H.265, VP8, VP9, AV1 (dav1d's), AAC, Opus and two PCM ones
 (FreeRDP's sound), the H.264 parser, libswscale and libswresample, and the
-hardware decoders of those video codecs: VAAPI's for each and Vulkan Video's
-for H.264, H.265, VP9 and AV1 (with libavcodec's own AV1 decoder, which
-decodes only on hardware), built against headers from `third_party/libva`
-(2.23.0) and `third_party/Vulkan-Headers` (v1.4.341) and nothing else of
-either: FFmpeg's VAAPI code reaches libva through `c/va_shim.c`, which loads
-`libva.so.2` and `libva-drm.so.2` on first use, and its Vulkan code loads
-`libvulkan.so.1` itself, so the binary depends on neither. Its own code
+hardware decoders of those video codecs: VAAPI's for each (with libavcodec's
+own AV1 decoder, which decodes only on hardware), built against headers from
+`third_party/libva` (2.23.0) and nothing else of it: FFmpeg's VAAPI code
+reaches libva through `c/va_shim.c`, which loads `libva.so.2` and
+`libva-drm.so.2` on first use, so the binary does not depend on it. Its own code
 (`backends/platform/desktop/c/vento_video.c`) is the only C that
 includes FFmpeg's headers for the Rust decoder, which calls a dozen
 functions of it declared by hand.
 
 **Hardware decoding is off by default**, and off it is the software decoder
-it always was: no device is opened, and neither libva nor libvulkan is
-loaded. Asked for — the **Hardware decoding** setting, or `--hw-decode`
-(`auto`; `=vaapi` or `=vulkan` for one of them) — the Rust decoder
-(RustDesk's picture, and TigerVNC's H.264) decodes on the device where it
-has a decoder for the stream's profile, and in software where it has not,
-with the reason kept;
-one device of each kind is opened for the whole process, by the first
-decoder that asks. `auto` decides stream by stream: **VAAPI first, then
-Vulkan Video, then software**. A stream VAAPI takes never loads libvulkan;
-where VAAPI has no device, or no decoder for the profile (iHD has none for
-H.264 High 10 or AV1 4:4:4), the same packet goes to a decoder on the
-Vulkan device, and where that cannot take it either, to software, the
-reason naming each (`vaapi: H.264 High 10 is not supported; vulkan: no
-video decode device`).
-
-Vulkan's device is the first the loader lists that is a GPU with a video
-decode queue, chosen through an instance of vento's own before FFmpeg opens
-one — never a CPU implementation such as lavapipe, which is what FFmpeg
-would open by default where the GPU's driver cannot (`/dev/dri` hidden by a
-sandbox), and which is unloaded again after the look. Which Vulkan drivers
-decode: **NVIDIA's** own is the one that gains most, with H.264, H.265, VP9
-and AV1 on Vulkan and no VAAPI of its own; Mesa's **RADV** (AMD) decodes
-too, beside AMD's VAAPI; Mesa's **ANV** (Intel) has no decode queue at all
-unless `ANV_DEBUG=video-decode` is set (Mesa 26.2), so `auto` stays on iHD's
-VAAPI there; and **Fedora's** Mesa, built without the patent-encumbered
-codecs, decodes only VP9 and AV1 on Vulkan with any of them (H.264 and H.265
-go on to software, "vulkan: H.264 High is not supported").
+it always was: no device is opened, and libva is not loaded. Asked for — the
+**Hardware decoding** setting, or `--hw-decode` (`auto`, or `=vaapi`, which
+is the same) — the Rust decoder (RustDesk's picture, and TigerVNC's H.264)
+decodes on VAAPI, stream by stream, where the device has a decoder for the
+stream's profile, and in software where it has not, with the reason kept:
+**VAAPI first, then software**. One device is opened for the whole process,
+by the first decoder that asks, on the first DRM render node. Where there
+is no device (`vaapi: no device`, `vaapi: no libva (...)`) or no decoder for
+the profile (iHD has none for H.264 High 10 or AV1 4:4:4: `vaapi: H.264 High
+10 is not supported`), the stream is software's. Which codecs a machine
+decodes is its libva driver's: Intel's **iHD** (`intel-media-driver`, what
+this was measured on), Mesa's for AMD; a Mesa built without the
+patent-encumbered codecs (Fedora's) has no H.264 or H.265 decoder, so those
+streams are software's there, and NVIDIA's own driver has no VAAPI at all.
 
 Unless it is drawn from the GPU (below), the picture comes off the device
 as planes in memory (NV12, P010 or XV30) and is converted like a software
 one, so the two look the same: VAAPI's
 surface mapped for reading — each decoder measures, on its first pictures,
 whether mapping the surface in place or as an image the driver copies it
-into is faster on this machine, and keeps to the faster — and Vulkan's
-image copied by the GPU into memory of FFmpeg's. A hardware failure
+into is faster on this machine, and keeps to the faster. A hardware failure
 mid-stream is a software decoder in its place and a key frame asked for,
 not a lost picture. What it gains is CPU more than time: on Lunar Lake at
 1080p (release build, a full-motion clip), H.264 on VAAPI took 10-11 ms a
 frame decoded and converted against software's 7 (slice threads on eight
-cores), at half the CPU; AV1 on VAAPI 9-10 ms against dav1d's 12, and on
-Vulkan (ANV with the switch) 5-6 ms. Most of VAAPI's time is the GPU's
+cores), at half the CPU; AV1 on VAAPI 9-10 ms against dav1d's 12. Most of
+VAAPI's time is the GPU's
 decode (about 3 ms) and the read back of the whole picture, which a mostly
 still desktop costs as much as a moving one, where software's decode is
 cheap. RustDesk's, TigerVNC's and FreeRDP's **Encoding** row says which,
@@ -210,8 +194,7 @@ H.264 comparison is 4.0 ms and 2.9% from the GPU, 11.9 ms and 9.0% read
 back, 8.3 ms and 10.8% in software. **TigerVNC and FreeRDP stay
 on read-back**: their H.264 is rectangles composed, with every other
 encoding, into a framebuffer in memory, which a picture on the GPU would
-have to be composed with there. Vulkan Video's pictures and H.265 4:4:4's
-XV30 are read back too.
+have to be composed with there. H.265 4:4:4's XV30 is read back too.
 
 The setting reaches every backend: the session's decoders carry it.
 **RustDesk** asks them each frame and takes a change at once — a new
@@ -233,10 +216,9 @@ picture is the cost here as it is for RustDesk.
 **FreeRDP** decodes its H.264 itself, below its own AVC444 combine, so it is
 handed the mode at connect (`Connect::hardware`, as
 `vento_freerdp_config.hardware`) and takes a change **at the next
-connection**. It decodes on **VAAPI only**, through the static FFmpeg and
-the same libva shim (built with upstream's `WITH_FFMPEG_HWACCEL`): `vaapi`
-and `auto` ask for it, and `vulkan` is software, which the overlay's line
-says (`dec H.264 sw 9.2 ms (vulkan: FreeRDP decodes on VAAPI only)`).
+connection**. It decodes on VAAPI through the static FFmpeg and the same
+libva shim (built with upstream's `WITH_FFMPEG_HWACCEL`): `vaapi` and `auto`
+alike ask for it.
 Upstream's path needed `patches/freerdp/0001` to be one to turn on: the
 request was the wrong way round (`FreeRDP_SoftwareGdi` itself, which this
 build keeps on, so it was always asked for), a stream the device cannot
@@ -259,8 +241,8 @@ libraries do and do not use the setting.
 
 The submodules must be initialised (`git submodule update --init --recursive`;
 RealVNC's four host-only submodules need `--recursive`) and patched
-(`./patch.sh -n` at the root). Five are this crate's alone: FFmpeg,
-dav1d, libva's and Vulkan's headers, above, and winit, at the tag of the release `Cargo.lock` names, which
+(`./patch.sh -n` at the root). Four are this crate's alone: FFmpeg,
+dav1d, libva's headers, above, and winit, at the tag of the release `Cargo.lock` names, which
 `Cargo.toml`'s `[patch.crates-io]` takes in place of the crates.io one so that
 our fixes to it live in `patches/winit/` like every other submodule's.
 Unpatched, winit builds and is exactly crates.io's, with the defects the
@@ -281,9 +263,8 @@ configured LGPL 2.1 or later (no `--enable-gpl`, no `--enable-nonfree`;
 `third_party/ffmpeg/COPYING.LGPLv2.1`), with one patch of ours to its
 configure (`patches/ffmpeg/`); dav1d, inside it, is BSD-2-Clause
 (`third_party/dav1d/COPYING`). FFmpeg is compiled against libva's headers,
-which are MIT (`third_party/libva/COPYING`), and Vulkan's, Apache-2.0
-(`third_party/Vulkan-Headers/LICENSES/Apache-2.0.txt`), and the libva shim
-is ours; neither library is linked. Nothing of this crate's graph reaches the
+which are MIT (`third_party/libva/COPYING`), and the libva shim is ours;
+libva is not linked. Nothing of this crate's graph reaches the
 Android app or its licence page.
 
 ```sh
@@ -305,7 +286,7 @@ cargo run -- rdp
 # keyboard grab that sends Alt+Tab and the rest on (on unless told), and the
 # far end's cursor drawn into the picture rather than made the window's own
 # (off unless told), and video decoded on the GPU (off unless told; bare is
-# auto: VAAPI, else Vulkan, else software, stream by stream). The dialog's
+# auto: VAAPI, else software, stream by stream). The dialog's
 # "Settings" section has the same five.
 cargo run -- tigervnc 127.0.0.1:5901 --no-clipboard-out --no-clipboard-in
 cargo run -- tigervnc 127.0.0.1:5901 --no-grab-keyboard
@@ -313,7 +294,6 @@ cargo run -- tigervnc 127.0.0.1:5901 --software-cursor
 cargo run -- rustdesk 127.0.0.1 -o ConnectBy=address --hw-decode
 cargo run -- rustdesk 127.0.0.1 -o ConnectBy=address --hw-decode=vaapi
 cargo run -- tigervnc 127.0.0.1::5903 -o H264=true -o Encoding=h264 --hw-decode
-ANV_DEBUG=video-decode cargo run -- rustdesk 127.0.0.1 -o ConnectBy=address -o Codec=av1 --hw-decode=vulkan
 
 # Straight into a session, with --connect. Without --password the credentials
 # prompt asks. Disconnecting it quits; if the far end ends it instead, the
@@ -700,8 +680,8 @@ phone's `AppSettings` has them: **Send clipboard** and **Receive clipboard**
 (both on by default; `--no-clipboard-out`, `--no-clipboard-in`), **Grab
 keyboard** (on by default; `--no-grab-keyboard`), **Software cursor** (off
 by default; `--software-cursor`), below, and **Hardware decoding** (off by
-default; `--hw-decode`, above, whose box on is `auto` and which shows a device
-named on the command line beside it). Grab keyboard is whether the window
+default; `--hw-decode`, above, whose box on is `auto`; `=vaapi` from the
+command line, which decodes the same, is kept until the box is unticked). Grab keyboard is whether the window
 holds the window manager's or the compositor's shortcuts off at all — the X11
 keyboard grab, or Wayland's shortcuts inhibitor, below — so that Alt+Tab,
 Super and the rest reach the far end; off, neither is ever taken, and a
@@ -816,7 +796,7 @@ software when that setting is on, its size and hotspot) and the two clipboard
 switches; three delays (below); and, where the backend decodes video through
 this end's decoders (RustDesk), `dec` and the decoder's line: the codec, the
 method (`sw`, `vaapi map`, `vaapi dmabuf` for a picture left on the GPU,
-`vulkan copy`), the smoothed time of the decoder's call, and why it is
+`vaapi copy` where the driver will not map it), the smoothed time of the decoder's call, and why it is
 software where hardware was asked for — made on the protocol thread twice a
 second and copied, not built per frame — and, with hardware decoding on, how
 the picture reaches the screen: `zero-copy` and what the window's pass

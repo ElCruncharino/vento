@@ -57,28 +57,20 @@ consumer that starts using another codec adds it there. Proven by the desktop
 crate's fixture tests, the RustDesk probe with each codec, and the TigerVNC
 H.264 and FreeRDP AVC probes. Android builds neither.
 
-`third_party/libva` and `third_party/Vulkan-Headers` go with FFmpeg: headers
-only, for its VAAPI and Vulkan Video decoders (`HWACCELS` in the same build
-script). Neither is compiled or linked; libva is reached through
-`backends/platform/desktop/c/va_shim.c`, which defines each libva function
-FFmpeg calls and loads the real one on first use. A newer FFmpeg may call a
-libva function the shim does not have yet, which is a link error naming it
-(`undefined symbol: va...`): add it to `VA_FUNCTIONS` there. `vento_video.c`
-calls two of them itself for a held picture (`vaSyncSurface`,
-`vaExportSurfaceHandle`) and reads FFmpeg's `AVVAAPIDeviceContext` for the
-display, which a new FFmpeg could rename. libva moves to
-a newer release's tag when FFmpeg wants newer headers (its configure says
-which `VA_CHECK_VERSION` a feature needs); Vulkan-Headers when FFmpeg's
-configure asks for a newer `VK_HEADER_VERSION`, which it checks for each of
-`vulkan` and `vulkan_1_4`. `c/vk_device.c` reads the same headers to pick
-the Vulkan device before FFmpeg opens one, by its index in the loader's list
-(FFmpeg's device string): a new FFmpeg that changes what that string means
-(`vulkan_device_create` in `libavutil/hwcontext_vulkan.c`) breaks the choice,
-which the UUID check after the open turns into "no device". Proven by the
+`third_party/libva` goes with FFmpeg: headers only, for its VAAPI decoders
+(`HWACCELS` in the same build script). Nothing of it is compiled or linked;
+libva is reached through `backends/platform/desktop/c/va_shim.c`, which
+defines each libva function FFmpeg calls and loads the real one on first
+use. A newer FFmpeg may call a libva function the shim does not have yet,
+which is a link error naming it (`undefined symbol: va...`): add it to
+`VA_FUNCTIONS` there. `vento_video.c` calls two of them itself for a held
+picture (`vaSyncSurface`, `vaExportSurfaceHandle`) and reads FFmpeg's
+`AVVAAPIDeviceContext` for the display, which a new FFmpeg could rename.
+libva moves to a newer release's tag when FFmpeg wants newer headers (its
+configure says which `VA_CHECK_VERSION` a feature needs). Proven by the
 desktop crate's `hardware` and `hardware_auto` tests with
-`VENTO_TEST_HW=require` on a machine with a VAAPI device (and
-`VENTO_TEST_VULKAN=1`, with `ANV_DEBUG=video-decode` on Intel, for Vulkan),
-and `hardware_off`.
+`VENTO_TEST_HW=require` on a machine with a VAAPI device, and
+`hardware_off`.
 
 A shared library can be blocked by a consumer: nettle 4 could not move until
 TigerVNC had upstream's nettle-4 compatibility. When an evaluation says "stay"
