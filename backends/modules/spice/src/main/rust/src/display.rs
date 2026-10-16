@@ -44,8 +44,12 @@ pub struct Display {
     streams: HashMap<u32, Stream>,
     /// The layout the server published, if it published one: `MONITORS_CONFIG`
     /// is how a multi-head guest says which part of this surface is which
-    /// screen. Empty means it has not said, which is not the same as one.
-    monitors: Vec<(i32, i32, i32, i32)>,
+    /// screen, each head by its id, then `x, y, width, height`. Empty means
+    /// it has not said, which is not the same as one.
+    monitors: Vec<(u32, i32, i32, i32, i32)>,
+    /// How many heads the device says it can have, from the same message;
+    /// zero until it has said.
+    max_heads: u16,
     /// Whether the desktop has a size yet, since a surface arrives after the
     /// channel and everything above waits for it.
     ready: bool,
@@ -66,14 +70,19 @@ impl Display {
             images: Images::new(cache_bytes),
             streams: HashMap::new(),
             monitors: Vec::new(),
+            max_heads: 0,
             ready: false,
             dirty: false,
             off_surface: 0,
         }
     }
 
-    pub fn monitors(&self) -> &[(i32, i32, i32, i32)] {
+    pub fn monitors(&self) -> &[(u32, i32, i32, i32, i32)] {
         &self.monitors
+    }
+
+    pub fn max_heads(&self) -> u16 {
+        self.max_heads
     }
 
     pub fn encodings(&self) -> Vec<&'static str> {
@@ -391,6 +400,7 @@ impl Display {
             return;
         }
         let count = u16::from_le_bytes(body[0..2].try_into().unwrap()) as usize;
+        self.max_heads = u16::from_le_bytes(body[2..4].try_into().unwrap());
         let mut heads = Vec::with_capacity(count);
         for i in 0..count {
             let at = 4 + i * 28;
@@ -405,12 +415,24 @@ impl Display {
                 read_u32(body, at + 16).unwrap_or(0) as i32,
                 read_u32(body, at + 20).unwrap_or(0) as i32,
             );
+            // The head's own number, which is its place in the agent's
+            // request: what a layout is asked for by.
+            let id = read_u32(body, at).unwrap_or(0);
             if width > 0 && height > 0 {
-                heads.push((x, y, width, height));
+                heads.push((id, x, y, width, height));
             }
         }
         if heads != self.monitors {
-            log::info!("display: {} monitor(s)", heads.len());
+            log::info!(
+                "display: {} monitor(s) of at most {}: {}",
+                heads.len(),
+                self.max_heads,
+                heads
+                    .iter()
+                    .map(|(id, x, y, w, h)| format!("head {id} {w}x{h}+{x}+{y}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
             self.monitors = heads;
         }
     }

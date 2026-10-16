@@ -35,7 +35,7 @@ use shakenfist_spice_protocol::messages::{
     Ping, SetAck,
 };
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -92,7 +92,8 @@ enum Command {
     Compression(u8),
     Clipboard(String),
     /// The layout this end is asking the guest for: `x, y, width, height` per
-    /// head, which for the app is always one.
+    /// head, in the order of the heads' ids; one of no size is a head asked
+    /// to be off.
     Monitors(Vec<(i32, i32, u32, u32)>),
     Close,
 }
@@ -106,7 +107,11 @@ pub struct Client {
     sent: Arc<std::sync::atomic::AtomicU64>,
     relative: Arc<AtomicBool>,
     view_only: Arc<AtomicBool>,
+    /// The guest's heads, five ints each: id, x, y, width, height.
     monitors: Arc<Mutex<Vec<i32>>>,
+    /// How many heads the device can have, as its last `MONITORS_CONFIG` said;
+    /// zero before it has.
+    max_heads: Arc<AtomicU32>,
     /// Whether the guest's agent is there and will take a size, which is a fact
     /// about this session rather than about the protocol — so the seam polls it
     /// and it can turn true seconds after the picture arrives.
@@ -135,6 +140,7 @@ impl Client {
             relative: Arc::new(AtomicBool::new(false)),
             view_only: Arc::new(AtomicBool::new(false)),
             monitors: Arc::new(Mutex::new(Vec::new())),
+            max_heads: Arc::new(AtomicU32::new(0)),
             resizable: Arc::new(AtomicBool::new(false)),
             clipboard: Arc::new(AtomicBool::new(false)),
             closing: tokio::sync::Notify::new(),
@@ -160,6 +166,11 @@ impl Client {
     /// The far end's monitors as `x, y, width, height` each, or empty where it
     /// has not published a layout.
     pub fn monitors(&self) -> Vec<i32> {
+        self.monitors.lock().unwrap().chunks_exact(5).flat_map(|m| [m[1], m[2], m[3], m[4]]).collect()
+    }
+
+    /// The same with each head's id in front: five ints each.
+    pub fn screens(&self) -> Vec<i32> {
         self.monitors.lock().unwrap().clone()
     }
 
@@ -186,11 +197,22 @@ impl Client {
     }
 
     /// The same request with more than one head in it, which is the shape the
-    /// message actually has. Nothing in the app asks for this — it shows one
-    /// picture — but it is how a second monitor is made to exist at all: a QXL
-    /// device reports one connected head until a client says otherwise.
+    /// message actually has, a head at the place its id names: it is how a
+    /// second monitor is made to exist at all, since a QXL device reports one
+    /// connected head until a client says otherwise.
     pub fn request_monitors(&self, monitors: &[(i32, i32, u32, u32)]) {
         let _ = self.commands.send(Command::Monitors(monitors.to_vec()));
+    }
+
+    /// A layout of these screens, `id, x, y, width, height` each, by the
+    /// heads' ids (see `heads_for`): the guest's own heads moved or resized,
+    /// and new ones numbered here.
+    pub fn request_layout(&self, screens: &[(u32, i32, i32, u32, u32)]) {
+        let have: Vec<u32> = self.monitors.lock().unwrap().chunks_exact(5).map(|m| m[0] as u32).collect();
+        let heads = heads_for(screens, &have, self.max_heads.load(Ordering::Relaxed) as usize);
+        if !heads.is_empty() {
+            self.request_monitors(&heads);
+        }
     }
 
     /// What this phone has on its clipboard, offered to the guest.
@@ -632,8 +654,11 @@ impl Session<'_> {
                     .display
                     .monitors()
                     .iter()
-                    .flat_map(|(x, y, w, h)| [*x, *y, *w, *h])
+                    .flat_map(|&(id, x, y, w, h)| [id as i32, x, y, w, h])
                     .collect();
+                self.client
+                    .max_heads
+                    .store(u32::from(self.display.max_heads()), Ordering::Relaxed);
             }
             Kind::Cursor => self.cursors.message(message.message_type, &message.body, handler)?,
             Kind::Inputs => {}
@@ -1094,9 +1119,72 @@ pub fn compression_of(name: &str) -> Option<u8> {
     })
 }
 
+/// The agent's request for a layout of `screens`, `id, x, y, width,
+/// height` each: the agent's message names no head, a head is its place in
+/// the list, so each screen goes at the place its id names and a place no
+/// screen takes is a head of no size, which the guest turns off. An id the
+/// guest has (`have`) is that head; an unknown or repeated one is a new head,
+/// at the lowest place neither list uses, which is RFB's rule for a new
+/// screen too. Past `max` heads, where the device has said how many it has,
+/// a screen has nowhere to go and is left out.
+fn heads_for(screens: &[(u32, i32, i32, u32, u32)], have: &[u32], max: usize) -> Vec<(i32, i32, u32, u32)> {
+    let mut placed: Vec<Option<(i32, i32, u32, u32)>> = Vec::new();
+    let mut taken: Vec<u32> = Vec::new();
+    let known: Vec<u32> = screens.iter().map(|s| s.0).filter(|id| have.contains(id)).collect();
+    for &(id, x, y, w, h) in screens {
+        let id = if have.contains(&id) && !taken.contains(&id) {
+            id
+        } else {
+            match (0..).find(|n| !have.contains(n) && !known.contains(n) && !taken.contains(n)) {
+                Some(n) => n,
+                None => continue,
+            }
+        };
+        if max > 0 && id as usize >= max {
+            log::warn!("display: head {id} is past the {max} the device has");
+            continue;
+        }
+        taken.push(id);
+        let at = id as usize;
+        if placed.len() <= at {
+            placed.resize(at + 1, None);
+        }
+        placed[at] = Some((x, y, w, h));
+    }
+    placed.into_iter().map(|p| p.unwrap_or((0, 0, 0, 0))).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_layout_puts_each_screen_at_its_head() {
+        // The guest's two heads, resized: each at its own place.
+        assert_eq!(
+            heads_for(&[(0, 0, 0, 1280, 800), (1, 1280, 0, 1024, 768)], &[0, 1], 4),
+            vec![(0, 0, 1280, 800), (1280, 0, 1024, 768)]
+        );
+        // Listed the other way round: still by id, not by place in the list.
+        assert_eq!(
+            heads_for(&[(1, 0, 0, 1024, 768), (0, 1024, 0, 1280, 800)], &[0, 1], 4),
+            vec![(1024, 0, 1280, 800), (0, 0, 1024, 768)]
+        );
+        // A new screen is the lowest head nobody has; one of the guest's
+        // left out is a head of no size, which turns it off.
+        assert_eq!(
+            heads_for(&[(1, 0, 0, 1280, 800), (u32::MAX, 1280, 0, 800, 600)], &[0, 1], 4),
+            vec![(0, 0, 0, 0), (0, 0, 1280, 800), (1280, 0, 800, 600)]
+        );
+        // A repeated id is a new screen too.
+        assert_eq!(
+            heads_for(&[(0, 0, 0, 800, 600), (0, 800, 0, 800, 600)], &[0], 0),
+            vec![(0, 0, 800, 600), (800, 0, 800, 600)]
+        );
+        // Past what the device has: nowhere to go.
+        let three = [(0, 0, 0, 800, 600), (1, 800, 0, 800, 600), (7, 1600, 0, 800, 600)];
+        assert_eq!(heads_for(&three, &[0, 1], 2), vec![(0, 0, 800, 600), (800, 0, 800, 600)]);
+    }
 
     #[test]
     fn the_button_mask_is_the_same_five_bits() {
