@@ -116,8 +116,20 @@ either: FFmpeg's VAAPI code reaches libva through `c/va_shim.c`, which loads
 `libva.so.2` and `libva-drm.so.2` on first use, and its Vulkan code loads
 `libvulkan.so.1` itself, so the binary depends on neither. Its own code
 (`backends/platform/desktop/c/vento_video.c`) is the only C that
-includes FFmpeg's headers for the Rust decoder, which calls six functions of
-it declared by hand.
+includes FFmpeg's headers for the Rust decoder, which calls a dozen
+functions of it declared by hand.
+
+**Hardware decoding is off by default**, and off it is the software decoder
+it always was: no device is opened, and neither libva nor libvulkan is
+loaded. Asked for, the Rust decoder (RustDesk's picture) decodes on VAAPI —
+or Vulkan Video, which Mesa's ANV offers only under `ANV_DEBUG=video-decode`
+and Fedora's only for VP9 and AV1 — where the device has a decoder for the
+stream's profile, and in software where it has not (iHD has none for H.264
+High 10 or AV1 4:4:4), with the reason kept; one device is opened for the
+whole process, by the first decoder that asks. The picture is mapped for
+reading off the device (NV12, P010 or XV30) and converted like a software
+one, so the two look the same. A hardware failure mid-stream is a software
+decoder in its place and a key frame asked for, not a lost picture.
 
 The submodules must be initialised (`git submodule update --init --recursive`;
 RealVNC's four host-only submodules need `--recursive`) and patched

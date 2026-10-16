@@ -29,7 +29,7 @@ name = "platform_desktop"
 [target.'cfg(not(target_os = "android"))'.dependencies]
 log.workspace = true
 remotedesktop-common.workspace = true
-# Nothing of FFmpeg's own API: `src/ffmpeg.rs` calls the six functions of
+# Nothing of FFmpeg's own API: `src/ffmpeg.rs` calls the dozen functions of
 # `c/vento_video.h`, declared by hand, and only that C file includes FFmpeg's
 # headers. No bindgen, no generated bindings, and nothing on the Rust side
 # that changes with an FFmpeg release.

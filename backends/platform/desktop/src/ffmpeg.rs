@@ -11,7 +11,7 @@
 //! planes are got at:
 //!
 //! - **Through `vento_video.h`, not FFmpeg's API.** libavcodec is reached
-//!   through six C calls of our own (`c/vento_video.c`), and this file
+//!   through a dozen C calls of our own (`c/vento_video.c`), and this file
 //!   declares those by hand: no generated bindings, no FFmpeg headers, and
 //!   nothing here that changes with an FFmpeg release. The choices that are
 //!   libavcodec's — low delay, slice threads, AV1 as dav1d, only the last of
@@ -42,6 +42,17 @@
 //! better than none, and a refusal is a session with no picture for good and an
 //! info row that still names the codec.
 //!
+//! **Hardware decoding is opt-in** ([`Hardware`], off by default): asked for,
+//! a decoder decodes on VAAPI (or Vulkan Video) where the device has a decoder
+//! for the stream's profile, and in software where it has not, with the
+//! reason kept for [`status`](common::video::Decoder::status). What comes back
+//! is still planes in memory — the hardware's surface mapped for reading, in
+//! NV12, P010 or XV30 — converted by the same code as software's, so the
+//! picture is the same either way. A hardware failure mid-stream is a
+//! software decoder in its place and a key frame asked for
+//! ([`take_key_frame_request`](common::video::Decoder::take_key_frame_request)),
+//! not a lost picture. Off, nothing of libva or Vulkan is loaded.
+//!
 //! **H.264 stays libavcodec's**, though two decoders without FFmpeg were tried
 //! in its place (October 2026): the `openh264` crate, Cisco's library, and
 //! `rusty_h264`, which is pure Rust. On what the rigs send, RustDesk's VAAPI
@@ -57,6 +68,7 @@
 
 use std::ffi::{CStr, c_char, c_int};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use common::video::convert::{Frame, Plane};
 use common::video::{Changes, Codec, Decoders, Output};
@@ -69,6 +81,8 @@ mod sys {
     pub const NONE: c_int = 0;
     pub const REFUSED: c_int = -1;
     pub const UNSUPPORTED: c_int = -2;
+
+    pub const XV30: i32 = 1;
 
     /// `struct vento_video_picture`, which [`super::Decoder::new`] checks the
     /// size of against the C side's before anything is decoded into it.
@@ -87,6 +101,12 @@ mod sys {
         pub full_range: i32,
         pub error: i32,
         pub skipped: u32,
+        pub shift: i32,
+        pub packed: i32,
+        pub hardware: i32,
+        pub fell_back: i32,
+        pub decode_us: u32,
+        pub map_us: u32,
     }
 
     impl Picture {
@@ -105,6 +125,12 @@ mod sys {
                 full_range: 0,
                 error: 0,
                 skipped: 0,
+                shift: 0,
+                packed: 0,
+                hardware: 0,
+                fell_back: 0,
+                decode_us: 0,
+                map_us: 0,
             }
         }
     }
@@ -121,10 +147,15 @@ mod sys {
             codec: c_int,
             width: c_int,
             height: c_int,
+            hardware: c_int,
             error: *mut c_char,
             error_len: usize,
         ) -> *mut Video;
         pub fn vento_video_name(video: *const Video) -> *const c_char;
+        pub fn vento_video_method(video: *const Video) -> c_int;
+        pub fn vento_video_software_reason(video: *const Video) -> *const c_char;
+        pub fn vento_video_device_state(method: c_int) -> c_int;
+        pub fn vento_video_fail_next(video: *mut Video);
         pub fn vento_video_decode(
             video: *mut Video,
             data: *const u8,
@@ -138,12 +169,114 @@ mod sys {
     }
 }
 
-/// libavcodec's decoders, as a session is handed them.
-pub struct FFmpeg;
+/// How a decoder may decode: `vento_video_hardware`, as whoever starts a
+/// session asks for it (a setting, `--hw-decode`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Hardware {
+    /// Software, and nothing of a device opened or loaded: the default.
+    #[default]
+    Off,
+    /// VAAPI, through libva, on the first DRM render node.
+    Vaapi,
+    /// Vulkan Video, through libvulkan, on the first Vulkan device.
+    Vulkan,
+    /// VAAPI where there is a device for it, else Vulkan.
+    Auto,
+}
+
+impl Hardware {
+    pub const ALL: [Hardware; 4] = [
+        Hardware::Off,
+        Hardware::Vaapi,
+        Hardware::Vulkan,
+        Hardware::Auto,
+    ];
+
+    /// The name a setting or a command line uses: "off", "vaapi", "vulkan"
+    /// or "auto".
+    pub fn name(self) -> &'static str {
+        match self {
+            Hardware::Off => "off",
+            Hardware::Vaapi => "vaapi",
+            Hardware::Vulkan => "vulkan",
+            Hardware::Auto => "auto",
+        }
+    }
+
+    /// The one [`name`](Self::name) names.
+    pub fn from_name(name: &str) -> Option<Hardware> {
+        Hardware::ALL.into_iter().find(|h| h.name() == name)
+    }
+
+    fn number(self) -> c_int {
+        match self {
+            Hardware::Off => 0,
+            Hardware::Vaapi => 1,
+            Hardware::Vulkan => 2,
+            Hardware::Auto => 3,
+        }
+    }
+
+    fn from_number(number: c_int) -> Hardware {
+        match number {
+            1 => Hardware::Vaapi,
+            2 => Hardware::Vulkan,
+            3 => Hardware::Auto,
+            _ => Hardware::Off,
+        }
+    }
+}
+
+/// Whether the device a [`Hardware`] decodes on has been opened in this
+/// process: `None` never asked for, `Some(true)` open, `Some(false)` tried
+/// and failed. Every decoder that asks shares the one device, and it stays
+/// open until the process ends; with hardware off it is never asked for.
+pub fn device_opened(hardware: Hardware) -> Option<bool> {
+    match unsafe { sys::vento_video_device_state(hardware.number()) } {
+        0 => None,
+        state => Some(state > 0),
+    }
+}
+
+/// libavcodec's decoders, as a session is handed them, decoding as
+/// [`Hardware`] says: software unless asked otherwise.
+///
+/// The mode can be changed under a running session ([`set_hardware`]): a
+/// decoder made from then on decodes the new way, and one already made goes on
+/// as it was, so a session that wants the change at once makes its decoder
+/// again.
+///
+/// [`set_hardware`]: FFmpeg::set_hardware
+#[derive(Default)]
+pub struct FFmpeg {
+    hardware: AtomicU8,
+}
+
+impl FFmpeg {
+    pub const fn new(hardware: Hardware) -> FFmpeg {
+        FFmpeg {
+            hardware: AtomicU8::new(hardware as u8),
+        }
+    }
+
+    pub fn hardware(&self) -> Hardware {
+        let number = self.hardware.load(Ordering::Relaxed);
+        Hardware::ALL
+            .into_iter()
+            .find(|h| *h as u8 == number)
+            .unwrap_or_default()
+    }
+
+    pub fn set_hardware(&self, hardware: Hardware) {
+        self.hardware.store(hardware as u8, Ordering::Relaxed);
+    }
+}
 
 impl Decoders for FFmpeg {
     /// Looked up once and remembered: the answer is the library's, which is
-    /// linked in and cannot change under a running process.
+    /// linked in and cannot change under a running process. The software
+    /// decoders' answer whatever the hardware, since software is where a
+    /// stream the hardware cannot take ends up.
     fn decodable(&self, codec: Codec) -> bool {
         static FOUND: OnceLock<[bool; Codec::ALL.len()]> = OnceLock::new();
         let found = FOUND.get_or_init(|| {
@@ -158,7 +291,8 @@ impl Decoders for FFmpeg {
         width: usize,
         height: usize,
     ) -> Option<Box<dyn common::video::Decoder>> {
-        Decoder::new(codec, width, height).map(|d| Box::new(d) as Box<dyn common::video::Decoder>)
+        Decoder::with_hardware(codec, width, height, self.hardware())
+            .map(|d| Box::new(d) as Box<dyn common::video::Decoder>)
     }
 }
 
@@ -178,7 +312,22 @@ fn number(codec: Codec) -> c_int {
 /// can make directly.
 pub struct Decoder {
     video: *mut sys::Video,
+    codec: Codec,
     failed: bool,
+    /// Whether the last picture came out of the hardware, and if so whether
+    /// it was copied rather than mapped; `None` before the first.
+    hardware: Option<(bool, bool)>,
+    /// The software reason last logged, so that a stream that keeps it is
+    /// logged once.
+    reason: String,
+    /// A mid-stream fallback the caller has not been told of.
+    key_frame: bool,
+    /// What a frame has been costing, in milliseconds, smoothed; and the
+    /// pictures so far, since the first is not counted: it is the one the
+    /// decoder (and on hardware the device's surfaces) is set up in, which
+    /// takes a frame's time several times over at once.
+    decode_ms: Option<f32>,
+    pictures: u64,
     /// The last frame's planes and the vectorised conversion's verdict, which
     /// between them are how little of this one is converted.
     output: Output,
@@ -191,7 +340,21 @@ pub struct Decoder {
 }
 
 impl Decoder {
+    /// A software decoder, which is what [`FFmpeg`] hands out by default.
     pub fn new(codec: Codec, width: usize, height: usize) -> Option<Decoder> {
+        Decoder::with_hardware(codec, width, height, Hardware::Off)
+    }
+
+    /// A decoder on the device `hardware` asks for, where the device opens and
+    /// the decoder on it does; a software one otherwise, with
+    /// [`software_reason`](Self::software_reason) saying why. `None` only
+    /// where software has no decoder either.
+    pub fn with_hardware(
+        codec: Codec,
+        width: usize,
+        height: usize,
+        hardware: Hardware,
+    ) -> Option<Decoder> {
         // The one place the two copies of the struct could disagree, checked
         // before the C side ever writes one.
         assert_eq!(
@@ -205,6 +368,7 @@ impl Decoder {
                 number(codec),
                 c_int::try_from(width).unwrap_or(0),
                 c_int::try_from(height).unwrap_or(0),
+                hardware.number(),
                 error.as_mut_ptr(),
                 error.len(),
             )
@@ -217,18 +381,114 @@ impl Decoder {
             );
             return None;
         }
-        let name = unsafe { CStr::from_ptr(sys::vento_video_name(video)) }.to_string_lossy();
-        log::info!(
-            "{} decoder ({name}) started for {width}x{height}",
-            codec.name()
-        );
-        Some(Decoder {
+        let mut decoder = Decoder {
             video,
+            codec,
             failed: false,
+            hardware: None,
+            reason: String::new(),
+            key_frame: false,
+            decode_ms: None,
+            pictures: 0,
             output: Output::new(),
             narrow: Default::default(),
             skipped: 0,
-        })
+        };
+        let name = decoder.name();
+        let method = decoder.method();
+        match decoder.software_reason() {
+            Some(why) => {
+                log::info!(
+                    "{} decoder ({name}) started for {width}x{height}, in software: {why}",
+                    codec.name()
+                );
+                decoder.reason = why;
+            }
+            None if method != Hardware::Off => log::info!(
+                "{} decoder ({name}, {}) started for {width}x{height}",
+                codec.name(),
+                method.name()
+            ),
+            None => log::info!(
+                "{} decoder ({name}) started for {width}x{height}",
+                codec.name()
+            ),
+        }
+        Some(decoder)
+    }
+
+    /// libavcodec's decoder ("h264", "av1", "libdav1d", ...).
+    pub fn name(&self) -> String {
+        unsafe { CStr::from_ptr(sys::vento_video_name(self.video)) }
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    /// The device decoded on, or [`Hardware::Off`] for software — which a
+    /// decoder is from the start without a device and from a mid-stream
+    /// fallback on. One on a device whose stream it cannot take is still on
+    /// it, and decodes in software: [`Decoder::hardware`] says which.
+    ///
+    /// [`Decoder::hardware`]: common::video::Decoder::hardware
+    pub fn method(&self) -> Hardware {
+        Hardware::from_number(unsafe { sys::vento_video_method(self.video) })
+    }
+
+    /// Why the decoder is decoding in software though hardware was asked for
+    /// ("vaapi: no device (...)", "vaapi: H.264 High 10 is not supported",
+    /// "vaapi: map failed (...)"), or `None`.
+    pub fn software_reason(&self) -> Option<String> {
+        let why = self.reason_text().to_string_lossy().into_owned();
+        (!why.is_empty()).then_some(why)
+    }
+
+    /// The C side's reason, valid until the next call on the decoder.
+    fn reason_text(&self) -> &CStr {
+        unsafe { CStr::from_ptr(sys::vento_video_software_reason(self.video)) }
+    }
+
+    /// For tests: the next hardware picture fails as a device that went away
+    /// would, which is what a mid-stream fallback is made of.
+    pub fn fail_next(&mut self) {
+        unsafe { sys::vento_video_fail_next(self.video) };
+    }
+
+    /// What the call just made says about how the decoder decodes, logged
+    /// where that changed.
+    fn note(&mut self, picture: &sys::Picture, status: c_int) {
+        if picture.fell_back != 0 {
+            // Before the first picture the packet given again is the one the
+            // stream started with, which the software decoder takes from the
+            // start as the hardware's would have: nothing is missing.
+            self.key_frame = self.pictures > 0;
+            self.hardware = Some((false, false));
+            let why = self.software_reason().unwrap_or_default();
+            if self.key_frame {
+                log::warn!(
+                    "{} decoder fell back to software mid-stream: {why}",
+                    self.codec.name()
+                );
+            } else {
+                log::info!("{} decoder is in software: {why}", self.codec.name());
+            }
+        }
+        if status == sys::PICTURE {
+            self.pictures += 1;
+            if self.pictures > 1 {
+                let ms = picture.decode_us as f32 / 1000.0;
+                self.decode_ms = Some(self.decode_ms.map_or(ms, |m| m + (ms - m) / 16.0));
+            }
+            self.hardware = Some((picture.hardware != 0, picture.hardware == 2));
+        }
+        // Compared in place: this is every frame, and the reason changes
+        // about once a stream.
+        if self.reason_text().to_bytes() != self.reason.as_bytes() {
+            let why = self.software_reason().unwrap_or_default();
+            if !why.is_empty() && picture.fell_back == 0 {
+                log::info!("{} decoder is in software: {why}", self.codec.name());
+            }
+            self.reason = why;
+        }
     }
 }
 
@@ -257,6 +517,7 @@ impl common::video::Decoder for Decoder {
             )
         };
         self.skipped += u64::from(picture.skipped);
+        self.note(&picture, status);
         match status {
             sys::PICTURE | sys::NONE if picture.error != 0 => {
                 log::warn!("the decoder failed a frame: {}", error(picture.error));
@@ -300,6 +561,37 @@ impl common::video::Decoder for Decoder {
         self.output.write(&frame, out, width, height, changed);
         true
     }
+
+    fn hardware(&self) -> Option<bool> {
+        self.hardware.map(|(hardware, _)| hardware)
+    }
+
+    fn status(&self) -> Option<String> {
+        let mut line = self.codec.name().to_string();
+        match self.hardware {
+            Some((true, copied)) => {
+                line += &format!(
+                    " {} {}",
+                    self.method().name(),
+                    if copied { "copy" } else { "map" }
+                );
+            }
+            Some((false, _)) => line += " sw",
+            None if self.method() != Hardware::Off => line += &format!(" {}", self.method().name()),
+            None => line += " sw",
+        }
+        if let Some(ms) = self.decode_ms {
+            line += &format!(" {ms:.1} ms");
+        }
+        if !matches!(self.hardware, Some((true, _))) && !self.reason.is_empty() {
+            line += &format!(" ({})", self.reason);
+        }
+        Some(line)
+    }
+
+    fn take_key_frame_request(&mut self) -> bool {
+        std::mem::take(&mut self.key_frame)
+    }
 }
 
 impl Drop for Decoder {
@@ -309,8 +601,9 @@ impl Drop for Decoder {
 }
 
 /// A picture's planes, as `convert` reads them: in place at eight bits, and
-/// narrowed into `into` deeper than that. `None` where the description does
-/// not hold together, which the C side should never hand back.
+/// narrowed into `into` deeper than that or packed (XV30). `None` where the
+/// description does not hold together, which the C side should never hand
+/// back.
 fn planes<'a>(
     p: &'a sys::Picture,
     into: &'a mut [Vec<u8>; 3],
@@ -326,34 +619,25 @@ fn planes<'a>(
     {
         return None;
     }
-    let (horiz, vert) = (1usize << p.chroma_shift_x, 1usize << p.chroma_shift_y);
-    let (cw, ch) = (width.div_ceil(horiz), height.div_ceil(vert));
-    let depth = u32::try_from(p.depth)
-        .ok()
-        .filter(|d| (8..=16).contains(d))?;
-    let interleaved = p.interleaved != 0;
-    if interleaved && depth != 8 {
-        return None;
-    }
-    let bytes = if depth > 8 { 2 } else { 1 };
-    let row_bytes = [
-        width * bytes,
-        if interleaved { cw * 2 } else { cw * bytes },
-        cw * bytes,
-    ];
-    let rows = [height, ch, ch];
-
-    // Exactly the bytes the picture covers in each plane: every row but the
-    // last at its full line size, and the last only as far as its last
-    // sample, since that is all the frame promises is there.
-    let plane = |i: usize| -> Option<(&'a [u8], usize)> {
+    let at = |offset: usize, col_inc: usize, row_inc: usize, h: usize, v: usize| Plane {
+        offset,
+        col_inc,
+        row_inc,
+        horiz_subsampling: h,
+        vert_subsampling: v,
+    };
+    // Exactly the bytes the picture covers in a plane of `rows` rows of
+    // `row_bytes`: every row but the last at its full line size, and the last
+    // only as far as its last sample, since that is all the frame promises is
+    // there.
+    let plane = |i: usize, rows: usize, row_bytes: usize| -> Option<(&'a [u8], usize)> {
         let stride = usize::try_from(p.stride[i])
             .ok()
-            .filter(|s| *s >= row_bytes[i])?;
+            .filter(|s| *s >= row_bytes)?;
         if p.data[i].is_null() {
             return None;
         }
-        let len = stride * (rows[i] - 1) + row_bytes[i];
+        let len = stride * (rows - 1) + row_bytes;
         // SAFETY: a decoded plane has `stride` bytes for every row of the
         // picture, and the last row as far as its last sample is the least of
         // that. The picture is the decoder's until the next `decode`, and
@@ -363,26 +647,64 @@ fn planes<'a>(
             stride,
         ))
     };
-    let at = |offset: usize, col_inc: usize, row_inc: usize, h: usize, v: usize| Plane {
-        offset,
-        col_inc,
-        row_inc,
-        horiz_subsampling: h,
-        vert_subsampling: v,
-    };
+
+    if p.packed == sys::XV30 {
+        let (src, stride) = plane(0, height, width * 4)?;
+        for dst in into.iter_mut() {
+            dst.resize(width * height, 0);
+        }
+        let [y, u, v] = into;
+        for row in 0..height {
+            let range = row * width..(row + 1) * width;
+            unpack_xv30(
+                &src[row * stride..row * stride + width * 4],
+                [&mut y[range.clone()], &mut u[range.clone()], &mut v[range]],
+            );
+        }
+        let full = at(0, 1, width, 1, 1);
+        return Some(([&y[..], &u[..], &v[..]], [full, full, full]));
+    }
+    if p.packed != 0 {
+        return None;
+    }
+
+    let (horiz, vert) = (1usize << p.chroma_shift_x, 1usize << p.chroma_shift_y);
+    let (cw, ch) = (width.div_ceil(horiz), height.div_ceil(vert));
+    let depth = u32::try_from(p.depth)
+        .ok()
+        .filter(|d| (8..=16).contains(d))?;
+    let bytes = if depth > 8 { 2 } else { 1 };
+    // The bits a sample's value spans counting from the bottom of its bytes,
+    // the zeros below a shifted one included: what it is narrowed from.
+    let stored = depth + u32::try_from(p.shift).ok()?;
+    if stored > 8 * bytes as u32 {
+        return None;
+    }
+    let interleaved = p.interleaved != 0;
+    let row_bytes = [
+        width * bytes,
+        if interleaved { cw * 2 * bytes } else { cw * bytes },
+        cw * bytes,
+    ];
+    let rows = [height, ch, ch];
+    let (u_at, v_at) = if p.v_first != 0 { (1, 0) } else { (0, 1) };
 
     if depth == 8 {
-        let (y, ys) = plane(0)?;
+        let (y, ys) = plane(0, rows[0], row_bytes[0])?;
         let luma = at(0, 1, ys, 1, 1);
         if interleaved {
-            let (uv, uvs) = plane(1)?;
-            let (u, v) = if p.v_first != 0 { (1, 0) } else { (0, 1) };
+            let (uv, uvs) = plane(1, rows[1], row_bytes[1])?;
             return Some((
                 [y, uv, uv],
-                [luma, at(u, 2, uvs, horiz, vert), at(v, 2, uvs, horiz, vert)],
+                [
+                    luma,
+                    at(u_at, 2, uvs, horiz, vert),
+                    at(v_at, 2, uvs, horiz, vert),
+                ],
             ));
         }
-        let ((u, us), (v, vs)) = (plane(1)?, plane(2)?);
+        let (u, us) = plane(1, rows[1], row_bytes[1])?;
+        let (v, vs) = plane(2, rows[2], row_bytes[2])?;
         return Some((
             [y, u, v],
             [luma, at(0, 1, us, horiz, vert), at(0, 1, vs, horiz, vert)],
@@ -391,16 +713,31 @@ fn planes<'a>(
 
     // Deeper: the whole picture every frame, which is a copy the 8-bit path
     // does not make; what is in doubt for a deep stream is whether there is a
-    // picture at all.
-    let sources = [plane(0)?, plane(1)?, plane(2)?];
-    for (i, ((src, stride), dst)) in sources.into_iter().zip(into.iter_mut()).enumerate() {
-        let w = if i == 0 { width } else { cw };
-        dst.resize(w * rows[i], 0);
-        for (row, out) in dst.chunks_exact_mut(w).enumerate() {
-            narrow(&src[row * stride..row * stride + w * 2], depth, out);
+    // picture at all. Interleaved (P010) stays interleaved, at eight bits.
+    let count = if interleaved { 2 } else { 3 };
+    for (i, dst) in into.iter_mut().enumerate().take(count) {
+        let (src, stride) = plane(i, rows[i], row_bytes[i])?;
+        let samples = row_bytes[i] / 2;
+        dst.resize(samples * rows[i], 0);
+        for (row, out) in dst.chunks_exact_mut(samples).enumerate() {
+            narrow(
+                &src[row * stride..row * stride + row_bytes[i]],
+                stored,
+                out,
+            );
         }
     }
     let [y, u, v] = into;
+    if interleaved {
+        return Some((
+            [&y[..], &u[..], &u[..]],
+            [
+                at(0, 1, width, 1, 1),
+                at(u_at, 2, cw * 2, horiz, vert),
+                at(v_at, 2, cw * 2, horiz, vert),
+            ],
+        ));
+    }
     Some((
         [&y[..], &u[..], &v[..]],
         [
@@ -409,6 +746,19 @@ fn planes<'a>(
             at(0, 1, cw, horiz, vert),
         ],
     ))
+}
+
+/// One row of XV30 — a little-endian word a pixel, U in its low ten bits, Y
+/// in the next ten and V in the ten above — into a row each of Y, U and V at
+/// eight bits, rounded as [`narrow`] rounds.
+fn unpack_xv30(src: &[u8], [y, u, v]: [&mut [u8]; 3]) {
+    let eight = |ten: u32| ((ten + 2) >> 2).min(255) as u8;
+    for (i, word) in src.chunks_exact(4).enumerate() {
+        let word = u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
+        u[i] = eight(word & 0x3ff);
+        y[i] = eight((word >> 10) & 0x3ff);
+        v[i] = eight((word >> 20) & 0x3ff);
+    }
 }
 
 /// One row of little-endian samples of `depth` bits to eight, rounded to the
@@ -442,7 +792,37 @@ fn text(buf: &[c_char]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::narrow;
+    use super::{narrow, unpack_xv30};
+
+    /// P010 has its ten bits at the top of sixteen: narrowed as sixteen bits,
+    /// it comes out where the same ten bits at the bottom do.
+    #[test]
+    fn a_shifted_sample_narrows_as_its_value() {
+        let ten = [0u16, 64, 512, 940, 1023];
+        let low: Vec<u8> = ten.iter().flat_map(|s| s.to_le_bytes()).collect();
+        let high: Vec<u8> = ten.iter().flat_map(|s| (s << 6).to_le_bytes()).collect();
+        let (mut a, mut b) = ([0u8; 5], [0u8; 5]);
+        narrow(&low, 10, &mut a);
+        narrow(&high, 16, &mut b);
+        assert_eq!(a, b);
+        assert_eq!(a, [0, 16, 128, 235, 255]);
+    }
+
+    /// Each of XV30's three fields lands in its own plane, with the top two
+    /// bits of the word ignored.
+    #[test]
+    fn xv30_unpacks_to_three_planes() {
+        let word = |y: u32, u: u32, v: u32, x: u32| (x << 30) | (v << 20) | (y << 10) | u;
+        let src: Vec<u8> = [word(64, 512, 940, 0), word(940, 64, 1023, 3)]
+            .iter()
+            .flat_map(|w| w.to_le_bytes())
+            .collect();
+        let (mut y, mut u, mut v) = ([0u8; 2], [0u8; 2], [0u8; 2]);
+        unpack_xv30(&src, [&mut y, &mut u, &mut v]);
+        assert_eq!(y, [16, 235]);
+        assert_eq!(u, [128, 16]);
+        assert_eq!(v, [235, 255]);
+    }
 
     /// The ends of limited range and of the whole range land where eight bits
     /// has them, and what rounds up past the top stays at the top.

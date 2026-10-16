@@ -91,6 +91,31 @@ pub trait Decoder {
         height: usize,
         changed: &mut Changes,
     ) -> bool;
+
+    /// Whether the last picture was decoded in hardware: `None` where the
+    /// decoder does not know, or has not had a picture yet. What a session's
+    /// facts say after the codec, as " (hardware)" or " (software)".
+    fn hardware(&self) -> Option<bool> {
+        None
+    }
+
+    /// A line for an overlay about how this decoder is decoding — the codec,
+    /// the method and what a frame costs, and why it is software where
+    /// hardware was asked for (`H.264 vaapi map 2.1 ms`, `H.264 sw 3.4 ms
+    /// (vaapi: no device)`) — or `None` where it has nothing to say.
+    fn status(&self) -> Option<String> {
+        None
+    }
+
+    /// True, once, after the decoder lost the pictures the stream refers back
+    /// to — a hardware decoder that failed mid-stream and was replaced by a
+    /// software one — so that the caller asks the far end for a key frame
+    /// rather than waiting for the next one. Polled after [`decode`].
+    ///
+    /// [`decode`]: Decoder::decode
+    fn take_key_frame_request(&mut self) -> bool {
+        false
+    }
 }
 
 /// What this platform can decode, and a decoder when asked for one.

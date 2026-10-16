@@ -30,7 +30,7 @@ pub fn client_name() -> String {
 /// What decodes video here: libavcodec, for RustDesk's picture, where the
 /// phone hands over MediaCodec.
 pub fn decoders() -> std::sync::Arc<dyn common::video::Decoders> {
-    std::sync::Arc::new(platform_desktop::ffmpeg::FFmpeg)
+    std::sync::Arc::new(platform_desktop::ffmpeg::FFmpeg::default())
 }
 
 /// Every backend this binary has, in the picker's order. RealVNC is here

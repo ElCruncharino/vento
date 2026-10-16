@@ -18,6 +18,9 @@ use std::ops::Range;
 use common::video::{Changes, Codec, Decoder, Decoders};
 use platform_desktop::ffmpeg::FFmpeg;
 
+mod clips;
+use clips::{annex_b, fixture, h264_aud, h265_aud, ivf};
+
 const W: usize = 128;
 const H: usize = 128;
 const BACKGROUND: u32 = 0x3366cc;
@@ -34,56 +37,6 @@ const UNTOUCHED: u32 = 0x0012_3456;
 /// four to six levels apart on these colours.
 const PIXEL: i32 = 10;
 const MEAN: f64 = 2.5;
-
-fn fixture(name: &str) -> Vec<u8> {
-    let path = format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
-    std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"))
-}
-
-/// IVF's frames: a 32-byte file header (whose own length is at byte 6), then
-/// per frame a 4-byte size, an 8-byte timestamp and the frame.
-fn ivf(bytes: &[u8]) -> Vec<&[u8]> {
-    assert_eq!(&bytes[..4], b"DKIF");
-    let mut at = u16::from_le_bytes([bytes[6], bytes[7]]) as usize;
-    let mut frames = Vec::new();
-    while at + 12 <= bytes.len() {
-        let size = u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap()) as usize;
-        at += 12;
-        frames.push(&bytes[at..at + size]);
-        at += size;
-    }
-    frames
-}
-
-/// An Annex B stream cut into access units at each delimiter, start code
-/// included — which is what one of RustDesk's H.264 or H.265 frames is.
-fn annex_b(bytes: &[u8], is_delimiter: fn(u8) -> bool) -> Vec<&[u8]> {
-    let mut starts = Vec::new();
-    let mut i = 0;
-    while i + 3 < bytes.len() {
-        if bytes[i..i + 3] == [0, 0, 1] {
-            // A four-byte start code begins at the zero before.
-            let code = if i > 0 && bytes[i - 1] == 0 { i - 1 } else { i };
-            if is_delimiter(bytes[i + 3]) {
-                starts.push(code);
-            }
-            i += 3;
-        } else {
-            i += 1;
-        }
-    }
-    assert!(!starts.is_empty(), "no access unit delimiters");
-    starts.push(bytes.len());
-    starts.windows(2).map(|w| &bytes[w[0]..w[1]]).collect()
-}
-
-fn h264_aud(header: u8) -> bool {
-    header & 0x1f == 9
-}
-
-fn h265_aud(header: u8) -> bool {
-    (header >> 1) & 0x3f == 35
-}
 
 fn channels(word: u32) -> [i32; 3] {
     // Red at shift 0, as the framebuffer has it.
@@ -165,10 +118,10 @@ fn clip(codec: Codec, frames: &[&[u8]]) {
     let name = codec.name();
     assert_eq!(frames.len(), 3, "{name}: the clip is three frames");
     assert!(
-        FFmpeg.decodable(codec),
+        FFmpeg::default().decodable(codec),
         "{name}: this libavcodec cannot decode it"
     );
-    let mut decoder = FFmpeg.decoder(codec, W, H).expect("a decoder");
+    let mut decoder = FFmpeg::default().decoder(codec, W, H).expect("a decoder");
     let mut out = vec![UNTOUCHED; W * H];
     let mut changed = Changes::new();
 
@@ -239,6 +192,12 @@ fn vp9_untagged_is_bt601() {
     clip(Codec::Vp9, &ivf(&fixture("vp9-untagged.ivf")));
 }
 
+/// 4:4:4, which on hardware is software's: `hardware.rs`.
+#[test]
+fn av1_444() {
+    clip(Codec::Av1, &ivf(&fixture("av1-444.ivf")));
+}
+
 #[test]
 fn av1_untagged_is_bt601() {
     clip(Codec::Av1, &ivf(&fixture("av1-untagged.ivf")));
@@ -281,6 +240,24 @@ fn vp9_444_ten_bits() {
     clip(Codec::Vp9, &ivf(&fixture("vp9-444-10bit.ivf")));
 }
 
+/// H.265 Main 10 and Main 4:4:4 10, narrowed the same way: what hardware
+/// decodes these into (P010, XV30) is `hardware.rs`'s.
+#[test]
+fn h265_main10() {
+    clip(
+        Codec::H265,
+        &annex_b(&fixture("h265-main10.h265"), h265_aud),
+    );
+}
+
+#[test]
+fn h265_444_ten_bits() {
+    clip(
+        Codec::H265,
+        &annex_b(&fixture("h265-444-10bit.h265"), h265_aud),
+    );
+}
+
 /// A picture that is not the session's size, which is every frame between a
 /// resize being asked for and arriving: what the two have in common is
 /// written, and nothing outside either.
@@ -290,7 +267,7 @@ fn a_picture_of_another_size_writes_what_overlaps() {
     let frames = ivf(&bytes);
     for (width, height) in [(W + 16, H - 16), (W - 16, H + 16)] {
         let what = format!("a {width}x{height} session");
-        let mut decoder = FFmpeg
+        let mut decoder = FFmpeg::default()
             .decoder(Codec::Vp9, width, height)
             .expect("a decoder");
         let mut out = vec![UNTOUCHED; width * height];
@@ -318,7 +295,7 @@ fn a_picture_of_another_size_writes_what_overlaps() {
 fn garbage_is_no_picture() {
     let bytes = fixture("h264.h264");
     let frames = annex_b(&bytes, h264_aud);
-    let mut decoder = FFmpeg.decoder(Codec::H264, W, H).expect("a decoder");
+    let mut decoder = FFmpeg::default().decoder(Codec::H264, W, H).expect("a decoder");
     let mut out = vec![UNTOUCHED; W * H];
     let mut changed = Changes::new();
     changed.reset(H);

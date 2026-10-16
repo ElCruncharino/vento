@@ -633,7 +633,7 @@ impl Video {
             .find(|c| c.name().replace('.', "") == self.codec)
             .ok_or_else(|| format!("{} is not a codec this decodes", self.codec))?;
         let (w, h) = (self.width as usize, self.height as usize);
-        let mut decoder = platform_desktop::ffmpeg::FFmpeg
+        let mut decoder = platform_desktop::ffmpeg::FFmpeg::default()
             .decoder(codec, w, h)
             .ok_or_else(|| format!("no {} decoder in this libavcodec", codec.name()))?;
         let mut out = vec![0u32; w * h];

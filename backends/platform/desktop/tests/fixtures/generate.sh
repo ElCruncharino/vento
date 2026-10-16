@@ -81,3 +81,17 @@ ff "$(picture bt709 tv yuv420p10le)" "${bt709[@]}" -frames:v 3 \
 ff "$(picture bt709 tv yuv444p10le)" "${bt709[@]}" -frames:v 3 \
     -c:v libvpx-vp9 -deadline good -cpu-used 4 -lag-in-frames 0 -auto-alt-ref 0 -crf 4 -b:v 0 -g 100 \
     -f ivf vp9-444-10bit.ivf
+# Two more for the hardware decoders' output formats: H.265 Main 10, which
+# VAAPI decodes into P010, and H.265 4:4:4 at ten bits (Main 4:4:4 10), into
+# XV30. Software narrows both like the other deep clips.
+ff "$(picture bt709 tv yuv420p10le)" "${bt709[@]}" -frames:v 3 \
+    -c:v libx265 -preset medium -tune zerolatency -crf 6 -x265-params aud=1:keyint=100:log-level=error \
+    -f hevc h265-main10.h265
+ff "$(picture bt709 tv yuv444p10le)" "${bt709[@]}" -frames:v 3 \
+    -c:v libx265 -preset medium -tune zerolatency -crf 6 -x265-params aud=1:keyint=100:log-level=error \
+    -f hevc h265-444-10bit.h265
+# And AV1 4:4:4 (profile 1), which iHD has no decoder for: what libavcodec's
+# hardware-only `av1` cannot take, so the decoder is dav1d after all.
+ff "$(picture bt709 tv yuv444p)" "${bt709[@]}" -frames:v 3 \
+    -c:v libaom-av1 -usage realtime -cpu-used 8 -lag-in-frames 0 -crf 8 -g 100 \
+    -f ivf av1-444.ivf
