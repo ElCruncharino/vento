@@ -103,6 +103,8 @@ enum Wake {
 /// What the session needs of the window, for a frame.
 pub struct Host<'a> {
     pub window: &'a Window,
+    /// The window's egui viewport, which is the session's pane for it.
+    pub viewport: ViewportId,
     pub winit: &'a mut egui_winit::State,
     pub event_loop: &'a ActiveEventLoop,
     pub focused: bool,
@@ -582,8 +584,10 @@ impl App {
     /// asked for; X11's grab is the client's, and goes to the focused
     /// window.
     fn sync_shortcuts(&mut self) {
-        let takes_input = matches!(&self.screen, Screen::Session(s) if s.holds_shortcuts());
-        let wanted = self.focused.filter(|_| takes_input);
+        let wanted = self.focused.filter(|id| {
+            let pane = self.windows.get(id).map(|s| s.viewport);
+            matches!((&self.screen, pane), (Screen::Session(s), Some(pane)) if s.holds_shortcuts(pane))
+        });
         for (id, surface) in &mut self.windows {
             if let Some(inhibitor) = &mut surface.inhibitor {
                 inhibitor.pump();
@@ -721,6 +725,7 @@ impl App {
         let mut ended: Option<(String, bool)> = None;
         let mut host = Host {
             window: &window,
+            viewport,
             winit: &mut surface.winit,
             event_loop,
             focused,
@@ -774,7 +779,7 @@ impl App {
         // been submitted and the surface handed to the compositor, which
         // is as far as this end can follow them.
         if let Screen::Session(session) = &mut self.screen {
-            session.presented(presented);
+            session.presented(viewport, presented);
         }
         for id in &output.textures_delta.free {
             gpu.renderer.free_texture(id);
@@ -819,6 +824,7 @@ impl App {
             }
             let mut host = Host {
                 window: &window,
+                viewport: surface.viewport,
                 winit: &mut surface.winit,
                 event_loop,
                 focused,
@@ -828,7 +834,7 @@ impl App {
                 clipboard: self.clipboard.as_ref(),
             };
             self.settings = session.settings;
-            self.placement = session.placement;
+            self.placement = session.placement();
             let teardown = session.shutdown(&self.egui, &mut host);
             self.reap(teardown);
             self.screen = Screen::Dialog(dialog);
@@ -849,6 +855,7 @@ impl App {
                 if let Screen::Session(session) = screen {
                     let mut host = Host {
                         window: &window,
+                        viewport: surface.viewport,
                         winit: &mut surface.winit,
                         event_loop,
                         focused,
@@ -910,6 +917,7 @@ impl App {
                 let window = Arc::clone(&surface.window);
                 let mut host = Host {
                     window: &window,
+                    viewport: surface.viewport,
                     winit: &mut surface.winit,
                     event_loop,
                     focused,
@@ -985,7 +993,7 @@ impl ApplicationHandler<Wake> for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
-        let Some(window) = self.windows.get(&id).map(|s| Arc::clone(&s.window)) else {
+        let Some((window, viewport)) = self.windows.get(&id).map(|s| (Arc::clone(&s.window), s.viewport)) else {
             return;
         };
         match &event {
@@ -1060,7 +1068,7 @@ impl ApplicationHandler<Wake> for App {
                 let since = Instant::now();
                 let egui = self.egui.clone();
                 if let Screen::Session(session) = &mut self.screen {
-                    if session.takes_keys(&egui) {
+                    if session.takes_keys(&egui, viewport) {
                         session.key(key, since);
                         window.request_redraw();
                         return;
@@ -1087,7 +1095,7 @@ impl ApplicationHandler<Wake> for App {
                 // centre, and every move away from it is undone. The far
                 // end gets raw motion, which a warp does not make.
                 if let Screen::Session(s) = &self.screen
-                    && s.centred()
+                    && s.centred(viewport)
                 {
                     let c = platform::centre(&window);
                     if position.x.round() as i32 != c.x || position.y.round() as i32 != c.y {
@@ -1099,11 +1107,11 @@ impl ApplicationHandler<Wake> for App {
                     surface.pointer = Some(*position);
                 }
                 if let Screen::Session(session) = &mut self.screen {
-                    session.pointer_event();
+                    session.pointer_event(viewport);
                 }
             }
             WindowEvent::CursorLeft { .. } | WindowEvent::CursorEntered { .. }
-                if matches!(&self.screen, Screen::Session(s) if s.centred()) =>
+                if matches!(&self.screen, Screen::Session(s) if s.centred(viewport)) =>
             {
                 let _ = window.set_cursor_position(platform::centre(&window));
                 return;
@@ -1116,7 +1124,7 @@ impl ApplicationHandler<Wake> for App {
                     return;
                 }
                 if let Screen::Session(session) = &mut self.screen {
-                    session.pointer_event();
+                    session.pointer_event(viewport);
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => {
@@ -1127,7 +1135,7 @@ impl ApplicationHandler<Wake> for App {
                     return;
                 }
                 if let Screen::Session(session) = &mut self.screen {
-                    session.pointer_event();
+                    session.pointer_event(viewport);
                 }
             }
             _ => {}

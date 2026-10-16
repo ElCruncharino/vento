@@ -118,8 +118,6 @@ fn ms(d: Duration) -> String {
 #[derive(Debug, Default)]
 pub struct Hud {
     pub on: bool,
-    pub frames: u64,
-    pub fps: Rate,
     pub damage: Rate,
     pub bytes: Rate,
     /// From a backend's `frame_end` to the frame with its pixels being

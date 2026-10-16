@@ -104,9 +104,15 @@ impl Alpha {
     }
 }
 
+/// The shapes made so far, by key: the event loop's, so one shared by every
+/// window, which each set it on themselves (a `CustomCursor` is not a
+/// window's).
+#[derive(Default)]
+pub struct Cache(HashMap<Key, CustomCursor>);
+
+/// One window's cursor, as far as the far end's shape goes.
 #[derive(Default)]
 pub struct Native {
-    cache: HashMap<Key, CustomCursor>,
     /// What the window's cursor was last set to from here, if a shape.
     shown: Option<Key>,
     /// egui's icon last frame, to see it change.
@@ -126,6 +132,7 @@ impl Native {
     /// After egui-winit's turn: the shape, if wanted and not already there.
     pub fn after(
         &mut self,
+        cache: &mut Cache,
         window: &Window,
         event_loop: &ActiveEventLoop,
         wanted: Option<(Key, &Cursor)>,
@@ -140,17 +147,17 @@ impl Native {
         if self.shown == Some(key) && !icon_changed {
             return;
         }
-        let custom = match self.cache.get(&key) {
+        let custom = match cache.0.get(&key) {
             Some(custom) => custom.clone(),
             None => {
                 let Some(source) = scaled(cursor, key.factor(), alpha) else {
                     return;
                 };
-                if self.cache.len() >= CACHE {
-                    self.cache.clear();
+                if cache.0.len() >= CACHE {
+                    cache.0.clear();
                 }
                 let custom = event_loop.create_custom_cursor(source);
-                self.cache.insert(key, custom.clone());
+                cache.0.insert(key, custom.clone());
                 custom
             }
         };

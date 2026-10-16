@@ -50,8 +50,11 @@ clients, and what differs between them is each client's own code.
   and egui renderer shared by every window, each window a `Surface` of its own
   with its wgpu surface, egui-winit state and egui viewport, all in one egui
   context; the focus resolved between the windows once per turn of the loop,
-  with tests), `session.rs` (a live session: the desktop, the input, the
-  toolbar, the prompts, the cursor), `desktop.rs` (the desktop as one
+  with tests), `session.rs` (a live session, and what of it is the same in
+  every window: the backend and its events, the desktop, the keyboard and the
+  capture, the prompts, the far end's cursor), `pane.rs` (one window's part
+  of a session: its view, which monitor it shows, its toolbar, the pointer
+  over it and its cursor, with tests), `desktop.rs` (the desktop as one
   texture, or as tiles where it is bigger than the device's largest, updated
   a damaged rectangle at a time), `view.rs` (scale modes, panning and the
   pointer's mapping, pure arithmetic with tests), `toolbar.rs` (where the

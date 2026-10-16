@@ -42,19 +42,29 @@
 //! The debug overlay (`hud.rs`) is the phone's `SessionHud`: every
 //! collaborator's state, in a corner, from the connection panel or
 //! Ctrl+Alt+D.
+//!
+//! What is here is the same in every window the session is shown in: the
+//! backend and its mailbox, the desktop, the follower, the prompts and the
+//! trust stores, the far end's cursor, the keys held, the capture, the
+//! clipboard.
+//! What one window has of its own — its view, its monitor, its toolbar,
+//! the pointer over it — is its [`Pane`] (`pane.rs`).
 
-use super::cursor::{self as native, Key, Native};
+// A child of this module, though a file beside it, for the state it shares.
+#[path = "pane.rs"]
+mod pane;
+
+use super::cursor::{self as native};
 use super::desktop::Desktop;
 use super::follow::Follower;
-use super::hud::{self, Hud};
+use super::hud::Hud;
 
 use super::keys::{self, KeyIds};
 use super::panel::{Action, Controls, Panel, Snapshot};
 use super::platform::{self, Platform};
 use super::prompts::{self, Answer, Form, Prompt};
 use super::settings::Settings;
-use super::toolbar::{self, Placement};
-use super::view::{Layout, ScaleMode, View};
+use super::toolbar::Placement;
 use super::x11::Fence;
 use super::{Host, Request};
 use crate::backend::Backend;
@@ -63,18 +73,15 @@ use crate::events::{Cursor, Event, Mailbox, State};
 use crate::known_hosts::{self, KnownHosts, Store};
 use ::session::trust::{self, Decision};
 use crate::options::Options;
-use egui::{
-    Color32, CursorIcon, Frame, Id, LayerId, Margin, Order, PointerButton, Pos2, Rect, Response, RichText, Sense,
-    Stroke, TextureHandle, TextureOptions, Vec2, pos2, vec2,
-};
-use super::icons;
+use egui::{CursorIcon, TextureHandle, TextureOptions, Vec2, ViewportId, vec2};
+use pane::{Pane, PaneId};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta};
 use winit::keyboard::{Key as LogicalKey, PhysicalKey};
-use winit::window::{CursorGrabMode, Fullscreen};
+use winit::window::CursorGrabMode;
 use xkeysym::Keysym;
 
 /// RFB's button bits, which every backend takes.
@@ -90,13 +97,6 @@ const WHEEL_RIGHT: i32 = 64;
 /// egui-winit turns one line of a wheel into.
 const NOTCH_POINTS: f32 = 50.0;
 
-/// How long the toolbar stays out after connecting, so that it is seen once.
-const TOOLBAR_REVEAL: Duration = Duration::from_secs(3);
-/// The toolbar's buttons' height, in points.
-const TOOLBAR_BUTTON: f32 = 28.0;
-/// The size of the toolbar's icons, in points: Material Symbols are drawn
-/// for 24, and read well down to 18.
-const TOOLBAR_ICON: f32 = 20.0;
 /// How long the bell rings in the title.
 const BELL: Duration = Duration::from_millis(600);
 /// How long a disconnect is given before the session is closed regardless.
@@ -134,27 +134,13 @@ pub struct Session {
     /// The client's settings as this session runs with them: what it
     /// started with, then whatever the panel changed.
     pub settings: Settings,
-    /// Where the toolbar sits along the top edge: where the last session
-    /// left it, then wherever it is dragged. Handed back, like `settings`.
-    pub placement: Placement,
-    /// Where the toolbar's left edge was when the drag under way began.
-    drag_from: Option<f32>,
     backend: Arc<dyn Backend>,
     mailbox: Arc<Mailbox>,
-    started: Instant,
     desktop: Option<Desktop>,
     snapshot: Snapshot,
     last_poll: Option<Instant>,
-    view: View,
-    /// Which of `facts.monitors` is on screen, or `None` for the whole
-    /// desktop.
-    monitor: Option<usize>,
-    /// The toolbar's size as last drawn, which is where it would be when
-    /// out, and so the span of the edge that brings it out.
-    toolbar_size: Vec2,
-    /// The pointer is on the toolbar: it stays out, and the keyboard is
-    /// this end's meanwhile.
-    toolbar_hovered: bool,
+    /// The windows the session is shown in, the main window's first.
+    panes: Vec<Pane>,
     panel: Panel,
     /// Every option's value as the session has it: what it connected with,
     /// then whatever has been set since, which is what the panel's controls
@@ -170,16 +156,14 @@ pub struct Session {
     /// Where RealVNC's remembered identity is kept, by address.
     identities: Store,
     cursor: Option<CursorShape>,
-    /// The far end's cursor as the window's own, where that is wanted.
-    native: Native,
-    /// The shape the window's cursor should be this frame, if the far
-    /// end's: the software cursor setting off, absolute mode, the pointer
-    /// over the desktop, and a shape to show.
-    native_key: Option<Key>,
+    /// The far end's cursor made into window cursors, at each scale a
+    /// window wanted it at; each pane says which its window shows.
+    cursors: native::Cache,
     /// What the far end said about who owns the pointer.
     relative: bool,
-    /// How the local pointer is held right now, if it is.
-    capture: Option<Capture>,
+    /// How the local pointer is held right now, if it is, and by which
+    /// pane's window: only ever one, the focused one.
+    capture: Option<(PaneId, Capture)>,
     /// X11: where the pointer was before it was captured, put back when it
     /// is let go.
     restore: Option<PhysicalPosition<f64>>,
@@ -201,6 +185,10 @@ pub struct Session {
     down: HashMap<PhysicalKey, u32>,
     /// The last pointer event sent, so the same one is not sent twice.
     last_pointer: (i32, i32, i32),
+    /// The pane a button was pressed in, while any is held: the far end's
+    /// pointer is that window's until the buttons are up (see
+    /// `pane::may_send`).
+    pointer_owner: Option<PaneId>,
     /// Smooth scrolling not yet amounting to a notch.
     wheel: Vec2,
     /// Raw motion not yet amounting to a pixel.
@@ -220,18 +208,6 @@ pub struct Session {
     hud: Hud,
     /// Damage rectangles received, in all.
     damage: u64,
-    /// The desktop's upload count at the last frame, for the per-frame
-    /// figure.
-    uploads_seen: u64,
-    /// Whether the pointer was over the desktop in the last frame.
-    hovered: bool,
-    /// When the oldest frame taken but not yet presented ended at the
-    /// backend: the start of the overlay's render latency.
-    unpresented: Option<Instant>,
-    /// When winit handed over the first pointer event egui has not yet
-    /// read, which the next frame turns into the pointer event the backend
-    /// is given: the start of the overlay's pointer latency.
-    pointer_since: Option<Instant>,
     /// The session is over, with the detail the backend gave (empty for an
     /// ending that was asked for).
     pub closed: Option<String>,
@@ -277,18 +253,12 @@ impl Session {
         Ok(Session {
             request,
             settings,
-            placement,
-            drag_from: None,
             backend,
             mailbox,
-            started: Instant::now(),
             desktop: None,
             snapshot: Snapshot::default(),
             last_poll: None,
-            view: View::default(),
-            monitor: None,
-            toolbar_size: vec2(0.0, 40.0),
-            toolbar_hovered: false,
+            panes: vec![Pane::new(ViewportId::ROOT, placement)],
             panel: Panel::default(),
             live,
             follower: Follower::default(),
@@ -298,8 +268,7 @@ impl Session {
             pinned,
             identities: known_hosts::realvnc_identities(&dirs.config),
             cursor: None,
-            native: Native::default(),
-            native_key: None,
+            cursors: native::Cache::default(),
             relative: false,
             capture: None,
             restore: None,
@@ -310,6 +279,7 @@ impl Session {
             held: HashMap::new(),
             down: HashMap::new(),
             last_pointer: (-1, -1, 0),
+            pointer_owner: None,
             wheel: Vec2::ZERO,
             motion_rest: (0.0, 0.0),
             captured_mask: 0,
@@ -321,10 +291,6 @@ impl Session {
             disconnecting: None,
             hud: Hud::default(),
             damage: 0,
-            uploads_seen: 0,
-            hovered: false,
-            unpresented: None,
-            pointer_since: None,
             closed: None,
         })
     }
@@ -346,16 +312,22 @@ impl Session {
     /// while the pointer is on the toolbar. The toolbar is this end's, so
     /// while it is being used the keyboard is too — Alt+Tab included, which
     /// is how a grabbed window is otherwise left only with the mouse.
-    /// Never with the grab keyboard setting off.
-    pub fn holds_shortcuts(&self) -> bool {
-        self.settings.grab_keyboard && self.accepts_input() && !self.toolbar_hovered
+    /// Never with the grab keyboard setting off. `pane` is the window that
+    /// has the focus, whose toolbar it is.
+    pub fn holds_shortcuts(&self, pane: PaneId) -> bool {
+        self.settings.grab_keyboard && self.accepts_input() && !self.toolbar_hovered(pane)
     }
 
-    /// Whether a key event from winit is the far end's rather than egui's:
-    /// not while the pointer is on the toolbar, where the shortcuts are
-    /// this desktop's again and a key typed is not meant for the far end.
-    pub fn takes_keys(&self, ctx: &egui::Context) -> bool {
-        self.accepts_input() && !self.toolbar_hovered && !ctx.egui_wants_keyboard_input()
+    /// Whether a key event from winit, to `pane`'s window, is the far end's
+    /// rather than egui's: not while the pointer is on that window's
+    /// toolbar, where the shortcuts are this desktop's again and a key
+    /// typed is not meant for the far end.
+    pub fn takes_keys(&self, ctx: &egui::Context, pane: PaneId) -> bool {
+        self.accepts_input() && !self.toolbar_hovered(pane) && !ctx.egui_wants_keyboard_input()
+    }
+
+    fn toolbar_hovered(&self, pane: PaneId) -> bool {
+        self.pane(pane).is_some_and(|p| p.toolbar_hovered)
     }
 
     /// Whether mouse events from winit go to the far end as raw input,
@@ -368,10 +340,10 @@ impl Session {
         self.capture.is_some()
     }
 
-    /// Whether the pointer is being held at the window's centre (X11's
-    /// capture), so the window swallows its motion and warps it back.
-    pub fn centred(&self) -> bool {
-        self.capture == Some(Capture::Centred) && self.accepts_input()
+    /// Whether the pointer is being held at the centre of `pane`'s window
+    /// (X11's capture), so the window swallows its motion and warps it back.
+    pub fn centred(&self, pane: PaneId) -> bool {
+        self.capture == Some((pane, Capture::Centred)) && self.accepts_input()
     }
 
     /// What the window is called: the desktop's name once known, with the
@@ -414,13 +386,17 @@ impl Session {
                         );
                         self.desktop = Some(desktop);
                     }
-                    self.monitor = None;
+                    for pane in &mut self.panes {
+                        pane.desktop_changed();
+                    }
                     self.last_poll = None;
                     self.relative = self.mailbox.pointer_relative();
                 }
                 Event::Frame { rects, ended } => {
                     self.damage += rects.len() as u64;
-                    self.unpresented = Some(self.unpresented.map_or(ended, |t| t.min(ended)));
+                    for pane in &mut self.panes {
+                        pane.unpresented = Some(pane.unpresented.map_or(ended, |t| t.min(ended)));
+                    }
                     if let Some(desktop) = &mut self.desktop {
                         desktop.update(ctx, &*self.backend, &rects);
                     }
@@ -514,7 +490,7 @@ impl Session {
     /// X11: the window moved or changed size under a captured pointer, and
     /// the barriers go where it is now.
     pub fn refence(&mut self) {
-        if self.capture == Some(Capture::Centred)
+        if matches!(self.capture, Some((_, Capture::Centred)))
             && let Some(fence) = &mut self.fence
         {
             fence.raise();
@@ -639,13 +615,17 @@ impl Session {
     }
 
     /// Capture or free the pointer to match what the mode, the focus and
-    /// the escape chord say.
+    /// the escape chord say, in `host`'s window: taken there when it has
+    /// the focus and nothing holds it, let go there when it held it and
+    /// should not.
     fn sync_capture(&mut self, host: &mut Host) {
         let want = self.relative && host.focused && !self.escaped && self.accepts_input();
-        if want == self.captured() {
-            return;
-        }
+        let holder = self.capture.map(|(pane, _)| pane);
         if want {
+            if holder.is_some() {
+                return;
+            }
+            let pane = host.viewport;
             match host.platform {
                 Platform::X11 => {
                     // winit's X11 `Locked` is unsupported, and `Confined` (an
@@ -666,21 +646,21 @@ impl Session {
                     if let Some(fence) = &mut self.fence {
                         fence.raise();
                     }
-                    self.capture = Some(Capture::Centred);
+                    self.capture = Some((pane, Capture::Centred));
                     self.motion_rest = (0.0, 0.0);
                     log::info!("pointer captured: hidden and held at the centre (Ctrl+Alt releases it)");
                 }
                 _ => match host.window.set_cursor_grab(CursorGrabMode::Locked) {
                     Ok(()) => {
                         host.window.set_cursor_visible(false);
-                        self.capture = Some(Capture::Locked);
+                        self.capture = Some((pane, Capture::Locked));
                         self.motion_rest = (0.0, 0.0);
                         log::info!("pointer locked (Ctrl+Alt releases it)");
                     }
                     Err(e) => log::warn!("pointer lock refused: {e}"),
                 },
             }
-        } else {
+        } else if holder == Some(host.viewport) {
             self.let_go(host);
             if self.captured_mask != 0 {
                 self.captured_mask = 0;
@@ -693,7 +673,7 @@ impl Session {
     /// The pointer as it was before the capture: unlocked, shown, and on
     /// X11 back where it was.
     fn let_go(&mut self, host: &mut Host) {
-        match self.capture.take() {
+        match self.capture.take().map(|(_, how)| how) {
             Some(Capture::Locked) => {
                 let _ = host.window.set_cursor_grab(CursorGrabMode::None);
             }
@@ -715,8 +695,11 @@ impl Session {
     /// A pointer event from winit, now, that egui will read in the next
     /// frame: the time of the first since the last frame is kept, for the
     /// overlay. One clock read a frame, whether the overlay is on or not.
-    pub fn pointer_event(&mut self) {
-        self.pointer_since.get_or_insert_with(Instant::now);
+    /// `pane` is the window it came to.
+    pub fn pointer_event(&mut self, pane: PaneId) {
+        if let Some(pane) = self.pane_mut(pane) {
+            pane.pointer_since.get_or_insert_with(Instant::now);
+        }
     }
 
     /// The frame just drawn went to the screen at `at`, or was not drawn
@@ -724,8 +707,9 @@ impl Session {
     /// again), in which case nothing is measured: a picture nobody could
     /// see has no latency worth the name, and the next one will be timed
     /// from its own frame.
-    pub fn presented(&mut self, at: Option<Instant>) {
-        if let (Some(ended), Some(at)) = (self.unpresented.take(), at) {
+    pub fn presented(&mut self, pane: PaneId, at: Option<Instant>) {
+        let ended = self.pane_mut(pane).and_then(|p| p.unpresented.take());
+        if let (Some(ended), Some(at)) = (ended, at) {
             self.hud.render.record(at.saturating_duration_since(ended));
         }
     }
@@ -895,9 +879,25 @@ impl Session {
 
     // ---- the frame ---------------------------------------------------------
 
-    /// One frame: the events, the poll, the desktop, the chrome.
+    /// One frame of the window `host` is: in the main window first what is
+    /// the session's in every window (the events, the poll, the follower,
+    /// the disconnect's deadline), then the pane's own (see `pane.rs`).
     pub fn frame(&mut self, root: &mut egui::Ui, host: &mut Host) {
-        let ctx = &root.ctx().clone();
+        let ctx = root.ctx().clone();
+        if host.viewport == ViewportId::ROOT {
+            self.frame_shared(&ctx, host);
+        }
+        // Out of the list while it draws, so that it can drive the session.
+        let Some(i) = self.panes.iter().position(|p| p.id == host.viewport) else {
+            return;
+        };
+        let mut pane = self.panes.remove(i);
+        pane.frame(self, root, host);
+        self.panes.insert(i, pane);
+    }
+
+    /// The session's part of a frame: once, however many windows show it.
+    fn frame_shared(&mut self, ctx: &egui::Context, host: &mut Host) {
         self.drain(ctx, host);
         self.poll(ctx, host);
         if let Some(due) = self.follower.due() {
@@ -924,7 +924,6 @@ impl Session {
                 }
             }
         }
-        self.sync_capture(host);
         // Whatever stopped input going to the far end — a prompt arriving,
         // view only, a disconnect — the keys it has down are let go of
         // there, since their releases will now be egui's. View only and the
@@ -933,233 +932,78 @@ impl Session {
         if !self.accepts_input() {
             self.release_keys();
         }
+    }
 
-        let title = self.title();
-        if title != self.title_set(ctx) {
-            host.window.set_title(&title);
-            ctx.data_mut(|d| d.insert_temp(Id::new("title"), title));
+    /// The connection panel, in the main window, and what was changed on it.
+    fn panel(&mut self, ctx: &egui::Context, host: &mut Host) {
+        if !self.panel.open {
+            return;
         }
-
-        let pixels_per_point = ctx.pixels_per_point();
-        let dt = ctx.input(|i| i.stable_dt).min(0.1);
-        let mut layout = None;
-        let mut response = None;
-        egui::CentralPanel::default()
-            .frame(Frame::NONE.fill(Color32::from_gray(24)))
-            .show(root, |ui| {
-                let window = ui.max_rect();
-                let Some((width, height)) = self.desktop.as_ref().map(Desktop::size) else {
-                    self.waiting(ui);
-                    return;
-                };
-                let source = self.source_rect(width, height);
-                let l = self.view.layout(source, window, pixels_per_point);
-                let exact = (l.scale * pixels_per_point - 1.0).abs() < 1e-3;
-                let desktop = self.desktop.as_mut().expect("checked above");
-                desktop.set_exact(ctx, &*self.backend, exact);
-                desktop.paint(ui.painter(), &l);
-                response = Some(ui.interact(window, Id::new("desktop"), Sense::click_and_drag()));
-                layout = Some(l);
-            });
-        self.hovered = response.as_ref().is_some_and(Response::hovered);
-        self.native_key = None;
-        // Taken whether or not there is a desktop for it to be sent over,
-        // so that a move from before one was there is not counted later.
-        let pointer_since = self.pointer_since.take();
-        if let (Some(layout), Some(response)) = (layout, response) {
-            self.pointer(ctx, &response, &layout, dt, pointer_since);
-            if self.settings.software_cursor {
-                self.draw_cursor(ctx, &response);
-            } else {
-                // Device pixels per desktop pixel: what the shape is
-                // resampled by so that its hotspot lands where the pointer is.
-                let factor = layout.scale * pixels_per_point;
-                self.native_key = (self.hovered && !self.relative && self.connected())
-                    .then(|| self.cursor.as_ref().map(|c| Key::new(c.hash, factor)))
-                    .flatten();
-            }
-        }
-
-        self.toolbar(ctx, host);
-        // The keyboard is this end's while the pointer is on the toolbar
-        // (see `holds_shortcuts`), so what the far end has down is let go
-        // of there, as for anything else that takes input away; the
-        // releases that follow are `key_elsewhere`'s.
-        if self.toolbar_hovered {
-            self.release_keys();
-        }
-        if self.panel.open {
-            let state = self.state_line();
-            let title = self.request.address.clone();
-            let controls = Controls {
-                specs: self.request.kind.options,
-                values: &self.live,
-                connected: self.connected(),
-                window: Self::window_size(host),
-                follow: self.follower.enabled(),
-                settings: self.settings,
-                debug: self.hud.on,
-            };
-            let actions = self.panel.show(ctx, &self.snapshot, &controls, &title, &state);
-            for action in actions {
-                match action {
-                    Action::SetOption(key, value) => self.set_option(key, &value),
-                    Action::DesktopSize(width, height) => {
-                        log::info!("asking for a {width}×{height} desktop");
-                        self.backend.request_desktop_size(width, height);
-                    }
-                    Action::Display(index) => self.backend.request_display(index),
-                    Action::Follow(follow) => self.set_follow(follow, host),
-                    Action::Settings(settings) => self.set_settings(settings),
-                    Action::Debug(on) => {
-                        if on != self.hud.on {
-                            self.toggle_hud();
-                        }
+        let state = self.state_line();
+        let title = self.request.address.clone();
+        let controls = Controls {
+            specs: self.request.kind.options,
+            values: &self.live,
+            connected: self.connected(),
+            window: Self::window_size(host),
+            follow: self.follower.enabled(),
+            settings: self.settings,
+            debug: self.hud.on,
+        };
+        let actions = self.panel.show(ctx, &self.snapshot, &controls, &title, &state);
+        for action in actions {
+            match action {
+                Action::SetOption(key, value) => self.set_option(key, &value),
+                Action::DesktopSize(width, height) => {
+                    log::info!("asking for a {width}×{height} desktop");
+                    self.backend.request_desktop_size(width, height);
+                }
+                Action::Display(index) => self.backend.request_display(index),
+                Action::Follow(follow) => self.set_follow(follow, host),
+                Action::Settings(settings) => self.set_settings(settings),
+                Action::Debug(on) => {
+                    if on != self.hud.on {
+                        self.toggle_hud();
                     }
                 }
             }
         }
-        if self.hud.on {
-            let lines = self.hud_lines(host, layout.as_ref(), pixels_per_point);
-            Hud::draw(ctx, &lines);
-        }
-        self.prompt(ctx);
+    }
+
+    fn pane_mut(&mut self, id: PaneId) -> Option<&mut Pane> {
+        self.panes.iter_mut().find(|p| p.id == id)
+    }
+
+    fn pane(&self, id: PaneId) -> Option<&Pane> {
+        self.panes.iter().find(|p| p.id == id)
+    }
+
+    /// Where the main window's toolbar was left, for the next session.
+    pub fn placement(&self) -> Placement {
+        self.pane(ViewportId::ROOT).map(|p| p.placement).unwrap_or_default()
     }
 
     /// Before egui-winit sets the window's cursor from egui's icon: the
     /// far end's shape taken off it where it is no longer wanted.
     pub fn cursor_before(&mut self, host: &mut Host) {
-        self.native.before(host.window, self.native_key);
+        if let Some(pane) = self.pane_mut(host.viewport) {
+            pane.native.before(host.window, pane.native_key);
+        }
     }
 
     /// After egui-winit's turn: the far end's shape put on, where wanted.
     pub fn cursor_after(&mut self, host: &mut Host, icon: CursorIcon) {
-        let wanted = match (self.native_key, &self.cursor) {
+        let Some(pane) = self.panes.iter_mut().find(|p| p.id == host.viewport) else {
+            return;
+        };
+        let wanted = match (pane.native_key, &self.cursor) {
             (Some(key), Some(shape)) => Some((key, &shape.source)),
             _ => None,
         };
         let alpha = native::Alpha::for_platform(host.platform);
-        self.native.after(host.window, host.event_loop, wanted, icon, alpha);
+        pane.native
+            .after(&mut self.cursors, host.window, host.event_loop, wanted, icon, alpha);
     }
-
-    // ---- the debug overlay -------------------------------------------------
-
-    /// `SessionHud.draw`'s lines, in its order where they apply here: the
-    /// state and the pixel path, the cursor and the view, the physical
-    /// mouse and keyboard, and the things this window has that the phone
-    /// has not.
-    fn hud_lines(&mut self, host: &Host, layout: Option<&Layout>, pixels_per_point: f32) -> Vec<String> {
-        let now = Instant::now();
-        self.hud.frames += 1;
-        let fps = self.hud.fps.sample(self.hud.frames, now);
-        let damage_rate = self.hud.damage.sample(self.damage, now);
-        let (uploads, bytes, last) = self.desktop.as_ref().map(Desktop::stats).unwrap_or((0, 0, None));
-        let per_frame = uploads.saturating_sub(self.uploads_seen);
-        self.uploads_seen = uploads;
-        let read_rate = self.hud.bytes.sample(bytes, now);
-        let (width, height) = self.desktop.as_ref().map(Desktop::size).unwrap_or((0, 0));
-        // `SessionClipboard.summary`: what the far end would be given.
-        let clip = match &self.clipboard_seen {
-            Some(text) if self.settings.clipboard_out => format!("{}c", text.chars().count()),
-            _ => "-".to_string(),
-        };
-        let state = format!("{:?}", self.mailbox.state()).to_ascii_lowercase();
-        let first = format!(
-            "state {state}  desktop {width}x{height}  fps {fps}  dmg {} ({damage_rate}/s)  tex {per_frame}/frame  rd {}  last {}  clip {clip}",
-            self.damage,
-            hud::bytes_per_second(read_rate),
-            last.map(|r| format!("{},{} {}x{}", r.x, r.y, r.width, r.height))
-                .unwrap_or_else(|| "-".to_string()),
-        );
-
-        let (x, y, mask) = self.last_pointer;
-        let cursor = if self.relative {
-            "theirs".to_string()
-        } else {
-            format!("{x},{y}")
-        };
-        let view = match layout {
-            Some(l) => {
-                let origin = (l.rect.min - l.window.min) * pixels_per_point;
-                let content = l.rect.size() * pixels_per_point;
-                format!(
-                    "scale {:.3} [{}]  origin {},{}  content {}x{}",
-                    l.scale * pixels_per_point,
-                    self.view.mode.label(),
-                    origin.x.round(),
-                    origin.y.round(),
-                    content.x.round(),
-                    content.y.round()
-                )
-            }
-            None => "scale -".to_string(),
-        };
-        let second = format!("cursor {cursor}  btn {}  {view}", hud::buttons_name(mask));
-
-        let mouse = match self.capture {
-            Some(Capture::Locked) => "captured (locked)",
-            Some(Capture::Centred) => "captured (centred)",
-            None if self.hovered => "hover",
-            None => "-",
-        };
-        // Every whole pixel of raw motion sent so far in relative mode, so
-        // that motion counted twice shows as twice the distance.
-        let sent = if self.relative {
-            format!("  Δ {},{}", self.motion_sent.0, self.motion_sent.1)
-        } else {
-            String::new()
-        };
-        let third = format!(
-            "mouse {mouse}{sent}  btn {}  keys {} held{}",
-            hud::buttons_name(if self.captured() { self.captured_mask } else { mask }),
-            self.held.len(),
-            if self.view_only { "   VIEW ONLY" } else { "" }
-        );
-
-        let follow = if !self.follower.enabled() {
-            "off".to_string()
-        } else {
-            match self.follower.followed() {
-                Some((w, h)) => format!("{w}x{h}"),
-                None => "waiting".to_string(),
-            }
-        };
-        let shape = match &self.cursor {
-            None => "none".to_string(),
-            Some(c) => {
-                let how = if self.native.shown().is_some() {
-                    "native"
-                } else if !self.settings.software_cursor {
-                    "native (off desktop)"
-                } else {
-                    "software"
-                };
-                format!("{how} {}x{} hot {},{}", c.source.width, c.source.height, c.source.hot_x, c.source.hot_y)
-            }
-        };
-        let fourth = format!(
-            "{} inhibitor {}  follow {follow}  shape {shape}  clipboard out {} in {}",
-            host.platform.name(),
-            host.inhibitor,
-            on_off(self.settings.clipboard_out),
-            on_off(self.settings.clipboard_in)
-        );
-        // What can be timed at this end, and only that: how long the far
-        // end takes to act on input and send back what it did is not
-        // something any of the protocols lets this end see.
-        let fifth = format!(
-            "render {}  pointer {}  keys {}",
-            self.hud.render.summary(),
-            self.hud.pointer.summary(),
-            self.hud.keys.summary()
-        );
-        vec![first, second, third, fourth, fifth]
-    }
-
-    fn title_set(&self, ctx: &egui::Context) -> String {
-        ctx.data(|d| d.get_temp::<String>(Id::new("title"))).unwrap_or_default()
-    }
-
     /// What the panel says under the name: the state, which client, the
     /// desktop.
     fn state_line(&self) -> String {
@@ -1203,113 +1047,6 @@ impl Session {
         });
     }
 
-    /// The desktop pixels on screen: one monitor's, or all of them.
-    fn source_rect(&mut self, width: usize, height: usize) -> Rect {
-        let whole = Rect::from_min_size(Pos2::ZERO, vec2(width as f32, height as f32));
-        let Some(i) = self.monitor else {
-            return whole;
-        };
-        match self.snapshot.facts.monitors.get(i) {
-            Some(m) => {
-                let r = Rect::from_min_size(pos2(m.x as f32, m.y as f32), vec2(m.width as f32, m.height as f32))
-                    .intersect(whole);
-                if r.width() >= 1.0 && r.height() >= 1.0 {
-                    r
-                } else {
-                    whole
-                }
-            }
-            None => {
-                self.monitor = None;
-                whole
-            }
-        }
-    }
-
-    /// The pointer over the desktop: the edge pan, and in absolute mode the
-    /// position, the buttons and the wheel.
-    /// `since` is when winit handed over the first of the frame's pointer
-    /// events; what was sent to the backend for them is timed from it.
-    fn pointer(&mut self, ctx: &egui::Context, response: &Response, layout: &Layout, dt: f32, since: Option<Instant>) {
-        let over = response.hovered() || response.dragged() || response.is_pointer_button_down_on();
-        let pos = ctx.input(|i| i.pointer.latest_pos());
-
-        if over && !self.captured() && let Some(pos) = pos {
-            let velocity = layout.edge_velocity(pos);
-            if velocity != Vec2::ZERO {
-                self.view.pan += velocity * dt;
-                ctx.request_repaint();
-            }
-        }
-
-        if response.clicked() || response.drag_started() {
-            // A click on the desktop takes the pointer back after the chord.
-            self.escaped = false;
-        }
-        if !self.accepts_input() || self.relative {
-            return;
-        }
-
-        // The frame's events in order rather than the state at its end,
-        // so that a press and a release in the same frame are both sent,
-        // and in that order.
-        let events = ctx.input(|i| i.events.clone());
-        let (_, _, mut mask) = self.last_pointer;
-        let mut sent = false;
-        if over && let Some(pos) = pos {
-            let mut at = layout.desktop_at(pos);
-            for event in &events {
-                match event {
-                    egui::Event::PointerMoved(p) => at = layout.desktop_at(*p),
-                    egui::Event::PointerButton {
-                        pos: p,
-                        button,
-                        pressed,
-                        ..
-                    } => {
-                        let bit = match button {
-                            PointerButton::Primary => LEFT,
-                            PointerButton::Middle => MIDDLE,
-                            PointerButton::Secondary => RIGHT,
-                            _ => continue,
-                        };
-                        at = layout.desktop_at(*p);
-                        mask = if *pressed { mask | bit } else { mask & !bit };
-                    }
-                    egui::Event::MouseWheel { unit, delta, .. } => {
-                        let notches = match unit {
-                            egui::MouseWheelUnit::Line => *delta,
-                            egui::MouseWheelUnit::Point => *delta / NOTCH_POINTS,
-                            egui::MouseWheelUnit::Page => *delta,
-                        };
-                        for bit in self.notches(notches) {
-                            self.backend.pointer(at.0, at.1, mask | bit);
-                            self.backend.pointer(at.0, at.1, mask);
-                            sent = true;
-                        }
-                        continue;
-                    }
-                    _ => continue,
-                }
-                sent |= self.send_pointer(at, mask);
-            }
-            sent |= self.send_pointer(at, mask);
-        } else if mask != 0 {
-            // A button pressed over the desktop and let go elsewhere: the
-            // far end is told at the last place it saw.
-            let released = events
-                .iter()
-                .any(|e| matches!(e, egui::Event::PointerButton { pressed: false, .. }));
-            if released {
-                let (x, y, _) = self.last_pointer;
-                sent |= self.send_pointer((x, y), 0);
-            }
-        }
-        if sent && let Some(since) = since {
-            self.hud.pointer.record(since.elapsed());
-        }
-    }
-
     /// One pointer event, unless it is the one already sent; whether it
     /// was sent.
     fn send_pointer(&mut self, at: (i32, i32), mask: i32) -> bool {
@@ -1321,253 +1058,6 @@ impl Session {
         fresh
     }
 
-    /// The far end's cursor under the local pointer, in absolute mode.
-    fn draw_cursor(&self, ctx: &egui::Context, response: &Response) {
-        if self.relative || !self.connected() {
-            return;
-        }
-        let Some(cursor) = &self.cursor else {
-            return;
-        };
-        if !response.hovered() {
-            return;
-        }
-        let Some(pos) = ctx.input(|i| i.pointer.latest_pos()) else {
-            return;
-        };
-        ctx.set_cursor_icon(CursorIcon::None);
-        let rect = Rect::from_min_size(pos - cursor.hot, cursor.size);
-        ctx.layer_painter(LayerId::new(Order::Tooltip, Id::new("remote-cursor")))
-            .image(
-                cursor.texture.id(),
-                rect,
-                Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)),
-                Color32::WHITE,
-            );
-    }
-
-    // ---- the toolbar -------------------------------------------------------
-
-    /// Slid down from the top edge, flush with it, while the pointer is at
-    /// the edge within the toolbar's own span or on the toolbar itself, and
-    /// back up otherwise, to a peek of its lower edge in a window or with
-    /// the pointer on fullscreen's top row, and out of sight in fullscreen
-    /// with the pointer anywhere else. Only its own span, because the rest
-    /// of the top edge is the desktop's: a pointer heading for something at
-    /// the top of the far end's screen, a menu bar or a tab, had the toolbar
-    /// come down over it wherever it touched the edge.
-    ///
-    /// It can be dragged along the edge, out of the way of what is under
-    /// it, by any part of it: the area senses drags beneath its buttons,
-    /// which sense only clicks, so egui gives a press on a button the click
-    /// and the area the drag (`hit_test`'s "the top Button and the
-    /// ScrollArea behind it"). A drag-only widget starts dragging at the
-    /// press, so the toolbar moves only once the pointer is decidedly
-    /// dragging, which is also when a release stops being a click: a
-    /// button is either clicked or dragged, never both.
-    fn toolbar(&mut self, ctx: &egui::Context, host: &mut Host) {
-        let pointer = ctx.input(|i| i.pointer.latest_pos());
-        let screen = ctx.content_rect();
-        let fullscreen = host.window.fullscreen().is_some();
-        let width = self.toolbar_size.x;
-        let left = self.placement.left(screen, width);
-        let at_edge = pointer.is_some_and(|p| toolbar::reveals(screen, left, width, fullscreen, ctx.pixels_per_point(), p));
-        let reveal = self.started.elapsed() < TOOLBAR_REVEAL;
-        let show = at_edge || self.toolbar_hovered || self.drag_from.is_some() || reveal || self.disconnecting.is_some();
-        let style = ctx.global_style();
-        // Square, and flush with the top edge: nothing between it and the
-        // edge for the pointer to fall into. Flat, too: a popup's frame
-        // without the popup's shadow, so that hidden nothing but the peek
-        // `hidden_y` leaves shows, and shown nothing of it lies
-        // over the desktop past its edge.
-        //
-        // Edged on three sides and not the top, which is the window's own
-        // edge: a line there would be a rule across the top of the screen
-        // and, hidden, all that peeked out. A frame's stroke goes all the
-        // way round, so the frame is drawn without one and the three sides
-        // are painted over it after, inside its rect as a frame's stroke is,
-        // with the margin keeping the stroke's width so that the buttons sit
-        // where they did.
-        let edge = style.visuals.window_stroke();
-        let edge_width = edge.width.round() as i8;
-        let frame = Frame::popup(&style)
-            .corner_radius(0)
-            .shadow(egui::Shadow::NONE)
-            .stroke(Stroke::NONE)
-            .inner_margin(Margin::symmetric(8 + edge_width, 6 + edge_width));
-        // Hidden, it peeks in a window always and in fullscreen while the
-        // pointer is on the screen's top row anywhere along it; the slide
-        // to and from the peek is the same slide, the same 0.2 s.
-        let peeks = toolbar::peeks(screen, fullscreen, ctx.pixels_per_point(), pointer);
-        let hidden = toolbar::hidden_y(self.toolbar_size.y, peeks);
-        let y = ctx.animate_value_with_time(Id::new("toolbar-y"), if show { 0.0 } else { hidden }, 0.2);
-        if reveal {
-            ctx.request_repaint_after(TOOLBAR_REVEAL.saturating_sub(self.started.elapsed()));
-        }
-
-        let area = egui::Area::new(Id::new("toolbar"))
-            .order(Order::Foreground)
-            .fixed_pos(pos2(left, screen.min.y + y))
-            // Unconstrained, or egui would keep it on screen: off the top
-            // is where it goes to hide.
-            .constrain(false)
-            .interactable(true)
-            .sense(Sense::drag())
-            .show(ctx, |ui| {
-                let rect = frame
-                    .show(ui, |ui| {
-                        // A little taller than egui's buttons, which were
-                        // made for a menu rather than for a bar at a
-                        // screen's edge.
-                        ui.spacing_mut().interact_size.y = TOOLBAR_BUTTON;
-                        ui.horizontal(|ui| self.toolbar_items(ui, host));
-                    })
-                    .response
-                    .rect;
-                let inner = rect.shrink(edge.width / 2.0);
-                let sides = vec![
-                    pos2(inner.min.x, rect.min.y),
-                    inner.left_bottom(),
-                    inner.right_bottom(),
-                    pos2(inner.max.x, rect.min.y),
-                ];
-                ui.painter().add(egui::Shape::line(sides, edge));
-            });
-        let response = &area.response;
-        if response.drag_started() {
-            self.drag_from = Some(left);
-        }
-        if let Some(from) = self.drag_from {
-            if !response.dragged() {
-                self.drag_from = None;
-            } else if ctx.input(|i| i.pointer.is_decidedly_dragging()) {
-                let moved = response.total_drag_delta().unwrap_or_default().x;
-                self.placement.move_to(screen, width, from + moved);
-                ctx.set_cursor_icon(CursorIcon::Grabbing);
-            }
-        } else if response.hovered() && !over_button(ctx, response) {
-            // The margins, which are where to take hold of it (the buttons'
-            // interact rects meet, so there are no gaps between them), but
-            // not the buttons, which are pressed before they are dragged.
-            ctx.set_cursor_icon(CursorIcon::Grab);
-        }
-        self.toolbar_size = response.rect.size();
-        // A drag that has run off the toolbar is still the toolbar's, and
-        // so is the keyboard while it lasts.
-        self.toolbar_hovered = response.contains_pointer() || self.drag_from.is_some();
-    }
-
-    /// The toolbar's buttons: Material Symbols and no words, each with its
-    /// name and its state in its tooltip. A button with a state shows it in
-    /// its icon — one per scale mode, all monitors or one, view only on or
-    /// off — and the tooltip says the rest (which monitor or display);
-    /// Info and view only are highlighted while they are on.
-    fn toolbar_items(&mut self, ui: &mut egui::Ui, host: &mut Host) {
-        let connected = self.connected();
-        let mode = self.view.mode;
-        let scale = ui.add_enabled(connected, icon_only(scale_icon(mode)));
-        if scale
-            .on_hover_text(format!(
-                "Scale: {} — click for {}.\n\
-                 Where the desktop overflows the window, the pointer near an edge pans it.",
-                mode.label().to_lowercase(),
-                mode.next().label().to_lowercase(),
-            ))
-            .clicked()
-        {
-            self.view.cycle();
-        }
-
-        let facts = &self.snapshot.facts;
-        // Several screens while showing them all, one while showing one;
-        // which one is the tooltip's to say, since a number on the icon
-        // would be the word again.
-        if facts.monitors.len() > 1 {
-            let count = facts.monitors.len();
-            let symbol = if self.monitor.is_some() { icons::MONITOR } else { icons::TV_DISPLAYS };
-            if ui
-                .add_enabled(connected, icon_only(symbol))
-                .on_hover_text(format!(
-                    "Monitor: {} — click for {}.\nThe whole desktop, or one of its monitors.",
-                    monitor_name(self.monitor, count),
-                    monitor_name(next_monitor(self.monitor, count), count),
-                ))
-                .clicked()
-            {
-                self.monitor = next_monitor(self.monitor, count);
-                self.view.pan = Vec2::ZERO;
-            }
-        } else if facts.displays.len() > 1 {
-            let count = facts.displays.len();
-            let next = (facts.display + 1).rem_euclid(count as i32);
-            if ui
-                .add_enabled(connected, icon_only(icons::MONITOR))
-                .on_hover_text(format!(
-                    "Display: {} of {count} — click for display {}.\nThe far end sends one display at a \
-                     time; a click asks it for the next.",
-                    facts.display + 1,
-                    next + 1,
-                ))
-                .clicked()
-            {
-                self.backend.request_display(next);
-            }
-        }
-
-        // An eye while only watching, a mouse while in control, so that the
-        // icon says which without the highlight's help.
-        let view_only = self.view_only;
-        let symbol = if view_only { icons::VISIBILITY } else { icons::MOUSE };
-        if ui
-            .add_enabled(connected, toggle(ui.visuals(), symbol, view_only))
-            .on_hover_text(if view_only {
-                "View only: on — the mouse, the keyboard and the clipboard stay here. Click to take \
-                 control again."
-            } else {
-                "View only: off — the mouse, the keyboard and the clipboard go to the far end. Click \
-                 to watch only."
-            })
-            .clicked()
-        {
-            self.set_option("ViewOnly", if view_only { "false" } else { "true" });
-        }
-
-        if ui
-            .add_enabled(connected, toggle(ui.visuals(), icons::INFO, self.panel.open))
-            .on_hover_text("Info: the connection's facts, and the settings it can still be told")
-            .clicked()
-        {
-            self.panel.open = !self.panel.open;
-        }
-
-        let fullscreen = host.window.fullscreen().is_some();
-        if ui
-            .add(icon_only(if fullscreen { icons::FULLSCREEN_EXIT } else { icons::FULLSCREEN }))
-            .on_hover_text(if fullscreen {
-                "Leave fullscreen: back to a window"
-            } else {
-                "Fullscreen: fill the screen. The toolbar still slides in at the top edge; its button, \
-                 or disconnecting, leaves fullscreen."
-            })
-            .clicked()
-        {
-            log::info!("{}", if fullscreen { "leaving fullscreen" } else { "fullscreen" });
-            host.window
-                .set_fullscreen((!fullscreen).then_some(Fullscreen::Borderless(None)));
-        }
-
-        if ui
-            .add_enabled(self.disconnecting.is_none() && self.closed.is_none(), icon_only(icons::LINK_OFF))
-            .on_hover_text(if self.relative {
-                "Disconnect: end the session. Ctrl+Alt held together frees the locked pointer."
-            } else {
-                "Disconnect: end the session"
-            })
-            .clicked()
-        {
-            self.disconnect();
-        }
-    }
 
     /// Whether the session's ending was asked for from this side, rather
     /// than the far end's or the library's doing.
@@ -1641,7 +1131,11 @@ impl Session {
     /// its own.
     pub fn shutdown(mut self, ctx: &egui::Context, host: &mut Host) -> Teardown {
         self.release_keys();
-        self.native.reset(host.window);
+        for pane in &mut self.panes {
+            if pane.id == host.viewport {
+                pane.native.reset(host.window);
+            }
+        }
         if self.captured() {
             self.let_go(host);
         }
@@ -1727,111 +1221,8 @@ fn is_d(event: &KeyEvent) -> bool {
     matches!(&event.logical_key, LogicalKey::Character(c) if c.eq_ignore_ascii_case("d"))
 }
 
-/// A toolbar icon, at the toolbar's size.
-fn icon(symbol: &'static str) -> RichText {
-    icons::text(symbol).size(TOOLBAR_ICON)
-}
-
-/// The Scale button's icon for a mode: Material Symbols' own fit page
-/// width and height for the fit modes, arrows kept within a page as fit
-/// keeps the desktop within 1:1; the bare width and height arrows for the
-/// fill modes, which stretch the desktop along that axis however far the
-/// window asks; and the symbol that reads "1:1" for 1:1.
-fn scale_icon(mode: ScaleMode) -> &'static str {
-    match mode {
-        ScaleMode::FitWidth => icons::FIT_PAGE_WIDTH,
-        ScaleMode::FitHeight => icons::FIT_PAGE_HEIGHT,
-        ScaleMode::FillWidth => icons::WIDTH,
-        ScaleMode::FillHeight => icons::HEIGHT,
-        ScaleMode::Original => icons::VIEW_REAL_SIZE,
-    }
-}
-
-/// Whether the pointer is on one of the toolbar's buttons rather than on
-/// the toolbar `area` itself. Both count as hovered, as egui hovers the top
-/// button and the area that senses drags behind it alike, so it is told
-/// apart by what else is under the pointer on the toolbar's layer: anything
-/// there that takes clicks is a button. (On its layer only: the desktop
-/// under the toolbar takes clicks too.) Read out first and then looked up,
-/// as the snapshot holds the context that `read_response` takes too.
-fn over_button(ctx: &egui::Context, area: &egui::Response) -> bool {
-    let under: Vec<Id> = ctx.interaction_snapshot(|s| s.contains_pointer.iter().copied().collect());
-    under.into_iter().any(|id| {
-        id != area.id
-            && ctx
-                .read_response(id)
-                .is_some_and(|r| r.layer_id == area.layer_id && r.sense.senses_click())
-    })
-}
-
-/// A toolbar button of an icon alone, square, and flat: no frame at rest,
-/// egui's while the pointer is on it or pressing it.
-fn icon_only(symbol: &'static str) -> egui::Button<'static> {
-    egui::Button::new(icon(symbol)).min_size(Vec2::splat(TOOLBAR_BUTTON)).frame_when_inactive(false)
-}
-
-/// A toolbar button that is on or off: flat while off, and while on framed
-/// at rest too (as `Button::selectable` is), in the selection's colours, so
-/// that on reads from across the toolbar without a hover — its icon in the
-/// selection's colour, on a fill of the selection's blue at about half its
-/// strength rather than all of it, which three buttons on at once made the
-/// loudest thing on the screen.
-fn toggle(visuals: &egui::Visuals, symbol: &'static str, on: bool) -> egui::Button<'static> {
-    let button = icon_only(symbol).selected(on).frame_when_inactive(on);
-    if on { button.fill(visuals.selection.bg_fill.gamma_multiply(0.5)) } else { button }
-}
-
-/// The Monitor button's next choice after `current` of `count` monitors:
-/// the whole desktop (`None`), then each monitor in turn, then the whole
-/// desktop again.
-fn next_monitor(current: Option<usize>, count: usize) -> Option<usize> {
-    match current {
-        None if count > 0 => Some(0),
-        Some(i) if i + 1 < count => Some(i + 1),
-        _ => None,
-    }
-}
-
-/// A Monitor choice in words, for the tooltip.
-fn monitor_name(monitor: Option<usize>, count: usize) -> String {
-    match monitor {
-        None => format!("all {count}"),
-        Some(i) => format!("{} of {count}", i + 1),
-    }
-}
 
 fn on_off(on: bool) -> &'static str {
     if on { "on" } else { "off" }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn every_scale_mode_has_its_own_icon() {
-        let mut mode = ScaleMode::FitWidth;
-        let mut seen = Vec::new();
-        for _ in 0..5 {
-            let codepoint = scale_icon(mode);
-            assert!(!seen.contains(&codepoint), "{} shares its icon", mode.label());
-            seen.push(codepoint);
-            mode = mode.next();
-        }
-        assert_eq!(mode, ScaleMode::FitWidth);
-    }
-
-    #[test]
-    fn the_monitor_button_goes_round_all_then_each() {
-        let mut monitor = None;
-        let mut seen = Vec::new();
-        for _ in 0..4 {
-            seen.push(monitor_name(monitor, 3));
-            monitor = next_monitor(monitor, 3);
-        }
-        assert_eq!(seen, ["all 3", "1 of 3", "2 of 3", "3 of 3"]);
-        assert_eq!(monitor, None);
-        // A monitor gone from under the choice goes back to all of them.
-        assert_eq!(next_monitor(Some(5), 2), None);
-    }
-}
