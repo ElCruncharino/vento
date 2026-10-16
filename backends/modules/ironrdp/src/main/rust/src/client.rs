@@ -34,6 +34,7 @@ use ironrdp_pdu::rdp::capability_sets::{InputFlags, client_codecs_capabilities};
 use ironrdp_pdu::rdp::client_info::CompressionType;
 use ironrdp_pdu::rdp::headers::ShareDataPdu;
 use ironrdp_pdu::rdp::suppress_output::SuppressOutputPdu;
+use ironrdp_pdu::gcc::{Monitor, MonitorFlags};
 use ironrdp_pdu::geometry::InclusiveRectangle;
 use ironrdp_session::{ActiveStage, ActiveStageBuilder, ActiveStageOutput};
 
@@ -249,16 +250,18 @@ enum Task {
     Layout(Vec<MonitorLayoutEntry>),
 }
 
-/// A monitor layout that has been asked for, and what the desktop would have to
-/// become for it to have happened.
+/// The desktop's monitors, four ints each — x, y, width, height — as the seam
+/// wants them: as the server last stated them, and as this end last asked
+/// for them. Either is the answer only while it covers the desktop as it now
+/// is (see `covers`); a layout from before the desktop last changed says
+/// nothing about it.
 #[derive(Default)]
 struct Layout {
-    /// Four ints per monitor — x, y, width, height — as the seam wants them.
-    monitors: Vec<i32>,
-    /// The bounding box of those monitors. A desktop of any other size means
-    /// the server did something else with the layout, and the monitors are then
-    /// not something this end can describe.
-    desktop: (u16, u16),
+    /// The Monitor Layout PDU's, from the connection, a reactivation or the
+    /// active session; empty until the server has sent one.
+    server: Vec<i32>,
+    /// What went out on the display-control channel last.
+    asked: Vec<i32>,
 }
 
 /// A key that is down, and what it took to press it.
@@ -298,10 +301,7 @@ struct Shared {
     /// the connection because a resize rebuilds the layout and has to keep the
     /// count.
     monitor_count: AtomicU8,
-    /// The layout that was asked for and the desktop size that would prove it
-    /// was granted. Reported as the monitors only once the desktop has become
-    /// that size — the server may make something else of a layout, and there is
-    /// nothing on the wire that says what it made.
+    /// The layout as the server stated it and as it was asked for.
     layout: Mutex<Layout>,
     /// What the session has moved, both directions, since the socket was
     /// opened. Protocol bytes: this counts what goes into and comes out of the
@@ -515,18 +515,21 @@ impl Client {
             && !self.shared.view_only.load(Ordering::Relaxed)
     }
 
-    /// The monitors the desktop is made of, four ints each, or empty for a
-    /// desktop this end cannot describe — which includes every single-monitor
-    /// session, since one monitor is not a layout.
+    /// The monitors the desktop is made of, four ints each, in the server's
+    /// order, which is the only identity RDP gives a monitor: the server's
+    /// own statement where it covers the desktop as it is, what was asked for
+    /// where the desktop came out that size, and otherwise empty — as for
+    /// every single-monitor session, since one monitor is not a layout.
     pub fn monitors(&self) -> Vec<i32> {
         let layout = self.shared.layout.lock().unwrap();
-        let (w, h) = layout.desktop;
         let fb = self.shared.framebuffer.read().unwrap();
-        if layout.monitors.len() > 4 && fb.width() == usize::from(w) && fb.height() == usize::from(h) {
-            layout.monitors.clone()
-        } else {
-            Vec::new()
-        }
+        let desktop = (fb.width(), fb.height());
+        [&layout.server, &layout.asked]
+            .into_iter()
+            .find(|flat| covers(flat, desktop))
+            .filter(|flat| flat.len() > 4)
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Ask for a desktop this size, which is the whole of it and not one
@@ -534,20 +537,49 @@ impl Client {
     /// everywhere else, and a caller that has just read 2560×800 off the panel
     /// and sent it back must get the desktop it already has.
     ///
-    /// So the monitors divide it. What came of it arrives as a reactivation
-    /// carrying the desktop's new size, or as nothing at all.
+    /// So the monitors divide it (see `divided`). What came of it arrives as a
+    /// reactivation carrying the desktop's new size, or as nothing at all.
     pub fn request_desktop_size(&self, width: u16, height: u16) {
-        if !self.can_resize() {
+        let count = self.shared.monitor_count.load(Ordering::Relaxed).max(1);
+        self.request_layout(&divided(u32::from(width), u32::from(height), count));
+    }
+
+    /// Ask for a desktop of these screens, `x, y, width, height` each, in
+    /// the server's order: the first is the primary, and one past the
+    /// server's last is a new monitor. Put into a shape the protocol takes
+    /// first (see `arranged`).
+    pub fn request_layout(&self, screens: &[(i32, i32, u32, u32)]) {
+        if !self.can_resize() || screens.is_empty() {
             return;
         }
-        let count = self.shared.monitor_count.load(Ordering::Relaxed).max(1);
-        let each = width / u16::from(count).max(1);
-        match monitor_layout(each, height, count) {
+        let screens = &screens[..screens.len().min(16)];
+        match layout_of(screens) {
             Ok(entries) => self.push(Task::Layout(entries)),
-            Err(e) => log::warn!(
-                "{count} monitors of {each}x{height} is not a layout the protocol allows: {e}"
-            ),
+            Err(e) => log::warn!("{screens:?} is not a layout the protocol allows: {e}"),
         }
+    }
+
+    /// The server's statement of its monitors, kept as the seam's four ints
+    /// each. A monitor's corners are inclusive and relative to the primary,
+    /// which others may sit above or to the left of; the desktop's pixel 0,0
+    /// is the top left of them all.
+    fn heard(&self, monitors: &[Monitor], from: &str) {
+        let left = monitors.iter().map(|m| m.left).min().unwrap_or(0);
+        let top = monitors.iter().map(|m| m.top).min().unwrap_or(0);
+        let mut flat = Vec::with_capacity(monitors.len() * 4);
+        for (i, m) in monitors.iter().take(16).enumerate() {
+            let (w, h) = (m.right - m.left + 1, m.bottom - m.top + 1);
+            log::info!(
+                "{from}: monitor {} of {} {w}x{h}+{}+{}{}",
+                i + 1,
+                monitors.len(),
+                m.left - left,
+                m.top - top,
+                if m.flags.contains(MonitorFlags::PRIMARY) { ", primary" } else { "" }
+            );
+            flat.extend_from_slice(&[m.left - left, m.top - top, w, h]);
+        }
+        self.shared.layout.lock().unwrap().server = flat;
     }
 
     /// How many monitors to ask for. Takes effect at the next layout, which is
@@ -858,6 +890,9 @@ impl Client {
         // granted, and a second layout built from that would double again.
         let unit = result.desktop_size;
         let mut asked = false;
+        if let Some(layout) = &result.monitor_layout {
+            self.heard(&layout.monitors, "monitor layout");
+        }
 
         loop {
             // The channel is opened by the server some time after the session
@@ -870,9 +905,11 @@ impl Client {
             {
                 asked = true;
                 let count = self.shared.monitor_count.load(Ordering::Relaxed);
-                match monitor_layout(unit.width, unit.height, count) {
+                let (w, h) = (u32::from(unit.width), u32::from(unit.height));
+                let copies: Vec<_> = (0..u32::from(count)).map(|i| ((i * w) as i32, 0, w, h)).collect();
+                match layout_of(&copies) {
                     Ok(entries) => self.send_layout(framed, &mut stage, entries)?,
-                    Err(e) => log::warn!("{count} monitors of {}x{} is not a layout the protocol allows: {e}", unit.width, unit.height),
+                    Err(e) => log::warn!("{count} monitors of {w}x{h} is not a layout the protocol allows: {e}"),
                 }
             }
             match framed.read_pdu() {
@@ -935,6 +972,9 @@ impl Client {
                                 // empty bitmap would do.
                                 log::debug!("the server asked for the default pointer");
                             }
+                            ActiveStageOutput::MonitorLayout(monitors) => {
+                                self.heard(&monitors, "monitor layout");
+                            }
                             ActiveStageOutput::Terminate(reason) => {
                                 return Err(Error::Protocol(reason.description()));
                             }
@@ -953,6 +993,12 @@ impl Client {
                                     io_channel_id,
                                     user_channel_id,
                                 )?;
+                                // A reactivation is how this server answers
+                                // a layout, and it restates the monitors in
+                                // the middle of it.
+                                if let Some(layout) = sequence.monitor_layout() {
+                                    self.heard(&layout.monitors, "reactivation");
+                                }
                                 if size != desktop {
                                     desktop = size;
                                     self.shared
@@ -1086,14 +1132,16 @@ impl Client {
         if !dvc.processor().ready() {
             return Ok(());
         }
+        // Relative to the primary on the wire, and to the top left of them
+        // all in the seam's terms.
+        let places: Vec<(i32, i32)> = entries.iter().map(|e| e.position().unwrap_or((0, 0))).collect();
+        let left = places.iter().map(|p| p.0).min().unwrap_or(0);
+        let top = places.iter().map(|p| p.1).min().unwrap_or(0);
         let mut flat = Vec::with_capacity(entries.len() * 4);
-        let mut desktop = (0u32, 0u32);
-        for entry in &entries {
-            let (x, y) = entry.position().unwrap_or((0, 0));
+        for (entry, (x, y)) in entries.iter().zip(places) {
             let (w, h) = entry.dimensions();
-            flat.extend_from_slice(&[x, y, w as i32, h as i32]);
-            desktop.0 = desktop.0.max(x as u32 + w);
-            desktop.1 = desktop.1.max(y as u32 + h);
+            log::info!("asking for monitor {}x{}{:+}{:+}", w, h, x, y);
+            flat.extend_from_slice(&[x - left, y - top, w as i32, h as i32]);
         }
         let pdu: DisplayControlPdu = DisplayControlMonitorLayout::new(&entries)
             .map_err(|e| Error::Protocol(e.to_string()))?
@@ -1102,10 +1150,7 @@ impl Client {
             .map_err(|e| Error::Protocol(e.to_string()))?;
         let frame = stage.encode_dvc_messages(messages).map_err(session)?;
         framed.write_all(&frame)?;
-        *self.shared.layout.lock().unwrap() = Layout {
-            monitors: flat,
-            desktop: (desktop.0.min(0xffff) as u16, desktop.1.min(0xffff) as u16),
-        };
+        self.shared.layout.lock().unwrap().asked = flat;
         Ok(())
     }
 
@@ -1487,27 +1532,81 @@ impl Rate {
     }
 }
 
-/// `count` monitors of `width` by `height`, side by side, the leftmost primary.
-///
-/// The protocol's own constraints, which the library enforces and which are the
-/// reason this can fail: a monitor is 200 to 8192 pixels each way, a width may
-/// not be odd, the primary is at the origin and exactly one monitor is it. The
-/// size is adjusted into range rather than refused, because it comes from a
-/// window whose shape is not ours to choose; the count is not, because it came
-/// from somebody choosing it.
-fn monitor_layout(width: u16, height: u16, count: u8) -> Result<Vec<MonitorLayoutEntry>> {
-    let (w, h) = MonitorLayoutEntry::adjust_display_size(u32::from(width), u32::from(height));
-    let mut entries = Vec::with_capacity(usize::from(count));
-    for i in 0..u32::from(count) {
-        let entry = if i == 0 {
-            MonitorLayoutEntry::new_primary(w, h)
-        } else {
-            MonitorLayoutEntry::new_secondary(w, h)
-                .and_then(|entry| entry.with_position((i * w) as i32, 0))
-        };
-        entries.push(entry.map_err(|e| Error::Protocol(e.to_string()))?);
+/// `count` monitors side by side dividing a desktop `width` wide between them,
+/// the last taking what the division leaves: the seam's size is the whole
+/// desktop's, not a monitor's. FreeRDP's backend divides it the same way.
+fn divided(width: u32, height: u32, count: u8) -> Vec<(i32, i32, u32, u32)> {
+    let count = u32::from(count.max(1));
+    let each = width / count;
+    (0..count)
+        .map(|i| {
+            let w = if i == count - 1 { width - each * (count - 1) } else { each };
+            ((i * each) as i32, 0, w, height)
+        })
+        .collect()
+}
+
+/// Screens, `x, y, width, height` each, in the shape the protocol takes,
+/// which is FreeRDP's backend's too: a monitor is 200 to 8192 pixels each way
+/// and its width is even, and a screen made narrower or shorter by that moves
+/// those right of or below it along by as much, so that screens side by side
+/// stay side by side; and the first is the primary, at the origin, the rest
+/// placed relative to it. The size is adjusted rather than refused, because it
+/// comes from a window whose shape is not ours to choose.
+fn arranged(screens: &[(i32, i32, u32, u32)]) -> Vec<(i32, i32, u32, u32)> {
+    let sizes: Vec<(u32, u32)> = screens
+        .iter()
+        .map(|&(_, _, w, h)| MonitorLayoutEntry::adjust_display_size(w, h))
+        .collect();
+    let moved: Vec<(i32, i32)> = screens
+        .iter()
+        .map(|&(x, y, _, _)| {
+            let (mut nx, mut ny) = (x, y);
+            for (&(ox, oy, ow, oh), &(aw, ah)) in screens.iter().zip(&sizes) {
+                if ox + ow as i32 <= x {
+                    nx -= ow as i32 - aw as i32;
+                }
+                if oy + oh as i32 <= y {
+                    ny -= oh as i32 - ah as i32;
+                }
+            }
+            (nx, ny)
+        })
+        .collect();
+    let (x0, y0) = moved.first().copied().unwrap_or((0, 0));
+    moved
+        .iter()
+        .zip(&sizes)
+        .map(|(&(x, y), &(w, h))| (x - x0, y - y0, w, h))
+        .collect()
+}
+
+/// `screens` (see `arranged`) as display-control entries, the first the
+/// primary. What can still fail is the library's own check of a layout.
+fn layout_of(screens: &[(i32, i32, u32, u32)]) -> Result<Vec<MonitorLayoutEntry>> {
+    arranged(screens)
+        .into_iter()
+        .enumerate()
+        .map(|(i, (x, y, w, h))| {
+            if i == 0 {
+                MonitorLayoutEntry::new_primary(w, h)
+            } else {
+                MonitorLayoutEntry::new_secondary(w, h).and_then(|e| e.with_position(x, y))
+            }
+            .map_err(|e| Error::Protocol(e.to_string()))
+        })
+        .collect()
+}
+
+/// Whether monitors, four ints each, are a division of a desktop this size:
+/// their bounding box is it.
+fn covers(flat: &[i32], (width, height): (usize, usize)) -> bool {
+    if flat.len() < 4 || flat.chunks_exact(4).any(|m| m[0] < 0 || m[1] < 0) {
+        return false;
     }
-    Ok(entries)
+    let right = flat.chunks_exact(4).map(|m| m[0] + m[2]).max().unwrap_or(0);
+    let bottom = flat.chunks_exact(4).map(|m| m[1] + m[3]).max().unwrap_or(0);
+    usize::try_from(right) == Ok(width) && usize::try_from(bottom) == Ok(height)
 }
 
 /// `host` or `host:port`, plus the bracketed IPv6 form. No display-number
@@ -1716,5 +1815,48 @@ mod tests {
         };
         assert_eq!(sent(Platform::Android), MajorPlatformType::ANDROID);
         assert_eq!(sent(Platform::Linux), MajorPlatformType::UNIX);
+    }
+
+    #[test]
+    fn a_size_is_the_whole_desktop_divided_between_the_monitors() {
+        // Two monitors of a desktop 2560 wide are 1280 each, not 2560 each.
+        assert_eq!(divided(2560, 800, 2), vec![(0, 0, 1280, 800), (1280, 0, 1280, 800)]);
+        // The last takes what the division leaves.
+        assert_eq!(divided(2561, 800, 2), vec![(0, 0, 1280, 800), (1280, 0, 1281, 800)]);
+        // One monitor is the size itself.
+        assert_eq!(divided(1600, 900, 1), vec![(0, 0, 1600, 900)]);
+    }
+
+    #[test]
+    fn a_layout_is_put_into_the_shape_the_protocol_takes() {
+        // Already one: unchanged.
+        let fine = [(0, 0, 1280, 800), (1280, 0, 1600, 900)];
+        assert_eq!(arranged(&fine), fine.to_vec());
+        // An odd width loses a pixel, and the screen beside it moves along
+        // by as much, so that the two still touch.
+        assert_eq!(
+            arranged(&[(0, 0, 1281, 800), (1281, 0, 1600, 900)]),
+            vec![(0, 0, 1280, 800), (1280, 0, 1600, 900)]
+        );
+        // Too small grows to the protocol's least, and pushes its neighbour.
+        assert_eq!(
+            arranged(&[(0, 0, 100, 100), (100, 0, 800, 600)]),
+            vec![(0, 0, 200, 200), (200, 0, 800, 600)]
+        );
+        // The primary goes to the origin and the others keep their places
+        // around it.
+        assert_eq!(
+            arranged(&[(1024, 0, 800, 600), (0, 0, 1024, 768)]),
+            vec![(0, 0, 800, 600), (-1024, 0, 1024, 768)]
+        );
+    }
+
+    #[test]
+    fn a_layout_is_the_answer_only_while_it_covers_the_desktop() {
+        let two = [0, 0, 1280, 800, 1280, 0, 1600, 900];
+        assert!(covers(&two, (2880, 900)));
+        // The desktop changed size since: it says nothing about it.
+        assert!(!covers(&two, (2560, 800)));
+        assert!(!covers(&[], (2880, 900)));
     }
 }

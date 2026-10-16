@@ -138,6 +138,17 @@ impl Backend for IronRdp {
             .request_desktop_size(width.min(65535) as u16, height.min(65535) as u16);
     }
 
+    /// RDP's ids are the monitors' places in the list, which is the order a
+    /// layout is sent in: the first is the primary. The desktop's size is the
+    /// layout's bounding box.
+    fn request_layout(&self, _width: u32, _height: u32, screens: &[Monitor]) {
+        let screens: Vec<(i32, i32, u32, u32)> = screens
+            .iter()
+            .map(|m| (m.x, m.y, m.width.max(0) as u32, m.height.max(0) as u32))
+            .collect();
+        self.session.client.request_layout(&screens);
+    }
+
     /// Nothing but view-only and the monitor count is live: RDP negotiates
     /// its codecs once. The count is remembered rather than acted on — it is
     /// what the *next* layout asks for.
@@ -154,14 +165,19 @@ impl Backend for IronRdp {
     fn facts(&self) -> Facts {
         let (width, height) = self.mailbox.size();
         let client = &self.session.client;
+        let monitors = Monitor::from_flat(&client.monitors());
+        // A single size over several monitors would be divided evenly
+        // between them whatever their shapes, so it is offered over one; a
+        // layout says each.
+        let takes = self.mailbox.connected() && client.can_resize();
         Facts {
             width,
             height,
-            monitors: Monitor::from_flat(&client.monitors()),
+            can_resize: takes && monitors.len() <= 1,
+            can_layout: takes,
+            monitors,
             displays: Vec::new(),
             display: -1,
-            can_resize: self.mailbox.connected() && client.can_resize(),
-            can_layout: false,
             view_only: self.options.lock().unwrap().bool("ViewOnly"),
             pointer_relative: false,
         }
