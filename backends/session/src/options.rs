@@ -396,7 +396,7 @@ pub static RFB: &[Spec] = &[
     ),
     // The two below are the connection's with the backend's as their default,
     // since which encoding and how hard to compress is mostly a fact about the
-    // link the phone is on. There is no colour row: this client works in one
+    // link the phone is on. There is no colour row: the RFB client works in one
     // pixel format on purpose, which is what makes a region read a row copy,
     // and a reduced one would put a conversion back in the path for every
     // decoder it has.
@@ -622,8 +622,8 @@ pub static TIGERVNC: &[Spec] = &[
 ///   be the one that table was written for. Offering a choice would let
 ///   someone pick a layout that turns every letter into a different letter.
 /// - **The clipboard.** The channel is open in both directions, but whether to
-///   share this phone's clipboard is a question about the phone and is
-///   answered once for every protocol, in the app's own settings.
+///   share the local clipboard is a question about the client and is
+///   answered once for every protocol, in the client's own settings.
 /// - **The domain**, RDP's third credential, which is not a row because it is
 ///   already a field: `DOMAIN\user` and `user@domain` are split out of the
 ///   user name, which is what every RDP client takes and what anyone who has
@@ -724,9 +724,9 @@ pub static IRONRDP: &[Spec] = &[
 /// at all: **EGFX**, the graphics pipeline, which is how a machine since
 /// Windows 8 would rather send a desktop and the only path that carries H.264;
 /// the **sound**, which is the one whole subsystem no backend behind this seam
-/// has ever had; and the **interface size**, which is the only answer this app
-/// has to a desktop whose text is sized for a monitor and is being read on a
-/// phone.
+/// has ever had; and the **interface size**, which is the only answer the phone
+/// has to a desktop whose text is sized for a monitor and is being read on
+/// it.
 ///
 /// What is deliberately **not** here:
 ///
@@ -747,8 +747,8 @@ pub static IRONRDP: &[Spec] = &[
 ///   needs PC/SC, neither of which is in this build; a drive needs a POSIX
 ///   path, and what a person can grant on Android is a document tree with no
 ///   path at all.
-/// - **The clipboard** (a question about this phone, answered once for every
-///   protocol in the app's own settings), **the domain** (already a field,
+/// - **The clipboard** (a question about the client, answered once for every
+///   protocol in the client's own settings), **the domain** (already a field,
 ///   split out of the user name) and **the colour depth** (the codec has
 ///   decided what a pixel costs long before it reaches a framebuffer that is
 ///   32 bits either way).
@@ -1190,11 +1190,11 @@ pub static REALVNC: &[Spec] = &[
     ),
     BELL,
     // The three clipboard parameters this core has are deliberately not rows.
-    // Whether a phone's clipboard goes to a remote machine and comes back is a
-    // question about the phone, asked once in the app's own settings and
+    // Whether the local clipboard goes to a remote machine and comes back is a
+    // question about the client, asked once in the client's own settings and
     // enforced there — the core's copies would be a second answer to it, in a
     // second screen, one layer down. Left at their defaults, which is on, so
-    // the app's answer is the only one.
+    // the client's answer is the only one.
     integer(
         "KeepAliveInterval",
         "Keep-alive interval",

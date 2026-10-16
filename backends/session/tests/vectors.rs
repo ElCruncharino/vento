@@ -1,10 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The shared test vectors in `backends/vectors/`, which the Java tests in
-//! `backends/src/test` read too: one set of cases for a rule both clients
-//! keep, so that a copy cannot drift from this one without one of these
-//! failing.
+//! The shared test vectors in `backends/vectors/`. `options.json` is read
+//! by the Java tests in `backends/src/test` too, for the one rule with a Java
+//! copy (`BackendOption.settle`, which the option screens run as somebody
+//! edits), so that the copy cannot drift from this one without one of these
+//! failing; the credentials and known-hosts cases are this side's alone,
+//! since both clients apply those rules from here.
 
 use serde_json::Value;
 use std::path::PathBuf;

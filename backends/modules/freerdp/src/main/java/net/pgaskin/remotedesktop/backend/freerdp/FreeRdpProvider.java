@@ -30,7 +30,7 @@ import java.util.Map;
  * Where it differs from IronRDP, the library is why: credentials are asked for
  * by FreeRDP itself, so a mistyped password is a second prompt rather than a
  * closed session; and its own certificate store is told to stay out of it, so
- * {@code KnownHosts} is the only thing that decides. What is left on this side
+ * the pins in {@code KnownHosts} are the only thing that decides. What is left on this side
  * is {@link RdpHooks}, the same as IronRDP's — the size this machine was left
  * at, and the prompt's words — and the store below.
  */

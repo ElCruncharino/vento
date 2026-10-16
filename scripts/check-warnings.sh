@@ -32,7 +32,7 @@
 # One caveat worth knowing before it fires: `RUSTFLAGS=-Dwarnings` reaches the
 # vendored trees under `third_party/` that are path dependencies rather than
 # registry crates, so a pin bump there could fail this for somebody else's code.
-# The fix when that happens is `[lints] workspace = true` in our ten crates and
+# The fix when that happens is `[lints] workspace = true` in our crates and
 # no RUSTFLAGS here — not a suppression in theirs.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -41,8 +41,9 @@ cd "$(dirname "$0")/.."
 # every vendored tree into a directory of its own. That is minutes, once.
 echo "== javac -Xlint:all -Werror, cargo -Dwarnings, lint warningsAsErrors, clang -Werror"
 
-# The Android target compiles every `src/bindings` module, which the host one
-# does not: cfg(target_os = "android") is where the whole JNI half lives.
+# The Android target compiles `platform_android`'s JNI layer and each crate's
+# `natives!` line, which the host one does not: cfg(target_os = "android") is
+# where the whole JNI half lives.
 ndk=$(sed -n "s/^ *nativeNdkVersion *= *'\\(.*\\)'/\\1/p" backends/build.gradle)
 sdk=${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}
 if [ -z "$sdk" ] || [ ! -d "$sdk/ndk/$ndk" ]; then

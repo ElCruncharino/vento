@@ -26,13 +26,14 @@ pub fn split_domain(value: &str) -> (String, String) {
 }
 
 /// A typed name without what Java's `trim()` takes off it — ASCII controls
-/// and the space — so that the phone and this client read one answer alike.
+/// and the space — which is what the phone's prompts took off when they read
+/// the answer themselves, so that a name reads as it always has there.
 fn trim(typed: &str) -> &str {
     typed.trim_matches(|c: char| c <= ' ')
 }
 
-/// Credentials as the Java prompts deliver them: an empty user name means
-/// the one the session was created with. A name is read trimmed, so one that
+/// Credentials as a prompt hands them back: an empty user name means the
+/// one the session was created with. A name is read trimmed, so one that
 /// is only spaces is an empty one (`backends/vectors/credentials.json`).
 pub fn fill_user(mut credentials: Credentials, user: &str) -> Credentials {
     let typed = trim(&credentials.user);
