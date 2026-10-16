@@ -59,33 +59,39 @@ const TOOLBAR_BUTTON: f32 = 28.0;
 const TOOLBAR_ICON: f32 = 20.0;
 
 /// Which of the far end's monitors a pane shows, kept as enough to find it
-/// again when the far end's layout changes under it: where it was in the
-/// list, and its rectangle. (The protocols that number their screens will
-/// add the number, which comes before both.)
+/// again when the far end's layout changes under it: the far end's own id
+/// for it, its rectangle, and where it was in the list.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MonitorKey {
-    pub index: usize,
+    pub id: u32,
     pub rect: (i32, i32, i32, i32),
+    pub index: usize,
 }
 
 impl MonitorKey {
     pub fn of(index: usize, monitor: &Monitor) -> MonitorKey {
         MonitorKey {
-            index,
+            id: monitor.id,
             rect: (monitor.x, monitor.y, monitor.width, monitor.height),
+            index,
         }
     }
 
     /// The same monitor in `monitors`, the layout as it is now: the one
-    /// with the same rectangle wherever it is in the list, since a list
-    /// that gained or lost a screen before it has moved it along; failing
-    /// that the one at the same place in the list, which is a monitor that
-    /// changed size; and failing both, none — it is gone.
+    /// with the same id, which is the far end's own name for it and stays
+    /// with it through a resize or a move — the follower resizing each
+    /// monitor to its window is exactly that; failing that the one with the
+    /// same rectangle wherever it is in the list, since a far end that
+    /// renumbered its screens may still have this one where it was; failing
+    /// that the one at the same place in the list; and failing all three,
+    /// none — it is gone. (Where a protocol has no ids the id is the index,
+    /// and its order is the only identity it gives a screen.)
     pub fn find(self, monitors: &[Monitor]) -> Option<MonitorKey> {
-        let same_rect = monitors
+        let index = monitors
             .iter()
-            .position(|m| (m.x, m.y, m.width, m.height) == self.rect);
-        let index = same_rect.or((self.index < monitors.len()).then_some(self.index))?;
+            .position(|m| m.id == self.id)
+            .or_else(|| monitors.iter().position(|m| (m.x, m.y, m.width, m.height) == self.rect))
+            .or((self.index < monitors.len()).then_some(self.index))?;
         Some(MonitorKey::of(index, &monitors[index]))
     }
 }
@@ -185,6 +191,9 @@ pub struct Pane {
     /// read, which the next frame turns into the pointer event the backend
     /// is given: the start of the overlay's pointer latency.
     pub pointer_since: Option<Instant>,
+    /// The window's size in pixels, as of its last frame: what the follower
+    /// asks for this pane's monitor (see `follow.rs`).
+    pub size: Option<(u32, u32)>,
 }
 
 impl Pane {
@@ -207,6 +216,7 @@ impl Pane {
             uploads_seen: 0,
             unpresented: None,
             pointer_since: None,
+            size: None,
         }
     }
 
@@ -1107,31 +1117,41 @@ mod tests {
         assert_eq!(next_monitor(Some(5), 2), None);
     }
 
-    #[test]
-    fn a_monitor_is_found_by_its_rectangle_first() {
-        let two = [monitor(0, 0, 1920, 1080), monitor(1920, 0, 1280, 1024)];
-        let right = MonitorKey::of(1, &two[1]);
-        // Unchanged: itself.
-        assert_eq!(right.find(&two), Some(right));
-        // A screen added before it moves it along the list; it is followed
-        // there, by its rectangle, rather than staying at its old place.
-        let three = [monitor(-1280, 0, 1280, 1024), two[0], two[1]];
-        assert_eq!(right.find(&three), Some(MonitorKey::of(2, &three[2])));
-        // And one taken away before it.
-        let left = MonitorKey::of(0, &two[0]);
-        assert_eq!(left.find(&three), Some(MonitorKey::of(1, &three[1])));
+    fn numbered(id: u32, m: Monitor) -> Monitor {
+        Monitor { id, ..m }
     }
 
     #[test]
-    fn a_monitor_that_changed_shape_is_found_by_its_place_and_a_gone_one_not_at_all() {
-        let two = [monitor(0, 0, 1920, 1080), monitor(1920, 0, 1280, 1024)];
+    fn a_monitor_is_found_by_its_id_first() {
+        let two = [numbered(1, monitor(0, 0, 1920, 1080)), numbered(2, monitor(1920, 0, 1280, 1024))];
         let right = MonitorKey::of(1, &two[1]);
-        // Resized where it is: the same place in the list, its new rectangle
-        // kept from now on.
-        let resized = [two[0], monitor(1920, 0, 1600, 900)];
+        // Unchanged: itself.
+        assert_eq!(right.find(&two), Some(right));
+        // Resized and moved to the front of the list, as a layout asked for
+        // can make it: still the one with its id, wherever and whatever
+        // shape it is.
+        let asked = [numbered(2, monitor(0, 0, 1600, 900)), numbered(1, monitor(1600, 0, 1920, 1080))];
+        assert_eq!(right.find(&asked), Some(MonitorKey { id: 2, rect: (0, 0, 1600, 900), index: 0 }));
+    }
+
+    #[test]
+    fn a_renumbered_monitor_is_found_by_its_rectangle_then_its_place() {
+        let two = [numbered(1, monitor(0, 0, 1920, 1080)), numbered(2, monitor(1920, 0, 1280, 1024))];
+        let right = MonitorKey::of(1, &two[1]);
+        // The far end numbered its screens afresh and added one before
+        // them: the same rectangle is the same monitor, at its new place.
+        let three = [
+            numbered(7, monitor(-1280, 0, 1280, 1024)),
+            numbered(8, two[0]),
+            numbered(9, two[1]),
+        ];
+        assert_eq!(right.find(&three), Some(MonitorKey::of(2, &three[2])));
+        // Renumbered and resized where it is: the same place in the list,
+        // its new id and rectangle kept from now on.
+        let resized = [numbered(8, two[0]), numbered(9, monitor(1920, 0, 1600, 900))];
         let found = right.find(&resized).unwrap();
-        assert_eq!(found, MonitorKey { index: 1, rect: (1920, 0, 1600, 900) });
-        // Gone, with nothing of its shape and nothing at its place.
+        assert_eq!(found, MonitorKey { id: 9, rect: (1920, 0, 1600, 900), index: 1 });
+        // Gone, with nothing of its name, its shape or its place.
         assert_eq!(right.find(&two[..1]), None);
         assert_eq!(right.find(&[]), None);
     }
@@ -1189,10 +1209,10 @@ mod tests {
 
     #[test]
     fn a_pane_s_gone_monitor_is_said_to_be_gone() {
-        let two = [monitor(0, 0, 1280, 800), monitor(1280, 0, 1280, 800)];
+        let two = [numbered(1, monitor(0, 0, 1280, 800)), numbered(2, monitor(1280, 0, 1280, 800))];
         let mut pane = Pane::new(ViewportId::from_hash_of("pop-out"), Placement::default(), Some(MonitorKey::of(1, &two[1])));
         // Still there, moved along the list by a screen added before it.
-        let three = [monitor(-1280, 0, 1280, 800), two[0], two[1]];
+        let three = [numbered(3, monitor(-1280, 0, 1280, 800)), two[0], two[1]];
         assert_eq!(pane.rebind(&three), Rebound::Kept);
         assert_eq!(pane.monitor().map(|k| k.index), Some(2));
         // Down to one screen of another shape: gone, from where it last was.

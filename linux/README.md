@@ -62,8 +62,8 @@ clients, and what differs between them is each client's own code.
   toolbar sits and which strip of the edge brings it out, with tests),
   `icons.rs` (the toolbar's font and the symbols it draws, tested against
   the font and its codepoints file), `follow.rs` (the desktop
-  following the window's size: the phone's `WindowFollower`, pure logic with
-  tests), `keys.rs` (winit keys to X11 keysyms), `platform.rs` (which display
+  following the windows' sizes, a monitor per window where the far end takes
+  a layout: the phone's `WindowFollower`, pure logic with tests), `keys.rs` (winit keys to X11 keysyms), `platform.rs` (which display
   server the window is on),
   `wayland.rs` (the Wayland keyboard shortcuts inhibitor), `x11.rs` (the X11
   keyboard grab that stands in for it), `cursor.rs` (the far end's cursor as
@@ -374,16 +374,17 @@ whole device pixels, linear draws the same picture), so that two windows at
 different scales do not change the sampler back and forth every frame.
 
 A far end's monitors change under the windows — another client resizes, a
-screen is added or taken away: each window finds its monitor again by its
-rectangle, then by its place in the list; a pop-out whose monitor is gone is
-closed, and the main window says so (*Monitor 2 of the far end is gone, and
-so is its window*); the main window goes back to the whole desktop. A local
-output going away is the display server's to deal with: it moves the windows
-that were on it, and the window reads which output it is on again when it
-moves or changes scale. **Follow window size** follows the main window only
-while there are no pop-outs: it asks for one screen, and a far end of
-several monitors asked that would be left with one. Asking the far end for
-a layout of a screen per window is still to come.
+screen is added or taken away, the follower below resizes it: each window
+finds its monitor again by the far end's id for it (RFB's screen id,
+SPICE's head; RDP has none, and there the id is the monitor's place in the
+list, which is the only identity RDP gives one), then by its rectangle, then
+by its place in the list; a pop-out whose monitor is gone is closed, and the
+main window says so (*Monitor 2 of the far end is gone, and so is its
+window*); the main window goes back to the whole desktop. A local output
+going away is the display server's to deal with: it moves the windows that
+were on it, and the window reads which output it is on again when it moves
+or changes scale. **Follow window size** follows every window, a monitor
+each, where the far end takes a layout (see the panel, below).
 
 Proven on `scripts/testx11` against a private `scripts/testvnc` given two
 1280×800 heads with `heads.sh 2`: two windows each showing its own monitor,
@@ -403,6 +404,40 @@ pop-out fullscreen on that output, and Return and the compositor's close
 (`swaymsg kill`) each gave the monitor back. The capture's hand-over between
 windows is unit-tested only: no rig here has a far end of several monitors
 in relative mode.
+
+Following, with **Follow window size** on and every monitor in a window of
+its own: on `scripts/testx11` against the two-head `scripts/testvnc` with
+TigerVNC, the two windows set to 1000×700 and 900×600 with `xdotool
+windowsize` made the far end `1900x700, id=1 1000x700+0+0, id=2
+900x600+1000+0` (`heads.sh`), one layout for the two, and the pop-out alone
+set to 1100×650 then changed only screen 2; on a headless sway with two
+outputs, `swaymsg resize set` on the two floating windows did the same, the
+far end following the windows' 996×671 and 896×571 to the pixel with ids 1
+and 2 kept; and FreeRDP against `scripts/testrdp` with `-o Monitors=2`
+went from two monitors of 1280×800 to 1000×700 and 900×600, a desktop of
+1900×700, as xrdp's own reset of the graphics pipeline stated them.
+
+### Why RealVNC and RustDesk have no monitors to pick
+
+Neither backend reports monitors, so neither has **Monitor** or **Pop out**,
+and neither can be asked for a layout:
+
+- **RealVNC**'s core has no layout in it at all. It never asks for the
+  `ExtendedDesktopSize` pseudo-encoding (-308), which is how an RFB server
+  says where its screens are — tapped between the core and Xvnc, its one
+  SetEncodings lists `DesktopSize` (-223) and not -308, so the server never
+  sends it a screen list — and its callbacks into this backend carry the
+  desktop's size and nothing else (`setDesktopSize(width, height)` in
+  `HostedCore.h`). Nor can its resize be reached through the binding this
+  backend has, so it does not follow a window's size either.
+- **RustDesk** sends displays, not monitors: each of the peer's displays is a
+  picture of its own, its own video stream at its own size (a `VideoFrame`
+  names the display it is of), rather than a rectangle of one desktop. The
+  backend asks for one at a time (`CaptureDisplays`) and the panel's
+  **Display** row and the **Monitor** button switch between them
+  (`request_display`). Showing two at once would be a second stream with its
+  own decoder and its own texture per window, which is not what a pane on
+  the shared desktop is, so there is nothing for a pop-out to show.
 
 **The connection panel** is the phone's `ConnectionPanel`: controls above
 facts, in the top right corner, where it stays. It has no title bar: its first
@@ -439,17 +474,33 @@ field being typed in keeps its text until it is left, which is when its value
 is sent.
 
 **Follow window size** (off by default, per session) asks the far end for a
-desktop the size of this window in pixels whenever the window changes shape —
-the phone's `WindowFollower`, in `follow.rs`: asked on a tick (the panel's
-one-second poll, brought forward to 600 ms after a resize) once the window has
-settled for two ticks, never twice for the same size, and only once the far
-end says it takes sizes, which a VNC server says some time after connecting.
-Turning it on asks at once. With fullscreen it makes the desktop the screen's
-size. Granted against the test rigs by TigerVNC's Xvnc (through all three VNC
+desktop the size of the windows in pixels whenever one changes shape — the
+phone's `WindowFollower`, in `follow.rs`: asked on a tick (the panel's
+one-second poll, brought forward to 600 ms after any window's resize, one
+debounce for them all) once every window has settled for two ticks, never
+twice for the same question, and only once the far end says it takes what is
+asked, which a VNC server says some time after connecting. Turning it on asks
+at once. With fullscreen it makes the desktop the screen's size. Where the far
+end takes a layout (`can_layout`: TigerVNC, libvnc and the Rust RFB client
+over an Xvnc that sends its screens, FreeRDP and IronRDP over a display-control
+channel, SPICE with the guest agent) each window showing one monitor asks for
+that monitor the window's size, in one layout of all the monitors left to
+right in the far end's order, the far end's ids handed back so that it moves
+its screens rather than making new ones, and a monitor no window shows
+keeping its own size; a main window showing the whole desktop asks for
+nothing over several monitors. Where it does not, or over a far end of one
+screen, the main window asks for the desktop its size, as before — and only
+over one screen, since a single size over several would merge them into
+one. Granted against the test rigs by TigerVNC's Xvnc (through all three VNC
 backends), xrdp (FreeRDP; and IronRDP with `-o Compression=false`, since its
 re-activation after the resize does not yet take the compressed FontMap PDU
-xrdp sends under RDP 6.1 compression, and the session ends) and QEMU with the
-SPICE agent.
+xrdp sends under RDP 6.1 compression, and the session ends, and with
+`-o Graphics=bitmap`, since xrdp's session process dies of SIGSEGV on any
+layout sent to it with RemoteFX on) and QEMU with the SPICE agent. Layouts of
+two screens were granted by the same Xvnc to all three VNC backends, by xrdp
+to both RDP backends (the monitors reported as xrdp stated them), and by a
+QEMU guest with two QXL heads (`HEADS=2`; the shared `testspice` has one, and
+a second screen asked of it is left out).
 
 **Settings** are the client's own, one answer for every connection, as the
 phone's `AppSettings` has them: **Send clipboard** and **Receive clipboard**

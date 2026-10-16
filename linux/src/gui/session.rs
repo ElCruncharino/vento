@@ -65,7 +65,7 @@ mod pane;
 
 use super::cursor::{self as native};
 use super::desktop::Desktop;
-use super::follow::Follower;
+use super::follow::{Ask, Follower, Shown, Takes};
 use super::hud::Hud;
 
 use super::keys::{self, KeyIds};
@@ -282,9 +282,6 @@ pub struct Session {
     attention: bool,
     /// Something to tell in the main window, and until when.
     notice: Option<(String, Instant)>,
-    /// The main window's size in pixels as of its last frame: what the
-    /// follower follows, whichever window's frame ticks it.
-    main_size: Option<(u32, u32)>,
 }
 
 impl Session {
@@ -372,7 +369,6 @@ impl Session {
             prompting: false,
             attention: false,
             notice: None,
-            main_size: None,
         })
     }
 
@@ -568,12 +564,11 @@ impl Session {
 
     // ---- the window's size, followed -----------------------------------------
 
-    /// A window changed shape: the follower, which follows the main
-    /// window, is asked `DEBOUNCE` later if it was that one (`main`).
-    pub fn resized(&mut self, main: bool) {
-        if main {
-            self.follower.resized(Instant::now());
-        }
+    /// A window changed shape: the follower, which follows every window,
+    /// is asked `DEBOUNCE` later, the one debounce started again whichever
+    /// window it was.
+    pub fn resized(&mut self) {
+        self.follower.resized(Instant::now());
         self.refence();
     }
 
@@ -596,22 +591,45 @@ impl Session {
         (size.width > 0 && size.height > 0).then_some((size.width, size.height))
     }
 
-    /// One tick of the follower: on the poll, and after the debounce. Not
-    /// while there are pop-outs: the follower asks for one screen the
-    /// main window's size, and a far end of several monitors shown in
-    /// several windows asked that would be left with one (following each
-    /// window as a monitor of its own is a layout, which no backend can be
-    /// asked for yet).
+    /// One tick of the follower: on the poll, and after the debounce. Every
+    /// window, the main one first, with the monitor it shows by the far
+    /// end's id: where the far end takes a layout each window's monitor is
+    /// asked to be the window's size, and otherwise the main window's size
+    /// is asked for over a far end of one screen (see `follow::plan`).
     fn follow_tick(&mut self) {
-        if !self.connected() || self.panes.len() > 1 {
+        if !self.connected() {
             return;
         }
-        let Some(window) = self.main_size else {
-            return;
-        };
-        if let Some((width, height)) = self.follower.tick(window, self.snapshot.facts.can_resize) {
-            log::info!("asking for a {width}×{height} desktop, this window's size");
-            self.backend.request_desktop_size(width, height);
+        let mut windows = Vec::with_capacity(self.panes.len());
+        let main = self.panes.iter().filter(|p| p.id == ViewportId::ROOT);
+        let popouts = self.panes.iter().filter(|p| p.id != ViewportId::ROOT);
+        for pane in main.chain(popouts) {
+            let Some(size) = pane.size else {
+                // A window that has not drawn yet has no size to follow,
+                // and the question waits for it.
+                return;
+            };
+            windows.push(Shown { monitor: pane.monitor().map(|k| k.id), size });
+        }
+        let facts = &self.snapshot.facts;
+        let takes = Takes { size: facts.can_resize, layout: facts.can_layout };
+        match self.follower.tick(&windows, &facts.monitors, takes) {
+            Some(Ask::Size(width, height)) => {
+                log::info!("asking for a {width}×{height} desktop, this window's size");
+                self.backend.request_desktop_size(width, height);
+            }
+            Some(Ask::Layout { width, height, screens }) => {
+                log::info!(
+                    "asking for a {width}×{height} desktop of {}, the windows' sizes",
+                    screens
+                        .iter()
+                        .map(|m| format!("{} {}×{}", m.id, m.width, m.height))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                self.backend.request_layout(width, height, &screens);
+            }
+            None => {}
         }
     }
 
@@ -1033,8 +1051,9 @@ impl Session {
     /// `pane.rs`).
     pub fn frame(&mut self, root: &mut egui::Ui, host: &mut Host) {
         let ctx = root.ctx().clone();
-        if host.viewport == ViewportId::ROOT {
-            self.main_size = Self::window_size(host);
+        let size = Self::window_size(host);
+        if let Some(pane) = self.pane_mut(host.viewport) {
+            pane.size = size;
         }
         self.frame_shared(&ctx, host);
         // Out of the list while it draws, so that it can drive the session.

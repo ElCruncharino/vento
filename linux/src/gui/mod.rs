@@ -1251,7 +1251,7 @@ impl ApplicationHandler<Wake> for App {
                     }
                 }
                 if let Screen::Session(session) = &mut self.screen {
-                    session.resized(Some(id) == self.main);
+                    session.resized();
                 }
             }
             WindowEvent::Moved(_) | WindowEvent::ScaleFactorChanged { .. } => {

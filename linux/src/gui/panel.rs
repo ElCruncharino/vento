@@ -236,7 +236,7 @@ impl Panel {
                  changes shape — once it has settled, and once the far end says it takes sizes.",
             );
             let mut follow = controls.follow;
-            let note = if follow && !facts.can_resize {
+            let note = if follow && !facts.can_resize && !facts.can_layout {
                 "waiting for the far end to take a size"
             } else {
                 ""
