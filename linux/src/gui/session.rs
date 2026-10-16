@@ -90,7 +90,6 @@ use std::time::{Duration, Instant};
 use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta};
 use winit::keyboard::{Key as LogicalKey, PhysicalKey};
-use winit::monitor::MonitorHandle;
 use winit::window::{CursorGrabMode, Window};
 use xkeysym::Keysym;
 
@@ -135,14 +134,9 @@ const NOTICE: Duration = Duration::from_secs(8);
 /// What the session asks of the window between frames: a window opened for
 /// a pane it has made, or a pane's window closed.
 pub enum WindowOp {
-    /// Open a window for `pane`, `size` in logical pixels, fullscreen on
-    /// `output` where there is one.
-    Open {
-        pane: PaneId,
-        title: String,
-        size: (u32, u32),
-        output: Option<MonitorHandle>,
-    },
+    /// Open a window for `pane`, `size` in logical pixels, wherever the
+    /// window manager puts it.
+    Open { pane: PaneId, title: String, size: (u32, u32) },
     /// Close `pane`'s window, which is a pop-out's: `returned` when it was
     /// given back (its Return, or the window manager's close), which hands
     /// its monitor back to the main window, rather than closed because its
@@ -1140,30 +1134,20 @@ impl Session {
         std::mem::take(&mut self.attention)
     }
 
-    /// A pane for `monitor`, and a window asked for to show it in:
-    /// fullscreen on `output` where one is given, otherwise a window the
+    /// A pane for `monitor`, and a window asked for to show it in, the
     /// monitor's shape. The pane is the session's from now on; its window
     /// opens after the frame (or does not, and the pane is forgotten).
-    fn pop_out(&mut self, monitor: MonitorKey, output: Option<MonitorHandle>) {
+    fn pop_out(&mut self, monitor: MonitorKey) {
         self.popped += 1;
         let id = ViewportId::from_hash_of(("pop-out", self.popped));
         let (_, _, w, h) = monitor.rect;
         let size = popout_size(w, h);
-        log::info!(
-            "popping out monitor {} ({w}×{h}){}",
-            monitor.index + 1,
-            output
-                .as_ref()
-                .and_then(MonitorHandle::name)
-                .map(|n| format!(", fullscreen on {n}"))
-                .unwrap_or_default()
-        );
+        log::info!("popping out monitor {} ({w}×{h})", monitor.index + 1);
         self.panes.push(Pane::new(id, Placement::default(), Some(monitor)));
         self.ops.push(WindowOp::Open {
             pane: id,
             title: self.title(),
             size,
-            output,
         });
     }
 

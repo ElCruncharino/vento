@@ -16,10 +16,13 @@
 //!
 //! The main window's pane is there for the whole session. The others are
 //! pop-outs: one of the far end's monitors in a window of its own, opened
-//! from the main window's toolbar (Pop out, which moves the main window on
-//! to the next monitor; or Pop out all, a window per monitor) and closed
-//! by their own (Return, or the window manager's close, either of which
-//! gives the monitor back to the main window). A pop-out's toolbar has
+//! from the main window's toolbar (Pop out, which pops out the monitor the
+//! main window shows and moves it on to the next, or, while it shows the
+//! whole desktop, gives every monitor a window) and closed by their own
+//! (Return, or the window manager's close, either of which gives the
+//! monitor back to the main window). A pop-out is an ordinary new window:
+//! where it goes is the window manager's or the compositor's to say, and
+//! the user's to change. A pop-out's toolbar has
 //! what is a window's own — the scale, the monitor, fullscreen — and view
 //! only, which is the session's; the panel, the prompts and the
 //! disconnect are the main window's alone.
@@ -42,7 +45,6 @@ use egui::{
     Sense, Stroke, Vec2, ViewportId, pos2, vec2,
 };
 use std::time::{Duration, Instant};
-use winit::monitor::MonitorHandle;
 use winit::window::Fullscreen;
 
 /// A pane is known by its window's egui viewport: the root one for the
@@ -111,28 +113,6 @@ pub enum Rebound {
 /// window of its own.
 pub fn next_free(popped: usize, count: usize, shown: &[usize]) -> Option<usize> {
     (1..count).map(|k| (popped + k) % count).find(|i| !shown.contains(i))
-}
-
-/// Pop out all: for each monitor not yet in a window of its own (`free`,
-/// in the far end's order, the first of which the main window keeps), the
-/// local output it goes fullscreen on, if any. Paired by position, the far
-/// end's monitors (`monitors`, their top left corners) and the local
-/// outputs (`outputs`, likewise) each taken left to right and then top to
-/// bottom, so that the leftmost goes on the leftmost; only with more than
-/// one output, since one would be covered by every window in turn, and a
-/// monitor past the last output stays a window.
-pub fn plan_all(monitors: &[(i32, i32)], free: &[usize], outputs: &[(i32, i32)]) -> Vec<(usize, Option<usize>)> {
-    let mut by_place: Vec<usize> = free.to_vec();
-    by_place.sort_by_key(|&i| monitors.get(i).map(|&(x, y)| (x, y)));
-    let mut out_by_place: Vec<usize> = (0..outputs.len()).collect();
-    out_by_place.sort_by_key(|&i| outputs[i]);
-    free.iter()
-        .map(|&m| {
-            let rank = by_place.iter().position(|&i| i == m).expect("from free");
-            let output = (outputs.len() > 1).then(|| out_by_place.get(rank).copied()).flatten();
-            (m, output)
-        })
-        .collect()
 }
 
 /// Whether `pane` may send pointer events while `owner` holds the pointer:
@@ -661,7 +641,7 @@ impl Pane {
                 self.view.pan = Vec2::ZERO;
             }
             if self.main() {
-                self.pop_out_menu(s, ui, host, connected);
+                self.pop_out_button(s, ui, connected);
             }
         } else if facts.displays.len() > 1 {
             let count = facts.displays.len();
@@ -747,91 +727,53 @@ impl Pane {
         }
     }
 
-    /// The main window's Pop out, beside Monitor: a menu, since where a
-    /// window goes is a choice — a window of its own, or fullscreen on one
-    /// of the local outputs, which on Wayland is the only way there is to
-    /// say where a window goes (a Wayland client cannot place a window,
-    /// only ask for it fullscreen on an output); and all of the monitors
-    /// at once. One monitor only while this window shows one.
-    fn pop_out_menu(&mut self, s: &mut Session, ui: &mut egui::Ui, host: &mut Host, connected: bool) {
-        let response = ui.add_enabled(connected, icon_only(icons::OPEN_IN_NEW)).on_hover_text(
-            "Pop out: a monitor of the far end's in a window of its own, or every monitor in one each",
-        );
-        // Numbered left to right (then top to bottom), as they are seen,
-        // rather than in the order the display server lists them.
-        let mut outputs: Vec<MonitorHandle> = host.event_loop.available_monitors().collect();
-        outputs.sort_by_key(|o| {
-            let at = o.position();
-            (at.x, at.y)
-        });
-        egui::Popup::menu(&response).show(|ui| {
-            match self.monitor {
-                Some(key) => {
-                    let n = key.index + 1;
-                    if ui
-                        .button(format!("Pop out monitor {n} (window)"))
-                        .on_hover_text("In a window of its own; this window moves on to the next monitor")
-                        .clicked()
-                    {
-                        self.pop_out(s, key, None);
-                    }
-                    for (i, output) in outputs.iter().enumerate() {
-                        if ui
-                            .button(format!("Pop out monitor {n} to output {} ({})", i + 1, output_name(output)))
-                            .on_hover_text("Fullscreen on that output")
-                            .clicked()
-                        {
-                            self.pop_out(s, key, Some(output.clone()));
-                        }
-                    }
-                }
-                None => {
-                    ui.label(RichText::new("Choose a monitor with Monitor to pop out one").weak());
-                }
-            }
-            ui.separator();
-            let placed = if outputs.len() > 1 { ", fullscreen on the outputs in order" } else { "" };
-            if ui
-                .button("Pop out all")
-                .on_hover_text(format!("A window for every monitor, this one keeping the first{placed}"))
-                .clicked()
-            {
-                self.pop_out_all(s, host, &outputs);
-            }
-        });
+    /// The main window's Pop out, beside Monitor: what this window shows,
+    /// in windows of its own. Showing one monitor, that monitor goes to a
+    /// new window and this one moves on to the next; showing the whole
+    /// desktop, every monitor without a window gets one, this window
+    /// keeping the first. The new windows are plain ones, placed where the
+    /// window manager puts new windows, to be moved and made fullscreen as
+    /// the user likes (their own Fullscreen fills the output each is on).
+    fn pop_out_button(&mut self, s: &mut Session, ui: &mut egui::Ui, connected: bool) {
+        let tip = match self.monitor {
+            Some(key) => format!(
+                "Pop out: monitor {} in a window of its own; this window moves on to the next monitor",
+                key.index + 1
+            ),
+            None => "Pop out: every monitor in a window of its own, this window keeping the first".to_string(),
+        };
+        if !ui.add_enabled(connected, icon_only(icons::OPEN_IN_NEW)).on_hover_text(tip).clicked() {
+            return;
+        }
+        match self.monitor {
+            Some(key) => self.pop_out(s, key),
+            None => self.pop_out_all(s),
+        }
     }
 
-    /// `key`, this window's monitor, popped out to a window of its own
-    /// (fullscreen on `output`, if given), and this window on to the next
-    /// monitor that has no window.
-    fn pop_out(&mut self, s: &mut Session, key: MonitorKey, output: Option<MonitorHandle>) {
-        s.pop_out(key, output);
+    /// `key`, this window's monitor, popped out to a window of its own, and
+    /// this window on to the next monitor that has no window.
+    fn pop_out(&mut self, s: &mut Session, key: MonitorKey) {
+        s.pop_out(key);
         let monitors = &s.snapshot.facts.monitors;
         let shown: Vec<usize> = s.panes.iter().filter_map(|p| p.monitor.map(|k| k.index)).collect();
         self.monitor = next_free(key.index, monitors.len(), &shown).map(|i| MonitorKey::of(i, &monitors[i]));
         self.view.pan = Vec2::ZERO;
     }
 
-    /// A window for every monitor that has none: this one keeps the first,
-    /// and each goes fullscreen on a local output in order where there are
-    /// outputs enough (see `plan_all`).
-    fn pop_out_all(&mut self, s: &mut Session, host: &mut Host, outputs: &[MonitorHandle]) {
+    /// A window for every monitor that has none, in the far end's order:
+    /// this one keeps the first.
+    fn pop_out_all(&mut self, s: &mut Session) {
         let monitors = s.snapshot.facts.monitors.clone();
         let shown: Vec<usize> = s.panes.iter().filter_map(|p| p.monitor.map(|k| k.index)).collect();
-        let free: Vec<usize> = (0..monitors.len()).filter(|i| !shown.contains(i)).collect();
-        let corners: Vec<(i32, i32)> = monitors.iter().map(|m| (m.x, m.y)).collect();
-        let places: Vec<(i32, i32)> = outputs.iter().map(|o| (o.position().x, o.position().y)).collect();
-        for (k, (monitor, output)) in plan_all(&corners, &free, &places).into_iter().enumerate() {
+        let free = (0..monitors.len()).filter(|i| !shown.contains(i));
+        for (k, monitor) in free.enumerate() {
             let key = MonitorKey::of(monitor, &monitors[monitor]);
-            let output = output.map(|i| outputs[i].clone());
             if k == 0 {
                 self.monitor = Some(key);
                 self.view.pan = Vec2::ZERO;
-                if let Some(output) = output {
-                    host.window.set_fullscreen(Some(Fullscreen::Borderless(Some(output))));
-                }
             } else {
-                s.pop_out(key, output);
+                s.pop_out(key);
             }
         }
     }
@@ -988,11 +930,6 @@ fn draw_cursor(s: &Session, ctx: &egui::Context, response: &Response) {
             Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)),
             Color32::WHITE,
         );
-}
-
-/// A local output in words: its name where it has one.
-fn output_name(output: &MonitorHandle) -> String {
-    output.name().unwrap_or_else(|| "unnamed".to_string())
 }
 
 /// A line of text over the desktop, in a box, at `align`: a notice in the
@@ -1192,24 +1129,6 @@ mod tests {
         assert_eq!(next_free(0, 3, &[0, 1]), Some(2));
         // Every monitor in a window of its own: the whole desktop.
         assert_eq!(next_free(1, 2, &[0, 1]), None);
-    }
-
-    #[test]
-    fn pop_out_all_pairs_monitors_and_outputs_left_to_right() {
-        let side_by_side = [(0, 0), (1280, 0)];
-        // Two outputs listed right one first: still the left monitor on the
-        // left output.
-        assert_eq!(plan_all(&side_by_side, &[0, 1], &[(1920, 0), (0, 0)]), vec![(0, Some(1)), (1, Some(0))]);
-        // One output: nothing fullscreen, a window each.
-        assert_eq!(plan_all(&side_by_side, &[0, 1], &[(0, 0)]), vec![(0, None), (1, None)]);
-        // Three monitors on two outputs: the third stays a window.
-        let three = [(0, 0), (1280, 0), (2560, 0)];
-        assert_eq!(plan_all(&three, &[0, 1, 2], &[(0, 0), (1920, 0)]), vec![(0, Some(0)), (1, Some(1)), (2, None)]);
-        // A monitor already popped out is not planned again; the rest keep
-        // their places among the free ones.
-        assert_eq!(plan_all(&three, &[0, 2], &[(0, 0), (1920, 0)]), vec![(0, Some(0)), (2, Some(1))]);
-        // Listed out of order on the far end too: by place, not by list.
-        assert_eq!(plan_all(&[(1280, 0), (0, 0)], &[0, 1], &[(0, 0), (1920, 0)]), vec![(0, Some(1)), (1, Some(0))]);
     }
 
     #[test]

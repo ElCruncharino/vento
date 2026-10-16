@@ -75,7 +75,7 @@ use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalPosition;
 use winit::event::{DeviceEvent, DeviceId, ElementState, StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, DeviceEvents, EventLoop, EventLoopProxy};
-use winit::window::{Fullscreen, UserAttentionType, Window, WindowAttributes, WindowId};
+use winit::window::{UserAttentionType, Window, WindowAttributes, WindowId};
 
 /// A connection to open, as the command line or the dialog describes one.
 #[derive(Clone)]
@@ -891,20 +891,10 @@ impl App {
         }
         for op in ops {
             match op {
-                WindowOp::Open {
-                    pane,
-                    title,
-                    size,
-                    output,
-                } => {
-                    let mut attributes = Window::default_attributes()
+                WindowOp::Open { pane, title, size } => {
+                    let attributes = Window::default_attributes()
                         .with_title(title)
                         .with_inner_size(winit::dpi::LogicalSize::new(size.0, size.1));
-                    // Fullscreen from the start, on the output asked for: on
-                    // Wayland the one way a window can be put somewhere.
-                    if let Some(output) = output {
-                        attributes = attributes.with_fullscreen(Some(Fullscreen::Borderless(Some(output))));
-                    }
                     match self.add_window(event_loop, attributes, pane) {
                         Ok(id) => self.windows[&id].window.request_redraw(),
                         Err(e) => {

@@ -303,8 +303,8 @@ is showing is in the tooltip too. On it:
   backend offers *displays* instead (RustDesk sends one screen at a time) the
   button (`monitor`) asks the far end for the next one.
 - **Pop out** (`open_in_new`, beside Monitor, when the far end reports more
-  than one monitor) is a menu: this window's monitor in a window of its own
-  or fullscreen on one of the local outputs, and **Pop out all**. See
+  than one monitor) puts what this window shows in windows of its own: its
+  monitor, or every monitor while it shows the whole desktop. See
   [pop-out windows](#pop-out-windows).
 - **View only** stops the mouse, the keyboard and the clipboard going to the
   far end, and tells the backend so: an eye while on, a mouse while off.
@@ -319,34 +319,31 @@ is showing is in the tooltip too. On it:
 A far end with several monitors can be shown in several windows, one monitor
 in each — the session is still one connection, one desktop texture drawn in
 every window, one set of keys and one pointer at the far end. Pick a monitor
-with **Monitor**, then **Pop out**:
+with **Pop out**:
 
-- **Pop out monitor N (window)** opens a window for it, the shape of the
-  monitor, and the main window moves on to the next monitor that has no
-  window (the whole desktop once every monitor has one).
-- **Pop out monitor N to output M** opens it fullscreen on that local
-  output, the outputs numbered left to right (then top to bottom) and named
-  as the display server names them. On Wayland this is the only way to say where a window goes — a
-  Wayland client cannot place a window, only ask for it fullscreen on an
-  output — so a pop-out in a window lands wherever the compositor puts new
-  windows. On X11 the outputs are RandR 1.5's monitors, those of `xrandr
-  --listmonitors`, which are what the window manager goes by (through
-  Xinerama): one per output on multi-head hardware, but a screen split with
-  `xrandr --setmonitor` — an ultrawide used as two, or the one framebuffer
-  of Xvfb or of many virtual machines' X servers — is a monitor for each
-  part. winit listed RandR's CRTCs instead, one for such a screen, so it
-  offered one output whatever the monitors said; `patches/winit/0006` lists
-  the monitors (the CRTCs still where the server is older than RandR 1.5),
-  and `patches/winit/0007` lists them again when a monitor is added or
-  taken away while the client runs, which comes with no RandR event of its
-  own. Fullscreen on one is winit's: the window moved to the monitor's
-  corner, then `_NET_WM_STATE_FULLSCREEN`, which an EWMH window manager
-  carries out on the monitor the window is on.
-- **Pop out all** gives every monitor without a window one: the main window
-  keeps the first, and with more than one local output each window goes
-  fullscreen on one, the far end's monitors and the local outputs each taken
-  left to right (then top to bottom); a monitor past the last output, or
-  every monitor with a single output, gets a window.
+- Showing one monitor (picked with **Monitor**), the main window's Pop out
+  opens a window for it, the shape of the monitor, and the main window moves
+  on to the next monitor that has no window (the whole desktop once every
+  monitor has one).
+- Showing the whole desktop, it gives every monitor without a window one:
+  the main window keeps the first, in the far end's order, and each of the
+  others gets a window of its own.
+
+A pop-out is an ordinary new window: it goes wherever the window manager or
+the compositor puts new windows, and it is moved, resized and made
+fullscreen like the main window — its own **Fullscreen** fills the local
+output it is on. On X11 that output is the RandR 1.5 monitor the window is
+on, those of `xrandr --listmonitors`, which are what the window manager goes
+by (through Xinerama): one per output on multi-head hardware, but a screen
+split with `xrandr --setmonitor` — an ultrawide used as two, or the one
+framebuffer of Xvfb or of many virtual machines' X servers — is a monitor for
+each part. winit listed RandR's CRTCs instead, one for such a screen, and its
+borderless fullscreen moves the window to the corner of the one it picks
+before asking for `_NET_WM_STATE_FULLSCREEN`, so a window on the right half of
+a split screen went fullscreen on the left half; `patches/winit/0006` lists
+the monitors (the CRTCs still where the server is older than RandR 1.5), and
+`patches/winit/0007` lists them again when a monitor is added or taken away
+while the client runs, which comes with no RandR event of its own.
 
 A pop-out's toolbar is a window's own: **Scale** and **Monitor** (any
 monitor, or the whole desktop) are its own, **Fullscreen** is its own
@@ -405,24 +402,20 @@ pointer, Return and the window manager's close each giving the monitor back,
 the main window, one window minimised leaving the session live and both
 minimised pausing it, and the disconnect and the main window's close each
 closing the pop-out first; and FreeRDP against `scripts/testrdp` with
-`-o Monitors=2`. On a headless sway with two outputs, the second at scale 2:
-Pop out all put the main window fullscreen on the left output with the first
-monitor and the pop-out fullscreen on the right one with the second, a drag
-from the pop-out into the main window carried the far end's window across,
-typing reached the far end through the pop-out, *to output 1* placed a
-pop-out fullscreen on that output, and Return and the compositor's close
-(`swaymsg kill`) each gave the monitor back. On `scripts/testx11` at
-2560×800 split into two monitors of 1280×800 with `xrandr --setmonitor`
-(Openbox), against the same two-head far end: the menu offers *to output 1
-(LEFT)* and *to output 2 (RIGHT)*, where before it offered one output
-(`screen`); *to output 2* made the pop-out exactly the right monitor,
-1280×800 at 1280,0, fullscreen; Pop out all put the main window fullscreen on
-the left monitor with the far end's first and the pop-out on the right one
-with its second, where before it gave two windows on the left; a monitor
-split off or joined back while the client ran was in the next menu; and with
-the screen whole again Fullscreen still filled the 2560×800. The capture's hand-over between
-windows is unit-tested only: no rig here has a far end of several monitors
-in relative mode.
+`-o Monitors=2`. On a headless sway, a drag from the pop-out into the main
+window carried the far end's window across, typing reached the far end
+through the pop-out, Pop out gave a plain tiled window (not fullscreen), and
+Return and the compositor's close (`swaymsg kill`) each gave the monitor
+back. On `scripts/testx11` at 2560×800 split into two monitors of 1280×800
+with `xrandr --setmonitor` (Openbox), against the same two-head far end: Pop
+out from the whole desktop opened one plain window for the far end's second
+monitor, without `_NET_WM_STATE_FULLSCREEN`; moved onto the right monitor,
+its Fullscreen made it exactly that monitor, 1280×800 at 1280,0, where winit
+without the two patches made it the left one, 1280×800 at 0,0, over the main
+window; leaving fullscreen put it back where it was; and with the screen
+whole again Fullscreen still filled the 2560×800. The capture's hand-over
+between windows is unit-tested only: no rig here has a far end of several
+monitors in relative mode.
 
 Following, with **Follow window size** on and every monitor in a window of
 its own: on `scripts/testx11` against the two-head `scripts/testvnc` with
