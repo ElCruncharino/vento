@@ -196,6 +196,9 @@ fn held(name: &str, layers: [u32; 2]) {
             layers,
             "{name}: the layers' formats"
         );
+        assert_eq!(picture.colour(), (dmabuf.bt709, dmabuf.full_range), "{name}: colour");
+        // Every clip here but VP8 is tagged BT.709 limited range.
+        assert_eq!(picture.colour(), (true, false), "{name}: colour");
         let (y, uv) = (&dmabuf.layers[0], &dmabuf.layers[1]);
         assert!(y.width as usize >= W && y.height as usize >= H, "{name}: Y is {}x{}", y.width, y.height);
         assert_eq!((uv.width, uv.height), (y.width.div_ceil(2), y.height.div_ceil(2)));

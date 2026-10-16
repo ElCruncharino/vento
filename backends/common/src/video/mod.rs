@@ -228,6 +228,11 @@ pub trait GpuPicture: Send + Sync {
     /// decoder, a new size), and is never used twice in a process.
     fn surface(&self) -> (u64, u32);
 
+    /// BT.709 rather than BT.601, and full range rather than limited, as
+    /// [`convert::Frame`] says them: the picture's own, which may change
+    /// with the stream while the surfaces stay.
+    fn colour(&self) -> (bool, bool);
+
     /// The surface as DMA-BUFs, one a plane, each descriptor a new one of
     /// the caller's own.
     #[cfg(unix)]

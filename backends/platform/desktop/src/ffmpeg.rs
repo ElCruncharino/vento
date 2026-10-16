@@ -644,6 +644,7 @@ impl Decoder {
             height: picture.height.max(0) as usize,
             pool: picture.pool,
             surface: picture.surface,
+            colour: (picture.bt709 != 0, picture.full_range != 0),
             readback: Arc::clone(&self.readback),
         });
         self.skipped += u64::from(picture.skipped);
@@ -791,6 +792,7 @@ struct Held {
     height: usize,
     pool: u64,
     surface: u32,
+    colour: (bool, bool),
     readback: Arc<Mutex<Readback>>,
 }
 
@@ -805,6 +807,10 @@ impl GpuPicture for Held {
 
     fn surface(&self) -> (u64, u32) {
         (self.pool, self.surface)
+    }
+
+    fn colour(&self) -> (bool, bool) {
+        self.colour
     }
 
     fn export(&self) -> Result<Dmabuf, String> {

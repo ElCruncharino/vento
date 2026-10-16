@@ -316,6 +316,9 @@ pub mod tests {
         fn surface(&self) -> (u64, u32) {
             (1, 1)
         }
+        fn colour(&self) -> (bool, bool) {
+            (false, false)
+        }
         fn export(&self) -> std::result::Result<common::video::Dmabuf, String> {
             Err("a test's".into())
         }
