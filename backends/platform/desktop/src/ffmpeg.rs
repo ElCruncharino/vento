@@ -53,6 +53,15 @@
 //! ([`take_key_frame_request`](common::video::Decoder::take_key_frame_request)),
 //! not a lost picture. Off, nothing of libva or Vulkan is loaded.
 //!
+//! **Or left on the GPU**, for a window that draws there and says so
+//! ([`FFmpeg::set_gpu_pictures`]): a caller that asks
+//! ([`decode_picture`](common::video::Decoder::decode_picture)) is handed a
+//! VAAPI picture in NV12 or P010 as it is, a [`GpuPicture`] holding the
+//! surface, which it exports as DMA-BUFs and converts on its GPU; nothing is
+//! mapped or converted here, which is most of what a hardware picture cost.
+//! Read back ([`GpuPicture::read`]), it is mapped and converted as a decode
+//! would have, the same picture to the bit.
+//!
 //! **H.264 stays libavcodec's**, though two decoders without FFmpeg were tried
 //! in its place (October 2026): the `openh264` crate, Cisco's library, and
 //! `rusty_h264`, which is pure Rust. On what the rigs send, RustDesk's VAAPI
@@ -67,11 +76,12 @@
 //! and from source it has no Cisco patent licence either.
 
 use std::ffi::{CStr, c_char, c_int};
-use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::os::fd::{FromRawFd, OwnedFd};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use common::video::convert::{Frame, Plane};
-use common::video::{Changes, Codec, Decoders, Output};
+use common::video::{Changes, Codec, Decoded, Decoders, Dmabuf, DmabufLayer, GpuPicture, Output};
 /// How a decoder may decode, which whoever starts a session asks for (a
 /// setting, `--hw-decode`): `common`'s, since it is handed to every backend.
 pub use common::video::Hardware;
@@ -110,6 +120,41 @@ mod sys {
         pub fell_back: i32,
         pub decode_us: u32,
         pub map_us: u32,
+        pub held: *mut Frame,
+        pub pool: u64,
+        pub surface: u32,
+    }
+
+    /// `hardware`'s numbers, past 1 for mapped.
+    pub const COPIED: i32 = 2;
+    pub const HELD: i32 = 3;
+
+    /// `struct vento_video_layer` and `struct vento_video_export`, checked
+    /// as the picture is.
+    #[repr(C)]
+    #[derive(Clone, Copy, Default)]
+    pub struct Layer {
+        pub fd: i32,
+        pub fourcc: u32,
+        pub modifier: u64,
+        pub offset: u32,
+        pub pitch: u32,
+        pub width: u32,
+        pub height: u32,
+    }
+
+    #[repr(C)]
+    #[derive(Default)]
+    pub struct Export {
+        pub layers: i32,
+        pub layer: [Layer; 2],
+        pub bt709: i32,
+        pub full_range: i32,
+    }
+
+    #[repr(C)]
+    pub struct Frame {
+        _opaque: [u8; 0],
     }
 
     impl Picture {
@@ -134,6 +179,9 @@ mod sys {
                 fell_back: 0,
                 decode_us: 0,
                 map_us: 0,
+                held: std::ptr::null_mut(),
+                pool: 0,
+                surface: 0,
             }
         }
     }
@@ -145,6 +193,7 @@ mod sys {
 
     unsafe extern "C" {
         pub fn vento_video_picture_size() -> usize;
+        pub fn vento_video_export_size() -> usize;
         pub fn vento_video_decodable(codec: c_int) -> c_int;
         pub fn vento_video_open(
             codec: c_int,
@@ -165,10 +214,20 @@ mod sys {
             video: *mut Video,
             data: *const u8,
             len: usize,
+            hold: c_int,
             out: *mut Picture,
             format: *mut c_char,
             format_len: usize,
         ) -> c_int;
+        pub fn vento_video_frame_export(
+            frame: *mut Frame,
+            out: *mut Export,
+            error: *mut c_char,
+            error_len: usize,
+        ) -> c_int;
+        pub fn vento_video_frame_map(frame: *mut Frame, out: *mut Picture) -> c_int;
+        pub fn vento_video_frame_unmap(frame: *mut Frame);
+        pub fn vento_video_frame_free(frame: *mut Frame);
         pub fn vento_video_strerror(error: c_int, buf: *mut c_char, len: usize);
         pub fn vento_video_close(video: *mut Video);
     }
@@ -225,13 +284,22 @@ pub fn vulkan_device() -> Option<String> {
 #[derive(Default)]
 pub struct FFmpeg {
     hardware: AtomicU8,
+    gpu: AtomicBool,
 }
 
 impl FFmpeg {
     pub const fn new(hardware: Hardware) -> FFmpeg {
         FFmpeg {
             hardware: AtomicU8::new(hardware as u8),
+            gpu: AtomicBool::new(false),
         }
+    }
+
+    /// Whether the session's pictures may be left on the GPU (see
+    /// [`Decoders::gpu_pictures`]), which the window says where it can import
+    /// them, and unsays where an import failed. Off by default.
+    pub fn set_gpu_pictures(&self, gpu: bool) {
+        self.gpu.store(gpu, Ordering::Relaxed);
     }
 
     pub fn hardware(&self) -> Hardware {
@@ -283,6 +351,10 @@ impl Decoders for FFmpeg {
     fn hardware(&self) -> Hardware {
         FFmpeg::hardware(self)
     }
+
+    fn gpu_pictures(&self) -> bool {
+        self.gpu.load(Ordering::Relaxed)
+    }
 }
 
 /// The codec as `vento_video.h` numbers it.
@@ -303,9 +375,9 @@ pub struct Decoder {
     video: *mut sys::Video,
     codec: Codec,
     failed: bool,
-    /// Whether the last picture came out of the hardware, and if so whether
-    /// it was copied rather than mapped; `None` before the first.
-    hardware: Option<(bool, bool)>,
+    /// How the last picture came out: as `hardware` in the C struct numbers
+    /// it, 0 software, else mapped, copied or held; `None` before the first.
+    hardware: Option<i32>,
     /// The software reason last logged, so that a stream that keeps it is
     /// logged once.
     reason: String,
@@ -325,6 +397,8 @@ pub struct Decoder {
     /// A deeper-than-eight-bit frame's planes, narrowed: kept rather than
     /// allocated per frame, since a stream that is one is one throughout.
     narrow: [Vec<u8>; 3],
+    /// What a held picture is read back with, shared by them all.
+    readback: Arc<Mutex<Readback>>,
     /// Frames received and dropped unread, because a newer whole picture came
     /// out of the same packet behind them.
     pub skipped: u64,
@@ -352,6 +426,11 @@ impl Decoder {
             unsafe { sys::vento_video_picture_size() },
             size_of::<sys::Picture>(),
             "vento_video.h and this file describe a picture differently"
+        );
+        assert_eq!(
+            unsafe { sys::vento_video_export_size() },
+            size_of::<sys::Export>(),
+            "vento_video.h and this file describe an export differently"
         );
         let mut error = [0 as c_char; 128];
         let video = unsafe {
@@ -384,6 +463,7 @@ impl Decoder {
             pictures: 0,
             output: Output::new(),
             narrow: Default::default(),
+            readback: Arc::default(),
             skipped: 0,
         };
         let name = decoder.name();
@@ -483,7 +563,7 @@ impl Decoder {
             // On `auto`'s next device, the one before it having had no
             // decoder for the stream's profile, nothing is known until its
             // first picture says whether it decodes them.
-            self.hardware = (method == Hardware::Off).then_some((false, false));
+            self.hardware = (method == Hardware::Off).then_some(0);
             if method != Hardware::Off {
                 log::info!(
                     "{} decoder moved to {} ({}), the device before it having no decoder \
@@ -513,7 +593,7 @@ impl Decoder {
                     self.map_ms = smooth(self.map_ms, picture.map_us);
                 }
             }
-            self.hardware = Some((picture.hardware != 0, picture.hardware == 2));
+            self.hardware = Some(picture.hardware);
         }
         // Compared in place: this is every frame, and the reason changes
         // about once a stream.
@@ -527,17 +607,21 @@ impl Decoder {
     }
 }
 
-impl common::video::Decoder for Decoder {
-    fn decode(
+impl Decoder {
+    /// A decode, as [`decode`](common::video::Decoder::decode) and
+    /// [`decode_picture`](common::video::Decoder::decode_picture) make one:
+    /// with `hold`, a picture the C side can hold is handed back held.
+    fn decode_as(
         &mut self,
         data: &[u8],
         out: &mut [u32],
         width: usize,
         height: usize,
         changed: &mut Changes,
-    ) -> bool {
+        hold: bool,
+    ) -> Decoded {
         if self.failed || data.is_empty() || out.len() < width * height {
-            return false;
+            return Decoded::Nothing;
         }
         let mut picture = sys::Picture::new();
         let mut format = [0 as c_char; 64];
@@ -546,11 +630,22 @@ impl common::video::Decoder for Decoder {
                 self.video,
                 data.as_ptr(),
                 data.len(),
+                c_int::from(hold),
                 &mut picture,
                 format.as_mut_ptr(),
                 format.len(),
             )
         };
+        // Owned from here, whatever else the call said, so that it is let go
+        // of on every way out.
+        let held = (!picture.held.is_null()).then(|| Held {
+            frame: Mutex::new(FramePtr(picture.held)),
+            width: picture.width.max(0) as usize,
+            height: picture.height.max(0) as usize,
+            pool: picture.pool,
+            surface: picture.surface,
+            readback: Arc::clone(&self.readback),
+        });
         self.skipped += u64::from(picture.skipped);
         self.note(&picture, status);
         match status {
@@ -565,7 +660,7 @@ impl common::video::Decoder for Decoder {
                     data.len(),
                     error(picture.error)
                 );
-                return false;
+                return Decoded::Nothing;
             }
             sys::UNSUPPORTED => {
                 log::warn!(
@@ -573,17 +668,20 @@ impl common::video::Decoder for Decoder {
                     text(&format)
                 );
                 self.failed = true;
-                return false;
+                return Decoded::Nothing;
             }
             _ => {}
         }
         if status != sys::PICTURE {
-            return false;
+            return Decoded::Nothing;
+        }
+        if let Some(held) = held {
+            return Decoded::Gpu(Arc::new(held));
         }
         let Some((bytes, planes)) = planes(&picture, &mut self.narrow) else {
             log::warn!("the decoder's output has planes this cannot read");
             self.failed = true;
-            return false;
+            return Decoded::Nothing;
         };
         let frame = Frame {
             bytes,
@@ -594,31 +692,65 @@ impl common::video::Decoder for Decoder {
             full_range: picture.full_range != 0,
         };
         self.output.write(&frame, out, width, height, changed);
-        true
+        Decoded::Converted
+    }
+}
+
+impl common::video::Decoder for Decoder {
+    fn decode(
+        &mut self,
+        data: &[u8],
+        out: &mut [u32],
+        width: usize,
+        height: usize,
+        changed: &mut Changes,
+    ) -> bool {
+        matches!(
+            self.decode_as(data, out, width, height, changed, false),
+            Decoded::Converted
+        )
+    }
+
+    fn decode_picture(
+        &mut self,
+        data: &[u8],
+        out: &mut [u32],
+        width: usize,
+        height: usize,
+        changed: &mut Changes,
+    ) -> Decoded {
+        self.decode_as(data, out, width, height, changed, true)
     }
 
     fn hardware(&self) -> Option<bool> {
-        self.hardware.map(|(hardware, _)| hardware)
+        self.hardware.map(|how| how != 0)
     }
 
+    /// `H.264 vaapi map 7.1 ms`, `copy` for a picture copied rather than
+    /// mapped (Vulkan's), `dmabuf` for one left on the GPU, where the time
+    /// is the decode and the wait for it and nothing else.
     fn status(&self) -> Option<String> {
         let mut line = self.codec.name().to_string();
         match self.hardware {
-            Some((true, copied)) => {
+            Some(how @ 1..) => {
                 line += &format!(
                     " {} {}",
                     self.method().name(),
-                    if copied { "copy" } else { "map" }
+                    match how {
+                        sys::COPIED => "copy",
+                        sys::HELD => "dmabuf",
+                        _ => "map",
+                    }
                 );
             }
-            Some((false, _)) => line += " sw",
+            Some(_) => line += " sw",
             None if self.method() != Hardware::Off => line += &format!(" {}", self.method().name()),
             None => line += " sw",
         }
         if let Some(ms) = self.decode_ms {
             line += &format!(" {ms:.1} ms");
         }
-        if !matches!(self.hardware, Some((true, _))) && !self.reason.is_empty() {
+        if !matches!(self.hardware, Some(1..)) && !self.reason.is_empty() {
             line += &format!(" ({})", self.reason);
         }
         Some(line)
@@ -632,6 +764,121 @@ impl common::video::Decoder for Decoder {
 impl Drop for Decoder {
     fn drop(&mut self) {
         unsafe { sys::vento_video_close(self.video) };
+    }
+}
+
+/// A held picture's frame, which the C side lets any thread export, map and
+/// free: one map at a time, which the [`Mutex`] it is kept in sees to.
+struct FramePtr(*mut sys::Frame);
+
+// SAFETY: see above; the pointer is the frame's only owner, freed once.
+unsafe impl Send for FramePtr {}
+
+/// What a held picture is read back with: the decoder's conversion state
+/// and buffers for a deep picture's narrowed planes, shared by every picture
+/// of a decoder, since a read is rare and each would otherwise log its
+/// layout's check again.
+#[derive(Default)]
+struct Readback {
+    output: Output,
+    narrow: [Vec<u8>; 3],
+}
+
+/// A VAAPI picture left on the GPU (see the module's documentation).
+struct Held {
+    frame: Mutex<FramePtr>,
+    width: usize,
+    height: usize,
+    pool: u64,
+    surface: u32,
+    readback: Arc<Mutex<Readback>>,
+}
+
+impl GpuPicture for Held {
+    fn width(&self) -> usize {
+        self.width
+    }
+
+    fn height(&self) -> usize {
+        self.height
+    }
+
+    fn surface(&self) -> (u64, u32) {
+        (self.pool, self.surface)
+    }
+
+    fn export(&self) -> Result<Dmabuf, String> {
+        let frame = self.frame.lock().unwrap();
+        let mut export = sys::Export::default();
+        let mut error = [0 as c_char; 128];
+        let made = unsafe {
+            sys::vento_video_frame_export(frame.0, &mut export, error.as_mut_ptr(), error.len())
+        };
+        if made < 0 {
+            return Err(text(&error));
+        }
+        let count = usize::try_from(export.layers).unwrap_or(0).min(2);
+        let layers = export.layer[..count]
+            .iter()
+            .map(|l| DmabufLayer {
+                // SAFETY: a descriptor the export made for the caller, and
+                // nobody else's.
+                fd: unsafe { OwnedFd::from_raw_fd(l.fd) },
+                fourcc: l.fourcc,
+                modifier: l.modifier,
+                offset: l.offset,
+                pitch: l.pitch,
+                width: l.width,
+                height: l.height,
+            })
+            .collect();
+        Ok(Dmabuf {
+            layers,
+            bt709: export.bt709 != 0,
+            full_range: export.full_range != 0,
+        })
+    }
+
+    fn read(&self, out: &mut [u32], width: usize, height: usize) -> bool {
+        if out.len() < width * height || height == 0 {
+            return false;
+        }
+        let frame = self.frame.lock().unwrap();
+        let mut picture = sys::Picture::new();
+        if unsafe { sys::vento_video_frame_map(frame.0, &mut picture) } == 0 {
+            log::warn!("a held picture could not be mapped for reading");
+            return false;
+        }
+        let mut readback = self.readback.lock().unwrap();
+        let Readback { output, narrow } = &mut *readback;
+        let read = match planes(&picture, narrow) {
+            Some((bytes, planes)) => {
+                let frame = Frame {
+                    bytes,
+                    planes,
+                    width: picture.width as usize,
+                    height: picture.height as usize,
+                    bt709: picture.bt709 != 0,
+                    full_range: picture.full_range != 0,
+                };
+                // Every row: what is in `out` is not this picture's.
+                let mut changed = Changes::new();
+                changed.reset(height);
+                changed.all(width, height);
+                output.write(&frame, out, width, height, &mut changed);
+                true
+            }
+            None => false,
+        };
+        unsafe { sys::vento_video_frame_unmap(frame.0) };
+        read
+    }
+}
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        let frame = self.frame.get_mut().unwrap();
+        unsafe { sys::vento_video_frame_free(frame.0) };
     }
 }
 

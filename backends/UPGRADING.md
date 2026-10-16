@@ -63,7 +63,10 @@ script). Neither is compiled or linked; libva is reached through
 `backends/platform/desktop/c/va_shim.c`, which defines each libva function
 FFmpeg calls and loads the real one on first use. A newer FFmpeg may call a
 libva function the shim does not have yet, which is a link error naming it
-(`undefined symbol: va...`): add it to `VA_FUNCTIONS` there. libva moves to
+(`undefined symbol: va...`): add it to `VA_FUNCTIONS` there. `vento_video.c`
+calls two of them itself for a held picture (`vaSyncSurface`,
+`vaExportSurfaceHandle`) and reads FFmpeg's `AVVAAPIDeviceContext` for the
+display, which a new FFmpeg could rename. libva moves to
 a newer release's tag when FFmpeg wants newer headers (its configure says
 which `VA_CHECK_VERSION` a feature needs); Vulkan-Headers when FFmpeg's
 configure asks for a newer `VK_HEADER_VERSION`, which it checks for each of

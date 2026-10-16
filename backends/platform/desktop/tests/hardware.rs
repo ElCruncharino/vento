@@ -19,7 +19,7 @@
 
 #![cfg(not(target_os = "android"))]
 
-use common::video::{Changes, Codec, Decoder as _};
+use common::video::{Changes, Codec, Decoded, Decoder as _, fourcc};
 use platform_desktop::ffmpeg::{Decoder, Hardware};
 
 mod clips;
@@ -164,6 +164,130 @@ fn av1_444_is_dav1d() {
 #[test]
 fn av1_untagged() {
     compare("av1-untagged.ivf", true, "");
+}
+
+/// A clip decoded on VAAPI with its pictures held: each one exported as the
+/// two layers its format has, and read back the same picture to the bit as
+/// a decode that mapped it; every picture of one decoder in the same set of
+/// surfaces, and another decoder's in another.
+fn held(name: &str, layers: [u32; 2]) {
+    if !vaapi(name) {
+        return;
+    }
+    let (codec, frames) = frames(name);
+    let mut mapped = Decoder::with_hardware(codec, W, H, Hardware::Vaapi).unwrap();
+    let mut holding = Decoder::with_hardware(codec, W, H, Hardware::Vaapi).unwrap();
+    let want = pictures(&mut mapped, &frames);
+    let mut pools = Vec::new();
+    for (i, frame) in frames.iter().enumerate() {
+        let mut out = vec![0u32; W * H];
+        let mut changed = Changes::new();
+        changed.reset(H);
+        let picture = match holding.decode_picture(frame, &mut out, W, H, &mut changed) {
+            Decoded::Gpu(picture) => picture,
+            Decoded::Converted => panic!("{name}: picture {i} was converted, not held"),
+            Decoded::Nothing => panic!("{name}: no picture {i}"),
+        };
+        assert_eq!(out, vec![0u32; W * H], "{name}: a held picture writes nothing");
+        assert_eq!((picture.width(), picture.height()), (W, H));
+        let dmabuf = picture.export().unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(
+            dmabuf.layers.iter().map(|l| l.fourcc).collect::<Vec<_>>(),
+            layers,
+            "{name}: the layers' formats"
+        );
+        let (y, uv) = (&dmabuf.layers[0], &dmabuf.layers[1]);
+        assert!(y.width as usize >= W && y.height as usize >= H, "{name}: Y is {}x{}", y.width, y.height);
+        assert_eq!((uv.width, uv.height), (y.width.div_ceil(2), y.height.div_ceil(2)));
+        assert!(y.pitch >= y.width && uv.pitch >= uv.width, "{name}: pitches");
+        let mut read = vec![0u32; W * H];
+        assert!(picture.read(&mut read, W, H), "{name}: picture {i} reads back");
+        assert_eq!(difference(&read, &want[i]), 0, "{name}: picture {i} read back");
+        pools.push(picture.surface().0);
+    }
+    assert!(pools.windows(2).all(|p| p[0] == p[1]), "{name}: pools {pools:?}");
+    assert_eq!(holding.hardware(), Some(true));
+    let status = holding.status().unwrap();
+    assert!(status.starts_with(&format!("{} vaapi dmabuf ", codec.name())), "{status}");
+
+    let mut another = Decoder::with_hardware(codec, W, H, Hardware::Vaapi).unwrap();
+    let mut out = vec![0u32; W * H];
+    let mut changed = Changes::new();
+    changed.reset(H);
+    let Decoded::Gpu(picture) = another.decode_picture(&frames[0], &mut out, W, H, &mut changed) else {
+        panic!("{name}: the other decoder held nothing");
+    };
+    assert_ne!(picture.surface().0, pools[0], "{name}: another decoder's surfaces");
+}
+
+#[test]
+fn a_held_h264_picture_is_nv12() {
+    held("h264.h264", [fourcc::R8, fourcc::GR88]);
+}
+
+#[test]
+fn a_held_vp9_picture_is_nv12() {
+    held("vp9.ivf", [fourcc::R8, fourcc::GR88]);
+}
+
+#[test]
+fn a_held_av1_picture_is_nv12() {
+    held("av1.ivf", [fourcc::R8, fourcc::GR88]);
+}
+
+#[test]
+fn a_held_main10_picture_is_p010() {
+    held("h265-main10.h265", [fourcc::R16, fourcc::GR1616]);
+}
+
+/// What cannot be held is converted as ever: software's pictures, and
+/// VAAPI's in XV30.
+#[test]
+fn what_cannot_be_held_is_converted() {
+    let try_one = |name: &str, hardware: Hardware| {
+        let (codec, frames) = frames(name);
+        let mut decoder = Decoder::with_hardware(codec, W, H, hardware).unwrap();
+        let mut out = vec![0u32; W * H];
+        let mut changed = Changes::new();
+        changed.reset(H);
+        changed.all(W, H);
+        assert!(
+            matches!(decoder.decode_picture(&frames[0], &mut out, W, H, &mut changed), Decoded::Converted),
+            "{name} on {hardware:?}"
+        );
+        assert_ne!(out, vec![0u32; W * H]);
+    };
+    try_one("h264.h264", Hardware::Off);
+    if vaapi("what_cannot_be_held_is_converted") {
+        try_one("h265-444-10bit.h265", Hardware::Vaapi);
+    }
+}
+
+/// A held picture whose wait fails is a fallback as a failed map is: the
+/// packet decoded again in software, a key frame asked for, and converted.
+#[test]
+fn a_held_picture_that_fails_falls_back_to_software() {
+    if !vaapi("a_held_picture_that_fails_falls_back_to_software") {
+        return;
+    }
+    let (codec, frames) = frames("h264.h264");
+    let mut decoder = Decoder::with_hardware(codec, W, H, Hardware::Vaapi).unwrap();
+    let mut out = vec![0u32; W * H];
+    let mut decode = |decoder: &mut Decoder, frame: &[u8]| {
+        let mut changed = Changes::new();
+        changed.reset(H);
+        changed.all(W, H);
+        decoder.decode_picture(frame, &mut out, W, H, &mut changed)
+    };
+    assert!(matches!(decode(&mut decoder, &frames[0]), Decoded::Gpu(_)));
+    decoder.fail_next();
+    // A P-frame, with nothing before it in software to refer to: no picture
+    // until the key frame that is asked for, and that one converted.
+    assert!(!matches!(decode(&mut decoder, &frames[1]), Decoded::Gpu(_)));
+    assert!(decoder.take_key_frame_request());
+    assert!(matches!(decode(&mut decoder, &frames[0]), Decoded::Converted));
+    assert_eq!(decoder.hardware(), Some(false));
+    assert!(decoder.software_reason().unwrap().contains("vaapi: sync failed"));
 }
 
 /// The render nodes this process has open: one per VAAPI device.

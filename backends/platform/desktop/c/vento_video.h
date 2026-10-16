@@ -20,6 +20,13 @@
 // mapped for reading, not copied), so the caller cannot tell the two apart
 // except by asking; and the decoder is software whenever hardware cannot
 // have it, at the open or in the middle of a stream, with the reason kept.
+//
+// Unless the caller asks to `hold` a VAAPI picture instead: then it is not
+// mapped at all but handed out as it is, a `vento_video_frame` that keeps
+// its surface for as long as the caller does, which the caller can export
+// as DMA-BUFs for its GPU to read, or map after all where it needs the
+// pixels in memory. That is for a caller that draws on the same GPU, and
+// saves the readback, which is most of what a hardware picture costs.
 #ifndef VENTO_VIDEO_H
 #define VENTO_VIDEO_H
 
@@ -132,13 +139,47 @@ struct vento_video_picture {
     uint32_t decode_us;
     // Of that, mapping the hardware's picture for reading, in microseconds.
     uint32_t map_us;
+    // A picture held rather than described, where the decode asked to
+    // `hold` and the picture is one that can be (VAAPI's, in NV12 or P010):
+    // the caller's, to be freed with `vento_video_frame_free`, and the
+    // planes above are not set. NULL otherwise.
+    struct vento_video_frame *held;
+    // Which surface a held picture is in: a number for the decoder's set of
+    // surfaces, never used twice in a process and changed whenever the set
+    // is (a new decoder, a new size), and the surface's own in it.
+    uint64_t pool;
+    uint32_t surface;
+};
+
+// One of a held picture's planes as a DMA-BUF: a descriptor of the caller's
+// own, which it closes, the DRM format and layout modifier, where the plane
+// starts and how far apart its rows are, and its size in samples (the
+// surface's, which is larger than the picture where the codec rounds it up).
+struct vento_video_layer {
+    int32_t fd;
+    uint32_t fourcc;
+    uint64_t modifier;
+    uint32_t offset;
+    uint32_t pitch;
+    uint32_t width;
+    uint32_t height;
+};
+
+// A held picture as DMA-BUFs: Y, then U and V interleaved, a layer each.
+struct vento_video_export {
+    int32_t layers;
+    struct vento_video_layer layer[2];
+    int32_t bt709;
+    int32_t full_range;
 };
 
 typedef struct vento_video vento_video;
+typedef struct vento_video_frame vento_video_frame;
 
-// sizeof(struct vento_video_picture), for a binding to check its copy of the
-// struct against.
+// sizeof(struct vento_video_picture), and of the export, for a binding to
+// check its copies of the structs against.
 size_t vento_video_picture_size(void);
+size_t vento_video_export_size(void);
 
 // Whether this build of libavcodec has a decoder for the codec.
 int vento_video_decodable(int codec);
@@ -204,8 +245,30 @@ void vento_video_fail_next(vento_video *video);
 // decoder then has ready read, of which the last is described in `out`.
 // On VENTO_VIDEO_REFUSED, `out->error` holds the decoder's error; on
 // VENTO_VIDEO_UNSUPPORTED, `format` (cut to `format_len`) names the format.
-int vento_video_decode(vento_video *video, const uint8_t *data, size_t len,
+//
+// With `hold`, a picture on VAAPI in NV12 or P010 is waited for (the GPU has
+// finished decoding it when this returns) and handed out in `out->held`
+// rather than mapped and described; any other picture is described as ever.
+int vento_video_decode(vento_video *video, const uint8_t *data, size_t len, int hold,
                        struct vento_video_picture *out, char *format, size_t format_len);
+
+// A held picture's surface as DMA-BUFs, every descriptor a new one of the
+// caller's; or a negative error, with why in `error` (cut to `error_len`).
+// From any thread, as often as wanted.
+int vento_video_frame_export(vento_video_frame *frame, struct vento_video_export *out,
+                             char *error, size_t error_len);
+
+// A held picture mapped for reading and described in `out` as a decode
+// describes one, valid until `vento_video_frame_unmap`: for a caller that
+// needs the pixels in memory after all. 1, or 0 where it cannot be mapped.
+// One mapping at a time per picture; from any one thread at a time.
+int vento_video_frame_map(vento_video_frame *frame, struct vento_video_picture *out);
+void vento_video_frame_unmap(vento_video_frame *frame);
+
+// Let go of a held picture, from any thread: its surface is the decoder's
+// to decode into again once nothing else holds it. The decoder may be gone
+// already.
+void vento_video_frame_free(vento_video_frame *frame);
 
 // libavcodec's words for an error code.
 void vento_video_strerror(int error, char *buf, size_t len);

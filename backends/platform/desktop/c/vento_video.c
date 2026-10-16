@@ -63,6 +63,18 @@
 //   (and the picture size's: at 128x128 the image was), so each decoder
 //   measures both, on alternate pictures (the map, a read of every plane,
 //   the unmap), and maps the faster way from then on.
+// - **Held, where the caller draws on the GPU.** Asked to `hold`, a VAAPI
+//   picture is neither mapped nor copied: the decoder waits for the surface
+//   (`vaSyncSurface`, which a map would have waited for too) and hands out a
+//   reference to the frame, which keeps the surface out of the decoder's
+//   reach until the caller lets go. The decoder's pool of surfaces grows
+//   rather than waits (libavcodec's VAAPI pools have no fixed size since
+//   VA-API 1.0), so a held picture costs a surface of memory and never a
+//   picture. Exported, it is `vaExportSurfaceHandle`'s DMA-BUFs, a layer a
+//   plane (`R8` and `GR88` for NV12), which FFmpeg's own DRM mapping would
+//   need libdrm for; mapped after all, it is the same `av_hwframe_map` a
+//   decode makes. Only NV12 and P010: XV30 has no two-layer form the caller
+//   could convert the same way, and Vulkan's images are not DMA-BUFs here.
 // - **A failure is a fallback, not an error.** A hardware decode or map that
 //   fails mid-stream closes the decoder, opens the software one in its place
 //   within the same handle, gives it the packet again and says so
@@ -71,18 +83,29 @@
 
 #include "vento_video.h"
 
+#include <errno.h>
+#include <fcntl.h>
 #include <pthread.h>
 #include <stdarg.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #include <libavcodec/avcodec.h>
 #include <libavutil/error.h>
 #include <libavutil/hwcontext.h>
 #include <libavutil/hwcontext_vulkan.h>
 #include <libavutil/pixdesc.h>
+
+// libva's declarations as `va_shim.c` defines them, hidden: the two calls
+// made here, to sync and export a held picture's surface, are the shim's.
+#pragma GCC visibility push(hidden)
+#include <libavutil/hwcontext_vaapi.h>
+#include <va/va_drmcommon.h>
+#pragma GCC visibility pop
 
 #include "va_shim.h"
 #include "vk_device.h"
@@ -142,10 +165,30 @@ struct vento_video {
     // "; " between them, and then this one's (from `said` on), if any.
     char reason[256];
     size_t said;
+    // The surfaces the last held picture came from, referenced so that their
+    // address is not another set's while the number is in use, and their
+    // number (see `pools`).
+    AVBufferRef *pool_ref;
+    uint64_t pool;
 };
+
+// A held picture: the decoder's frame, referenced, and a mapping of it.
+struct vento_video_frame {
+    AVFrame *frame;
+    AVFrame *mapped;
+};
+
+// The last number given to a set of surfaces, in the whole process: a
+// holder's cache of what it imported is keyed by it, and two decoders' sets
+// can have surfaces of the same id.
+static atomic_uint_fast64_t pools;
 
 size_t vento_video_picture_size(void) {
     return sizeof(struct vento_video_picture);
+}
+
+size_t vento_video_export_size(void) {
+    return sizeof(struct vento_video_export);
 }
 
 // The software decoder for the codec, or (`hardware`) the one libavcodec
@@ -456,6 +499,7 @@ void vento_video_close(vento_video *video) {
     av_frame_free(&video->frame);
     av_packet_free(&video->packet);
     avcodec_free_context(&video->context);
+    av_buffer_unref(&video->pool_ref);
     free(video);
 }
 
@@ -537,20 +581,25 @@ void vento_video_fail_next(vento_video *video) {
 // hands back), hardware surfaces, packed formats but that one, or chroma
 // subsampled other than 4:2:0, 4:2:2, 4:4:0 or 4:4:4. An alpha plane after
 // the three is not read.
+// The frame's colour, as `describe` and an export say it.
+static void colour(const AVFrame *f, int32_t *bt709, int32_t *full_range) {
+    // BT.601 for BT.601, and for a stream that says nothing — which is what
+    // the encoders met so far produce untagged, and what libavcodec's own
+    // scaler takes silence for — and BT.709 for anything else that names
+    // itself.
+    *bt709 = !(f->colorspace == AVCOL_SPC_BT470BG || f->colorspace == AVCOL_SPC_SMPTE170M ||
+               f->colorspace == AVCOL_SPC_UNSPECIFIED);
+    // The YUVJ formats are full range whatever the frame's range says.
+    *full_range = f->color_range == AVCOL_RANGE_JPEG || f->format == AV_PIX_FMT_YUVJ420P ||
+                  f->format == AV_PIX_FMT_YUVJ422P || f->format == AV_PIX_FMT_YUVJ444P;
+}
+
 static int describe(const AVFrame *f, struct vento_video_picture *out) {
     const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get((enum AVPixelFormat)f->format);
     if (!desc || f->width <= 0 || f->height <= 0)
         return 0;
 
-    // BT.601 for BT.601, and for a stream that says nothing — which is what
-    // the encoders met so far produce untagged, and what libavcodec's own
-    // scaler takes silence for — and BT.709 for anything else that names
-    // itself.
-    out->bt709 = !(f->colorspace == AVCOL_SPC_BT470BG || f->colorspace == AVCOL_SPC_SMPTE170M ||
-                   f->colorspace == AVCOL_SPC_UNSPECIFIED);
-    // The YUVJ formats are full range whatever the frame's range says.
-    out->full_range = f->color_range == AVCOL_RANGE_JPEG || f->format == AV_PIX_FMT_YUVJ420P ||
-                      f->format == AV_PIX_FMT_YUVJ422P || f->format == AV_PIX_FMT_YUVJ444P;
+    colour(f, &out->bt709, &out->full_range);
     out->width = f->width;
     out->height = f->height;
 
@@ -675,9 +724,54 @@ static uint64_t read_through(const AVFrame *f) {
     return now_us() - start;
 }
 
+// Whether a picture on the device can be held: VAAPI's, in a format whose
+// layers the caller converts (see the header).
+static int holdable(const vento_video *video, const AVFrame *f) {
+    if (video->method != VENTO_VIDEO_HW_VAAPI || !f->hw_frames_ctx)
+        return 0;
+    enum AVPixelFormat sw = ((const AVHWFramesContext *)f->hw_frames_ctx->data)->sw_format;
+    return sw == AV_PIX_FMT_NV12 || sw == AV_PIX_FMT_P010LE;
+}
+
+// The VAAPI picture handed out in `out->held`, once the GPU has decoded it;
+// a libavcodec error where the wait fails, which is the device's.
+static int hold_picture(vento_video *video, const AVFrame *f, struct vento_video_picture *out) {
+    const AVHWFramesContext *frames = (const AVHWFramesContext *)f->hw_frames_ctx->data;
+    const AVVAAPIDeviceContext *device = frames->device_ctx->hwctx;
+    VASurfaceID surface = (VASurfaceID)(uintptr_t)f->data[3];
+    // Decoded into memory before anybody is told it is there: the caller's
+    // GPU reads the DMA-BUF with no fence of the decoder's to wait on.
+    VAStatus synced = vaSyncSurface(device->display, surface);
+    if (synced != VA_STATUS_SUCCESS)
+        return AVERROR(EIO);
+    if (!video->pool_ref || video->pool_ref->data != f->hw_frames_ctx->data) {
+        av_buffer_unref(&video->pool_ref);
+        video->pool_ref = av_buffer_ref(f->hw_frames_ctx);
+        if (!video->pool_ref)
+            return AVERROR(ENOMEM);
+        video->pool = atomic_fetch_add(&pools, 1) + 1;
+    }
+    vento_video_frame *held = calloc(1, sizeof(*held));
+    if (!held)
+        return AVERROR(ENOMEM);
+    held->frame = av_frame_clone(f);
+    if (!held->frame) {
+        free(held);
+        return AVERROR(ENOMEM);
+    }
+    out->held = held;
+    out->pool = video->pool;
+    out->surface = surface;
+    out->width = f->width;
+    out->height = f->height;
+    out->depth = frames->sw_format == AV_PIX_FMT_P010LE ? 10 : 8;
+    colour(f, &out->bt709, &out->full_range);
+    return 0;
+}
+
 // One decode of the packet into `out`: a status of the header's, or
 // HARDWARE_FAILED with the reason kept.
-static int decode_packet(vento_video *video, const uint8_t *data, size_t len,
+static int decode_packet(vento_video *video, const uint8_t *data, size_t len, int hold,
                          struct vento_video_picture *out, char *format, size_t format_len) {
     // libavcodec copies a packet it does not own into one with the padding
     // its bitstream readers need, so `data` is lent rather than kept.
@@ -723,6 +817,22 @@ static int decode_packet(vento_video *video, const uint8_t *data, size_t len,
         return VENTO_VIDEO_NONE;
 
     const AVFrame *picture = video->frame;
+    if (hold && video->hw_format != AV_PIX_FMT_NONE && picture->format == video->hw_format &&
+        holdable(video, picture)) {
+        uint64_t waiting = now_us();
+        int held = video->fail_next ? AVERROR(EIO) : hold_picture(video, picture, out);
+        video->fail_next = 0;
+        out->map_us = (uint32_t)(now_us() - waiting);
+        if (held < 0) {
+            av_frame_unref(video->frame);
+            return hardware_failed(video, "sync failed", held);
+        }
+        video->hw_pictures++;
+        out->hardware = 3;
+        video->reason[0] = '\0';
+        video->said = 0;
+        return VENTO_VIDEO_PICTURE;
+    }
     if (video->hw_format != AV_PIX_FMT_NONE && picture->format == video->hw_format) {
         uint64_t mapping = now_us();
         int read = 0;
@@ -801,7 +911,7 @@ static int decode_packet(vento_video *video, const uint8_t *data, size_t len,
     return VENTO_VIDEO_PICTURE;
 }
 
-int vento_video_decode(vento_video *video, const uint8_t *data, size_t len,
+int vento_video_decode(vento_video *video, const uint8_t *data, size_t len, int hold,
                        struct vento_video_picture *out, char *format, size_t format_len) {
     uint64_t start = now_us();
     memset(out, 0, sizeof(*out));
@@ -825,7 +935,7 @@ int vento_video_decode(vento_video *video, const uint8_t *data, size_t len,
         out->error = AVERROR(EINVAL);
         return VENTO_VIDEO_REFUSED;
     }
-    int status = decode_packet(video, data, len, out, format, format_len);
+    int status = decode_packet(video, data, len, hold, out, format, format_len);
     // At most once a device asked for and once more for software.
     for (int changes = 0; status == HARDWARE_FAILED && changes <= video->chained; changes++) {
         // Another decoder in the hardware one's place, given the same
@@ -848,9 +958,111 @@ int vento_video_decode(vento_video *video, const uint8_t *data, size_t len,
             out->error = opened;
             status = VENTO_VIDEO_REFUSED;
         } else {
-            status = decode_packet(video, data, len, out, format, format_len);
+            status = decode_packet(video, data, len, hold, out, format, format_len);
         }
     }
     out->decode_us = (uint32_t)(now_us() - start);
     return status;
+}
+
+int vento_video_frame_export(vento_video_frame *frame, struct vento_video_export *out,
+                             char *error, size_t error_len) {
+    memset(out, 0, sizeof(*out));
+    if (error_len > 0)
+        error[0] = '\0';
+    const AVFrame *f = frame->frame;
+    const AVHWFramesContext *frames = (const AVHWFramesContext *)f->hw_frames_ctx->data;
+    const AVVAAPIDeviceContext *device = frames->device_ctx->hwctx;
+    VASurfaceID surface = (VASurfaceID)(uintptr_t)f->data[3];
+    VADRMPRIMESurfaceDescriptor d;
+    memset(&d, 0, sizeof(d));
+    VAStatus exported = vaExportSurfaceHandle(
+        device->display, surface, VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2,
+        VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS, &d);
+    if (exported != VA_STATUS_SUCCESS) {
+        snprintf(error, error_len, "the surface could not be exported (%s)",
+                 vaErrorStr(exported));
+        return AVERROR(EIO);
+    }
+    int made = 0;
+    if (d.num_layers != 2 || d.num_objects < 1 || d.num_objects > 4) {
+        snprintf(error, error_len, "the surface came out as %u layers in %u objects",
+                 d.num_layers, d.num_objects);
+        made = AVERROR(ENOSYS);
+    }
+    for (uint32_t i = 0; made == 0 && i < 2; i++) {
+        uint32_t object = d.layers[i].object_index[0];
+        if (d.layers[i].num_planes != 1 || object >= d.num_objects) {
+            snprintf(error, error_len, "layer %u has %u planes", i, d.layers[i].num_planes);
+            made = AVERROR(ENOSYS);
+            break;
+        }
+        // A descriptor per layer, though both are usually the one object:
+        // each is imported on its own, and an import takes its descriptor.
+        int fd = fcntl(d.objects[object].fd, F_DUPFD_CLOEXEC, 0);
+        if (fd < 0) {
+            snprintf(error, error_len, "the descriptor could not be duplicated (%s)",
+                     strerror(errno));
+            made = AVERROR(errno);
+            break;
+        }
+        // Y at the surface's size, and the chroma at half of it either way,
+        // which is 4:2:0 for both formats held.
+        out->layer[i] = (struct vento_video_layer){
+            .fd = fd,
+            .fourcc = d.layers[i].drm_format,
+            .modifier = d.objects[object].drm_format_modifier,
+            .offset = d.layers[i].offset[0],
+            .pitch = d.layers[i].pitch[0],
+            .width = i == 0 ? d.width : (d.width + 1) / 2,
+            .height = i == 0 ? d.height : (d.height + 1) / 2,
+        };
+        out->layers = (int32_t)i + 1;
+    }
+    for (uint32_t i = 0; i < d.num_objects && i < 4; i++)
+        close(d.objects[i].fd);
+    if (made < 0) {
+        for (int32_t i = 0; i < out->layers; i++)
+            close(out->layer[i].fd);
+        out->layers = 0;
+        return made;
+    }
+    colour(f, &out->bt709, &out->full_range);
+    return 0;
+}
+
+int vento_video_frame_map(vento_video_frame *frame, struct vento_video_picture *out) {
+    memset(out, 0, sizeof(*out));
+    if (!frame->mapped && !(frame->mapped = av_frame_alloc()))
+        return 0;
+    av_frame_unref(frame->mapped);
+    // Into the surface's own format, as a decode maps it; or copied, where
+    // the driver will not map it.
+    frame->mapped->format = AV_PIX_FMT_NONE;
+    int read = av_hwframe_map(frame->mapped, frame->frame, AV_HWFRAME_MAP_READ);
+    if (read < 0) {
+        av_frame_unref(frame->mapped);
+        read = av_hwframe_transfer_data(frame->mapped, frame->frame, 0);
+        if (read >= 0)
+            read = av_frame_copy_props(frame->mapped, frame->frame);
+    }
+    if (read < 0 || !describe(frame->mapped, out)) {
+        av_frame_unref(frame->mapped);
+        return 0;
+    }
+    out->hardware = 1;
+    return 1;
+}
+
+void vento_video_frame_unmap(vento_video_frame *frame) {
+    if (frame->mapped)
+        av_frame_unref(frame->mapped);
+}
+
+void vento_video_frame_free(vento_video_frame *frame) {
+    if (!frame)
+        return;
+    av_frame_free(&frame->mapped);
+    av_frame_free(&frame->frame);
+    free(frame);
 }

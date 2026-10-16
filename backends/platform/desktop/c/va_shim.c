@@ -6,7 +6,8 @@
 //
 // FFmpeg's VAAPI device and its hardware decoders call the libva functions
 // defined below (and its Vulkan device one of them, deriving itself from a
-// VAAPI one), and nothing else of libva or libva-drm. Linked against the
+// VAAPI one), and nothing else of libva or libva-drm; `vento_video.c` calls
+// two of the same, to wait for a held picture's surface and export it. Linked against the
 // real libraries, every vento would need libva installed just to start, and
 // would load it into every process, though hardware decoding is off unless it
 // is asked for and most sessions never touch it. So each function is defined
