@@ -88,8 +88,10 @@ pub struct Connect<'a> {
     pub client_name: &'a str,
     pub platform: Platform,
     /// What decodes a protocol's video, for the one whose picture is video
-    /// (RustDesk): the phone's MediaCodec, or libavcodec on a desktop. `None`
-    /// is a session with no picture, reported as such.
+    /// (RustDesk) and the one that has a video encoding (TigerVNC's H.264,
+    /// through `vento/video.h`): the phone's MediaCodec, or libavcodec on a
+    /// desktop. `None` is a RustDesk session with no picture, reported as
+    /// such, and a TigerVNC one that never offers H.264.
     pub decoders: Option<Arc<dyn Decoders>>,
 }
 
@@ -104,9 +106,10 @@ impl Connect<'_> {
     }
 
     /// How video may be decoded, as the [`decoders`](Connect::decoders) say
-    /// at connect: what a library with decoders of its own is handed, where
-    /// a backend that decodes through `decoders` asks them instead, and
-    /// again whenever it makes a decoder.
+    /// at connect: what a library with decoders of its own would be handed
+    /// (none is yet), where a backend that decodes through `decoders` —
+    /// RustDesk, TigerVNC — asks them instead, and again whenever it makes a
+    /// decoder.
     pub fn hardware(&self) -> Hardware {
         self.decoders.as_ref().map(|d| d.hardware()).unwrap_or_default()
     }

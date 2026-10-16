@@ -266,7 +266,17 @@ impl Decoders for FFmpeg {
         width: usize,
         height: usize,
     ) -> Option<Box<dyn common::video::Decoder>> {
-        Decoder::with_hardware(codec, width, height, self.hardware())
+        self.decoder_as(codec, width, height, self.hardware())
+    }
+
+    fn decoder_as(
+        &self,
+        codec: Codec,
+        width: usize,
+        height: usize,
+        hardware: Hardware,
+    ) -> Option<Box<dyn common::video::Decoder>> {
+        Decoder::with_hardware(codec, width, height, hardware)
             .map(|d| Box::new(d) as Box<dyn common::video::Decoder>)
     }
 

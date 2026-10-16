@@ -118,7 +118,11 @@ impl Hardware {
 /// converted in place under a lock the drawing thread wants.
 ///
 /// Not `Send`: a decoder is made, fed and dropped on the protocol thread, and
-/// MediaCodec's is a raw handle nothing has promised may move.
+/// MediaCodec's is a raw handle nothing has promised may move. The one caller
+/// that moves one anyway is TigerVNC's, whose library decodes each rectangle
+/// on whichever of its worker threads is free: one call at a time, never two
+/// at once, and that promise is written down where it is made
+/// (`session::c::video`).
 pub trait Decoder {
     /// True when a frame arrived, with the rows and columns it changed added to
     /// `changed`. `out` is `width * height` words, row-major, `R, G, B, A` in
@@ -185,6 +189,23 @@ pub trait Decoders: Send + Sync {
     /// which is a session with no picture and is reported as such rather than
     /// retried.
     fn decoder(&self, codec: Codec, width: usize, height: usize) -> Option<Box<dyn Decoder>>;
+
+    /// A decoder as [`decoder`](Decoders::decoder) makes one, but decoding as
+    /// `hardware` says rather than as these decoders do now: what a caller
+    /// that holds many decoders at once (TigerVNC keeps up to 64) uses to
+    /// keep all but a few of them off the GPU. A platform whose decoders take
+    /// no such choice — the phone's MediaCodec, which is whatever the phone
+    /// has — makes the one it always makes.
+    fn decoder_as(
+        &self,
+        codec: Codec,
+        width: usize,
+        height: usize,
+        hardware: Hardware,
+    ) -> Option<Box<dyn Decoder>> {
+        let _ = hardware;
+        self.decoder(codec, width, height)
+    }
 
     /// How a decoder made now would decode. It can change under a running
     /// session, which is how a session is told to switch: one whose decoder
