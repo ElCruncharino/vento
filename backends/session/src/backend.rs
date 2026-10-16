@@ -380,6 +380,16 @@ pub trait Backend: Send + Sync {
     /// `None` while there is nothing to count.
     fn traffic(&self) -> Option<Traffic>;
 
+    /// How the picture is being decoded, for a debug overlay, where the
+    /// session decodes video through the platform's
+    /// [`Decoders`](common::video::Decoders): the decoder's own
+    /// [`status`](common::video::Decoder::status) line, as of the last
+    /// picture or so. `None` for a protocol whose picture is not video, and
+    /// before the first frame.
+    fn decoder_status(&self) -> Option<String> {
+        None
+    }
+
     /// Copy the desktop rectangle `(x, y, width, height)` into `dst` at
     /// `(dst_x, dst_y)`, 1:1, where `dst` is rows of `R, G, B, A` bytes
     /// `dst_stride` bytes apart. The rest of `dst` is left as it was, which

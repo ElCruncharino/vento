@@ -60,6 +60,53 @@ impl Codec {
     }
 }
 
+/// How a desktop's decoders may decode: on the GPU or not, and through which
+/// API. The person's choice (a setting, `--hw-decode`), off unless asked for.
+///
+/// Here rather than beside the desktop's decoder because it is what a
+/// session is started with, whichever backend it is: RustDesk's picture is
+/// decoded by the platform's [`Decoders`], which carry it, and a library with
+/// decoders of its own is handed it at connect. A phone's MediaCodec is
+/// whatever the phone has and takes no such choice; its [`Decoders`] say
+/// `Off`, which to the phone means nothing more than "nothing was asked".
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Hardware {
+    /// Software, and nothing of a device opened or loaded: the default.
+    #[default]
+    Off,
+    /// VAAPI, through libva, on the first DRM render node.
+    Vaapi,
+    /// Vulkan Video, through libvulkan, on the first Vulkan device.
+    Vulkan,
+    /// VAAPI where there is a device for it, else Vulkan.
+    Auto,
+}
+
+impl Hardware {
+    pub const ALL: [Hardware; 4] = [
+        Hardware::Off,
+        Hardware::Vaapi,
+        Hardware::Vulkan,
+        Hardware::Auto,
+    ];
+
+    /// The name a setting or a command line uses: "off", "vaapi", "vulkan"
+    /// or "auto".
+    pub fn name(self) -> &'static str {
+        match self {
+            Hardware::Off => "off",
+            Hardware::Vaapi => "vaapi",
+            Hardware::Vulkan => "vulkan",
+            Hardware::Auto => "auto",
+        }
+    }
+
+    /// The one [`name`](Self::name) names.
+    pub fn from_name(name: &str) -> Option<Hardware> {
+        Hardware::ALL.into_iter().find(|h| h.name() == name)
+    }
+}
+
 /// One decoder, for one codec at one size.
 ///
 /// A frame goes in and what moved in it comes out into `out`, which is the
@@ -135,6 +182,14 @@ pub trait Decoders: Send + Sync {
     /// which is a session with no picture and is reported as such rather than
     /// retried.
     fn decoder(&self, codec: Codec, width: usize, height: usize) -> Option<Box<dyn Decoder>>;
+
+    /// How a decoder made now would decode. It can change under a running
+    /// session, which is how a session is told to switch: one whose decoder
+    /// was made under another answer makes it again. Cheap enough to ask
+    /// every frame.
+    fn hardware(&self) -> Hardware {
+        Hardware::Off
+    }
 }
 
 /// Nothing decodes: for a test of a protocol that is not about its picture, and

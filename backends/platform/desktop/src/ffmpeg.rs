@@ -72,6 +72,9 @@ use std::sync::atomic::{AtomicU8, Ordering};
 
 use common::video::convert::{Frame, Plane};
 use common::video::{Changes, Codec, Decoders, Output};
+/// How a decoder may decode, which whoever starts a session asks for (a
+/// setting, `--hw-decode`): `common`'s, since it is handed to every backend.
+pub use common::video::Hardware;
 
 /// `c/vento_video.h`, declared by hand: the whole of what this crate calls.
 mod sys {
@@ -169,61 +172,22 @@ mod sys {
     }
 }
 
-/// How a decoder may decode: `vento_video_hardware`, as whoever starts a
-/// session asks for it (a setting, `--hw-decode`).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Hardware {
-    /// Software, and nothing of a device opened or loaded: the default.
-    #[default]
-    Off,
-    /// VAAPI, through libva, on the first DRM render node.
-    Vaapi,
-    /// Vulkan Video, through libvulkan, on the first Vulkan device.
-    Vulkan,
-    /// VAAPI where there is a device for it, else Vulkan.
-    Auto,
+/// How a decoder may decode, as `vento_video_hardware` numbers it.
+fn hardware_number(hardware: Hardware) -> c_int {
+    match hardware {
+        Hardware::Off => 0,
+        Hardware::Vaapi => 1,
+        Hardware::Vulkan => 2,
+        Hardware::Auto => 3,
+    }
 }
 
-impl Hardware {
-    pub const ALL: [Hardware; 4] = [
-        Hardware::Off,
-        Hardware::Vaapi,
-        Hardware::Vulkan,
-        Hardware::Auto,
-    ];
-
-    /// The name a setting or a command line uses: "off", "vaapi", "vulkan"
-    /// or "auto".
-    pub fn name(self) -> &'static str {
-        match self {
-            Hardware::Off => "off",
-            Hardware::Vaapi => "vaapi",
-            Hardware::Vulkan => "vulkan",
-            Hardware::Auto => "auto",
-        }
-    }
-
-    /// The one [`name`](Self::name) names.
-    pub fn from_name(name: &str) -> Option<Hardware> {
-        Hardware::ALL.into_iter().find(|h| h.name() == name)
-    }
-
-    fn number(self) -> c_int {
-        match self {
-            Hardware::Off => 0,
-            Hardware::Vaapi => 1,
-            Hardware::Vulkan => 2,
-            Hardware::Auto => 3,
-        }
-    }
-
-    fn from_number(number: c_int) -> Hardware {
-        match number {
-            1 => Hardware::Vaapi,
-            2 => Hardware::Vulkan,
-            3 => Hardware::Auto,
-            _ => Hardware::Off,
-        }
+fn hardware_of(number: c_int) -> Hardware {
+    match number {
+        1 => Hardware::Vaapi,
+        2 => Hardware::Vulkan,
+        3 => Hardware::Auto,
+        _ => Hardware::Off,
     }
 }
 
@@ -232,7 +196,7 @@ impl Hardware {
 /// and failed. Every decoder that asks shares the one device, and it stays
 /// open until the process ends; with hardware off it is never asked for.
 pub fn device_opened(hardware: Hardware) -> Option<bool> {
-    match unsafe { sys::vento_video_device_state(hardware.number()) } {
+    match unsafe { sys::vento_video_device_state(hardware_number(hardware)) } {
         0 => None,
         state => Some(state > 0),
     }
@@ -244,7 +208,7 @@ pub fn device_opened(hardware: Hardware) -> Option<bool> {
 /// The mode can be changed under a running session ([`set_hardware`]): a
 /// decoder made from then on decodes the new way, and one already made goes on
 /// as it was, so a session that wants the change at once makes its decoder
-/// again.
+/// again — which it knows to do from [`Decoders::hardware`], the same answer.
 ///
 /// [`set_hardware`]: FFmpeg::set_hardware
 #[derive(Default)]
@@ -293,6 +257,10 @@ impl Decoders for FFmpeg {
     ) -> Option<Box<dyn common::video::Decoder>> {
         Decoder::with_hardware(codec, width, height, self.hardware())
             .map(|d| Box::new(d) as Box<dyn common::video::Decoder>)
+    }
+
+    fn hardware(&self) -> Hardware {
+        FFmpeg::hardware(self)
     }
 }
 
@@ -370,7 +338,7 @@ impl Decoder {
                 number(codec),
                 c_int::try_from(width).unwrap_or(0),
                 c_int::try_from(height).unwrap_or(0),
-                hardware.number(),
+                hardware_number(hardware),
                 error.as_mut_ptr(),
                 error.len(),
             )
@@ -434,7 +402,7 @@ impl Decoder {
     ///
     /// [`Decoder::hardware`]: common::video::Decoder::hardware
     pub fn method(&self) -> Hardware {
-        Hardware::from_number(unsafe { sys::vento_video_method(self.video) })
+        hardware_of(unsafe { sys::vento_video_method(self.video) })
     }
 
     /// Why the decoder is decoding in software though hardware was asked for
