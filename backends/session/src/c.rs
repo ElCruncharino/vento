@@ -192,6 +192,23 @@ unsafe fn table_size(ops: *const ffi::vento_session_ops) -> usize {
 const BASE_TABLE: usize =
     std::mem::offset_of!(ffi::vento_session_ops, destroy) + std::mem::size_of::<Option<unsafe extern "C" fn()>>();
 
+/// One of the table's optional members — those after `destroy` — or `None`
+/// where the backend's table ends before it, which is a table from an older
+/// header, as well as where the backend left it NULL. The member is not read
+/// at all unless the table reaches it.
+macro_rules! optional {
+    ($ops:expr, $member:ident) => {{
+        let ops: *const ffi::vento_session_ops = $ops;
+        let end = std::mem::offset_of!(ffi::vento_session_ops, $member)
+            + std::mem::size_of::<Option<unsafe extern "C" fn()>>();
+        if unsafe { table_size(ops) } >= end {
+            unsafe { (*ops).$member }
+        } else {
+            None
+        }
+    }};
+}
+
 /// A started session and the vtable it is reached through. The raw pointers
 /// are the C library's and are safe to touch from any thread, as the header
 /// says of every `vento_session_*` call.
@@ -258,6 +275,31 @@ impl CSession {
 
     fn request_desktop_size(&self, width: i32, height: i32) {
         unsafe { ((*self.ops()).request_desktop_size.unwrap())(self.session, width, height) }
+    }
+
+    /// The layout with the far end's own ids, or `None` where the backend
+    /// has none and [`monitors`](CSession::monitors) numbered by index is the
+    /// layout.
+    fn screens(&self) -> Option<Vec<Monitor>> {
+        let screens = optional!(self.ops(), screens)?;
+        let mut flat = vec![0i32; 5 * ffi::VENTO_MAX_MONITORS as usize];
+        let n = unsafe { screens(self.session, flat.as_mut_ptr()) };
+        flat.truncate((n.max(0) as usize * 5).min(flat.len()));
+        Some(Monitor::from_flat5(&flat))
+    }
+
+    /// Whether the backend can send a layout at all, whatever the far end
+    /// says to one.
+    fn has_layout(&self) -> bool {
+        optional!(self.ops(), request_layout).is_some()
+    }
+
+    fn request_layout(&self, width: i32, height: i32, screens: &[Monitor]) {
+        if let Some(request_layout) = optional!(self.ops(), request_layout) {
+            let flat = Monitor::flat5(screens);
+            let n = screens.len().min(c_int::MAX as usize) as c_int;
+            unsafe { request_layout(self.session, width, height, flat.as_ptr(), n) }
+        }
     }
 
     fn clipboard(&self, text: &str) {
@@ -506,6 +548,18 @@ impl Backend for CBackend {
             .request_desktop_size(width.min(i32::MAX as u32) as i32, height.min(i32::MAX as u32) as i32);
     }
 
+    fn request_layout(&self, width: u32, height: u32, screens: &[Monitor]) {
+        if self.session.has_layout() {
+            self.session.request_layout(
+                width.min(i32::MAX as u32) as i32,
+                height.min(i32::MAX as u32) as i32,
+                screens,
+            );
+        } else if screens.len() == 1 {
+            self.request_desktop_size(width, height);
+        }
+    }
+
     fn set_option(&self, key: &str, value: &str) {
         let mut options = self.options.lock().unwrap();
         options.set(key, value);
@@ -518,14 +572,23 @@ impl Backend for CBackend {
     fn facts(&self) -> Facts {
         let (width, height) = self.mailbox.size();
         let connected = self.mailbox.connected();
+        let monitors = self
+            .session
+            .screens()
+            .unwrap_or_else(|| Monitor::from_flat(&self.session.monitors()));
+        // A backend that sends layouts says whether the far end takes one,
+        // whatever its number of screens; a single size is still one screen
+        // over the lot, which would merge several, so that is not offered.
+        let layout = self.session.has_layout();
+        let takes = connected && self.session.can_resize();
         Facts {
             width,
             height,
-            monitors: Monitor::from_flat(&self.session.monitors()),
+            can_resize: takes && (!layout || monitors.len() <= 1),
+            can_layout: takes && layout,
+            monitors,
             displays: Vec::new(),
             display: -1,
-            can_resize: connected && self.session.can_resize(),
-            can_layout: false,
             view_only: self.options.lock().unwrap().bool("ViewOnly"),
             pointer_relative: false,
         }
@@ -653,6 +716,44 @@ pub fn start(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    unsafe extern "C" fn no_layout(_: *mut ffi::vento_session, _: c_int, _: c_int, _: *const i32, _: c_int) {}
+
+    /// A table in a session, with nothing else behind it: only the table is
+    /// read by what is tested.
+    fn with_table<T>(ops: &ffi::vento_session_ops, f: impl FnOnce(&CSession) -> T) -> T {
+        let mut raw = ffi::vento_session { ops };
+        let session = CSession {
+            session: &mut raw,
+            user: std::ptr::null(),
+            destroyed: AtomicBool::new(true),
+        };
+        f(&session)
+    }
+
+    #[test]
+    fn a_member_past_the_tables_size_is_not_there() {
+        let full = ffi::vento_session_ops {
+            size: std::mem::size_of::<ffi::vento_session_ops>(),
+            request_layout: Some(no_layout),
+            ..Default::default()
+        };
+        assert!(with_table(&full, |s| s.has_layout()));
+        // The same member, in a table that says it ends before it: an older
+        // backend's, whose bytes there are something else.
+        let old = ffi::vento_session_ops {
+            size: BASE_TABLE,
+            ..full
+        };
+        assert!(!with_table(&old, |s| s.has_layout()));
+        // And in range but NULL, which is a backend saying no.
+        let none = ffi::vento_session_ops {
+            request_layout: None,
+            ..full
+        };
+        assert!(!with_table(&none, |s| s.has_layout()));
+        assert!(with_table(&none, |s| s.screens()).is_none());
+    }
 
     #[test]
     fn a_region_is_passed_on_only_when_the_destination_holds_it() {

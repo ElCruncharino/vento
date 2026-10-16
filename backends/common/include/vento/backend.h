@@ -266,6 +266,10 @@ typedef struct vento_session_ops {
     void (*release_all_keys)(vento_session *s);
     void (*focus)(vento_session *s, bool focused);
     void (*view_only)(vento_session *s, bool view_only);
+    /* Whether the far end takes a new desktop size now. A session with
+       `request_layout` answers for a layout of any number of screens; one
+       without it answers for one screen covering the desktop, and says no
+       over a desktop of several, which that would merge into one. */
     bool (*can_resize)(vento_session *s);
     /* The far end's screen layout, four ints a screen — x, y, width, height —
        into a buffer of `4 * VENTO_MAX_MONITORS`; returns how many screens,
@@ -308,7 +312,33 @@ typedef struct vento_session_ops {
     /* Ends the session, waits for its thread, and frees it. Nothing may use
        the session afterwards. */
     void (*destroy)(vento_session *s);
+
+    /* Optional from here: read only where `size` reaches the member (see
+       VENTO_SESSION_HAS), and NULL where the backend has nothing to offer. */
+
+    /* The far end's layout as `monitors` has it, in the same order, with the
+       far end's own name for each screen in front: five ints a screen — id,
+       x, y, width, height, the id's 32 bits as an int — into a buffer of
+       `5 * VENTO_MAX_MONITORS`. Returns how many. NULL where the protocol
+       does not number its screens, and a screen's id is then its index. */
+    int (*screens)(vento_session *s, int32_t *out);
+    /* Ask for a desktop `width × height` divided into `n` screens, five ints
+       each as `screens` gives them. An id the far end has is that screen,
+       moved or resized, its flags kept; one it does not have, or one already
+       used earlier in the list, is a new screen, which the session numbers
+       itself. A request, answered by `desktop_size` and a new layout, or by
+       nothing at all; one the session can see is not a valid layout is not
+       sent. NULL where the protocol cannot say where screens go. */
+    void (*request_layout)(vento_session *s, int width, int height, const int32_t *screens,
+                           int n);
 } vento_session_ops;
+
+/* Whether `s`'s table has `member` and it is not NULL: the table's `size`
+   reaches past it, so that it was there in the header the backend was built
+   against, and the backend filled it in. */
+#define VENTO_SESSION_HAS(s, member)                                                         \
+    ((s)->ops->size >= offsetof(vento_session_ops, member) + sizeof((s)->ops->member)        \
+     && (s)->ops->member != NULL)
 
 /* The first member of every backend's own session struct, so that a pointer to
    one is a pointer to this. */
@@ -390,6 +420,21 @@ static inline void vento_session_disconnect(vento_session *s) {
 
 static inline void vento_session_destroy(vento_session *s) {
     s->ops->destroy(s);
+}
+
+/* -1 where the session has no ids of its own, and `monitors` is the layout. */
+static inline int vento_session_screens(vento_session *s, int32_t *out) {
+    return VENTO_SESSION_HAS(s, screens) ? s->ops->screens(s, out) : -1;
+}
+
+/* False, and nothing sent, where the session cannot send a layout. */
+static inline bool vento_session_request_layout(vento_session *s, int width, int height,
+                                                const int32_t *screens, int n) {
+    if (!VENTO_SESSION_HAS(s, request_layout)) {
+        return false;
+    }
+    s->ops->request_layout(s, width, height, screens, n);
+    return true;
 }
 
 #ifdef __cplusplus
