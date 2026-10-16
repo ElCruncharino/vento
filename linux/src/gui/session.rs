@@ -1133,7 +1133,7 @@ impl Session {
         self.release_keys();
         for pane in &mut self.panes {
             if pane.id == host.viewport {
-                pane.native.reset(host.window);
+                pane.close(ctx, host.window);
             }
         }
         if self.captured() {

@@ -398,6 +398,11 @@ impl App {
             style.animation_time = 0.0;
             style.scroll_animation = egui::style::ScrollAnimation::none();
         });
+        // Every window but the main one is a viewport of egui's that this
+        // loop draws itself, in a window it made: egui is never to draw one
+        // as a window inside another, which it does by default for an
+        // integration it believes cannot open windows.
+        self.egui.set_embed_viewports(false);
         {
             // egui's repaint requests become a deadline the loop waits for,
             // one per viewport; the proxy wakes it in case it is already
@@ -694,6 +699,12 @@ impl App {
         // for: the focused one, where a Ctrl+V asked for it, or the main
         // window when none of ours has the focus.
         let takes_clipboard = focused || (self.focused.is_none() && viewport == ViewportId::ROOT);
+        // The other windows' viewports, declared in the main window's pass.
+        let children: Vec<ViewportId> = if viewport == ViewportId::ROOT {
+            self.windows.values().map(|s| s.viewport).filter(|v| *v != ViewportId::ROOT).collect()
+        } else {
+            Vec::new()
+        };
         let (Some(gpu), Some(surface)) = (self.gpu.as_mut(), self.windows.get_mut(&id)) else {
             return;
         };
@@ -736,14 +747,28 @@ impl App {
         };
         let egui = self.egui.clone();
         let settings = &mut self.settings;
-        let mut output = egui.run_ui(raw_input, |ui| match &mut self.screen {
-            Screen::Dialog(dialog) => {
-                next = dialog.ui(ui, settings);
+        let mut output = egui.run_ui(raw_input, |ui| {
+            // egui keeps a viewport — its input, its memory of areas and of
+            // what the pointer is on — only while the root's pass says it is
+            // still wanted, and forgets the rest when that pass ends. Every
+            // other window is said to be here, with a callback egui is never
+            // to call (its pass is run from this loop, in its own window's
+            // turn), so that each keeps its state between its own frames.
+            for child in &children {
+                ui.ctx()
+                    .show_viewport_deferred(*child, egui::ViewportBuilder::default(), |_, _| {});
             }
-            Screen::Session(session) => {
-                session.frame(ui, &mut host);
-                if let Some(detail) = &session.closed {
-                    ended = Some((detail.clone(), session.disconnect_asked()));
+            match &mut self.screen {
+                // The dialog is the main window's alone.
+                Screen::Dialog(_) if viewport != ViewportId::ROOT => {}
+                Screen::Dialog(dialog) => {
+                    next = dialog.ui(ui, settings);
+                }
+                Screen::Session(session) => {
+                    session.frame(ui, &mut host);
+                    if let Some(detail) = &session.closed {
+                        ended = Some((detail.clone(), session.disconnect_asked()));
+                    }
                 }
             }
         });
@@ -841,7 +866,6 @@ impl App {
         }
         self.launched = false;
         window.set_title("Vento");
-        self.egui.data_mut(|d| d.remove_temp::<String>(egui::Id::new("title")));
         window.request_redraw();
     }
 

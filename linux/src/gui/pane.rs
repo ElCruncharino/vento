@@ -162,6 +162,25 @@ impl Pane {
         self.id == ViewportId::ROOT
     }
 
+    /// Where the title last given to the pane's window is kept, in egui's
+    /// data: per pane, as that store is the context's and not a
+    /// viewport's.
+    fn title_id(&self) -> Id {
+        Id::new(("title", self.id))
+    }
+
+    fn title_set(&self, ctx: &egui::Context) -> String {
+        ctx.data(|d| d.get_temp::<String>(self.title_id())).unwrap_or_default()
+    }
+
+    /// The pane's window is no longer the session's: the title it was
+    /// given forgotten, so that the next session's is set again, and the
+    /// cursor put back.
+    pub fn close(&mut self, ctx: &egui::Context, window: &winit::window::Window) {
+        ctx.data_mut(|d| d.remove_temp::<String>(self.title_id()));
+        self.native.reset(window);
+    }
+
     /// The far end's layout was replaced (a new desktop size): the pane
     /// goes back to the whole desktop.
     pub fn desktop_changed(&mut self) {
@@ -177,9 +196,9 @@ impl Pane {
 
         if self.main() {
             let title = s.title();
-            if title != title_set(ctx) {
+            if title != self.title_set(ctx) {
                 host.window.set_title(&title);
-                ctx.data_mut(|d| d.insert_temp(Id::new("title"), title));
+                ctx.data_mut(|d| d.insert_temp(self.title_id(), title));
             }
         }
 
@@ -412,7 +431,9 @@ impl Pane {
         // to and from the peek is the same slide, the same 0.2 s.
         let peeks = toolbar::peeks(screen, fullscreen, ctx.pixels_per_point(), pointer);
         let hidden = toolbar::hidden_y(self.toolbar_size.y, peeks);
-        let y = ctx.animate_value_with_time(Id::new("toolbar-y"), if show { 0.0 } else { hidden }, 0.2);
+        // Keyed by the pane: egui's animations are the context's, by id
+        // alone, and two toolbars on one id would slide as one.
+        let y = ctx.animate_value_with_time(Id::new(("toolbar-y", self.id)), if show { 0.0 } else { hidden }, 0.2);
         if reveal {
             ctx.request_repaint_after(TOOLBAR_REVEAL.saturating_sub(self.opened.elapsed()));
         }
@@ -696,10 +717,6 @@ impl Pane {
         );
         vec![first, second, third, fourth, fifth]
     }
-}
-
-fn title_set(ctx: &egui::Context) -> String {
-    ctx.data(|d| d.get_temp::<String>(Id::new("title"))).unwrap_or_default()
 }
 
 /// The far end's cursor under the local pointer, in absolute mode.
