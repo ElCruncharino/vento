@@ -5067,6 +5067,7 @@ dependencies = [
 name = "vento"
 version = "0.0.1"
 dependencies = [
+ "ash",
  "bytemuck",
  "cmake",
  "egui",

@@ -299,6 +299,11 @@ impl Pane {
                 let everywhere = exact && s.panes.iter().all(|p| p.exact);
                 let desktop = s.desktop.as_mut().expect("checked above");
                 desktop.set_exact(ctx, &*s.backend, everywhere);
+                // And a picture drawn from the GPU, whose texture is the
+                // same one in every window too.
+                if let Some(video) = &mut host.video {
+                    video.zerocopy.set_nearest(everywhere, video.renderer);
+                }
                 desktop.paint(ui.painter(), &l);
                 response = Some(ui.interact(window, Id::new("desktop"), Sense::click_and_drag()));
                 layout = Some(l);
@@ -908,7 +913,10 @@ impl Pane {
         // this end's decoders: the line is the decoder's, made on the
         // protocol thread a couple of times a second, and only copied here.
         if let Some(status) = s.backend.decoder_status() {
-            lines.push(format!("dec {status}"));
+            match s.zero_copy_summary(host) {
+                Some(how) => lines.push(format!("dec {status}  {how}")),
+                None => lines.push(format!("dec {status}")),
+            }
         }
         lines.extend([window, shortcuts]);
         lines

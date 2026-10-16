@@ -63,6 +63,11 @@ egui = "0.36"
 egui-winit = { version = "0.36", default-features = false, features = ["wayland", "x11"] }
 egui-wgpu = { version = "0.36", features = ["winit"] }
 wgpu = "30"
+# Vulkan's own calls, for the one question wgpu-hal does not ask before it
+# imports a DMA-BUF: whether the device takes its layout modifier (see
+# `gui/zerocopy.rs`). Already in the graph through wgpu-hal, with these
+# features, so it adds nothing to the build.
+ash = "0.38"
 winit = "0.30"
 pollster = "0.4"
 raw-window-handle = "0.6"
