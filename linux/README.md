@@ -57,7 +57,9 @@ clients, and what differs between them is each client's own code.
   which monitor it shows, its toolbar, the pointer over it and its cursor;
   the main window's or a pop-out's, with tests), `desktop.rs` (the desktop as one
   texture, or as tiles where it is bigger than the device's largest, updated
-  a damaged rectangle at a time), `view.rs` (scale modes, panning and the
+  a damaged rectangle at a time, or a picture on the GPU's texture),
+  `zerocopy.rs` and `zerocopy.wgsl` (a hardware picture imported from its
+  DMA-BUFs and converted on the GPU, with tests), `view.rs` (scale modes, panning and the
   pointer's mapping, pure arithmetic with tests), `toolbar.rs` (where the
   toolbar sits and which strip of the edge brings it out, with tests),
   `icons.rs` (the toolbar's font and the symbols it draws, tested against
@@ -924,7 +926,11 @@ needs — the raw display and window handles for the inhibitor and the X11
 keyboard grab, device events for raw motion, keyboard events as winit delivers
 them with the layout's logical key, and the event loop's wake-up (the backend's
 mailbox wakes it through an event-loop proxy). It costs a page of surface
-setup.
+setup. The zero-copy path reaches under wgpu to wgpu-hal's Vulkan device
+(`as_hal`, `texture_from_dmabuf_fd`, `create_texture_from_hal`) and asks
+Vulkan one question itself through `ash` (whether the device samples a
+layout modifier): the three calls are the part of a wgpu upgrade to read
+the release notes for, and `gui/zerocopy.rs`'s tests are what proves them.
 
 
 #### Wayland
