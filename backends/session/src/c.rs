@@ -175,6 +175,23 @@ fn callbacks(user: *mut c_void) -> ffi::vento_callbacks {
     }
 }
 
+/// How far a backend's table reaches, in bytes, which is its `size` member:
+/// the header grows the table at its end, and a backend built against an
+/// older header has a shorter one, whose missing members are not there to be
+/// read at all.
+///
+/// # Safety
+///
+/// `ops` is a backend's table, which always has its `size`.
+unsafe fn table_size(ops: *const ffi::vento_session_ops) -> usize {
+    unsafe { (*ops).size }
+}
+
+/// Where the members every table has end: those up to `destroy`, the last
+/// of the table as it was when `size` was put in front of it.
+const BASE_TABLE: usize =
+    std::mem::offset_of!(ffi::vento_session_ops, destroy) + std::mem::size_of::<Option<unsafe extern "C" fn()>>();
+
 /// A started session and the vtable it is reached through. The raw pointers
 /// are the C library's and are safe to touch from any thread, as the header
 /// says of every `vento_session_*` call.
@@ -197,52 +214,55 @@ unsafe impl Send for CSession {}
 unsafe impl Sync for CSession {}
 
 impl CSession {
-    fn ops(&self) -> &ffi::vento_session_ops {
-        unsafe { &*(*self.session).ops }
+    /// The table, as a pointer rather than a reference: it may be shorter
+    /// than this build's `vento_session_ops` (see [`table_size`]), so a
+    /// member is read through it one at a time, and never the whole.
+    fn ops(&self) -> *const ffi::vento_session_ops {
+        unsafe { (*self.session).ops }
     }
 
     fn pointer(&self, x: i32, y: i32, mask: i32) {
-        unsafe { (self.ops().pointer.unwrap())(self.session, x, y, mask) }
+        unsafe { ((*self.ops()).pointer.unwrap())(self.session, x, y, mask) }
     }
 
     fn key_down(&self, keysym: u32, key_id: i64) {
-        unsafe { (self.ops().key_down.unwrap())(self.session, keysym, key_id) }
+        unsafe { ((*self.ops()).key_down.unwrap())(self.session, keysym, key_id) }
     }
 
     fn key_up(&self, key_id: i64) {
-        unsafe { (self.ops().key_up.unwrap())(self.session, key_id) }
+        unsafe { ((*self.ops()).key_up.unwrap())(self.session, key_id) }
     }
 
     fn release_all_keys(&self) {
-        unsafe { (self.ops().release_all_keys.unwrap())(self.session) }
+        unsafe { ((*self.ops()).release_all_keys.unwrap())(self.session) }
     }
 
     fn focus(&self, focused: bool) {
-        unsafe { (self.ops().focus.unwrap())(self.session, focused) }
+        unsafe { ((*self.ops()).focus.unwrap())(self.session, focused) }
     }
 
     fn view_only(&self, view_only: bool) {
-        unsafe { (self.ops().view_only.unwrap())(self.session, view_only) }
+        unsafe { ((*self.ops()).view_only.unwrap())(self.session, view_only) }
     }
 
     fn can_resize(&self) -> bool {
-        unsafe { (self.ops().can_resize.unwrap())(self.session) }
+        unsafe { ((*self.ops()).can_resize.unwrap())(self.session) }
     }
 
     fn monitors(&self) -> Vec<i32> {
         let mut flat = vec![0i32; 4 * ffi::VENTO_MAX_MONITORS as usize];
-        let n = unsafe { (self.ops().monitors.unwrap())(self.session, flat.as_mut_ptr()) };
+        let n = unsafe { ((*self.ops()).monitors.unwrap())(self.session, flat.as_mut_ptr()) };
         flat.truncate((n.max(0) as usize * 4).min(flat.len()));
         flat
     }
 
     fn request_desktop_size(&self, width: i32, height: i32) {
-        unsafe { (self.ops().request_desktop_size.unwrap())(self.session, width, height) }
+        unsafe { ((*self.ops()).request_desktop_size.unwrap())(self.session, width, height) }
     }
 
     fn clipboard(&self, text: &str) {
         if let Ok(c) = CString::new(text) {
-            unsafe { (self.ops().clipboard.unwrap())(self.session, c.as_ptr()) }
+            unsafe { ((*self.ops()).clipboard.unwrap())(self.session, c.as_ptr()) }
         }
     }
 
@@ -254,7 +274,7 @@ impl CSession {
             items: std::ptr::null_mut(),
             count: 0,
         };
-        if !unsafe { (self.ops().info.unwrap())(self.session, &mut strings) } {
+        if !unsafe { ((*self.ops()).info.unwrap())(self.session, &mut strings) } {
             return None;
         }
         let rows = (0..strings.count)
@@ -272,7 +292,7 @@ impl CSession {
     /// Received and sent, or `None` while there is nothing to count.
     fn traffic(&self) -> Option<[u64; 2]> {
         let mut out = [0u64; 2];
-        unsafe { (self.ops().traffic.unwrap())(self.session, out.as_mut_ptr()) }.then_some(out)
+        unsafe { ((*self.ops()).traffic.unwrap())(self.session, out.as_mut_ptr()) }.then_some(out)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -296,7 +316,7 @@ impl CSession {
             return false;
         };
         unsafe {
-            (self.ops().read_region.unwrap())(
+            ((*self.ops()).read_region.unwrap())(
                 self.session,
                 x,
                 y,
@@ -319,7 +339,7 @@ impl CSession {
         let th = height.div_ceil(step);
         let mut rgba = vec![0u8; tw * th * 4];
         let ok = unsafe {
-            (self.ops().read_thumbnail.unwrap())(
+            ((*self.ops()).read_thumbnail.unwrap())(
                 self.session,
                 step as c_int,
                 rgba.as_mut_ptr() as *mut c_void,
@@ -340,7 +360,7 @@ impl CSession {
         let domain = CString::new(domain).unwrap_or_default();
         let password = password.and_then(|p| CString::new(p).ok());
         unsafe {
-            (self.ops().answer_credentials.unwrap())(
+            ((*self.ops()).answer_credentials.unwrap())(
                 self.session,
                 user.as_ptr(),
                 domain.as_ptr(),
@@ -350,11 +370,11 @@ impl CSession {
     }
 
     fn answer_trust(&self, accept: bool) {
-        unsafe { (self.ops().answer_trust.unwrap())(self.session, accept) }
+        unsafe { ((*self.ops()).answer_trust.unwrap())(self.session, accept) }
     }
 
     fn disconnect(&self) {
-        unsafe { (self.ops().disconnect.unwrap())(self.session) }
+        unsafe { ((*self.ops()).disconnect.unwrap())(self.session) }
     }
 
     /// Ends the session, waits for its thread, frees it, and then reclaims
@@ -367,7 +387,7 @@ impl CSession {
             return;
         }
         unsafe {
-            (self.ops().destroy.unwrap())(self.session);
+            ((*self.ops()).destroy.unwrap())(self.session);
             drop(Arc::from_raw(self.user));
         }
     }
@@ -605,6 +625,14 @@ pub fn start(
         // Nothing started: reclaim the pointer the callbacks would have.
         unsafe { drop(Arc::from_raw(user)) };
         return Err("could not start the connection".into());
+    }
+    // A table that says it is shorter than the members every table has is
+    // one whose `size` was never filled in, and every member after them
+    // would be read as absent; said here, where it is the backend's fault,
+    // rather than discovered as a feature that silently does nothing.
+    let size = unsafe { table_size((*session).ops) };
+    if size < BASE_TABLE {
+        log::warn!("the backend's vento_session_ops says it is {size} bytes, which no table is");
     }
     let (domain, user_name) = c.domain_and_user();
     Ok(Arc::new(CBackend {

@@ -1454,6 +1454,7 @@ void op_destroy(vento_session *base) {
 }
 
 const vento_session_ops OPS = {
+        sizeof(vento_session_ops),
         op_pointer,
         op_key_down,
         op_key_up,

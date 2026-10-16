@@ -248,8 +248,18 @@ typedef struct vento_session vento_session;
 
 /* What a session can be asked. Each backend fills one of these in, statically,
    and points every session it creates at it. The inline wrappers below are
-   the calls; nothing calls through the table by hand. */
+   the calls; nothing calls through the table by hand.
+
+   The table grows at its end and nowhere else, and `size` is how long it was
+   in the header a backend was built against: RealVNC's is a plugin shipped
+   on its own, so the table in front of a caller can be older than the
+   caller's header, and a member past its `size` is not there to be read —
+   not NULL, not anything. Every member up to `destroy` is in every table;
+   one after it is optional, and a caller reads it only once `size` says the
+   table reaches it, and then treats NULL as "not supported". */
 typedef struct vento_session_ops {
+    /* sizeof(vento_session_ops), as the backend saw it. */
+    size_t size;
     void (*pointer)(vento_session *s, int x, int y, int button_mask);
     void (*key_down)(vento_session *s, uint32_t keysym, int64_t key_id);
     void (*key_up)(vento_session *s, int64_t key_id);
