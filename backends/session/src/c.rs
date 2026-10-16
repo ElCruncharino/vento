@@ -63,7 +63,7 @@ pub(crate) unsafe fn write_string(text: &str, out: *mut c_char, len: usize) -> b
     }
     let text = text[..end].replace('\0', " ");
     unsafe {
-        std::ptr::copy_nonoverlapping(text.as_ptr(), out as *mut u8, end);
+        std::ptr::copy_nonoverlapping(text.as_ptr(), out.cast::<u8>(), end);
         *out.add(end) = 0;
     }
     true
