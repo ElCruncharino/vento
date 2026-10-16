@@ -164,9 +164,9 @@ cores), at half the CPU; AV1 on VAAPI 9-10 ms against dav1d's 12, and on
 Vulkan (ANV with the switch) 5-6 ms. Most of VAAPI's time is the GPU's
 decode (about 3 ms) and the read back of the whole picture, which a mostly
 still desktop costs as much as a moving one, where software's decode is
-cheap. RustDesk's and TigerVNC's **Encoding** row says which, after the
-codec: `AV1 (software)`, `H.264 (hardware)`, nothing before the first
-picture; and the debug overlay's `dec` line says how and what a frame costs
+cheap. RustDesk's, TigerVNC's and FreeRDP's **Encoding** row says which,
+after the codec: `AV1 (software)`, `H.264 (hardware)`, `EGFX 10.6, H.264
+(software)`, nothing before the first picture; and the debug overlay's `dec` line says how and what a frame costs
 (`dec H.264 vaapi map 2.1 ms`, `dec H.264 sw 3.2 ms (vaapi: no device)`).
 The setting reaches every backend: the session's decoders carry it.
 **RustDesk** asks them each frame and takes a change at once — a new
@@ -183,9 +183,34 @@ build), a rectangle took 3.7-4.0 ms in software where upstream's libavcodec
 context, which this replaced, took 5.3 — it converted the whole picture
 every frame, where only the rows that moved are converted now, straight
 into the framebuffer — and 10-12 ms on VAAPI, whose read back of the whole
-picture is the cost here as it is for RustDesk. The other backends decode as their libraries do: a backend
-with decoders of its own would be handed the mode at connect
-(`Connect::hardware`), and none uses it yet.
+picture is the cost here as it is for RustDesk.
+
+**FreeRDP** decodes its H.264 itself, below its own AVC444 combine, so it is
+handed the mode at connect (`Connect::hardware`, as
+`vento_freerdp_config.hardware`) and takes a change **at the next
+connection**. It decodes on **VAAPI only**, through the static FFmpeg and
+the same libva shim (built with upstream's `WITH_FFMPEG_HWACCEL`): `vaapi`
+and `auto` ask for it, and `vulkan` is software, which the overlay's line
+says (`dec H.264 sw 9.2 ms (vulkan: FreeRDP decodes on VAAPI only)`).
+Upstream's path needed `patches/freerdp/0001` to be one to turn on: the
+request was the wrong way round (`FreeRDP_SoftwareGdi` itself, which this
+build keeps on, so it was always asked for), a stream the device cannot
+decode failed instead of going to software, the option that says whether
+the picture is hardware kept saying yes after a fall back, iHD's own copy
+of the picture into I420 made a 1920x1200 AVC444 frame cost 60 ms (it is
+copied as NV12 and converted by swscale now), and every surface opened a
+device of its own (19-34 ms each; one serves the process now). A device
+that fails mid-stream is a software decoder in its place, and since
+Windows sends a key frame neither for a Refresh Rect nor for output
+suppressed and allowed again, the session advertises the graphics
+pipeline's capabilities again, which Windows answers with new surfaces and
+a new stream, in software for the rest of the session: one update is
+lost. Against Windows 10 at 1920x1200 with a full-screen animation (debug
+build), an AVC444 command took 13.6-15.2 ms decoded, combined and
+converted on VAAPI against 8.5-10.9 ms in software, at about the same CPU.
+The phone's FreeRDP decodes on MediaCodec, which says nothing about
+hardware, so its row has no suffix. The other backends decode as their
+libraries do and do not use the setting.
 
 The submodules must be initialised (`git submodule update --init --recursive`;
 RealVNC's four host-only submodules need `--recursive`) and patched
