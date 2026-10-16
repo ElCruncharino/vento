@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! A desktop's decoder, through libavcodec's C API: [`FFmpeg`] is this
-//! platform's `common::video::Decoders`, and the counterpart of
+//! A desktop's decoder, libavcodec's: [`FFmpeg`] is this platform's
+//! `common::video::Decoders`, and the counterpart of
 //! `platform_android::mediacodec` call for call.
 //!
 //! The same contract as the phone's, because it is the same trait and the same
@@ -10,19 +10,20 @@
 //! caller's buffer, and nothing else written. What differs is only how the
 //! planes are got at:
 //!
+//! - **Through `vento_video.h`, not FFmpeg's API.** libavcodec is reached
+//!   through six C calls of our own (`c/vento_video.c`), and this file
+//!   declares those by hand: no generated bindings, no FFmpeg headers, and
+//!   nothing here that changes with an FFmpeg release. The choices that are
+//!   libavcodec's — low delay, slice threads, AV1 as dav1d, only the last of
+//!   several pictures — are made there, and the file says why.
 //! - **Three allocations, not one.** libavcodec hands back a data pointer and a
 //!   line size per plane, each in a buffer of its own, which is what
 //!   `convert::Frame` takes three slices for. Nothing is copied to make them
 //!   look like MediaCodec's single buffer.
-//! - **Low delay, and slice threads only.** A decoder with frame threads holds
-//!   one frame per thread before the first comes out, and H.264 without
-//!   `LOW_DELAY` holds frames back to reorder them — a desktop that lags the
-//!   finger on it, for a stream that has nothing to reorder. dav1d reads the
-//!   same flag as a frame delay of one.
-//! - **AV1 by name.** libavcodec's own `av1` decoder is a front for hardware
-//!   acceleration and decodes nothing without it, so AV1 is dav1d, then
-//!   libaom, and otherwise not on offer at all — rather than a decoder that
-//!   opens and then fails every frame.
+//!
+//! The FFmpeg is the build's own (see `build.rs`): FFmpeg and dav1d from their
+//! submodules, configured for exactly the decoders vento's desktop backends
+//! use, and linked statically, so nothing of a system FFmpeg is asked for.
 //!
 //! Colour follows the frame, as MediaCodec's follows the buffer's format: the
 //! two BT.601 matrices are taken for BT.601, BT.709 for BT.709 (and for
@@ -54,23 +55,100 @@
 //! dependency would go: a second H.264 decoder would only have been more code,
 //! and from source it has no Cisco patent licence either.
 
-use std::ffi::{CStr, c_int};
-use std::ptr;
+use std::ffi::{CStr, c_char, c_int};
 use std::sync::OnceLock;
 
 use common::video::convert::{Frame, Plane};
 use common::video::{Changes, Codec, Decoders, Output};
-use ffmpeg_sys_next as ff;
+
+/// `c/vento_video.h`, declared by hand: the whole of what this crate calls.
+mod sys {
+    use std::ffi::{c_char, c_int};
+
+    pub const PICTURE: c_int = 1;
+    pub const NONE: c_int = 0;
+    pub const REFUSED: c_int = -1;
+    pub const UNSUPPORTED: c_int = -2;
+
+    /// `struct vento_video_picture`, which [`super::Decoder::new`] checks the
+    /// size of against the C side's before anything is decoded into it.
+    #[repr(C)]
+    pub struct Picture {
+        pub data: [*const u8; 3],
+        pub stride: [i32; 3],
+        pub width: i32,
+        pub height: i32,
+        pub chroma_shift_x: i32,
+        pub chroma_shift_y: i32,
+        pub interleaved: i32,
+        pub v_first: i32,
+        pub depth: i32,
+        pub bt709: i32,
+        pub full_range: i32,
+        pub error: i32,
+        pub skipped: u32,
+    }
+
+    impl Picture {
+        pub fn new() -> Picture {
+            Picture {
+                data: [std::ptr::null(); 3],
+                stride: [0; 3],
+                width: 0,
+                height: 0,
+                chroma_shift_x: 0,
+                chroma_shift_y: 0,
+                interleaved: 0,
+                v_first: 0,
+                depth: 0,
+                bt709: 0,
+                full_range: 0,
+                error: 0,
+                skipped: 0,
+            }
+        }
+    }
+
+    #[repr(C)]
+    pub struct Video {
+        _opaque: [u8; 0],
+    }
+
+    unsafe extern "C" {
+        pub fn vento_video_picture_size() -> usize;
+        pub fn vento_video_decodable(codec: c_int) -> c_int;
+        pub fn vento_video_open(
+            codec: c_int,
+            width: c_int,
+            height: c_int,
+            error: *mut c_char,
+            error_len: usize,
+        ) -> *mut Video;
+        pub fn vento_video_name(video: *const Video) -> *const c_char;
+        pub fn vento_video_decode(
+            video: *mut Video,
+            data: *const u8,
+            len: usize,
+            out: *mut Picture,
+            format: *mut c_char,
+            format_len: usize,
+        ) -> c_int;
+        pub fn vento_video_strerror(error: c_int, buf: *mut c_char, len: usize);
+        pub fn vento_video_close(video: *mut Video);
+    }
+}
 
 /// libavcodec's decoders, as a session is handed them.
 pub struct FFmpeg;
 
 impl Decoders for FFmpeg {
-    /// Looked up once and remembered: the answer is the library's, and which
-    /// one is loaded cannot change under a running process.
+    /// Looked up once and remembered: the answer is the library's, which is
+    /// linked in and cannot change under a running process.
     fn decodable(&self, codec: Codec) -> bool {
         static FOUND: OnceLock<[bool; Codec::ALL.len()]> = OnceLock::new();
-        let found = FOUND.get_or_init(|| Codec::ALL.map(|c| find(c).is_some()));
+        let found = FOUND.get_or_init(|| {
+            Codec::ALL.map(|c| unsafe { sys::vento_video_decodable(number(c)) } != 0)
+        });
         found[Codec::ALL.iter().position(|c| *c == codec).unwrap()]
     }
 
@@ -84,36 +162,22 @@ impl Decoders for FFmpeg {
     }
 }
 
-/// The decoder libavcodec would use for this codec, or `None` where the build
-/// it was linked against has none that decodes in software.
-fn find(codec: Codec) -> Option<*const ff::AVCodec> {
-    let id = match codec {
-        Codec::Vp9 => ff::AVCodecID::AV_CODEC_ID_VP9,
-        Codec::Vp8 => ff::AVCodecID::AV_CODEC_ID_VP8,
-        Codec::H264 => ff::AVCodecID::AV_CODEC_ID_H264,
-        Codec::H265 => ff::AVCodecID::AV_CODEC_ID_HEVC,
-        Codec::Av1 => {
-            return [c"libdav1d", c"libaom-av1"].into_iter().find_map(|name| {
-                let found = unsafe { ff::avcodec_find_decoder_by_name(name.as_ptr()) };
-                (!found.is_null()).then_some(found)
-            });
-        }
-    };
-    let found = unsafe { ff::avcodec_find_decoder(id) };
-    (!found.is_null()).then_some(found)
+/// The codec as `vento_video.h` numbers it.
+fn number(codec: Codec) -> c_int {
+    match codec {
+        Codec::H264 => 1,
+        Codec::H265 => 2,
+        Codec::Vp8 => 3,
+        Codec::Vp9 => 4,
+        Codec::Av1 => 5,
+    }
 }
 
 /// One libavcodec decoder for one codec, which is what [`FFmpeg::decoder`]
 /// hands out boxed — and what a caller that wants [`skipped`](Self::skipped)
 /// can make directly.
 pub struct Decoder {
-    context: *mut ff::AVCodecContext,
-    packet: *mut ff::AVPacket,
-    /// The frame being converted, and the one a newer picture is received
-    /// into while it waits — two, so that only the last of several is read.
-    frame: *mut ff::AVFrame,
-    newer: *mut ff::AVFrame,
-    pts: i64,
+    video: *mut sys::Video,
     failed: bool,
     /// The last frame's planes and the vectorised conversion's verdict, which
     /// between them are how little of this one is converted.
@@ -128,152 +192,43 @@ pub struct Decoder {
 
 impl Decoder {
     pub fn new(codec: Codec, width: usize, height: usize) -> Option<Decoder> {
-        let Some(found) = find(codec) else {
-            log::warn!("no {} decoder in this libavcodec", codec.name());
-            return None;
+        // The one place the two copies of the struct could disagree, checked
+        // before the C side ever writes one.
+        assert_eq!(
+            unsafe { sys::vento_video_picture_size() },
+            size_of::<sys::Picture>(),
+            "vento_video.h and this file describe a picture differently"
+        );
+        let mut error = [0 as c_char; 128];
+        let video = unsafe {
+            sys::vento_video_open(
+                number(codec),
+                c_int::try_from(width).unwrap_or(0),
+                c_int::try_from(height).unwrap_or(0),
+                error.as_mut_ptr(),
+                error.len(),
+            )
         };
-        let name = unsafe { CStr::from_ptr((*found).name) }.to_string_lossy();
-        let context = unsafe { ff::avcodec_alloc_context3(found) };
-        if context.is_null() {
-            return None;
-        }
-        // Built before anything can fail, so that `Drop` is the one place any
-        // of it is freed.
-        let decoder = Decoder {
-            context,
-            packet: unsafe { ff::av_packet_alloc() },
-            frame: unsafe { ff::av_frame_alloc() },
-            newer: unsafe { ff::av_frame_alloc() },
-            pts: 0,
-            failed: false,
-            output: Output::new(),
-            narrow: Default::default(),
-            skipped: 0,
-        };
-        if decoder.packet.is_null() || decoder.frame.is_null() || decoder.newer.is_null() {
-            return None;
-        }
-        let opened = unsafe {
-            // A hint rather than a promise: the stream says what size it is,
-            // and what is read is the frame's own.
-            (*context).width = width as c_int;
-            (*context).height = height as c_int;
-            (*context).flags |= ff::AV_CODEC_FLAG_LOW_DELAY as c_int;
-            (*context).thread_type = ff::FF_THREAD_SLICE;
-            (*context).thread_count = 0; // as many as the machine has
-            ff::avcodec_open2(context, found, ptr::null_mut())
-        };
-        if opened < 0 {
+        if video.is_null() {
             log::warn!(
-                "could not open {name} for {} at {width}x{height}: {}",
+                "could not open a {} decoder at {width}x{height}: {}",
                 codec.name(),
-                error(opened)
+                text(&error)
             );
             return None;
         }
+        let name = unsafe { CStr::from_ptr(sys::vento_video_name(video)) }.to_string_lossy();
         log::info!(
             "{} decoder ({name}) started for {width}x{height}",
             codec.name()
         );
-        Some(decoder)
-    }
-
-    /// One encoded frame in. libavcodec copies a packet it does not own into
-    /// one with the padding its bitstream readers need, so `data` is lent
-    /// rather than kept.
-    fn feed(&mut self, data: &[u8]) -> bool {
-        let Ok(size) = c_int::try_from(data.len()) else {
-            return false;
-        };
-        let sent = unsafe {
-            (*self.packet).data = data.as_ptr() as *mut u8;
-            (*self.packet).size = size;
-            (*self.packet).pts = self.pts;
-            let sent = ff::avcodec_send_packet(self.context, self.packet);
-            (*self.packet).data = ptr::null_mut();
-            (*self.packet).size = 0;
-            sent
-        };
-        self.pts += 1;
-        if sent < 0 {
-            // A frame the decoder refuses is one picture lost rather than a
-            // session: the next key frame starts it again.
-            log::warn!("a {} byte frame was refused: {}", data.len(), error(sent));
-            return false;
-        }
-        true
-    }
-
-    /// Every frame the decoder has ready, keeping the last. False when there
-    /// was none.
-    ///
-    /// **Only the last one is converted**, for the reason MediaCodec's is: each
-    /// is a whole picture, and one the next overwrites before anybody sees it
-    /// is a conversion for nothing.
-    fn receive(&mut self) -> bool {
-        let mut got = false;
-        loop {
-            let received = unsafe { ff::avcodec_receive_frame(self.context, self.newer) };
-            if received < 0 {
-                if received != ff::AVERROR(ff::EAGAIN) && received != ff::AVERROR_EOF {
-                    log::warn!("the decoder failed a frame: {}", error(received));
-                }
-                return got;
-            }
-            if got {
-                self.skipped += 1;
-            }
-            unsafe {
-                ff::av_frame_unref(self.frame);
-                ff::av_frame_move_ref(self.frame, self.newer);
-            }
-            got = true;
-        }
-    }
-
-    /// The received frame into `out`, and what moved in it into `changed`.
-    fn convert(&mut self, out: &mut [u32], width: usize, height: usize, changed: &mut Changes) {
-        use ff::AVColorRange::AVCOL_RANGE_JPEG;
-        use ff::AVColorSpace::{AVCOL_SPC_BT470BG, AVCOL_SPC_SMPTE170M, AVCOL_SPC_UNSPECIFIED};
-        use ff::AVPixelFormat::{AV_PIX_FMT_YUVJ420P, AV_PIX_FMT_YUVJ422P, AV_PIX_FMT_YUVJ444P};
-
-        let f = unsafe { &*self.frame };
-        // The context's format is the frame's for a decoder that is not
-        // handing back hardware surfaces, and is typed where the frame's is a
-        // bare integer.
-        let format = unsafe { (*self.context).pix_fmt };
-        let Some((bytes, planes)) = planes(f).or_else(|| narrowed(f, format, &mut self.narrow))
-        else {
-            let name = unsafe { ff::av_get_pix_fmt_name(format) };
-            let name = if name.is_null() {
-                "an unknown format".into()
-            } else {
-                unsafe { CStr::from_ptr(name) }.to_string_lossy()
-            };
-            log::warn!("the decoder's output is {name}, which is not YUV this can convert");
-            self.failed = true;
-            return;
-        };
-        let jpeg = [
-            AV_PIX_FMT_YUVJ420P,
-            AV_PIX_FMT_YUVJ422P,
-            AV_PIX_FMT_YUVJ444P,
-        ]
-        .iter()
-        .any(|fmt| f.format == *fmt as c_int);
-        let bt601 = matches!(
-            f.colorspace,
-            AVCOL_SPC_BT470BG | AVCOL_SPC_SMPTE170M | AVCOL_SPC_UNSPECIFIED
-        );
-        let frame = Frame {
-            bytes,
-            planes,
-            width: f.width as usize,
-            height: f.height as usize,
-            bt709: !bt601,
-            full_range: f.color_range == AVCOL_RANGE_JPEG || jpeg,
-        };
-        self.output.write(&frame, out, width, height, changed);
+        Some(Decoder {
+            video,
+            failed: false,
+            output: Output::new(),
+            narrow: Default::default(),
+            skipped: 0,
+        })
     }
 }
 
@@ -289,185 +244,169 @@ impl common::video::Decoder for Decoder {
         if self.failed || data.is_empty() || out.len() < width * height {
             return false;
         }
-        if !self.feed(data) || !self.receive() {
+        let mut picture = sys::Picture::new();
+        let mut format = [0 as c_char; 64];
+        let status = unsafe {
+            sys::vento_video_decode(
+                self.video,
+                data.as_ptr(),
+                data.len(),
+                &mut picture,
+                format.as_mut_ptr(),
+                format.len(),
+            )
+        };
+        self.skipped += u64::from(picture.skipped);
+        match status {
+            sys::PICTURE | sys::NONE if picture.error != 0 => {
+                log::warn!("the decoder failed a frame: {}", error(picture.error));
+            }
+            sys::REFUSED => {
+                // A frame the decoder refuses is one picture lost rather than
+                // a session: the next key frame starts it again.
+                log::warn!(
+                    "a {} byte frame was refused: {}",
+                    data.len(),
+                    error(picture.error)
+                );
+                return false;
+            }
+            sys::UNSUPPORTED => {
+                log::warn!(
+                    "the decoder's output is {}, which is not YUV this can convert",
+                    text(&format)
+                );
+                self.failed = true;
+                return false;
+            }
+            _ => {}
+        }
+        if status != sys::PICTURE {
             return false;
         }
-        self.convert(out, width, height, changed);
-        unsafe { ff::av_frame_unref(self.frame) };
-        !self.failed
+        let Some((bytes, planes)) = planes(&picture, &mut self.narrow) else {
+            log::warn!("the decoder's output has planes this cannot read");
+            self.failed = true;
+            return false;
+        };
+        let frame = Frame {
+            bytes,
+            planes,
+            width: picture.width as usize,
+            height: picture.height as usize,
+            bt709: picture.bt709 != 0,
+            full_range: picture.full_range != 0,
+        };
+        self.output.write(&frame, out, width, height, changed);
+        true
     }
 }
 
 impl Drop for Decoder {
     fn drop(&mut self) {
-        unsafe {
-            ff::av_frame_free(&mut self.newer);
-            ff::av_frame_free(&mut self.frame);
-            ff::av_packet_free(&mut self.packet);
-            ff::avcodec_free_context(&mut self.context);
-        }
+        unsafe { sys::vento_video_close(self.video) };
     }
 }
 
-/// A received frame's planes, as `convert` reads them, where they can be read
-/// in place. `None` for a format that is not 8-bit YUV, which is
-/// [`narrowed`]'s to try next.
-fn planes(f: &ff::AVFrame) -> Option<([&[u8]; 3], [Plane; 3])> {
-    use ff::AVPixelFormat::*;
-    let (width, height) = (f.width.max(0) as usize, f.height.max(0) as usize);
-    if width == 0 || height == 0 {
+/// A picture's planes, as `convert` reads them: in place at eight bits, and
+/// narrowed into `into` deeper than that. `None` where the description does
+/// not hold together, which the C side should never hand back.
+fn planes<'a>(
+    p: &'a sys::Picture,
+    into: &'a mut [Vec<u8>; 3],
+) -> Option<([&'a [u8]; 3], [Plane; 3])> {
+    let (width, height) = (
+        usize::try_from(p.width).ok()?,
+        usize::try_from(p.height).ok()?,
+    );
+    if width == 0
+        || height == 0
+        || !(0..=1).contains(&p.chroma_shift_x)
+        || !(0..=1).contains(&p.chroma_shift_y)
+    {
         return None;
     }
-    let format = f.format;
-    let is = |fmt: ff::AVPixelFormat| format == fmt as c_int;
-    // Chroma subsampling, and whether U and V share a plane.
-    let (horiz, vert, interleaved) = if is(AV_PIX_FMT_YUV420P) || is(AV_PIX_FMT_YUVJ420P) {
-        (2, 2, false)
-    } else if is(AV_PIX_FMT_YUV422P) || is(AV_PIX_FMT_YUVJ422P) {
-        (2, 1, false)
-    } else if is(AV_PIX_FMT_YUV444P) || is(AV_PIX_FMT_YUVJ444P) {
-        (1, 1, false)
-    } else if is(AV_PIX_FMT_NV12) || is(AV_PIX_FMT_NV21) {
-        (2, 2, true)
-    } else {
-        return None;
-    };
+    let (horiz, vert) = (1usize << p.chroma_shift_x, 1usize << p.chroma_shift_y);
     let (cw, ch) = (width.div_ceil(horiz), height.div_ceil(vert));
+    let depth = u32::try_from(p.depth)
+        .ok()
+        .filter(|d| (8..=16).contains(d))?;
+    let interleaved = p.interleaved != 0;
+    if interleaved && depth != 8 {
+        return None;
+    }
+    let bytes = if depth > 8 { 2 } else { 1 };
+    let row_bytes = [
+        width * bytes,
+        if interleaved { cw * 2 } else { cw * bytes },
+        cw * bytes,
+    ];
+    let rows = [height, ch, ch];
 
     // Exactly the bytes the picture covers in each plane: every row but the
     // last at its full line size, and the last only as far as its last
     // sample, since that is all the frame promises is there.
-    let plane = |i: usize, rows: usize, row_bytes: usize| -> Option<&[u8]> {
-        let stride = usize::try_from(f.linesize[i])
+    let plane = |i: usize| -> Option<(&'a [u8], usize)> {
+        let stride = usize::try_from(p.stride[i])
             .ok()
-            .filter(|s| *s >= row_bytes)?;
-        if f.data[i].is_null() {
+            .filter(|s| *s >= row_bytes[i])?;
+        if p.data[i].is_null() {
             return None;
         }
-        let len = stride * (rows - 1) + row_bytes;
-        // SAFETY: a decoded plane has `linesize` bytes for every row of the
+        let len = stride * (rows[i] - 1) + row_bytes[i];
+        // SAFETY: a decoded plane has `stride` bytes for every row of the
         // picture, and the last row as far as its last sample is the least of
-        // that. The frame is not unreferenced until `convert` is done with it.
-        Some(unsafe { std::slice::from_raw_parts(f.data[i], len) })
-    };
-    let luma = Plane {
-        offset: 0,
-        col_inc: 1,
-        row_inc: f.linesize[0] as usize,
-        horiz_subsampling: 1,
-        vert_subsampling: 1,
-    };
-    let y = plane(0, height, width)?;
-    if interleaved {
-        let uv = plane(1, ch, cw * 2)?;
-        let at = |offset: usize| Plane {
-            offset,
-            col_inc: 2,
-            row_inc: f.linesize[1] as usize,
-            horiz_subsampling: horiz,
-            vert_subsampling: vert,
-        };
-        let (u, v) = if is(AV_PIX_FMT_NV12) { (0, 1) } else { (1, 0) };
-        Some(([y, uv, uv], [luma, at(u), at(v)]))
-    } else {
-        let chroma = |i: usize| Plane {
-            offset: 0,
-            col_inc: 1,
-            row_inc: f.linesize[i] as usize,
-            horiz_subsampling: horiz,
-            vert_subsampling: vert,
-        };
+        // that. The picture is the decoder's until the next `decode`, and
+        // `convert` is done with it before then.
         Some((
-            [y, plane(1, ch, cw)?, plane(2, ch, cw)?],
-            [luma, chroma(1), chroma(2)],
+            unsafe { std::slice::from_raw_parts(p.data[i], len) },
+            stride,
         ))
-    }
-}
-
-/// A planar YUV frame of nine to sixteen bits a sample, narrowed to eight into
-/// `into` and described as [`planes`] describes an 8-bit one. `None` for
-/// anything else: RGB, a palette, big-endian samples (which no decoder on a
-/// little-endian machine hands back), or chroma subsampled other than 4:2:0,
-/// 4:2:2 or 4:4:4.
-///
-/// The whole picture every frame, which is a copy [`planes`] does not make;
-/// what is in doubt for a deep stream is whether there is a picture at all.
-fn narrowed<'a>(
-    f: &ff::AVFrame,
-    format: ff::AVPixelFormat,
-    into: &'a mut [Vec<u8>; 3],
-) -> Option<([&'a [u8]; 3], [Plane; 3])> {
-    let (width, height) = (f.width.max(0) as usize, f.height.max(0) as usize);
-    if width == 0 || height == 0 || f.format != format as c_int {
-        return None;
-    }
-    let desc = unsafe { ff::av_pix_fmt_desc_get(format) };
-    if desc.is_null() {
-        return None;
-    }
-    let desc = unsafe { &*desc };
-    let unwanted = (ff::AV_PIX_FMT_FLAG_BE
-        | ff::AV_PIX_FMT_FLAG_PAL
-        | ff::AV_PIX_FMT_FLAG_BITSTREAM
-        | ff::AV_PIX_FMT_FLAG_HWACCEL
-        | ff::AV_PIX_FMT_FLAG_RGB
-        | ff::AV_PIX_FMT_FLAG_BAYER
-        | ff::AV_PIX_FMT_FLAG_FLOAT
-        | ff::AV_PIX_FMT_FLAG_XYZ) as u64;
-    if desc.flags & unwanted != 0
-        || desc.flags & ff::AV_PIX_FMT_FLAG_PLANAR as u64 == 0
-        || desc.nb_components < 3
-        || desc.log2_chroma_w > 1
-        || desc.log2_chroma_h > 1
-    {
-        return None;
-    }
-    // Y, U and V each in a plane of its own, two bytes a sample, the value in
-    // the low bits; an alpha plane after them is not read.
-    let depth = desc.comp[0].depth;
-    let one_each = desc.comp[..3].iter().enumerate().all(|(i, c)| {
-        c.plane == i as c_int && c.step == 2 && c.offset == 0 && c.shift == 0 && c.depth == depth
-    });
-    if !one_each || !(9..=16).contains(&depth) {
-        return None;
-    }
-    let (horiz, vert) = (1usize << desc.log2_chroma_w, 1usize << desc.log2_chroma_h);
-    let (cw, ch) = (width.div_ceil(horiz), height.div_ceil(vert));
-
-    for (i, (w, h)) in [(width, height), (cw, ch), (cw, ch)]
-        .into_iter()
-        .enumerate()
-    {
-        let stride = usize::try_from(f.linesize[i])
-            .ok()
-            .filter(|s| *s >= w * 2)?;
-        if f.data[i].is_null() {
-            return None;
-        }
-        // SAFETY: as in `planes`, a decoded plane has `linesize` bytes for
-        // every row of the picture, and the last row as far as its last
-        // sample is the least of that.
-        let src = unsafe { std::slice::from_raw_parts(f.data[i], stride * (h - 1) + w * 2) };
-        let dst = &mut into[i];
-        dst.resize(w * h, 0);
-        for (row, out) in dst.chunks_exact_mut(w).enumerate() {
-            narrow(&src[row * stride..row * stride + w * 2], depth as u32, out);
-        }
-    }
-    let plane = |w: usize, horiz: usize, vert: usize| Plane {
-        offset: 0,
-        col_inc: 1,
-        row_inc: w,
-        horiz_subsampling: horiz,
-        vert_subsampling: vert,
     };
+    let at = |offset: usize, col_inc: usize, row_inc: usize, h: usize, v: usize| Plane {
+        offset,
+        col_inc,
+        row_inc,
+        horiz_subsampling: h,
+        vert_subsampling: v,
+    };
+
+    if depth == 8 {
+        let (y, ys) = plane(0)?;
+        let luma = at(0, 1, ys, 1, 1);
+        if interleaved {
+            let (uv, uvs) = plane(1)?;
+            let (u, v) = if p.v_first != 0 { (1, 0) } else { (0, 1) };
+            return Some((
+                [y, uv, uv],
+                [luma, at(u, 2, uvs, horiz, vert), at(v, 2, uvs, horiz, vert)],
+            ));
+        }
+        let ((u, us), (v, vs)) = (plane(1)?, plane(2)?);
+        return Some((
+            [y, u, v],
+            [luma, at(0, 1, us, horiz, vert), at(0, 1, vs, horiz, vert)],
+        ));
+    }
+
+    // Deeper: the whole picture every frame, which is a copy the 8-bit path
+    // does not make; what is in doubt for a deep stream is whether there is a
+    // picture at all.
+    let sources = [plane(0)?, plane(1)?, plane(2)?];
+    for (i, ((src, stride), dst)) in sources.into_iter().zip(into.iter_mut()).enumerate() {
+        let w = if i == 0 { width } else { cw };
+        dst.resize(w * rows[i], 0);
+        for (row, out) in dst.chunks_exact_mut(w).enumerate() {
+            narrow(&src[row * stride..row * stride + w * 2], depth, out);
+        }
+    }
     let [y, u, v] = into;
     Some((
         [&y[..], &u[..], &v[..]],
         [
-            plane(width, 1, 1),
-            plane(cw, horiz, vert),
-            plane(cw, horiz, vert),
+            at(0, 1, width, 1, 1),
+            at(0, 1, cw, horiz, vert),
+            at(0, 1, cw, horiz, vert),
         ],
     ))
 }
@@ -486,11 +425,19 @@ fn narrow(src: &[u8], depth: u32, out: &mut [u8]) {
 
 /// libavcodec's own words for an error code.
 fn error(code: c_int) -> String {
-    let mut buf = [0 as std::ffi::c_char; 128];
-    unsafe { ff::av_strerror(code, buf.as_mut_ptr(), buf.len()) };
-    unsafe { CStr::from_ptr(buf.as_ptr()) }
-        .to_string_lossy()
-        .into_owned()
+    let mut buf = [0 as c_char; 128];
+    unsafe { sys::vento_video_strerror(code, buf.as_mut_ptr(), buf.len()) };
+    text(&buf)
+}
+
+/// A NUL-terminated buffer the C side wrote, as text.
+fn text(buf: &[c_char]) -> String {
+    let bytes: Vec<u8> = buf
+        .iter()
+        .take_while(|c| **c != 0)
+        .map(|c| *c as u8)
+        .collect();
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 #[cfg(test)]

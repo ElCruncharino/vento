@@ -9,15 +9,19 @@
 # protocol crate reaches it only as a dev-dependency under
 # `cfg(not(target_os = "android"))`, for its probe.
 #
-# Building it needs FFmpeg's development files where pkg-config can find them
-# (libavcodec and libavutil; written against FFmpeg 8) and a libclang for
-# bindgen.
+# FFmpeg is the build's own: `build.rs` builds dav1d and a minimal FFmpeg from
+# `third_party/` into OUT_DIR, statically, and the Linux client's C backends
+# link the same build (the `links` key is how `linux/build.rs` hears where).
+# Building it needs Meson, Ninja, make, pkg-config and a C compiler, and NASM on
+# x86 for the decoders' assembly; nothing of a system FFmpeg.
 [package]
 name = "remotedesktop-platform-desktop"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
+build = "build.rs"
+links = "vento_video"
 
 [lib]
 name = "platform_desktop"
@@ -25,11 +29,12 @@ name = "platform_desktop"
 [target.'cfg(not(target_os = "android"))'.dependencies]
 log.workspace = true
 remotedesktop-common.workspace = true
-# The C API and nothing over it: the dozen calls a decoder makes are wrapped in
-# `src/ffmpeg.rs` the way `platform_android::mediacodec` wraps MediaCodec's,
-# and `ffmpeg-next`'s safe layer would be a second wrapper around those same
-# calls with its own idea of a frame. Linked against whatever FFmpeg the host
-# has, with bindings generated from its own headers, so a libavcodec major
-# version is a rebuild rather than a port. Only `avcodec` (which brings
-# `avutil`): there is nothing to demux, filter or scale.
-ffmpeg-sys-next = { version = "9.0", default-features = false, features = ["avcodec"] }
+# Nothing of FFmpeg's own API: `src/ffmpeg.rs` calls the six functions of
+# `c/vento_video.h`, declared by hand, and only that C file includes FFmpeg's
+# headers. No bindgen, no generated bindings, and nothing on the Rust side
+# that changes with an FFmpeg release.
+
+[build-dependencies]
+# For the wrapper. Unconditional, since a build script is one program for
+# every target; on Android it returns before it uses it.
+cc = "1"
