@@ -152,7 +152,10 @@ int vento_vk_choose(struct vento_vk_choice *choice, char *why, size_t why_len) {
             choice->index = (int)i;
             choice->codecs = codecs;
             memcpy(choice->uuid, id.deviceUUID, sizeof(choice->uuid));
-            snprintf(choice->name, sizeof(choice->name), "%s", properties.properties.deviceName);
+            const char *name = properties.properties.deviceName;
+            size_t length = strnlen(name, sizeof(choice->name) - 1);
+            memcpy(choice->name, name, length);
+            choice->name[length] = '\0';
         }
     }
     free(devices);

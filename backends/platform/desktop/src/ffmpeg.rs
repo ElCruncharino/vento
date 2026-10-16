@@ -158,6 +158,7 @@ mod sys {
         pub fn vento_video_method(video: *const Video) -> c_int;
         pub fn vento_video_software_reason(video: *const Video) -> *const c_char;
         pub fn vento_video_vulkan_device() -> *const c_char;
+        pub fn vento_video_maps_in_place(video: *const Video) -> c_int;
         pub fn vento_video_device_state(method: c_int) -> c_int;
         pub fn vento_video_fail_next(video: *mut Video);
         pub fn vento_video_decode(
@@ -439,6 +440,18 @@ impl Decoder {
     /// the conversion after it, which is the caller's to time.
     pub fn timing(&self) -> Option<(f32, Option<f32>)> {
         self.decode_ms.map(|decode| (decode, self.map_ms))
+    }
+
+    /// Whether VAAPI's pictures are read in place (`Some(true)`) or through
+    /// an image the driver copies each into (`Some(false)`), which the
+    /// decoder decides by measuring both ways on its first pictures: `None`
+    /// until it has.
+    pub fn maps_in_place(&self) -> Option<bool> {
+        match unsafe { sys::vento_video_maps_in_place(self.video) } {
+            0 => Some(false),
+            1 => Some(true),
+            _ => None,
+        }
     }
 
     /// For tests: the next hardware picture fails as a device that went away

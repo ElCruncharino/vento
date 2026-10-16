@@ -189,6 +189,12 @@ int vento_video_device_state(int method);
 // can decode video. Valid until the process ends.
 const char *vento_video_vulkan_device(void);
 
+// Whether the decoder maps VAAPI's pictures in place (1) rather than as an
+// image the driver copies each surface into (0), which it decides once it
+// has measured both ways, on alternate pictures after its first two;
+// -1 until then.
+int vento_video_maps_in_place(const vento_video *video);
+
 // For tests: the next hardware picture of this decoder fails as a device
 // that has gone away would, which is otherwise not something a test can
 // make happen.

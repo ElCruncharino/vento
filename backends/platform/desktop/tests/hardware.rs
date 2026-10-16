@@ -175,6 +175,34 @@ fn render_nodes() -> usize {
         .count()
 }
 
+/// VAAPI's pictures read both ways, as an image the driver copies into and
+/// mapped in place, on alternate pictures until one is measured the faster:
+/// every picture the same as software's either way, and a verdict at the
+/// end of it.
+#[test]
+fn mapped_either_way_the_picture_is_the_same() {
+    if !vaapi("mapped_either_way_the_picture_is_the_same") {
+        return;
+    }
+    // The clip over and over (each time from its key frame), for enough
+    // pictures to try both ways eight times after the first two, and one
+    // more, whose decode is when the last trial's unmap is counted.
+    let (codec, frames) = frames("h264.h264");
+    let frames: Vec<Vec<u8>> = frames.iter().cycle().take(19).cloned().collect();
+    let mut sw = Decoder::with_hardware(codec, W, H, Hardware::Off).unwrap();
+    let mut hw = Decoder::with_hardware(codec, W, H, Hardware::Vaapi).unwrap();
+    let want = pictures(&mut sw, &frames);
+    let got = pictures(&mut hw, &frames);
+    assert_eq!(hw.hardware(), Some(true));
+    for (i, (want, got)) in want.iter().zip(&got).enumerate() {
+        let d = difference(want, got);
+        assert!(d <= 1, "picture {i} is up to {d} levels from software's");
+    }
+    let verdict = hw.maps_in_place();
+    eprintln!("VAAPI maps in place: {verdict:?}");
+    assert!(verdict.is_some(), "no verdict after {} pictures", frames.len());
+}
+
 /// Held by the tests that count render nodes and by the one that opens the
 /// Vulkan device, which is one more render node: the count is the process's.
 static RENDER_NODES: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -352,12 +380,16 @@ fn vulkan() {
     fallback_on(Hardware::Vulkan, "av1.ivf");
 }
 
-/// What a frame costs, software against VAAPI, on the clips `VENTO_BENCH`
-/// names (comma-separated Annex B `.h264`/`.h265` at `VENTO_BENCH_SIZE`, or
-/// IVF, which says its own size): the decoder's own time (decode, and on
+/// What a frame costs, software against VAAPI (or the methods
+/// `VENTO_BENCH_HW` names, comma-separated: `off,vaapi,vulkan`), on the clips
+/// `VENTO_BENCH` names (comma-separated Annex B `.h264`/`.h265` at
+/// `VENTO_BENCH_SIZE`, or IVF, which says its own size): the decoder's own time (decode, and on
 /// hardware the wait for it and the map) as `status` has it, the whole of
 /// `decode` with every row converted, and the CPU the process spent. Run
 /// with `--release --ignored --nocapture`, since the conversion is Rust's.
+/// `VENTO_BENCH_FRAMES` decodes only the first so many, and
+/// `VENTO_BENCH_GAP_MS` waits that long before each, untimed, as a quiet
+/// desktop does between updates (and a GPU idles, clocking down).
 #[test]
 #[ignore]
 fn bench() {
@@ -371,6 +403,14 @@ fn bench() {
         // utime and stime, in ticks of a hundredth of a second.
         (fields[11].parse::<f64>().unwrap() + fields[12].parse::<f64>().unwrap()) * 10.0
     };
+    let methods: Vec<Hardware> = std::env::var("VENTO_BENCH_HW")
+        .unwrap_or("off,vaapi".into())
+        .split(',')
+        .map(|name| Hardware::from_name(name).unwrap_or_else(|| panic!("{name}: which method?")))
+        .collect();
+    let number = |var: &str| std::env::var(var).ok().map(|v| v.parse::<u64>().unwrap());
+    let gap = std::time::Duration::from_millis(number("VENTO_BENCH_GAP_MS").unwrap_or(0));
+    let limit = number("VENTO_BENCH_FRAMES").map_or(usize::MAX, |n| n as usize);
     for path in clips.split(',') {
         let bytes = std::fs::read(path).unwrap();
         let (codec, frames, (w, h)) = if path.ends_with(".ivf") {
@@ -390,13 +430,15 @@ fn bench() {
                 (Codec::H264, annex_b(&bytes, h264_aud), size)
             }
         };
-        for method in [Hardware::Off, Hardware::Vaapi] {
+        for &method in &methods {
             let mut decoder = Decoder::with_hardware(codec, w, h, method).unwrap();
             let mut out = vec![0u32; w * h];
             let mut changed = Changes::new();
             let (mut wall, mut worst, mut pictures) = (0f64, 0f64, 0usize);
             let cpu0 = cpu();
+            let frames = &frames[..frames.len().min(limit)];
             for (i, frame) in frames.iter().enumerate() {
+                std::thread::sleep(gap);
                 changed.reset(h);
                 for row in 0..h {
                     changed.mark(row, 0, w);
@@ -411,9 +453,14 @@ fn bench() {
             }
             let n = (frames.len() - 1) as f64;
             let map = decoder.timing().and_then(|(_, map)| map);
+            let in_place = match decoder.maps_in_place() {
+                Some(true) => ", in place",
+                Some(false) => ", as an image",
+                None => "",
+            };
             eprintln!(
-                "{path} {}: {pictures}/{} pictures; {} (of it map {}); decode+convert {:.2} \
-                 ms/frame (worst {worst:.2}); CPU {:.2} ms/frame",
+                "{path} {}: {pictures}/{} pictures; {} (of it map {}{in_place}); decode+convert \
+                 {:.2} ms/frame (worst {worst:.2}); CPU {:.2} ms/frame",
                 method.name(),
                 frames.len(),
                 decoder.status().unwrap(),

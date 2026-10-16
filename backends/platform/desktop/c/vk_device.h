@@ -20,7 +20,8 @@ struct vento_vk_choice {
     // `VkPhysicalDeviceIDProperties::deviceUUID`, to tell that the device
     // FFmpeg opened is this one.
     uint8_t uuid[16];
-    char name[256];
+    // Cut to fit a reason; device names are a few dozen characters.
+    char name[128];
 };
 
 // The first device the loader lists that is not a CPU implementation (such

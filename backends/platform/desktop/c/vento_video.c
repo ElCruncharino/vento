@@ -50,7 +50,19 @@
 //   (`av_hwframe_map`) and described in place, which measured about 40% less
 //   time and half the CPU of `av_hwframe_transfer_data`'s copy into a frame
 //   of our own; the caller's conversion reads the planes once either way.
-//   Where a surface cannot be mapped (Vulkan's images) it is copied.
+//   Where a surface cannot be mapped (Vulkan's images) it is copied, which
+//   Vulkan does on the GPU into memory the CPU reads fast.
+// - **VAAPI's surface mapped in place, where that measures faster.** A map
+//   for reading is, in libavcodec, a new image the driver copies the
+//   surface into (`vaGetImage`), since the surface's own memory may be
+//   uncached (Intel's Gen7-9, where reading it is many times slower). A
+//   direct map (`vaDeriveImage`) skips that copy, which on Lunar Lake's iHD
+//   was 4.5 ms of a 1080p H.264 frame's 7.4 against 2 ms, plus 1.5 ms to
+//   unmap and reads half as fast: about 8% off a frame's decode and
+//   conversion and 10% of its CPU. Which way is faster is the machine's
+//   (and the picture size's: at 128x128 the image was), so each decoder
+//   measures both, on alternate pictures (the map, a read of every plane,
+//   the unmap), and maps the faster way from then on.
 // - **A failure is a fallback, not an error.** A hardware decode or map that
 //   fails mid-stream closes the decoder, opens the software one in its place
 //   within the same handle, gives it the packet again and says so
@@ -79,6 +91,16 @@
 // caller never sees: the decoder falls back and decodes the packet again.
 #define HARDWARE_FAILED (-100)
 
+// How a decoder maps VAAPI surfaces for reading: not known yet, as an image
+// the driver copies into, or in place.
+enum { MAP_UNKNOWN, MAP_IMAGE, MAP_DIRECT };
+// The trial pictures of each way, alternating, which are compared by their
+// medians, since one picture's wait for the GPU can be twice another's; and
+// the pictures before the first, which are the device setting up its
+// surfaces and not a frame's cost.
+#define MAP_TRIALS 8
+#define MAP_TRIALS_FROM 2
+
 struct vento_video {
     int codec;
     int width;
@@ -106,6 +128,15 @@ struct vento_video {
     int next;
     // Copied rather than mapped, once a map has been refused as impossible.
     int copy;
+    // Pictures out of the device; how VAAPI's are mapped for reading (a
+    // MAP_ verdict); and until that is known the trials of each way so far,
+    // what each cost (image's, direct's), and which way the mapping held was
+    // made as a trial (or -1), whose unmap is part of its cost.
+    uint64_t hw_pictures;
+    int map_verdict;
+    int trials;
+    uint64_t trial_us[2][MAP_TRIALS];
+    int held_trial;
     int fail_next;
     // Why the decoder is not on hardware: each device tried before this one,
     // "; " between them, and then this one's (from `said` on), if any.
@@ -185,6 +216,7 @@ static uint64_t now_us(void) {
     clock_gettime(CLOCK_MONOTONIC, &t);
     return (uint64_t)t.tv_sec * 1000000 + (uint64_t)t.tv_nsec / 1000;
 }
+
 
 // The shared devices, by `vento_video_hardware` (VAAPI and VULKAN).
 static struct {
@@ -444,6 +476,7 @@ vento_video *vento_video_open(int codec, int width, int height, int hardware, ch
     video->width = width;
     video->height = height;
     video->hw_format = AV_PIX_FMT_NONE;
+    video->held_trial = -1;
     video->packet = av_packet_alloc();
     video->frame = av_frame_alloc();
     video->newer = av_frame_alloc();
@@ -487,6 +520,10 @@ const char *vento_video_software_reason(const vento_video *video) {
     if (video->method != VENTO_VIDEO_HW_OFF && strlen(video->reason) <= video->said)
         return "";
     return video->reason;
+}
+
+int vento_video_maps_in_place(const vento_video *video) {
+    return video->map_verdict == MAP_UNKNOWN ? -1 : video->map_verdict == MAP_DIRECT;
 }
 
 void vento_video_fail_next(vento_video *video) {
@@ -605,6 +642,39 @@ static int device_error(const vento_video *video, int error) {
            error != AVERROR(EAGAIN) && error != AVERROR_EOF;
 }
 
+static int compare_us(const void *a, const void *b) {
+    uint64_t x = *(const uint64_t *)a, y = *(const uint64_t *)b;
+    return (x > y) - (x < y);
+}
+
+// The median of one way's trials (sorting them).
+static uint64_t median(uint64_t trials[MAP_TRIALS]) {
+    qsort(trials, MAP_TRIALS, sizeof(trials[0]), compare_us);
+    return (trials[MAP_TRIALS / 2 - 1] + trials[MAP_TRIALS / 2]) / 2;
+}
+
+// Every row of a mapped picture's planes read once, as a conversion reads
+// them, in microseconds.
+static uint64_t read_through(const AVFrame *f) {
+    uint64_t start = now_us();
+    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get((enum AVPixelFormat)f->format);
+    uint64_t sum = 0;
+    for (int plane = 0; desc && plane < 4 && f->data[plane]; plane++) {
+        int rows = plane == 0 || plane == 3 ? f->height
+                                            : AV_CEIL_RSHIFT(f->height, desc->log2_chroma_h);
+        size_t words = (size_t)abs(f->linesize[plane]) / sizeof(uint64_t);
+        for (int r = 0; r < rows; r++) {
+            const uint64_t *row =
+                (const uint64_t *)(f->data[plane] + (ptrdiff_t)r * f->linesize[plane]);
+            for (size_t w = 0; w < words; w++)
+                sum += row[w];
+        }
+    }
+    // Used, as far as the compiler knows, so that the reads are made.
+    __asm__ __volatile__("" : : "r"(sum) : "memory");
+    return now_us() - start;
+}
+
 // One decode of the packet into `out`: a status of the header's, or
 // HARDWARE_FAILED with the reason kept.
 static int decode_packet(vento_video *video, const uint8_t *data, size_t len,
@@ -656,15 +726,34 @@ static int decode_packet(vento_video *video, const uint8_t *data, size_t len,
     if (video->hw_format != AV_PIX_FMT_NONE && picture->format == video->hw_format) {
         uint64_t mapping = now_us();
         int read = 0;
+        int trial = -1;
         if (video->fail_next) {
             video->fail_next = 0;
             read = AVERROR(EIO);
         } else {
             if (!video->copy) {
+                int direct = 0;
+                if (video->method == VENTO_VIDEO_HW_VAAPI) {
+                    if (video->map_verdict != MAP_UNKNOWN)
+                        direct = video->map_verdict == MAP_DIRECT;
+                    else if (video->hw_pictures >= MAP_TRIALS_FROM &&
+                             video->trials < 2 * MAP_TRIALS)
+                        direct = trial = video->trials & 1;
+                }
                 // Into the surfaces' own software format (NV12, P010, ...),
                 // which is what a format of NONE asks for.
                 video->mapped->format = AV_PIX_FMT_NONE;
-                read = av_hwframe_map(video->mapped, picture, AV_HWFRAME_MAP_READ);
+                read = av_hwframe_map(video->mapped, picture,
+                                      AV_HWFRAME_MAP_READ | (direct ? AV_HWFRAME_MAP_DIRECT : 0));
+                if (direct && read == AVERROR(EINVAL)) {
+                    // The driver cannot map its surfaces in place (FFmpeg
+                    // tried when it made them), which is the verdict.
+                    video->map_verdict = MAP_IMAGE;
+                    trial = -1;
+                    av_frame_unref(video->mapped);
+                    video->mapped->format = AV_PIX_FMT_NONE;
+                    read = av_hwframe_map(video->mapped, picture, AV_HWFRAME_MAP_READ);
+                }
                 if (read == AVERROR(ENOSYS))
                     video->copy = 1;
             }
@@ -675,11 +764,20 @@ static int decode_packet(vento_video *video, const uint8_t *data, size_t len,
                     read = av_frame_copy_props(video->mapped, picture);
             }
         }
+        if (trial >= 0 && read >= 0) {
+            // What the caller's conversion will make of the memory, which
+            // is the half of the cost the map does not show.
+            uint64_t mapped = now_us() - mapping;
+            video->trial_us[trial][video->trials / 2] = mapped + read_through(video->mapped);
+            video->trials++;
+            video->held_trial = trial;
+        }
         out->map_us = (uint32_t)(now_us() - mapping);
         if (read < 0) {
             av_frame_unref(video->frame);
             return hardware_failed(video, video->copy ? "copy failed" : "map failed", read);
         }
+        video->hw_pictures++;
         picture = video->mapped;
         out->hardware = video->copy ? 2 : 1;
         // On hardware, so nothing stands in its way, whatever the devices
@@ -711,7 +809,16 @@ int vento_video_decode(vento_video *video, const uint8_t *data, size_t len,
         format[0] = '\0';
     // The last picture described is the caller's until now, and so is the
     // mapping of it, which holds the surface it was decoded into.
+    uint64_t unmapping = now_us();
     av_frame_unref(video->mapped);
+    if (video->held_trial >= 0) {
+        video->trial_us[video->held_trial][(video->trials - 1) / 2] += now_us() - unmapping;
+        video->held_trial = -1;
+        if (video->trials == 2 * MAP_TRIALS)
+            video->map_verdict = median(video->trial_us[1]) < median(video->trial_us[0])
+                                     ? MAP_DIRECT
+                                     : MAP_IMAGE;
+    }
     av_frame_unref(video->frame);
 
     if (len > INT32_MAX) {
