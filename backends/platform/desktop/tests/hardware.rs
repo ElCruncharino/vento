@@ -393,12 +393,14 @@ fn bench() {
                 }
             }
             let n = (frames.len() - 1) as f64;
+            let map = decoder.timing().and_then(|(_, map)| map);
             eprintln!(
-                "{path} {}: {pictures}/{} pictures; {}; decode+convert {:.2} ms/frame (worst \
-                 {worst:.2}); CPU {:.2} ms/frame",
+                "{path} {}: {pictures}/{} pictures; {} (of it map {}); decode+convert {:.2} \
+                 ms/frame (worst {worst:.2}); CPU {:.2} ms/frame",
                 method.name(),
                 frames.len(),
                 decoder.status().unwrap(),
+                map.map_or("-".into(), |m| format!("{m:.2} ms")),
                 wall / n,
                 (cpu() - cpu0) / frames.len() as f64,
             );

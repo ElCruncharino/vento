@@ -327,6 +327,8 @@ pub struct Decoder {
     /// decoder (and on hardware the device's surfaces) is set up in, which
     /// takes a frame's time several times over at once.
     decode_ms: Option<f32>,
+    /// Of that, mapping (or copying) a hardware picture for reading.
+    map_ms: Option<f32>,
     pictures: u64,
     /// The last frame's planes and the vectorised conversion's verdict, which
     /// between them are how little of this one is converted.
@@ -389,6 +391,7 @@ impl Decoder {
             reason: String::new(),
             key_frame: false,
             decode_ms: None,
+            map_ms: None,
             pictures: 0,
             output: Output::new(),
             narrow: Default::default(),
@@ -447,6 +450,14 @@ impl Decoder {
         unsafe { CStr::from_ptr(sys::vento_video_software_reason(self.video)) }
     }
 
+    /// What a picture has been costing lately, in milliseconds: the decoder's
+    /// whole call (on hardware the decode, the wait for it and the map), and
+    /// of that the map of a hardware picture, where there has been one. Not
+    /// the conversion after it, which is the caller's to time.
+    pub fn timing(&self) -> Option<(f32, Option<f32>)> {
+        self.decode_ms.map(|decode| (decode, self.map_ms))
+    }
+
     /// For tests: the next hardware picture fails as a device that went away
     /// would, which is what a mid-stream fallback is made of.
     pub fn fail_next(&mut self) {
@@ -475,8 +486,14 @@ impl Decoder {
         if status == sys::PICTURE {
             self.pictures += 1;
             if self.pictures > 1 {
-                let ms = picture.decode_us as f32 / 1000.0;
-                self.decode_ms = Some(self.decode_ms.map_or(ms, |m| m + (ms - m) / 16.0));
+                let smooth = |mean: Option<f32>, us: u32| {
+                    let ms = us as f32 / 1000.0;
+                    Some(mean.map_or(ms, |m| m + (ms - m) / 16.0))
+                };
+                self.decode_ms = smooth(self.decode_ms, picture.decode_us);
+                if picture.hardware != 0 {
+                    self.map_ms = smooth(self.map_ms, picture.map_us);
+                }
             }
             self.hardware = Some((picture.hardware != 0, picture.hardware == 2));
         }
