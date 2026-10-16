@@ -4,7 +4,9 @@
 //! The desktop as pixels: the picture two threads share, and the buffer the
 //! next one is decoded into.
 
-use common::video::Changes;
+use std::sync::Arc;
+
+use common::video::{Changes, GpuPicture};
 
 /// A framebuffer of `R, G, B, A` words, so a read is a row copy into an Android
 /// `ARGB_8888` bitmap.
@@ -17,10 +19,17 @@ use common::video::Changes;
 /// decoder converts into a buffer of its own and [`swap`](Self::swap) puts it
 /// in, which holds the lock for a `Vec` swap. What that buffer costs when a
 /// frame converts only part of itself is [`Back`].
+///
+/// Or the picture is on the GPU ([`show_gpu`](Self::show_gpu)), where a
+/// window that draws there asked for it to be left: then the pixels here
+/// are behind it until somebody reads them, and a read
+/// ([`catch_up`](Self::catch_up)) converts it in first, once.
 pub struct Framebuffer {
     width: usize,
     height: usize,
     pixels: Vec<u32>,
+    gpu: Option<Arc<dyn GpuPicture>>,
+    behind: bool,
 }
 
 impl Framebuffer {
@@ -29,6 +38,8 @@ impl Framebuffer {
             width: 0,
             height: 0,
             pixels: Vec::new(),
+            gpu: None,
+            behind: false,
         }
     }
 
@@ -47,6 +58,8 @@ impl Framebuffer {
         self.height = height;
         self.pixels.clear();
         self.pixels.resize(width * height, 0xff00_0000);
+        self.gpu = None;
+        self.behind = false;
     }
 
     /// Take `next` as the picture, handing back the buffer that was there for
@@ -60,7 +73,46 @@ impl Framebuffer {
             return false;
         }
         std::mem::swap(&mut self.pixels, next);
+        self.gpu = None;
+        self.behind = false;
         true
+    }
+
+    /// Take a picture left on the GPU as the picture. Refused, as a swap
+    /// is, where it is not this desktop's size.
+    pub fn show_gpu(&mut self, picture: Arc<dyn GpuPicture>) -> bool {
+        if (picture.width(), picture.height()) != (self.width, self.height) || self.width == 0 {
+            return false;
+        }
+        self.gpu = Some(picture);
+        self.behind = true;
+        true
+    }
+
+    /// The picture, where it is on the GPU.
+    pub fn gpu(&self) -> Option<Arc<dyn GpuPicture>> {
+        self.gpu.clone()
+    }
+
+    /// Whether the pixels here are behind a picture on the GPU, and a read
+    /// of them has to [`catch_up`](Self::catch_up) first.
+    pub fn behind(&self) -> bool {
+        self.behind
+    }
+
+    /// The picture on the GPU read back into the pixels here, if they are
+    /// behind it: the readback it was left there to save, paid only by
+    /// whoever reads them. Where it cannot be read the pixels stay as they
+    /// were, rather than being asked for again on every read.
+    pub fn catch_up(&mut self) {
+        if !std::mem::take(&mut self.behind) {
+            return;
+        }
+        if let Some(picture) = &self.gpu
+            && !picture.read(&mut self.pixels, self.width, self.height)
+        {
+            log::warn!("the picture on the GPU could not be read back");
+        }
     }
 
     /// Copy the rows `behind` names out of the picture here into `dst`, which
@@ -244,8 +296,69 @@ impl Default for Back {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
+
+    /// A picture on the GPU that reads back as one colour, counting reads.
+    pub struct Flat {
+        pub size: (usize, usize),
+        pub colour: u32,
+        pub reads: std::sync::atomic::AtomicUsize,
+    }
+
+    impl GpuPicture for Flat {
+        fn width(&self) -> usize {
+            self.size.0
+        }
+        fn height(&self) -> usize {
+            self.size.1
+        }
+        fn surface(&self) -> (u64, u32) {
+            (1, 1)
+        }
+        fn export(&self) -> std::result::Result<common::video::Dmabuf, String> {
+            Err("a test's".into())
+        }
+        fn read(&self, out: &mut [u32], width: usize, height: usize) -> bool {
+            self.reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            out[..width * height].fill(self.colour);
+            true
+        }
+    }
+
+    pub fn flat(width: usize, height: usize, colour: u32) -> Arc<Flat> {
+        Arc::new(Flat {
+            size: (width, height),
+            colour,
+            reads: Default::default(),
+        })
+    }
+
+    #[test]
+    fn a_picture_on_the_gpu_is_read_back_once_and_only_when_read() {
+        let mut fb = Framebuffer::new();
+        fb.resize(2, 2);
+        let picture = flat(2, 2, 7);
+        assert!(fb.show_gpu(picture.clone()));
+        assert!(fb.behind());
+        assert!(fb.gpu().is_some());
+        assert_eq!(picture.reads.load(std::sync::atomic::Ordering::Relaxed), 0);
+        fb.catch_up();
+        fb.catch_up();
+        assert_eq!(picture.reads.load(std::sync::atomic::Ordering::Relaxed), 1);
+        let mut out = [0u8; 16];
+        assert!(fb.read_rgba(0, 0, 2, 2, &mut out, 8));
+        assert_eq!(u32::from_le_bytes(out[0..4].try_into().unwrap()), 7);
+        // A picture of another size is refused, as a swap would be.
+        assert!(!fb.show_gpu(flat(3, 2, 1)));
+        // A picture converted on the processor is the picture again.
+        let mut next = vec![1u32, 2, 3, 4];
+        assert!(fb.swap(&mut next));
+        assert!(fb.gpu().is_none() && !fb.behind());
+        fb.catch_up();
+        assert!(fb.read_rgba(0, 0, 2, 2, &mut out, 8));
+        assert_eq!(u32::from_le_bytes(out[0..4].try_into().unwrap()), 1);
+    }
 
     #[test]
     fn a_swapped_frame_reads_back() {

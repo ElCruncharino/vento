@@ -49,7 +49,7 @@ use crate::protos::message::{
 use crate::rendezvous;
 use crate::wire::{self, Traffic};
 use common::{Handler, Hangup};
-use common::video::{self, Codec, Decoders, Hardware};
+use common::video::{self, Codec, Decoded, Decoders, GpuPicture, Hardware};
 
 /// Their default direct-access port, which is `RENDEZVOUS_PORT + 2`.
 pub const DIRECT_PORT: u16 = 21118;
@@ -457,6 +457,11 @@ impl Client {
             format!("{rtt} ms")
         };
         info
+    }
+
+    /// The picture, where it was left on the GPU (see [`Client::picture`]).
+    pub fn gpu_picture(&self) -> Option<Arc<dyn GpuPicture>> {
+        self.framebuffer.read().unwrap().gpu()
     }
 
     /// How the picture is being decoded, as the decoder last said: `None`
@@ -1092,6 +1097,14 @@ impl Client {
     /// One update, which in this protocol is always a whole picture: there are
     /// no damage rectangles anywhere in it, so what moved is found here rather
     /// than read off the wire.
+    ///
+    /// Where whoever draws the session takes pictures on the GPU (the
+    /// platform's decoders say so, every frame), a picture the decoder can
+    /// leave there is left there and becomes the framebuffer's picture as it
+    /// is, damaging the whole desktop: there is no conversion to find what
+    /// moved, and nothing here reads it. The next picture converted on the
+    /// processor is then converted whole, its buffer knowing nothing of the
+    /// one before.
     fn picture(
         &self,
         frame: VideoFrame,
@@ -1164,9 +1177,40 @@ impl Client {
             return;
         };
         back.begin(w, h);
+        let gpu = self.decoders.gpu_pictures();
         let mut drew = false;
+        let mut held: Option<Arc<dyn GpuPicture>> = None;
         for frame in frames {
-            drew |= current.decoder.decode(&frame.data, &mut back.pixels, w, h, &mut back.changed);
+            let decoded = if gpu {
+                current.decoder.decode_picture(&frame.data, &mut back.pixels, w, h, &mut back.changed)
+            } else if current.decoder.decode(&frame.data, &mut back.pixels, w, h, &mut back.changed) {
+                Decoded::Converted
+            } else {
+                Decoded::Nothing
+            };
+            match decoded {
+                Decoded::Gpu(picture) if (picture.width(), picture.height()) == (w, h) => {
+                    held = Some(picture);
+                    // A picture converted after it in the same update is
+                    // converted whole, as one after it in the next is.
+                    back.changed.all(w, h);
+                }
+                // Not the session's size, which is a frame between a resize
+                // and the desktop's new size: read back, as a converted one
+                // of that size would have been written.
+                Decoded::Gpu(picture) => {
+                    back.changed.all(w, h);
+                    if picture.read(&mut back.pixels, w, h) {
+                        drew = true;
+                        held = None;
+                    }
+                }
+                Decoded::Converted => {
+                    drew = true;
+                    held = None;
+                }
+                Decoded::Nothing => {}
+            }
         }
         // A decoder that lost the pictures the stream refers back to — a
         // hardware one that failed mid-stream and went on in software — draws
@@ -1177,6 +1221,16 @@ impl Client {
             self.refresh_video();
         }
         self.note(current);
+        if let Some(picture) = held {
+            // Whatever the back buffer holds is not the picture on screen now.
+            back.lost();
+            if !self.framebuffer.write().unwrap().show_gpu(picture) {
+                return;
+            }
+            handler.damaged(0, 0, w, h);
+            handler.frame_end();
+            return;
+        }
         if !drew {
             return;
         }
@@ -1919,6 +1973,9 @@ mod tests {
         hardware: Mutex<Hardware>,
         made: AtomicI32,
         lose_references: Arc<AtomicBool>,
+        /// The window takes pictures on the GPU, which each decoder then
+        /// hands back as a flat one.
+        gpu: AtomicBool,
     }
 
     struct Drawing {
@@ -1951,6 +2008,17 @@ mod tests {
         fn take_key_frame_request(&mut self) -> bool {
             self.lose_references.swap(false, Ordering::Relaxed)
         }
+
+        fn decode_picture(
+            &mut self,
+            _data: &[u8],
+            _out: &mut [u32],
+            width: usize,
+            height: usize,
+            _changed: &mut video::Changes,
+        ) -> Decoded {
+            Decoded::Gpu(crate::framebuffer::tests::flat(width, height, 9))
+        }
     }
 
     impl Decoders for Switchable {
@@ -1968,6 +2036,10 @@ mod tests {
 
         fn hardware(&self) -> Hardware {
             *self.hardware.lock().unwrap()
+        }
+
+        fn gpu_pictures(&self) -> bool {
+            self.gpu.load(Ordering::Relaxed)
         }
     }
 
@@ -2026,5 +2098,79 @@ mod tests {
         assert_eq!(refreshes(), 1);
         client.picture(frame(), &mut decoder, &mut back, &mut Nothing);
         assert_eq!(refreshes(), 0);
+    }
+
+    /// A handler that keeps the damage it is told of.
+    #[derive(Default)]
+    struct Damage(Vec<(usize, usize, usize, usize)>);
+    impl Handler for Damage {
+        fn connected(&mut self, _width: usize, _height: usize) {}
+        fn desktop_size(&mut self, _width: usize, _height: usize) {}
+        fn damaged(&mut self, x: usize, y: usize, width: usize, height: usize) {
+            self.0.push((x, y, width, height));
+        }
+        fn frame_end(&mut self) {}
+        fn cursor(&mut self, _p: &[u32], _w: usize, _h: usize, _hx: i32, _hy: i32) {}
+        fn clipboard(&mut self, _text: &str) {}
+        fn credentials(&mut self, _needs_user: bool) -> Option<common::Credentials> {
+            None
+        }
+        fn trust(&mut self, _fingerprint: &str) -> bool {
+            false
+        }
+    }
+
+    /// With the window taking pictures on the GPU, the decoder's picture is
+    /// the framebuffer's as it is, the whole desktop damaged and nothing
+    /// converted until somebody reads it; and once it takes them no more,
+    /// the next picture is converted whole, with no new decoder or key
+    /// frame for the change.
+    #[test]
+    fn a_picture_on_the_gpu_is_the_picture_until_one_is_converted() {
+        let decoders = Arc::new(Switchable::default());
+        let client = Client::new(Arc::clone(&decoders) as Arc<dyn Decoders>);
+        let mut back = Back::new();
+        client.width.store(4, Ordering::Relaxed);
+        client.height.store(2, Ordering::Relaxed);
+        client.resize(4, 2, &mut back);
+        let frame = || {
+            let mut one = crate::protos::message::EncodedVideoFrame::new();
+            one.data = vec![0; 4];
+            let mut frames = crate::protos::message::EncodedVideoFrames::new();
+            frames.frames.push(one);
+            let mut frame = VideoFrame::new();
+            frame.set_h264s(frames);
+            frame
+        };
+        let words = |client: &Client| {
+            let mut out = [0u8; 32];
+            assert!(client.framebuffer().read().unwrap().read_rgba(0, 0, 4, 2, &mut out, 16));
+            out.chunks_exact(4)
+                .map(|w| u32::from_le_bytes(w.try_into().unwrap()))
+                .collect::<Vec<_>>()
+        };
+        let mut decoder = None;
+        let mut damage = Damage::default();
+
+        client.picture(frame(), &mut decoder, &mut back, &mut damage);
+        assert!(client.gpu_picture().is_none());
+        assert_eq!(words(&client)[0], 0xff00_0001);
+
+        decoders.gpu.store(true, Ordering::Relaxed);
+        damage.0.clear();
+        client.picture(frame(), &mut decoder, &mut back, &mut damage);
+        assert_eq!(decoders.made.load(Ordering::Relaxed), 1);
+        assert!(client.gpu_picture().is_some());
+        assert_eq!(damage.0, [(0, 0, 4, 2)]);
+        assert!(client.framebuffer().read().unwrap().behind());
+        client.framebuffer().write().unwrap().catch_up();
+        assert_eq!(words(&client), [9; 8]);
+
+        decoders.gpu.store(false, Ordering::Relaxed);
+        damage.0.clear();
+        client.picture(frame(), &mut decoder, &mut back, &mut damage);
+        assert_eq!(decoders.made.load(Ordering::Relaxed), 1);
+        assert!(client.gpu_picture().is_none());
+        assert_eq!(damage.0, [(0, 0, 4, 2)], "converted whole");
     }
 }
