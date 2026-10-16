@@ -225,6 +225,13 @@ impl Backend for RustDesk {
         })
     }
 
+    fn decoder_status(&self) -> Option<String> {
+        if !self.mailbox.connected() {
+            return None;
+        }
+        self.session.client.decoder_status()
+    }
+
     fn read_region(
         &self,
         x: usize,

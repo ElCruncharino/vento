@@ -49,7 +49,7 @@ use crate::protos::message::{
 use crate::rendezvous;
 use crate::wire::{self, Traffic};
 use common::{Handler, Hangup};
-use common::video::{self, Codec, Decoders};
+use common::video::{self, Codec, Decoders, Hardware};
 
 /// Their default direct-access port, which is `RENDEZVOUS_PORT + 2`.
 pub const DIRECT_PORT: u16 = 21118;
@@ -74,6 +74,10 @@ const KEEP_ALIVE_EVERY: Duration = Duration::from_secs(8);
 /// thing to one — the picture stays current enough to be worth showing the
 /// moment it comes back, at a hundredth of the traffic.
 const UNFOCUSED_FPS: i32 = 1;
+
+/// How often the decoder's status line is made again: it is a string a
+/// frame otherwise, for an overlay that is read by eye.
+const STATUS_EVERY: Duration = Duration::from_millis(500);
 
 pub struct Config {
     /// The peer: `host` or `host:port` for [`Reach::Direct`], and their nine
@@ -265,6 +269,31 @@ pub struct Info {
     pub display: String,
 }
 
+/// The decoder a session is drawing with, and what it was made for: a codec,
+/// a picture size and a way of decoding, a change in any of which makes it
+/// again.
+struct Current {
+    codec: Codec,
+    size: (usize, usize),
+    hardware: Hardware,
+    /// What the Encoding row last said of where its pictures come from.
+    shown: Option<bool>,
+    /// When its status line was last made, `None` before the first.
+    status_at: Option<Instant>,
+    decoder: Box<dyn video::Decoder>,
+}
+
+/// The Encoding row: the codec, and whether its pictures come out of the
+/// hardware, where the decoder knows — nothing is said before the first
+/// picture, nor by a decoder that never knows.
+fn encoding(codec: Codec, hardware: Option<bool>) -> String {
+    match hardware {
+        Some(true) => format!("{} (hardware)", codec.name()),
+        Some(false) => format!("{} (software)", codec.name()),
+        None => codec.name().to_string(),
+    }
+}
+
 /// One button of theirs, already shifted into the place a mask wants it.
 mod mouse {
     pub const TYPE_MOVE: i32 = 0;
@@ -323,6 +352,9 @@ pub struct Client {
     /// while it is the one being waited on, as well as the session's own.
     hangup: Hangup,
     info: Mutex<Info>,
+    /// The decoder's status line, for an overlay: made on the protocol
+    /// thread, where the decoder is, at most every [`STATUS_EVERY`].
+    decoder_status: Mutex<Option<String>>,
     /// What the login names itself as, which for a direct connection is the
     /// address the socket actually went to and for an id is that id.
     login_as: Mutex<String>,
@@ -383,6 +415,7 @@ impl Client {
             out: Mutex::new(None),
             hangup: Hangup::new(),
             info: Mutex::new(Info::default()),
+            decoder_status: Mutex::new(None),
             login_as: Mutex::new(String::new()),
             resolutions: Mutex::new(Vec::new()),
             displays: Mutex::new(Vec::new()),
@@ -424,6 +457,12 @@ impl Client {
             format!("{rtt} ms")
         };
         info
+    }
+
+    /// How the picture is being decoded, as the decoder last said: `None`
+    /// before the first frame, and where there is no decoder.
+    pub fn decoder_status(&self) -> Option<String> {
+        self.decoder_status.lock().unwrap().clone()
     }
 
     /// Whether the far end offers a size it is not already at.
@@ -490,6 +529,12 @@ impl Client {
         let mut out = Message::new();
         out.set_misc(misc);
         self.send(out);
+        self.refresh_video();
+    }
+
+    /// Ask for a fresh picture, which their server sends as a key frame: what
+    /// a decoder that starts mid-stream needs before it can draw anything.
+    fn refresh_video(&self) {
         let mut misc = Misc::new();
         misc.set_refresh_video(true);
         let mut out = Message::new();
@@ -796,7 +841,7 @@ impl Client {
         self.send_login(config, &hash, &password);
         reader.set_timeout(Some(IDLE_TIMEOUT))?;
 
-        let mut decoder: Option<(Codec, (usize, usize), Box<dyn video::Decoder>)> = None;
+        let mut decoder: Option<Current> = None;
         let mut back = Back::new();
         let mut rate = Rate::new();
         let mut cursors: HashMap<u64, Cursor> = HashMap::new();
@@ -1050,7 +1095,7 @@ impl Client {
     fn picture(
         &self,
         frame: VideoFrame,
-        decoder: &mut Option<(Codec, (usize, usize), Box<dyn video::Decoder>)>,
+        decoder: &mut Option<Current>,
         back: &mut Back,
         handler: &mut dyn Handler,
     ) {
@@ -1077,30 +1122,61 @@ impl Client {
         }
         // The size as well as the codec: a decoder is configured for one
         // picture size, and this protocol changes that under a running session
-        // whenever the far end switches display.
-        if decoder
-            .as_ref()
-            .is_none_or(|(had, size, _)| *had != codec || *size != (w, h))
-        {
+        // whenever the far end switches display. And the way of decoding,
+        // which the platform's decoders say and which can be switched under a
+        // running session too: asked every frame, that is the switch taking
+        // effect at the next picture, with no message of its own to wait for.
+        let hardware = self.decoders.hardware();
+        let made_for = |c: &Current| c.codec == codec && c.size == (w, h) && c.hardware == hardware;
+        if !decoder.as_ref().is_some_and(made_for) {
+            let switched = decoder.as_ref().is_some_and(|c| c.hardware != hardware);
+            // Let go of first, so that a hardware decoder's surfaces are back
+            // before the next one asks for its own.
+            *decoder = None;
             match self.decoders.decoder(codec, w, h) {
                 Some(new) => {
-                    self.info.lock().unwrap().encoding = codec.name().into();
-                    *decoder = Some((codec, (w, h), new));
+                    self.info.lock().unwrap().encoding = encoding(codec, None);
+                    *decoder = Some(Current {
+                        codec,
+                        size: (w, h),
+                        hardware,
+                        shown: None,
+                        status_at: None,
+                        decoder: new,
+                    });
+                    // A new decoder mid-stream has none of the pictures the
+                    // next frames refer to. A new codec or size starts with a
+                    // key frame of the peer's own accord; a new way of
+                    // decoding is this end's doing, and the peer is asked.
+                    if switched {
+                        log::info!("decoding switched to {}: asking for a key frame", hardware.name());
+                        self.refresh_video();
+                    }
                 }
                 None => {
                     self.info.lock().unwrap().encoding = format!("{} (no decoder)", codec.name());
+                    *self.decoder_status.lock().unwrap() = None;
                     return;
                 }
             }
         }
-        let Some((_, _, decoder)) = decoder.as_mut() else {
+        let Some(current) = decoder.as_mut() else {
             return;
         };
         back.begin(w, h);
         let mut drew = false;
         for frame in frames {
-            drew |= decoder.decode(&frame.data, &mut back.pixels, w, h, &mut back.changed);
+            drew |= current.decoder.decode(&frame.data, &mut back.pixels, w, h, &mut back.changed);
         }
+        // A decoder that lost the pictures the stream refers back to — a
+        // hardware one that failed mid-stream and went on in software — draws
+        // nothing right until the next key frame, which is asked for rather
+        // than waited for.
+        if current.decoder.take_key_frame_request() {
+            log::info!("the decoder asks for a key frame");
+            self.refresh_video();
+        }
+        self.note(current);
         if !drew {
             return;
         }
@@ -1124,6 +1200,23 @@ impl Client {
         back.swapped();
         handler.damaged(dx, dy, dw, dh);
         handler.frame_end();
+    }
+
+    /// What the decoder now says about itself, where anybody is shown it: the
+    /// Encoding row whenever where its pictures come from changed — the
+    /// first picture, a fallback — and the status line every
+    /// [`STATUS_EVERY`].
+    fn note(&self, current: &mut Current) {
+        let hardware = current.decoder.hardware();
+        if hardware != current.shown {
+            current.shown = hardware;
+            self.info.lock().unwrap().encoding = encoding(current.codec, hardware);
+        }
+        let now = Instant::now();
+        if current.status_at.is_none_or(|at| now.duration_since(at) >= STATUS_EVERY) {
+            current.status_at = Some(now);
+            *self.decoder_status.lock().unwrap() = current.decoder.status();
+        }
     }
 
     fn clipboard_arrived(&self, clip: Clipboard, handler: &mut dyn Handler) {
@@ -1279,11 +1372,7 @@ impl Client {
         }
         self.send_options();
         if focused {
-            let mut misc = Misc::new();
-            misc.set_refresh_video(true);
-            let mut out = Message::new();
-            out.set_misc(misc);
-            self.send(out);
+            self.refresh_video();
         }
     }
 
@@ -1736,24 +1825,25 @@ mod tests {
     /// that screen, and every coordinate on the wire is the desktop's — so a
     /// client that sends the picture's own numbers moves the cursor on the
     /// first display instead, which is what this pins.
+    /// A handler that takes everything and does nothing with it.
+    struct Nothing;
+    impl Handler for Nothing {
+        fn connected(&mut self, _width: usize, _height: usize) {}
+        fn desktop_size(&mut self, _width: usize, _height: usize) {}
+        fn damaged(&mut self, _x: usize, _y: usize, _width: usize, _height: usize) {}
+        fn frame_end(&mut self) {}
+        fn cursor(&mut self, _p: &[u32], _w: usize, _h: usize, _hx: i32, _hy: i32) {}
+        fn clipboard(&mut self, _text: &str) {}
+        fn credentials(&mut self, _needs_user: bool) -> Option<common::Credentials> {
+            None
+        }
+        fn trust(&mut self, _fingerprint: &str) -> bool {
+            false
+        }
+    }
+
     #[test]
     fn a_pointer_is_where_the_captured_display_is() {
-        struct Nothing;
-        impl Handler for Nothing {
-            fn connected(&mut self, _width: usize, _height: usize) {}
-            fn desktop_size(&mut self, _width: usize, _height: usize) {}
-            fn damaged(&mut self, _x: usize, _y: usize, _width: usize, _height: usize) {}
-            fn frame_end(&mut self) {}
-            fn cursor(&mut self, _p: &[u32], _w: usize, _h: usize, _hx: i32, _hy: i32) {}
-            fn clipboard(&mut self, _text: &str) {}
-            fn credentials(&mut self, _needs_user: bool) -> Option<common::Credentials> {
-                None
-            }
-            fn trust(&mut self, _fingerprint: &str) -> bool {
-                false
-            }
-        }
-
         let client = Client::new(Arc::new(video::NoDecoders));
         let (out, sent) = channel();
         *client.out.lock().unwrap() = Some(out);
@@ -1811,5 +1901,130 @@ mod tests {
         // for "has a port already" gets wrong, since every literal has one.
         assert_eq!(resolve("[::1]").unwrap().port(), DIRECT_PORT);
         assert!(resolve("::1").is_err());
+    }
+
+    #[test]
+    fn the_encoding_row_says_where_the_pictures_come_from_once_known() {
+        assert_eq!(encoding(Codec::Av1, Some(false)), "AV1 (software)");
+        assert_eq!(encoding(Codec::H264, Some(true)), "H.264 (hardware)");
+        assert_eq!(encoding(Codec::Vp9, None), "VP9");
+    }
+
+    /// Decoders whose way of decoding can be switched, as a desktop's can,
+    /// and which count what they make; each decoder draws a word per frame,
+    /// says it is hardware when made so, and asks for a key frame when told
+    /// to.
+    #[derive(Default)]
+    struct Switchable {
+        hardware: Mutex<Hardware>,
+        made: AtomicI32,
+        lose_references: Arc<AtomicBool>,
+    }
+
+    struct Drawing {
+        hardware: bool,
+        lose_references: Arc<AtomicBool>,
+    }
+
+    impl video::Decoder for Drawing {
+        fn decode(
+            &mut self,
+            _data: &[u8],
+            out: &mut [u32],
+            _width: usize,
+            _height: usize,
+            changed: &mut video::Changes,
+        ) -> bool {
+            out[0] = out[0].wrapping_add(1);
+            changed.mark(0, 0, 1);
+            true
+        }
+
+        fn hardware(&self) -> Option<bool> {
+            Some(self.hardware)
+        }
+
+        fn status(&self) -> Option<String> {
+            Some(if self.hardware { "H.264 vaapi" } else { "H.264 sw" }.into())
+        }
+
+        fn take_key_frame_request(&mut self) -> bool {
+            self.lose_references.swap(false, Ordering::Relaxed)
+        }
+    }
+
+    impl Decoders for Switchable {
+        fn decodable(&self, _codec: Codec) -> bool {
+            true
+        }
+
+        fn decoder(&self, _codec: Codec, _width: usize, _height: usize) -> Option<Box<dyn video::Decoder>> {
+            self.made.fetch_add(1, Ordering::Relaxed);
+            Some(Box::new(Drawing {
+                hardware: *self.hardware.lock().unwrap() != Hardware::Off,
+                lose_references: Arc::clone(&self.lose_references),
+            }))
+        }
+
+        fn hardware(&self) -> Hardware {
+            *self.hardware.lock().unwrap()
+        }
+    }
+
+    /// Hardware decoding switched on under a running session is a new
+    /// decoder at the next picture and a key frame asked for, with the
+    /// Encoding row and the status line following it; a decoder that loses
+    /// its references asks for one too; and nothing else asks.
+    #[test]
+    fn a_switch_of_decoding_is_a_new_decoder_and_a_key_frame() {
+        let decoders = Arc::new(Switchable::default());
+        let client = Client::new(Arc::clone(&decoders) as Arc<dyn Decoders>);
+        let (out, sent) = channel();
+        *client.out.lock().unwrap() = Some(out);
+        let refreshes = || {
+            sent.try_iter()
+                .filter(|bytes| match Message::parse_from_bytes(bytes).unwrap().union {
+                    Some(message::Union::Misc(misc)) => misc.refresh_video(),
+                    _ => false,
+                })
+                .count()
+        };
+        let mut back = Back::new();
+        client.width.store(4, Ordering::Relaxed);
+        client.height.store(2, Ordering::Relaxed);
+        client.resize(4, 2, &mut back);
+        let frame = || {
+            let mut one = crate::protos::message::EncodedVideoFrame::new();
+            one.data = vec![0; 4];
+            let mut frames = crate::protos::message::EncodedVideoFrames::new();
+            frames.frames.push(one);
+            let mut frame = VideoFrame::new();
+            frame.set_h264s(frames);
+            frame
+        };
+        let mut decoder = None;
+
+        client.picture(frame(), &mut decoder, &mut back, &mut Nothing);
+        assert_eq!(decoders.made.load(Ordering::Relaxed), 1);
+        assert_eq!(client.info().encoding, "H.264 (software)");
+        assert_eq!(client.decoder_status().as_deref(), Some("H.264 sw"));
+        assert_eq!(refreshes(), 0, "a first decoder waits for the peer's own key frame");
+
+        client.picture(frame(), &mut decoder, &mut back, &mut Nothing);
+        assert_eq!(decoders.made.load(Ordering::Relaxed), 1);
+
+        *decoders.hardware.lock().unwrap() = Hardware::Auto;
+        client.picture(frame(), &mut decoder, &mut back, &mut Nothing);
+        assert_eq!(decoders.made.load(Ordering::Relaxed), 2);
+        assert_eq!(refreshes(), 1);
+        assert_eq!(client.info().encoding, "H.264 (hardware)");
+        assert_eq!(client.decoder_status().as_deref(), Some("H.264 vaapi"));
+
+        decoders.lose_references.store(true, Ordering::Relaxed);
+        client.picture(frame(), &mut decoder, &mut back, &mut Nothing);
+        assert_eq!(decoders.made.load(Ordering::Relaxed), 2);
+        assert_eq!(refreshes(), 1);
+        client.picture(frame(), &mut decoder, &mut back, &mut Nothing);
+        assert_eq!(refreshes(), 0);
     }
 }
