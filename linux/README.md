@@ -354,7 +354,9 @@ first (each letting go of the pointer capture and anything it held), and
 then the main window goes back to the dialog or quits as before.
 
 What follows the focus between the windows: the keys (typed into whichever
-window has the focus, and not let go of at the far end when the focus moves
+window has the focus — egui's, not the far end's, while a widget of *that*
+window has egui's focus, so a field in the main window's panel takes nothing
+typed into a pop-out — and not let go of at the far end when the focus moves
 from one of ours to another — only when it leaves the process), X11's
 keyboard grab (moved to the focused window), Wayland's shortcuts inhibitor
 (the focused window's only), relative mode's capture (taken only in the

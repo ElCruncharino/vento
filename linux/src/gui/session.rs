@@ -398,9 +398,11 @@ impl Session {
     /// Whether a key event from winit, to `pane`'s window, is the far end's
     /// rather than egui's: not while the pointer is on that window's
     /// toolbar, where the shortcuts are this desktop's again and a key
-    /// typed is not meant for the far end.
-    pub fn takes_keys(&self, ctx: &egui::Context, pane: PaneId) -> bool {
-        self.accepts_input() && !self.toolbar_hovered(pane) && !ctx.egui_wants_keyboard_input()
+    /// typed is not meant for the far end, nor while a widget of that
+    /// window has egui's focus (a text field in the main window's panel
+    /// does not take keys typed into a pop-out).
+    pub fn takes_keys(&self, pane: PaneId) -> bool {
+        self.accepts_input() && !self.toolbar_hovered(pane) && !self.pane(pane).is_some_and(|p| p.wants_keys)
     }
 
     fn toolbar_hovered(&self, pane: PaneId) -> bool {
@@ -1062,6 +1064,9 @@ impl Session {
         };
         let mut pane = self.panes.remove(i);
         pane.frame(self, root, host);
+        // Read inside this window's pass, which is the only time egui's
+        // answer is this window's.
+        pane.wants_keys = ctx.egui_wants_keyboard_input();
         self.panes.insert(i, pane);
     }
 

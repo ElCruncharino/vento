@@ -194,6 +194,10 @@ pub struct Pane {
     /// The window's size in pixels, as of its last frame: what the follower
     /// asks for this pane's monitor (see `follow.rs`).
     pub size: Option<(u32, u32)>,
+    /// Whether egui had a widget of this window's focused at the end of its
+    /// last frame, so that a key typed into it is egui's. Kept per window:
+    /// egui's own answer is for whichever window ran its pass last.
+    pub wants_keys: bool,
 }
 
 impl Pane {
@@ -217,6 +221,7 @@ impl Pane {
             unpresented: None,
             pointer_since: None,
             size: None,
+            wants_keys: false,
         }
     }
 

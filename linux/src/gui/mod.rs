@@ -1296,9 +1296,8 @@ impl ApplicationHandler<Wake> for App {
                 ..
             } if !is_synthetic => {
                 let since = Instant::now();
-                let egui = self.egui.clone();
                 if let Screen::Session(session) = &mut self.screen {
-                    if session.takes_keys(&egui, viewport) {
+                    if session.takes_keys(viewport) {
                         session.key(key, since);
                         window.request_redraw();
                         return;
