@@ -100,8 +100,8 @@ impl Settings {
         let label = if weak { RichText::new("Hardware decoding").weak() } else { RichText::new("Hardware decoding") };
         ui.label(label).on_hover_text(
             "Decode video on the GPU (VAAPI, else Vulkan Video) where the device takes the stream, and in \
-             software where it does not. RustDesk switches at once; the other backends decode as their \
-             libraries do and do not use this.",
+             software where it does not. RustDesk and TigerVNC's H.264 switch at once (at the next picture \
+             the far end sends whole); the other backends decode as their libraries do and do not use this.",
         );
         let mut on = self.hw_decode != Hardware::Off;
         let note = match self.hw_decode {

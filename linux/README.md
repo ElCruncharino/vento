@@ -101,9 +101,11 @@ libraries: the client's FFmpeg is built from `third_party/ffmpeg` (n8.1.3) and
 `third_party/dav1d` (1.5.4) by `backends/platform/desktop/build.rs`, once per
 target directory and profile (about a minute and a half; a stamp beside it
 says what it was built from, and it is built again only when that changes),
-as static libraries that the RustDesk decoder, TigerVNC's H.264 and FreeRDP's
-H.264, sound and scaling all link — the C backends through
-`VENTO_FFMPEG_PREFIX`, which `build.rs` hands their CMake build. It is
+as static libraries that the Rust decoder (RustDesk's video and TigerVNC's
+H.264) and FreeRDP's H.264, sound and scaling link — FreeRDP through
+`VENTO_FFMPEG_PREFIX`, which `build.rs` hands the CMake build. TigerVNC
+links none of it: its H.264 decoder context hands each rectangle to the Rust
+decoder through a table of function pointers in its config. It is
 configured `--disable-everything`, `--disable-autodetect`, without programs,
 network or the format, filter and device libraries, with exactly these
 decoders: H.264, H.265, VP8, VP9, AV1 (dav1d's), AAC, Opus and two PCM ones
@@ -123,8 +125,9 @@ functions of it declared by hand.
 it always was: no device is opened, and neither libva nor libvulkan is
 loaded. Asked for — the **Hardware decoding** setting, or `--hw-decode`
 (`auto`; `=vaapi` or `=vulkan` for one of them) — the Rust decoder
-(RustDesk's picture) decodes on the device where it has a decoder for the
-stream's profile, and in software where it has not, with the reason kept;
+(RustDesk's picture, and TigerVNC's H.264) decodes on the device where it
+has a decoder for the stream's profile, and in software where it has not,
+with the reason kept;
 one device of each kind is opened for the whole process, by the first
 decoder that asks. `auto` decides stream by stream: **VAAPI first, then
 Vulkan Video, then software**. A stream VAAPI takes never loads libvulkan;
@@ -161,14 +164,28 @@ cores), at half the CPU; AV1 on VAAPI 9-10 ms against dav1d's 12, and on
 Vulkan (ANV with the switch) 5-6 ms. Most of VAAPI's time is the GPU's
 decode (about 3 ms) and the read back of the whole picture, which a mostly
 still desktop costs as much as a moving one, where software's decode is
-cheap. RustDesk's **Encoding** row says which, after the codec: `AV1
-(software)`, `H.264 (hardware)`, nothing before the first picture; and the
-debug overlay's `dec` line says how and what a frame costs (`dec H.264 vaapi
-map 2.1 ms`, `dec H.264 sw 3.2 ms (vaapi: no device)`). The setting reaches
-every backend: the session's decoders carry it, which RustDesk asks each
-frame and takes a change of at once — a new decoder, and a key frame asked
-for, on the same session — and a backend with decoders of its own is handed
-it at connect (`Connect::hardware`), though none of those uses it yet.
+cheap. RustDesk's and TigerVNC's **Encoding** row says which, after the
+codec: `AV1 (software)`, `H.264 (hardware)`, nothing before the first
+picture; and the debug overlay's `dec` line says how and what a frame costs
+(`dec H.264 vaapi map 2.1 ms`, `dec H.264 sw 3.2 ms (vaapi: no device)`).
+The setting reaches every backend: the session's decoders carry it.
+**RustDesk** asks them each frame and takes a change at once — a new
+decoder, and a key frame asked for, on the same session. **TigerVNC** decodes
+its H.264 rectangles through the same decoders (handed to the C as
+`vento/video.h`'s table) and takes a change at once too: each rectangle's
+decoder is made again in the new mode and the whole screen asked for
+(a non-incremental update request, the nearest thing RFB has to a key frame
+request, which wayvnc answers with one); a picture or two in between is
+refused and nothing wrong is drawn. TigerVNC keeps a decoder per rectangle,
+up to 64, and at most four of them hold a hardware decoder; the rest decode
+in software. Against wayvnc at 1920x1200 with a terminal scrolling (debug
+build), a rectangle took 3.7-4.0 ms in software where upstream's libavcodec
+context, which this replaced, took 5.3 — it converted the whole picture
+every frame, where only the rows that moved are converted now, straight
+into the framebuffer — and 10-12 ms on VAAPI, whose read back of the whole
+picture is the cost here as it is for RustDesk. The other backends decode as their libraries do: a backend
+with decoders of its own would be handed the mode at connect
+(`Connect::hardware`), and none uses it yet.
 
 The submodules must be initialised (`git submodule update --init --recursive`;
 RealVNC's four host-only submodules need `--recursive`) and patched
@@ -225,6 +242,7 @@ cargo run -- tigervnc 127.0.0.1:5901 --no-grab-keyboard
 cargo run -- tigervnc 127.0.0.1:5901 --software-cursor
 cargo run -- rustdesk 127.0.0.1 -o ConnectBy=address --hw-decode
 cargo run -- rustdesk 127.0.0.1 -o ConnectBy=address --hw-decode=vaapi
+cargo run -- tigervnc 127.0.0.1::5903 -o H264=true -o Encoding=h264 --hw-decode
 ANV_DEBUG=video-decode cargo run -- rustdesk 127.0.0.1 -o ConnectBy=address -o Codec=av1 --hw-decode=vulkan
 
 # Straight into a session, with --connect. Without --password the credentials

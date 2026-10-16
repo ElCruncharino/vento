@@ -118,7 +118,7 @@ usage: vento                                   the connection dialog
                          else Vulkan; the default without =HOW) or off, which
                          is what it is without the flag; where the device does
                          not take a stream it is decoded in software. RustDesk
-                         is the backend that uses it (the dialog's Settings
+                         and TigerVNC's H.264 use it (the dialog's Settings
                          have all five, and the panel switches them live)
   --x11, --wayland       open the window on that display server (default:
                          Wayland where WAYLAND_DISPLAY is set, X11 otherwise)
