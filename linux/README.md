@@ -156,9 +156,9 @@ cargo run -- --list
 # A session, headless: connect, print every event, answer the prompts from the
 # flags, write the framebuffer and a thumbnail, print the facts, and leave.
 # Any of the probe's flags (--probe, --out, --click, --key, --clipboard,
-# --trust, …) selects this instead of the window. A certificate the known
-# hosts match is accepted without --trust; --trust accepts any other for this
-# run and pins nothing.
+# --resize, --layout, --trust, …) selects this instead of the window. A
+# certificate the known hosts match is accepted without --trust; --trust
+# accepts any other for this run and pins nothing.
 cargo run -- tigervnc 127.0.0.1:5901 --password vncpass \
     --out /tmp/shot.ppm --click 500,300 --key 0x61 --clipboard hello
 cargo run -- rdp 127.0.0.1:3389 --user proto --password protopass \
@@ -190,6 +190,14 @@ advance is refused (status 2): any of the three under `-o ViewOnly=true`,
 where every backend drops input. And `--clipboard` fails the run (1) where the
 backend can tell the text went nowhere, which today is SPICE without a guest
 agent that takes a clipboard.
+
+`--resize WxH` asks for a desktop of that size, as the window does when it is
+resized, and `--layout WxH,WxH,…` asks for that many screens side by side,
+handing the far end's own screens back by position (their ids kept) and
+numbering any past them afresh. Both go out a second after connecting, and
+like input they are sent, not confirmed: the facts printed at the end, which
+list each monitor as `id=N WxH+X+Y`, say what the far end made of them, and
+`scripts/testvnc/heads.sh` says the same from the server's side.
 
 `--verbose` lets the backends' debug lines through (and not the GUI stack's,
 which would be tens of thousands a minute).

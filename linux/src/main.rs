@@ -29,7 +29,7 @@ mod host {
     use std::path::PathBuf;
     use std::sync::Arc;
     use std::time::{Duration, Instant};
-    use vento::backend::{Backend, Credentials, thumbnail_step};
+    use vento::backend::{Backend, Credentials, Monitor, thumbnail_step};
     use vento::backends::{self, Connect, Dirs, Kind, Platform};
     use vento::events::{Event, Mailbox, State};
     use vento::gui;
@@ -63,6 +63,11 @@ mod host {
         click: Option<(i32, i32)>,
         key: Option<u32>,
         clipboard: Option<String>,
+        /// `--resize`: a desktop size to ask for, as the window's follower
+        /// asks for one.
+        resize: Option<(u32, u32)>,
+        /// `--layout`: screens to ask for, left to right.
+        layout: Option<Vec<(u32, u32)>>,
         /// `--no-clipboard-in`'s opposite: whether what the far end copies is
         /// shown, which is the probe's way of taking it.
         clipboard_in: bool,
@@ -125,7 +130,10 @@ headless, any of which selects the probe instead of the window:
   --click X,Y            left-click there once connected
   --key KEYSYM           press and release this X keysym: 0x61, 97 and 0141
                          are all 'a', as strtol reads them
-  --clipboard TEXT       send this as the clipboard a second after connecting";
+  --clipboard TEXT       send this as the clipboard a second after connecting
+  --resize WxH           ask for a desktop this size a second after connecting
+  --layout WxH,WxH,...   ask for these screens side by side instead, the far
+                         end's own screens by position and new ones past them";
 
     pub fn run(args: Vec<String>) -> i32 {
         vento::log::init(args.iter().any(|a| a == "--verbose"));
@@ -192,6 +200,8 @@ headless, any of which selects the probe instead of the window:
         let mut click = None;
         let mut key = None;
         let mut clipboard = None;
+        let mut resize = None;
+        let mut layout = None;
         let mut out = None;
         let mut thumb_step = 8usize;
         let mut dirs = Dirs::xdg();
@@ -264,6 +274,19 @@ headless, any of which selects the probe instead of the window:
                     headless = true;
                     clipboard = Some(value(&mut it, "--clipboard")?);
                 }
+                "--resize" => {
+                    headless = true;
+                    resize = Some(dimensions(&value(&mut it, "--resize")?, "--resize")?);
+                }
+                "--layout" => {
+                    headless = true;
+                    let v = value(&mut it, "--layout")?;
+                    layout = Some(
+                        v.split(',')
+                            .map(|s| dimensions(s.trim(), "--layout"))
+                            .collect::<Result<Vec<_>, _>>()?,
+                    );
+                }
                 "--library-dir" => dirs.realvnc_libs = PathBuf::from(value(&mut it, "--library-dir")?),
                 "--state-dir" => dirs.state = PathBuf::from(value(&mut it, "--state-dir")?),
                 other if other.starts_with('-') && other != "-" => {
@@ -327,6 +350,9 @@ headless, any of which selects the probe instead of the window:
         if options.bool("ViewOnly") && (click.is_some() || key.is_some() || clipboard.is_some()) {
             return Err("-o ViewOnly=true sends no input or clipboard, so --click, --key and --clipboard cannot happen".into());
         }
+        if resize.is_some() && layout.is_some() {
+            return Err("--resize and --layout are two answers to one question; give one".into());
+        }
         Ok(Mode::Probe(Box::new(Probe {
             kind,
             address: positional.remove(1),
@@ -341,6 +367,8 @@ headless, any of which selects the probe instead of the window:
             click,
             key,
             clipboard,
+            resize,
+            layout,
             clipboard_in: settings.clipboard_in,
             out,
             thumb_step,
@@ -348,6 +376,21 @@ headless, any of which selects the probe instead of the window:
             answered: Cell::new(false),
             refused: Cell::new(false),
         })))
+    }
+
+    /// A screen as the probe prints it: `id=N WxH+X+Y`, as heads.sh does.
+    fn screen(m: &Monitor) -> String {
+        format!("id={} {}x{}+{}+{}", m.id, m.width, m.height, m.x, m.y)
+    }
+
+    /// `WxH`, neither of them zero.
+    fn dimensions(value: &str, flag: &str) -> Result<(u32, u32), String> {
+        let (w, h) = value.split_once('x').ok_or(format!("{flag}: not WxH: {value:?}"))?;
+        let (w, h) = (number::<u32>(w, flag)?, number::<u32>(h, flag)?);
+        if w == 0 || h == 0 {
+            return Err(format!("{flag}: a screen has an area: {value:?}"));
+        }
+        Ok((w, h))
     }
 
     fn number<T: std::str::FromStr>(value: &str, flag: &str) -> Result<T, String> {
@@ -668,6 +711,42 @@ headless, any of which selects the probe instead of the window:
                 backend.key_down(keysym, 1);
                 backend.key_up(1);
             }
+            if let Some((w, h)) = self.resize {
+                say(&format!("request_desktop_size -> {w}x{h}"));
+                backend.request_desktop_size(w, h);
+            }
+            if let Some(sizes) = &self.layout {
+                // The far end's screens keep their ids by position, as a
+                // window placing its monitors left to right would hand them
+                // back; one past them has an id the far end cannot have yet
+                // (none has all 2^32), and the backend numbers it.
+                let have = backend.facts().monitors;
+                let fresh = (0..=u32::MAX).rev().find(|id| have.iter().all(|m| m.id != *id));
+                let mut x = 0i32;
+                let screens: Vec<Monitor> = sizes
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &(w, h))| {
+                        let id = have.get(i).map(|m| m.id).or(fresh).unwrap_or(0);
+                        let m = Monitor {
+                            id,
+                            x,
+                            y: 0,
+                            width: w as i32,
+                            height: h as i32,
+                        };
+                        x += w as i32;
+                        m
+                    })
+                    .collect();
+                let width = x.max(0) as u32;
+                let height = sizes.iter().map(|s| s.1).max().unwrap_or(0);
+                say(&format!(
+                    "request_layout -> {width}x{height}: {}",
+                    screens.iter().map(screen).collect::<Vec<_>>().join(", ")
+                ));
+                backend.request_layout(width, height, &screens);
+            }
         }
 
         fn facts(&self, backend: &Arc<dyn Backend>, say: &dyn Fn(&str)) {
@@ -682,6 +761,12 @@ headless, any of which selects the probe instead of the window:
                 if facts.can_resize { ", resizable" } else { "" },
                 if facts.pointer_relative { ", relative pointer" } else { "" }
             ));
+            if facts.can_layout {
+                say("facts: takes a layout");
+            }
+            for m in &facts.monitors {
+                say(&format!("monitor {}", screen(m)));
+            }
             for (i, fact) in backend.info().iter().enumerate() {
                 say(&format!(
                     "info[{i}] {}{}: {}",
