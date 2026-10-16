@@ -36,6 +36,9 @@ typedef struct vento_freerdp_config {
     int monitors;
     int keyboard_layout;
     const char *client_name;
+    /* What this end runs on, for the general capability set's major type:
+       "android" or "linux"; NULL, or anything else, sends unspecified. */
+    const char *platform;
     /* A writable directory: the library sets its certificate store up there,
        and fails to connect without one, though the store is never read or
        written — every certificate goes to `trust_needed` and nowhere else.

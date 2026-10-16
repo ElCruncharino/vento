@@ -56,6 +56,7 @@ int main(int argc, char **argv) {
             .height = 800,
             .monitors = 1,
             .client_name = "vento-probe",
+            .platform = "linux",
             .config_path = "vento-probe-freerdp",
     };
     for (int i = 1; i < argc;) {
