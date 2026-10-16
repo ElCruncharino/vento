@@ -64,12 +64,15 @@ endif()
 #
 # One imported target per library, each carrying what a static link of it
 # needs after it — dav1d and libswresample after libavcodec (its AV1 and its
-# Opus decoder), libavutil after all, and the system's threads, libm and
-# libdl — so that a module names only the library it calls.
+# Opus decoder), libavutil after all, the libva shim after libavutil (its
+# VAAPI code calls libva through it: backends/platform/desktop/c/va_shim.c,
+# which loads libva only when something decodes in hardware, and no backend
+# here asks to), and the system's threads, libm and libdl — so that a module
+# names only the library it calls.
 set(VENTO_FFMPEG_PREFIX "" CACHE PATH "FFmpeg and dav1d built statically under this prefix, or empty for the host's FFmpeg")
 if(VENTO_FFMPEG_PREFIX AND NOT TARGET vento_ffmpeg::avcodec)
     find_package(Threads REQUIRED)
-    foreach(lib avutil dav1d swresample swscale avcodec)
+    foreach(lib vento_va avutil dav1d swresample swscale avcodec)
         set(_file "${VENTO_FFMPEG_PREFIX}/lib/lib${lib}.a")
         if(NOT EXISTS "${_file}")
             message(FATAL_ERROR "VENTO_FFMPEG_PREFIX has no ${_file}")
@@ -79,7 +82,8 @@ if(VENTO_FFMPEG_PREFIX AND NOT TARGET vento_ffmpeg::avcodec)
                 IMPORTED_LOCATION "${_file}"
                 INTERFACE_INCLUDE_DIRECTORIES "${VENTO_FFMPEG_PREFIX}/include")
     endforeach()
-    target_link_libraries(vento_ffmpeg::avutil INTERFACE Threads::Threads m)
+    target_link_libraries(vento_ffmpeg::vento_va INTERFACE ${CMAKE_DL_LIBS})
+    target_link_libraries(vento_ffmpeg::avutil INTERFACE vento_ffmpeg::vento_va Threads::Threads m)
     target_link_libraries(vento_ffmpeg::dav1d INTERFACE Threads::Threads ${CMAKE_DL_LIBS})
     target_link_libraries(vento_ffmpeg::swresample INTERFACE vento_ffmpeg::avutil)
     target_link_libraries(vento_ffmpeg::swscale INTERFACE vento_ffmpeg::avutil)

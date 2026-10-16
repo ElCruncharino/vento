@@ -107,15 +107,22 @@ H.264, sound and scaling all link — the C backends through
 configured `--disable-everything`, `--disable-autodetect`, without programs,
 network or the format, filter and device libraries, with exactly these
 decoders: H.264, H.265, VP8, VP9, AV1 (dav1d's), AAC, Opus and two PCM ones
-(FreeRDP's sound), the H.264 parser, libswscale and libswresample. Its own
-code (`backends/platform/desktop/c/vento_video.c`) is the only C that
+(FreeRDP's sound), the H.264 parser, libswscale and libswresample, and the
+hardware decoders of those video codecs: VAAPI's for each and Vulkan Video's
+for H.264, H.265, VP9 and AV1 (with libavcodec's own AV1 decoder, which
+decodes only on hardware), built against headers from `third_party/libva`
+(2.23.0) and `third_party/Vulkan-Headers` (v1.4.341) and nothing else of
+either: FFmpeg's VAAPI code reaches libva through `c/va_shim.c`, which loads
+`libva.so.2` and `libva-drm.so.2` on first use, and its Vulkan code loads
+`libvulkan.so.1` itself, so the binary depends on neither. Its own code
+(`backends/platform/desktop/c/vento_video.c`) is the only C that
 includes FFmpeg's headers for the Rust decoder, which calls six functions of
 it declared by hand.
 
 The submodules must be initialised (`git submodule update --init --recursive`;
 RealVNC's four host-only submodules need `--recursive`) and patched
-(`./patch.sh -n` at the root). Three are this crate's alone: FFmpeg and
-dav1d, above, and winit, at the tag of the release `Cargo.lock` names, which
+(`./patch.sh -n` at the root). Five are this crate's alone: FFmpeg,
+dav1d, libva's and Vulkan's headers, above, and winit, at the tag of the release `Cargo.lock` names, which
 `Cargo.toml`'s `[patch.crates-io]` takes in place of the crates.io one so that
 our fixes to it live in `patches/winit/` like every other submodule's.
 Unpatched, winit builds and is exactly crates.io's, with the defects the
@@ -135,7 +142,10 @@ linked statically into the binary and the TigerVNC and FreeRDP libraries, as
 configured LGPL 2.1 or later (no `--enable-gpl`, no `--enable-nonfree`;
 `third_party/ffmpeg/COPYING.LGPLv2.1`), with one patch of ours to its
 configure (`patches/ffmpeg/`); dav1d, inside it, is BSD-2-Clause
-(`third_party/dav1d/COPYING`). Nothing of this crate's graph reaches the
+(`third_party/dav1d/COPYING`). FFmpeg is compiled against libva's headers,
+which are MIT (`third_party/libva/COPYING`), and Vulkan's, Apache-2.0
+(`third_party/Vulkan-Headers/LICENSES/Apache-2.0.txt`), and the libva shim
+is ours; neither library is linked. Nothing of this crate's graph reaches the
 Android app or its licence page.
 
 ```sh

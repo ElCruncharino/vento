@@ -56,6 +56,20 @@ consumer that starts using another codec adds it there. Proven by the desktop
 crate's fixture tests, the RustDesk probe with each codec, and the TigerVNC
 H.264 and FreeRDP AVC probes. Android builds neither.
 
+`third_party/libva` and `third_party/Vulkan-Headers` go with FFmpeg: headers
+only, for its VAAPI and Vulkan Video decoders (`HWACCELS` in the same build
+script). Neither is compiled or linked; libva is reached through
+`backends/platform/desktop/c/va_shim.c`, which defines each libva function
+FFmpeg calls and loads the real one on first use. A newer FFmpeg may call a
+libva function the shim does not have yet, which is a link error naming it
+(`undefined symbol: va...`): add it to `VA_FUNCTIONS` there. libva moves to
+a newer release's tag when FFmpeg wants newer headers (its configure says
+which `VA_CHECK_VERSION` a feature needs); Vulkan-Headers when FFmpeg's
+configure asks for a newer `VK_HEADER_VERSION`, which it checks for each of
+`vulkan` and `vulkan_1_4`. Proven by the desktop crate's `hardware` tests
+with `VENTO_TEST_HW=require` on a machine with a VAAPI device, and
+`hardware_off`.
+
 A shared library can be blocked by a consumer: nettle 4 could not move until
 TigerVNC had upstream's nettle-4 compatibility. When an evaluation says "stay"
 because of a consumer, note it and come back after that consumer moves.

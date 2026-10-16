@@ -20,13 +20,22 @@
 //!
 //! **Built once.** The two builds take about a minute and a half together
 //! (dav1d with Meson and Ninja, FFmpeg with its configure and make), and are
-//! made again only when what they are made from changes — either submodule's
-//! commit, the configure line, the compiler or whether NASM is there — which a
+//! made again only when what they are made from changes — any of the four
+//! submodules' commits, the configure line, the compiler or whether NASM is there — which a
 //! stamp beside them records. Any other reason this script runs (a change to
 //! the wrapper, a new `PATH`) finds the stamp the same and only recompiles the
 //! wrapper. A debug and a release build each have an `OUT_DIR` and so a copy
 //! of their own; FFmpeg is optimised in both, as its configure does by
 //! default.
+//!
+//! **Hardware decoders, from headers alone.** FFmpeg's VAAPI and Vulkan Video
+//! decoders (`HWACCELS`) are built against `third_party/libva`'s headers,
+//! installed into the prefix with the one libva generates, and
+//! `third_party/Vulkan-Headers`, through pkg-config files of ours that say so.
+//! Nothing of either is linked: libva's functions are `c/va_shim.c`'s, which
+//! loads the real ones when hardware decoding is first asked for, and
+//! FFmpeg's Vulkan code loads libvulkan itself. So the binary runs where
+//! neither is installed, and loads neither while hardware decoding is off.
 //!
 //! **Assembly** is NASM's on x86: without it dav1d and libavcodec fall back to
 //! their C, which works and decodes a fraction as fast, so its absence is a
@@ -50,9 +59,10 @@ const DECODERS: &[&str] = &[
     "hevc",
     "vp8",
     "vp9",
-    // RustDesk's AV1, through dav1d: libavcodec's own `av1` decodes only with
-    // hardware acceleration.
+    // RustDesk's AV1, through dav1d in software; libavcodec's own `av1`
+    // decodes only with hardware acceleration, and is there for that alone.
     "libdav1d",
+    "av1",
     // FreeRDP's sound channel: the AAC and Opus a server may send, and the
     // two PCM decoders FreeRDP asks for before it plays PCM, which it then
     // only resamples.
@@ -60,6 +70,24 @@ const DECODERS: &[&str] = &[
     "opus",
     "pcm_u8",
     "pcm_u16le",
+];
+
+/// The hardware decoders of the codecs above, for the Rust decoder when
+/// hardware decoding is asked for (`c/vento_video.c`): VAAPI's for each, and
+/// Vulkan Video's for each FFmpeg has one of (no VP8). Neither needs a library
+/// at build time: libva is reached through `c/va_shim.c`, and FFmpeg's Vulkan
+/// code loads `libvulkan.so.1` itself when a Vulkan device is made, so both
+/// are headers here (`third_party/libva`, `third_party/Vulkan-Headers`).
+const HWACCELS: &[&str] = &[
+    "h264_vaapi",
+    "hevc_vaapi",
+    "vp8_vaapi",
+    "vp9_vaapi",
+    "av1_vaapi",
+    "h264_vulkan",
+    "hevc_vulkan",
+    "vp9_vulkan",
+    "av1_vulkan",
 ];
 
 /// TigerVNC and FreeRDP each split their H.264 stream into frames with
@@ -70,6 +98,8 @@ const PARSERS: &[&str] = &["h264"];
 fn main() {
     println!("cargo:rerun-if-changed=c/vento_video.c");
     println!("cargo:rerun-if-changed=c/vento_video.h");
+    println!("cargo:rerun-if-changed=c/va_shim.c");
+    println!("cargo:rerun-if-changed=c/va_shim.h");
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android") {
         return;
     }
@@ -84,10 +114,18 @@ fn main() {
         .expect("third_party/ at the repository root");
     let dav1d = third_party.join("dav1d");
     let ffmpeg = third_party.join("ffmpeg");
-    for (source, marker) in [(&dav1d, "meson.build"), (&ffmpeg, "configure")] {
+    let libva = third_party.join("libva");
+    let vulkan = third_party.join("Vulkan-Headers");
+    for (source, marker) in [
+        (&dav1d, "meson.build"),
+        (&ffmpeg, "configure"),
+        (&libva, "va/va.h"),
+        (&vulkan, "include/vulkan/vulkan.h"),
+    ] {
         assert!(
             source.join(marker).is_file(),
-            "{} is empty; run: git submodule update --init third_party/dav1d third_party/ffmpeg",
+            "{} is empty; run: git submodule update --init third_party/dav1d third_party/ffmpeg \
+             third_party/libva third_party/Vulkan-Headers",
             source.display()
         );
         if let Some(head) = git_head(source) {
@@ -113,9 +151,11 @@ fn main() {
     let prefix = root.join("prefix");
     let configure = configure_args(&prefix, &cc, asm);
     let stamp = format!(
-        "dav1d {}\nffmpeg {}\ncc {} {}\nasm {asm}\n{}\n",
+        "dav1d {}\nffmpeg {}\nlibva {}\nvulkan {}\ncc {} {}\nasm {asm}\n{}\n",
         revision(&dav1d),
         revision(&ffmpeg),
+        revision(&libva),
+        revision(&vulkan),
         cc.display(),
         version(&cc),
         configure.join(" ")
@@ -128,8 +168,15 @@ fn main() {
         }
         fs::create_dir_all(&root).unwrap();
         build_dav1d(&dav1d, &root, &prefix, &cc, asm);
+        install_libva_headers(&libva, &prefix);
+        write_pkg_config(&prefix, &vulkan);
+        build_va_shim(&manifest, &root, &prefix);
         build_ffmpeg(&ffmpeg, &root, &prefix, &configure);
         fs::write(&stamp_path, &stamp).unwrap();
+    } else {
+        // The shim is not part of the stamp: a change to it is a recompile of
+        // it alone, which FFmpeg's libraries only link against.
+        build_va_shim(&manifest, &root, &prefix);
     }
 
     cc::Build::new()
@@ -138,8 +185,8 @@ fn main() {
         .warnings(true)
         .compile("vento_video");
     // libavcodec and what it needs, in the order a static link wants them,
-    // from its own pkg-config file: dav1d and libavutil after it, and the
-    // system's libm and threads. (Not libatomic, which FFmpeg's configure
+    // from its own pkg-config file: dav1d and libavutil after it, the libva
+    // shim after that, and the system's libm, libdl and threads. (Not libatomic, which FFmpeg's configure
     // named wherever it was installed until patches/ffmpeg/0001.)
     for lib in static_libs(&prefix, "libavcodec") {
         if prefix.join("lib").join(format!("lib{lib}.a")).is_file() {
@@ -177,6 +224,13 @@ fn configure_args(prefix: &Path, cc: &Path, asm: bool) -> Vec<String> {
         "--enable-pic",
         "--enable-pthreads",
         "--enable-libdav1d",
+        // Hardware decoding (`HWACCELS`), against the headers of
+        // `third_party/` through the pkg-config files `write_pkg_config`
+        // puts in the prefix. Named, since `--disable-autodetect` turns off
+        // everything that is not; nothing else of the machine's is looked
+        // for, so no libdrm and no X11.
+        "--enable-vaapi",
+        "--enable-vulkan",
         // dav1d's pkg-config file is the only one it reads, and the static
         // half of it is what a static link needs.
         "--pkg-config-flags=--static",
@@ -187,6 +241,7 @@ fn configure_args(prefix: &Path, cc: &Path, asm: bool) -> Vec<String> {
     args.push(format!("--cc={}", cc.display()));
     args.push(format!("--enable-decoder={}", DECODERS.join(",")));
     args.push(format!("--enable-parser={}", PARSERS.join(",")));
+    args.push(format!("--enable-hwaccel={}", HWACCELS.join(",")));
     if !asm {
         args.push("--disable-x86asm".into());
     }
@@ -218,6 +273,159 @@ fn build_dav1d(source: &Path, root: &Path, prefix: &Path, cc: &Path, asm: bool) 
     let mut install = Command::new("ninja");
     install.arg("-C").arg(&build).arg("install").arg(jobs());
     run(install, &root.join("dav1d-build.log"));
+}
+
+/// libva's headers into the prefix, where its own install would put them
+/// (`include/va/`), with the one it generates: `va_version.h`, from its
+/// template and the version `meson.build` declares. Nothing of libva is
+/// compiled; its functions are `c/va_shim.c`'s.
+fn install_libva_headers(source: &Path, prefix: &Path) {
+    let into = prefix.join("include/va");
+    fs::create_dir_all(&into).unwrap();
+    let meson = fs::read_to_string(source.join("meson.build")).expect("libva's meson.build");
+    let part = |name: &str| -> String {
+        meson
+            .lines()
+            .find_map(|l| {
+                let (key, value) = l.split_once('=')?;
+                (key.trim() == name).then(|| value.trim().to_string())
+            })
+            .unwrap_or_else(|| panic!("libva's meson.build declares no {name}"))
+    };
+    let (major, minor, micro) = (
+        part("va_api_major_version"),
+        part("va_api_minor_version"),
+        part("va_api_micro_version"),
+    );
+    let template =
+        fs::read_to_string(source.join("va/va_version.h.in")).expect("libva's va_version.h.in");
+    let version = template
+        .replace("@VA_API_MAJOR_VERSION@", &major)
+        .replace("@VA_API_MINOR_VERSION@", &minor)
+        .replace("@VA_API_MICRO_VERSION@", &micro)
+        .replace("@VA_API_VERSION@", &format!("{major}.{minor}.{micro}"));
+    assert!(
+        !version.contains("@VA_"),
+        "va_version.h.in has a placeholder this does not fill"
+    );
+    fs::write(into.join("va_version.h"), version).unwrap();
+    // The headers libva's install puts there, which `va/meson.build` lists:
+    // the core's and the DRM one's, which is in a directory of its own in the
+    // tree and beside the rest once installed.
+    let list = fs::read_to_string(source.join("va/meson.build")).expect("libva's va/meson.build");
+    let listed = |name: &str| -> Vec<String> {
+        let start = list
+            .find(&format!("{name} = ["))
+            .unwrap_or_else(|| panic!("va/meson.build lists no {name}"));
+        let body = &list[start..start + list[start..].find(']').unwrap()];
+        body.split('\'')
+            .skip(1)
+            .step_by(2)
+            .map(String::from)
+            .collect()
+    };
+    let headers = [listed("libva_headers"), listed("libva_drm_headers")].concat();
+    assert!(
+        headers.iter().any(|h| h == "va.h") && headers.iter().any(|h| h == "drm/va_drm.h"),
+        "va/meson.build's header lists are not what this reads them as"
+    );
+    for header in headers {
+        let from = source.join("va").join(&header);
+        fs::copy(&from, into.join(from.file_name().unwrap())).unwrap();
+    }
+}
+
+/// What FFmpeg's configure is told libva and Vulkan are, through the
+/// pkg-config files it reads (the prefix's alone, as for dav1d): libva and
+/// libva-drm are the headers just installed and the shim, and Vulkan is its
+/// headers and nothing to link, which is what configure asks of it when
+/// Vulkan is not linked statically.
+fn write_pkg_config(prefix: &Path, vulkan: &Path) {
+    let dir = prefix.join("lib/pkgconfig");
+    fs::create_dir_all(&dir).unwrap();
+    let head = format!(
+        "prefix={}\nlibdir=${{prefix}}/lib\nincludedir=${{prefix}}/include\n\n",
+        prefix.display()
+    );
+    // The version libva would say it is: 2.x for the 1.x of its API.
+    let api = fs::read_to_string(prefix.join("include/va/va_version.h")).unwrap();
+    let api = api
+        .lines()
+        .find_map(|l| l.strip_prefix("#define VA_VERSION_S"))
+        .map(|v| v.trim().trim_matches('"').to_string())
+        .expect("va_version.h has VA_VERSION_S");
+    let libva_version = match api.split_once('.') {
+        Some(("1", rest)) => format!("2.{rest}"),
+        _ => api.clone(),
+    };
+    fs::write(
+        dir.join("libva.pc"),
+        format!(
+            "{head}Name: libva\nDescription: libva's headers over vento's dlopen shim\n\
+             Version: {libva_version}\nCflags: -I${{includedir}}\n\
+             Libs: -L${{libdir}} -lvento_va -ldl\n"
+        ),
+    )
+    .unwrap();
+    fs::write(
+        dir.join("libva-drm.pc"),
+        format!(
+            "{head}Name: libva-drm\nDescription: libva-drm's header over vento's dlopen shim\n\
+             Version: {libva_version}\nRequires: libva\nCflags: -I${{includedir}}\n\
+             Libs: -L${{libdir}} -lvento_va\n"
+        ),
+    )
+    .unwrap();
+    let include = vulkan.join("include");
+    let registry = fs::read_to_string(include.join("vulkan/vulkan_core.h")).unwrap();
+    let header = registry
+        .lines()
+        .find_map(|l| l.strip_prefix("#define VK_HEADER_VERSION "))
+        .map(|v| v.trim().to_string())
+        .expect("vulkan_core.h has VK_HEADER_VERSION");
+    let complete = registry
+        .lines()
+        .find_map(|l| l.strip_prefix("#define VK_HEADER_VERSION_COMPLETE VK_MAKE_API_VERSION("))
+        .and_then(|v| {
+            let parts: Vec<&str> = v.trim_end_matches(')').split(',').map(str::trim).collect();
+            (parts.len() == 4).then(|| format!("{}.{}.{header}", parts[1], parts[2]))
+        })
+        .expect("vulkan_core.h has VK_HEADER_VERSION_COMPLETE");
+    fs::write(
+        dir.join("vulkan.pc"),
+        // configure reads `includedir` as well as the flags: it checks the
+        // version by including the header at that path.
+        format!(
+            "includedir={}\n\nName: Vulkan-Headers\n\
+             Description: Vulkan's headers; FFmpeg loads libvulkan itself\n\
+             Version: {complete}\nCflags: -I${{includedir}}\n",
+            include.display()
+        ),
+    )
+    .unwrap();
+}
+
+/// `c/va_shim.c` as `libvento_va.a` in the prefix, which the pkg-config files
+/// above name and FFmpeg's libraries are linked with from then on. Copied in
+/// only when it differs, so that a build of the C backends that links it is
+/// not made to link again for nothing.
+fn build_va_shim(manifest: &Path, root: &Path, prefix: &Path) {
+    let out = root.join("va-shim");
+    fs::create_dir_all(&out).unwrap();
+    cc::Build::new()
+        .file(manifest.join("c/va_shim.c"))
+        .include(prefix.join("include"))
+        .warnings(true)
+        .pic(true)
+        .out_dir(&out)
+        .cargo_metadata(false)
+        .compile("vento_va");
+    let built = out.join("libvento_va.a");
+    let installed = prefix.join("lib/libvento_va.a");
+    fs::create_dir_all(installed.parent().unwrap()).unwrap();
+    if fs::read(&built).ok() != fs::read(&installed).ok() {
+        fs::copy(&built, &installed).unwrap();
+    }
 }
 
 fn build_ffmpeg(source: &Path, root: &Path, prefix: &Path, configure: &[String]) {

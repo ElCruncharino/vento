@@ -101,3 +101,19 @@
 	url = https://github.com/videolan/dav1d.git
 	shallow = true
 	ignore = all
+# Headers only, for that FFmpeg's hardware decoders: libva's (MIT; its one
+# generated header, va_version.h, made by build.rs from its template) for
+# VAAPI, and Vulkan's (Apache-2.0) for Vulkan Video. Neither is compiled or
+# linked: FFmpeg's VAAPI code calls libva through
+# backends/platform/desktop/c/va_shim.c, which loads it on first use, and its
+# Vulkan code loads libvulkan itself. libva 2.23.0, Vulkan-Headers v1.4.341.
+[submodule "third_party/libva"]
+	path = third_party/libva
+	url = https://github.com/intel/libva.git
+	shallow = true
+	ignore = all
+[submodule "third_party/Vulkan-Headers"]
+	path = third_party/Vulkan-Headers
+	url = https://github.com/KhronosGroup/Vulkan-Headers.git
+	shallow = true
+	ignore = all
