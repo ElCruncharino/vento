@@ -66,9 +66,15 @@ libva function the shim does not have yet, which is a link error naming it
 a newer release's tag when FFmpeg wants newer headers (its configure says
 which `VA_CHECK_VERSION` a feature needs); Vulkan-Headers when FFmpeg's
 configure asks for a newer `VK_HEADER_VERSION`, which it checks for each of
-`vulkan` and `vulkan_1_4`. Proven by the desktop crate's `hardware` tests
-with `VENTO_TEST_HW=require` on a machine with a VAAPI device, and
-`hardware_off`.
+`vulkan` and `vulkan_1_4`. `c/vk_device.c` reads the same headers to pick
+the Vulkan device before FFmpeg opens one, by its index in the loader's list
+(FFmpeg's device string): a new FFmpeg that changes what that string means
+(`vulkan_device_create` in `libavutil/hwcontext_vulkan.c`) breaks the choice,
+which the UUID check after the open turns into "no device". Proven by the
+desktop crate's `hardware` and `hardware_auto` tests with
+`VENTO_TEST_HW=require` on a machine with a VAAPI device (and
+`VENTO_TEST_VULKAN=1`, with `ANV_DEBUG=video-decode` on Intel, for Vulkan),
+and `hardware_off`.
 
 A shared library can be blocked by a consumer: nettle 4 could not move until
 TigerVNC had upstream's nettle-4 compatibility. When an evaluation says "stay"

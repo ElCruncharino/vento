@@ -76,9 +76,12 @@ pub enum Hardware {
     Off,
     /// VAAPI, through libva, on the first DRM render node.
     Vaapi,
-    /// Vulkan Video, through libvulkan, on the first Vulkan device.
+    /// Vulkan Video, through libvulkan, on the first Vulkan device that is a
+    /// GPU with a video decode queue (never a CPU implementation such as
+    /// lavapipe).
     Vulkan,
-    /// VAAPI where there is a device for it, else Vulkan.
+    /// Per stream: VAAPI where it takes the stream (a device, with a decoder
+    /// for the profile), else Vulkan where that does, else software.
     Auto,
 }
 

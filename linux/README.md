@@ -122,24 +122,53 @@ functions of it declared by hand.
 **Hardware decoding is off by default**, and off it is the software decoder
 it always was: no device is opened, and neither libva nor libvulkan is
 loaded. Asked for — the **Hardware decoding** setting, or `--hw-decode`
-(`auto`, VAAPI else Vulkan; `=vaapi` or `=vulkan` for one of them) — the
-Rust decoder (RustDesk's picture) decodes on VAAPI —
-or Vulkan Video, which Mesa's ANV offers only under `ANV_DEBUG=video-decode`
-and Fedora's only for VP9 and AV1 — where the device has a decoder for the
-stream's profile, and in software where it has not (iHD has none for H.264
-High 10 or AV1 4:4:4), with the reason kept; one device is opened for the
-whole process, by the first decoder that asks. The picture is mapped for
-reading off the device (NV12, P010 or XV30) and converted like a software
-one, so the two look the same. A hardware failure mid-stream is a software
-decoder in its place and a key frame asked for, not a lost picture.
-RustDesk's **Encoding** row says which, after the codec: `AV1 (software)`,
-`H.264 (hardware)`, nothing before the first picture; and the debug overlay's
-`dec` line says how and what a frame costs (`dec H.264 vaapi map 2.1 ms`,
-`dec H.264 sw 3.2 ms (vaapi: no device)`). The setting reaches every backend:
-the session's decoders carry it, which RustDesk asks each frame and takes a
-change of at once — a new decoder, and a key frame asked for, on the same
-session — and a backend with decoders of its own is handed it at connect
-(`Connect::hardware`), though none of those uses it yet.
+(`auto`; `=vaapi` or `=vulkan` for one of them) — the Rust decoder
+(RustDesk's picture) decodes on the device where it has a decoder for the
+stream's profile, and in software where it has not, with the reason kept;
+one device of each kind is opened for the whole process, by the first
+decoder that asks. `auto` decides stream by stream: **VAAPI first, then
+Vulkan Video, then software**. A stream VAAPI takes never loads libvulkan;
+where VAAPI has no device, or no decoder for the profile (iHD has none for
+H.264 High 10 or AV1 4:4:4), the same packet goes to a decoder on the
+Vulkan device, and where that cannot take it either, to software, the
+reason naming each (`vaapi: H.264 High 10 is not supported; vulkan: no
+video decode device`).
+
+Vulkan's device is the first the loader lists that is a GPU with a video
+decode queue, chosen through an instance of vento's own before FFmpeg opens
+one — never a CPU implementation such as lavapipe, which is what FFmpeg
+would open by default where the GPU's driver cannot (`/dev/dri` hidden by a
+sandbox), and which is unloaded again after the look. Which Vulkan drivers
+decode: **NVIDIA's** own is the one that gains most, with H.264, H.265, VP9
+and AV1 on Vulkan and no VAAPI of its own; Mesa's **RADV** (AMD) decodes
+too, beside AMD's VAAPI; Mesa's **ANV** (Intel) has no decode queue at all
+unless `ANV_DEBUG=video-decode` is set (Mesa 26.2), so `auto` stays on iHD's
+VAAPI there; and **Fedora's** Mesa, built without the patent-encumbered
+codecs, decodes only VP9 and AV1 on Vulkan with any of them (H.264 and H.265
+go on to software, "vulkan: H.264 High is not supported").
+
+The picture comes off the device as planes in memory (NV12, P010 or XV30)
+and is converted like a software one, so the two look the same: VAAPI's
+surface mapped for reading — each decoder measures, on its first pictures,
+whether mapping the surface in place or as an image the driver copies it
+into is faster on this machine, and keeps to the faster — and Vulkan's
+image copied by the GPU into memory of FFmpeg's. A hardware failure
+mid-stream is a software decoder in its place and a key frame asked for,
+not a lost picture. What it gains is CPU more than time: on Lunar Lake at
+1080p (release build, a full-motion clip), H.264 on VAAPI took 10-11 ms a
+frame decoded and converted against software's 7 (slice threads on eight
+cores), at half the CPU; AV1 on VAAPI 9-10 ms against dav1d's 12, and on
+Vulkan (ANV with the switch) 5-6 ms. Most of VAAPI's time is the GPU's
+decode (about 3 ms) and the read back of the whole picture, which a mostly
+still desktop costs as much as a moving one, where software's decode is
+cheap. RustDesk's **Encoding** row says which, after the codec: `AV1
+(software)`, `H.264 (hardware)`, nothing before the first picture; and the
+debug overlay's `dec` line says how and what a frame costs (`dec H.264 vaapi
+map 2.1 ms`, `dec H.264 sw 3.2 ms (vaapi: no device)`). The setting reaches
+every backend: the session's decoders carry it, which RustDesk asks each
+frame and takes a change of at once — a new decoder, and a key frame asked
+for, on the same session — and a backend with decoders of its own is handed
+it at connect (`Connect::hardware`), though none of those uses it yet.
 
 The submodules must be initialised (`git submodule update --init --recursive`;
 RealVNC's four host-only submodules need `--recursive`) and patched
@@ -189,12 +218,14 @@ cargo run -- rdp
 # keyboard grab that sends Alt+Tab and the rest on (on unless told), and the
 # far end's cursor drawn into the picture rather than made the window's own
 # (off unless told), and video decoded on the GPU (off unless told; bare is
-# auto, VAAPI else Vulkan). The dialog's "Settings" section has the same five.
+# auto: VAAPI, else Vulkan, else software, stream by stream). The dialog's
+# "Settings" section has the same five.
 cargo run -- tigervnc 127.0.0.1:5901 --no-clipboard-out --no-clipboard-in
 cargo run -- tigervnc 127.0.0.1:5901 --no-grab-keyboard
 cargo run -- tigervnc 127.0.0.1:5901 --software-cursor
 cargo run -- rustdesk 127.0.0.1 -o ConnectBy=address --hw-decode
 cargo run -- rustdesk 127.0.0.1 -o ConnectBy=address --hw-decode=vaapi
+ANV_DEBUG=video-decode cargo run -- rustdesk 127.0.0.1 -o ConnectBy=address -o Codec=av1 --hw-decode=vulkan
 
 # Straight into a session, with --connect. Without --password the credentials
 # prompt asks. Disconnecting it quits; if the far end ends it instead, the
