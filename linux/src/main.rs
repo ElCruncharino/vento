@@ -31,9 +31,10 @@ mod host {
     use std::time::{Duration, Instant};
     use vento::backend::{Backend, Credentials, thumbnail_step};
     use vento::backends::{self, Connect, Dirs, Kind, Platform};
-    use vento::events::{Event, Identity, Mailbox, State};
+    use vento::events::{Event, Mailbox, State};
     use vento::gui;
-    use vento::known_hosts::{KnownHosts, Verdict};
+    use session::trust::{self, Decision};
+    use vento::known_hosts::KnownHosts;
     use vento::options::{self, Options};
     use vento::ppm;
 
@@ -608,14 +609,12 @@ headless, any of which selects the probe instead of the window:
                     // and never written — `--trust` is for this run.
                     let pinned = backends::pinned_as(self.kind, &self.address, &self.options);
                     let hosts = KnownHosts::in_dir(&self.dirs.config);
-                    let (yes, why) = match hosts.verdict(&pinned.key, fingerprint) {
-                        Verdict::Matches => (true, format!("matches the pin for {}", pinned.key)),
-                        Verdict::Ask { identity, .. }
-                            if pinned.first_sight_silent && identity != Identity::Changed =>
-                        {
+                    let (yes, why) = match trust::decide(&trust::ReadOnly(&hosts), &pinned, fingerprint) {
+                        Decision::Matches => (true, format!("matches the pin for {}", pinned.key)),
+                        Decision::FirstSight => {
                             (true, format!("first sight of {}, taken without asking (not pinned)", pinned.key))
                         }
-                        Verdict::Ask {
+                        Decision::Ask {
                             identity,
                             matching_address,
                         } => (

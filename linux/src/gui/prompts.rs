@@ -7,8 +7,9 @@
 //! Every one of them owes an answer — the backend's thread is blocked until
 //! it gets one — so closing a dialog by any route is a no, and the session
 //! queues what arrives while one is already up. Nothing is written from here:
-//! a certificate is put as `KnownHosts.ask` puts it, with why it is being
-//! asked about and a *remember server* box, and the session pins what was
+//! a certificate is put as the phone's `NativeBackend.onTrustNeeded` puts it,
+//! with why it is being asked about and a *remember server* box, and the
+//! session hands the answer to `session::trust::answered`, which pins what was
 //! accepted with the box ticked; RealVNC's own *remember* goes to its core.
 
 use crate::backend::Credentials;
@@ -158,7 +159,7 @@ pub fn show(ctx: &egui::Context, prompt: &Prompt, form: &mut Form, address: &str
                 identity,
                 matching_address,
             } => {
-                // `KnownHosts.ask`'s prompt: encrypted, the fingerprint as
+                // The phone's trust prompt: encrypted, the fingerprint as
                 // the signature, and no catchphrase.
                 identity_prompt(ui, form, address, *identity, Encryption::Encrypted, fingerprint, "", matching_address)
                     .map(|(accept, remember)| Answer::Pin {

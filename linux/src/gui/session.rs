@@ -59,8 +59,9 @@ use super::x11::Fence;
 use super::{Host, Request};
 use crate::backend::Backend;
 use crate::backends::{self, Connect, Dirs, Pinned};
-use crate::events::{Cursor, Event, Identity, Mailbox, State};
-use crate::known_hosts::{self, KnownHosts, Store, Verdict};
+use crate::events::{Cursor, Event, Mailbox, State};
+use crate::known_hosts::{self, KnownHosts, Store};
+use ::session::trust::{self, Decision};
 use crate::options::Options;
 use egui::{
     Color32, CursorIcon, Frame, Id, LayerId, Margin, Order, PointerButton, Pos2, Rect, Response, RichText, Sense,
@@ -1584,23 +1585,19 @@ impl Session {
 
     // ---- the prompts -------------------------------------------------------
 
-    /// A certificate, against what this address was accepted with before:
-    /// what each Java backend's `onTrustNeeded` does. A match is silent, a
+    /// A certificate, against what this address was accepted with before,
+    /// as `session::trust` decides on the phone too: a match is silent, a
     /// RustDesk key never seen is pinned without asking, and anything else
     /// is put to the person with why.
     fn trust_needed(&mut self, fingerprint: String) {
         let key = &self.pinned.key;
-        match self.known_hosts.verdict(key, &fingerprint) {
-            Verdict::Matches => {
+        match trust::decide(&self.known_hosts, &self.pinned, &fingerprint) {
+            Decision::Matches => {
                 log::info!("certificate matches the pin for {key}");
                 self.backend.answer_trust(true);
             }
-            // Pinned under this key is the one case that is still asked.
-            Verdict::Ask { identity, .. } if self.pinned.first_sight_silent && identity != Identity::Changed => {
-                self.pin(&fingerprint);
-                self.backend.answer_trust(true);
-            }
-            Verdict::Ask {
+            Decision::FirstSight => self.backend.answer_trust(true),
+            Decision::Ask {
                 identity,
                 matching_address,
             } => {
@@ -1611,16 +1608,6 @@ impl Session {
                     matching_address,
                 });
             }
-        }
-    }
-
-    /// A store that cannot be written costs the next connection a question,
-    /// not this one its answer, so a failure is a line in the log.
-    fn pin(&self, fingerprint: &str) {
-        let key = &self.pinned.key;
-        match self.known_hosts.pin(key, fingerprint) {
-            Ok(()) => log::info!("pinned {key}"),
-            Err(e) => log::warn!("could not pin {key} in {}: {e}", self.known_hosts.path().display()),
         }
     }
 
@@ -1639,10 +1626,7 @@ impl Session {
                     remember,
                     fingerprint,
                 } => {
-                    // `KnownHosts.ask`'s deliver: pinned only when both.
-                    if accept && remember {
-                        self.pin(&fingerprint);
-                    }
+                    let accept = trust::answered(&self.known_hosts, &self.pinned, &fingerprint, accept, remember);
                     self.backend.answer_trust(accept);
                 }
                 Answer::Security { accept, remember } => self.backend.answer_security(accept, remember),

@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Which certificate each address is supposed to have: `KnownHosts.java`,
-//! as a file under `$XDG_CONFIG_HOME/vento`.
+//! Which certificate each address is supposed to have, as a file under
+//! `$XDG_CONFIG_HOME/vento`: what the phone keeps in its `known_hosts`
+//! preferences, kept here.
 //!
 //! A remote desktop server's certificate is one it made for itself on first
 //! start, and no authority vouches for it — so, as on the phone and as over
@@ -19,9 +20,10 @@
 //! with *remember server* — the probe's `--trust` is for that run.
 //!
 //! What a pin means — the key an address is filed under, how two
-//! fingerprints compare, and what is asked when they do not — is
-//! `session::trust`, the phone's rule as well as this client's; what is here
-//! is where this client keeps them.
+//! fingerprints compare, what is asked when they do not, and when an answer
+//! is pinned — is `session::trust`, the phone's rule as well as this
+//! client's; what is here is where this client keeps them, as a
+//! `trust::Store`.
 //!
 //! The file is a line per address, `<address> <fingerprint>`, with `#`
 //! comments; whitespace, control characters and `\` inside either are
@@ -31,7 +33,6 @@
 //! beside itself and renamed over — so a crash leaves the old one or the new
 //! one, never half of either, and it is private to this user.
 
-pub use session::trust::{Verdict, canonical, key};
 use session::trust;
 use std::fs::{DirBuilder, OpenOptions};
 use std::io::{self, Write};
@@ -243,7 +244,8 @@ impl Store {
     }
 }
 
-/// The pin store: `KnownHosts.java`'s operations over a [`Store`].
+/// The pin store: `session::trust`'s [`Store`](trust::Store) over a
+/// [`Store`] file, which is what the window and the probe decide against.
 #[derive(Clone, Debug)]
 pub struct KnownHosts {
     store: Store,
@@ -260,20 +262,20 @@ impl KnownHosts {
     pub fn path(&self) -> &Path {
         self.store.path()
     }
+}
 
-    /// Whether `fingerprint` is the one `address` was accepted with, and if
-    /// not, how to put the question: `KnownHosts.matches`, and the identity
-    /// `KnownHosts.ask` works out before it asks.
-    pub fn verdict(&self, address: &str, fingerprint: &str) -> Verdict {
+impl trust::Store for KnownHosts {
+    /// Read afresh for every question, so that an edit to the file counts
+    /// from the next connection.
+    fn pins(&self) -> Vec<(String, String)> {
         let table = self.store.read_or_empty();
-        let pins: Vec<(&str, &str)> = table.entries().collect();
-        trust::verdict(&pins, address, fingerprint)
+        table.entries().map(|(k, v)| (k.to_string(), v.to_string())).collect()
     }
 
-    /// Remembers `fingerprint` for `address`, as `KnownHosts.pin` does when a
-    /// prompt was answered yes with *remember server* ticked.
-    pub fn pin(&self, address: &str, fingerprint: &str) -> io::Result<()> {
-        self.store.set(&key(address), fingerprint)
+    fn put(&self, key: &str, fingerprint: &str) -> Result<(), String> {
+        self.store
+            .set(key, fingerprint)
+            .map_err(|e| format!("{}: {e}", self.path().display()))
     }
 }
 
@@ -289,6 +291,7 @@ pub fn realvnc_identities(config: &Path) -> Store {
 mod tests {
     use super::*;
     use session::events::Identity;
+    use session::trust::{Decision, Pinned, Store as _, answered, decide};
 
     const FP: &str = "66:cc:ed:01:02:03:04:05:06:07:08:09:0a:0b:0c:0d";
 
@@ -335,6 +338,13 @@ mod tests {
         assert_eq!(t.to_bytes(), b"# c\nh 4\nother 2\nnew 5\n");
     }
 
+    fn pinned(address: &str) -> Pinned {
+        Pinned {
+            key: address.into(),
+            first_sight_silent: false,
+        }
+    }
+
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("vento-known-hosts-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -345,15 +355,16 @@ mod tests {
     fn pinning_writes_a_private_file_and_keeps_what_was_there() {
         let dir = scratch("pin");
         let hosts = KnownHosts::in_dir(&dir.join("vento"));
+        let host = pinned("Host");
         assert_eq!(
-            hosts.verdict("host", FP),
-            Verdict::Ask {
+            decide(&hosts, &host, FP),
+            Decision::Ask {
                 identity: Identity::New,
                 matching_address: String::new()
             }
         );
-        hosts.pin("Host", FP).unwrap();
-        assert_eq!(hosts.verdict("host", &FP.to_uppercase()), Verdict::Matches);
+        assert!(answered(&hosts, &host, FP, true, true));
+        assert_eq!(decide(&hosts, &pinned("host"), &FP.to_uppercase()), Decision::Matches);
         let mode = std::fs::metadata(hosts.path()).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
         let dir_mode = std::fs::metadata(dir.join("vento")).unwrap().permissions().mode();
@@ -363,7 +374,7 @@ mod tests {
         let mut text = std::fs::read(hosts.path()).unwrap();
         text.extend_from_slice(b"garbage\n");
         std::fs::write(hosts.path(), &text).unwrap();
-        hosts.pin("other", "AA").unwrap();
+        hosts.put("other", "AA").unwrap();
         let after = std::fs::read_to_string(hosts.path()).unwrap();
         assert_eq!(after, format!("host {FP}\ngarbage\nother AA\n"));
         // Nothing is left beside it.
@@ -377,8 +388,8 @@ mod tests {
         // A directory where the file should be: unreadable as a file.
         std::fs::create_dir_all(dir.join("known_hosts")).unwrap();
         let hosts = KnownHosts::in_dir(&dir);
-        assert!(matches!(hosts.verdict("host", FP), Verdict::Ask { .. }));
-        assert!(hosts.pin("host", FP).is_err());
+        assert!(matches!(decide(&hosts, &pinned("host"), FP), Decision::Ask { .. }));
+        assert!(hosts.put("host", FP).is_err());
         assert!(dir.join("known_hosts").is_dir());
         let _ = std::fs::remove_dir_all(&dir);
     }
