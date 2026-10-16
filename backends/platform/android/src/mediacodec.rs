@@ -30,7 +30,7 @@
 //!   session does not have the same stride as the rest, and a decoder asked for
 //!   Flexible reports Flexible and nothing more.
 
-use std::ffi::{CString, c_char, c_void};
+use std::ffi::{CStr, CString, c_char, c_void};
 use std::sync::OnceLock;
 
 use common::video::convert::{Frame, Plane};
@@ -124,7 +124,19 @@ unsafe extern "C" {
         index: usize,
         render: bool,
     ) -> i32;
+    fn AMediaCodec_getName(codec: *mut AMediaCodec, out_name: *mut *mut c_char) -> i32;
+    fn AMediaCodec_releaseName(codec: *mut AMediaCodec, name: *mut c_char);
 }
+
+// For the two calls Android 16 added (API 36), looked up rather than linked:
+// the app runs from API 34, where linking them would fail to load.
+unsafe extern "C" {
+    fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
+}
+
+/// bionic's `RTLD_DEFAULT`, which on a 64-bit ABI is the null handle:
+/// every library already loaded, `libmediandk.so` among them.
+const RTLD_DEFAULT: *mut c_void = std::ptr::null_mut();
 
 const AMEDIA_OK: i32 = 0;
 const INFO_OUTPUT_FORMAT_CHANGED: isize = -2;
@@ -201,6 +213,12 @@ fn can_decode(codec: Codec) -> bool {
 
 pub struct Decoder {
     codec: *mut AMediaCodec,
+    kind: Codec,
+    /// The codec's own name, `c2.qti.avc.decoder` or `c2.android.avc.decoder`,
+    /// and what the platform says it is: hardware or software, decided once
+    /// when the decoder is made, since a codec does not change its nature.
+    name: String,
+    hardware: Option<bool>,
     pts: u64,
     saw_frame: bool,
     failed: bool,
@@ -248,9 +266,23 @@ impl Decoder {
             unsafe { AMediaCodec_delete(handle) };
             return None;
         }
-        log::info!("{} decoder started for {width}x{height}", codec.name());
+        let name = codec_name(handle);
+        let hardware = name.as_deref().and_then(is_hardware);
+        log::info!(
+            "{} decoder started for {width}x{height}: {}, {}",
+            codec.name(),
+            name.as_deref().unwrap_or("unnamed"),
+            match hardware {
+                Some(true) => "hardware",
+                Some(false) => "software",
+                None => "not known whether hardware",
+            }
+        );
         Some(Decoder {
             codec: handle,
+            kind: codec,
+            name: name.unwrap_or_default(),
+            hardware,
             pts: 0,
             saw_frame: false,
             failed: false,
@@ -265,33 +297,47 @@ impl Decoder {
         })
     }
 
-    fn feed(&mut self, data: &[u8]) -> bool {
-        let index = unsafe { AMediaCodec_dequeueInputBuffer(self.codec, FRAME_TIMEOUT_US) };
-        if index < 0 {
-            log::warn!("no input buffer, dropping {} bytes", data.len());
-            return false;
+    /// The frame into the decoder's input, in as many buffers as it takes.
+    fn feed(&mut self, mut data: &[u8]) -> bool {
+        while !data.is_empty() {
+            let index = unsafe { AMediaCodec_dequeueInputBuffer(self.codec, FRAME_TIMEOUT_US) };
+            if index < 0 {
+                log::warn!("no input buffer, dropping {} bytes", data.len());
+                return false;
+            }
+            let mut capacity = 0usize;
+            let buffer =
+                unsafe { AMediaCodec_getInputBuffer(self.codec, index as usize, &mut capacity) };
+            if buffer.is_null() || capacity == 0 {
+                return false;
+            }
+            let take = if data.len() <= capacity {
+                data.len()
+            } else if matches!(self.kind, Codec::H264 | Codec::H265) {
+                // A TigerVNC key frame at a desktop's size can be more than
+                // one input buffer holds. An H.264 or H.265 access unit is
+                // split at a NAL boundary rather than anywhere, since a
+                // decoder reassembles by start code and a buffer cut through
+                // the middle of a NAL unit is a corrupt frame.
+                match nal_boundary(data, capacity) {
+                    Some(at) => at,
+                    None => {
+                        log::warn!("{} bytes with no NAL boundary under {capacity}", data.len());
+                        return false;
+                    }
+                }
+            } else {
+                // A VP9 frame is one unit and half of one is not a picture.
+                log::warn!("a {} byte frame does not fit {capacity} bytes", data.len());
+                return false;
+            };
+            unsafe {
+                std::ptr::copy_nonoverlapping(data.as_ptr(), buffer, take);
+                AMediaCodec_queueInputBuffer(self.codec, index as usize, 0, take, self.pts, 0);
+            }
+            data = &data[take..];
+            self.pts += 1000;
         }
-        let mut capacity = 0usize;
-        let buffer =
-            unsafe { AMediaCodec_getInputBuffer(self.codec, index as usize, &mut capacity) };
-        if buffer.is_null() || capacity < data.len() {
-            // Unlike H.264 there is nothing to split at: a VP9 frame is one
-            // access unit and half of one is not a picture.
-            log::warn!("a {} byte frame does not fit {capacity} bytes", data.len());
-            return false;
-        }
-        unsafe {
-            std::ptr::copy_nonoverlapping(data.as_ptr(), buffer, data.len());
-            AMediaCodec_queueInputBuffer(
-                self.codec,
-                index as usize,
-                0,
-                data.len(),
-                self.pts,
-                0,
-            );
-        }
-        self.pts += 1000;
         true
     }
 
@@ -491,6 +537,100 @@ impl common::video::Decoder for Decoder {
         self.saw_frame = true;
         true
     }
+
+    /// The platform's answer for this codec, once there is a picture to have
+    /// decoded: hardware stays MediaCodec's choice on a phone, so this only
+    /// says which one it made.
+    fn hardware(&self) -> Option<bool> {
+        self.hardware.filter(|_| self.saw_frame)
+    }
+
+    fn status(&self) -> Option<String> {
+        (!self.name.is_empty()).then(|| format!("{} {}", self.kind.name(), self.name))
+    }
+}
+
+/// The name MediaCodec gave the codec it picked, or `None` where it says
+/// nothing.
+fn codec_name(codec: *mut AMediaCodec) -> Option<String> {
+    let mut name: *mut c_char = std::ptr::null_mut();
+    if unsafe { AMediaCodec_getName(codec, &mut name) } != AMEDIA_OK || name.is_null() {
+        return None;
+    }
+    let owned = unsafe { CStr::from_ptr(name) }.to_string_lossy().into_owned();
+    unsafe { AMediaCodec_releaseName(codec, name) };
+    Some(owned)
+}
+
+/// Whether the codec of this name decodes in hardware.
+///
+/// The platform's own answer where it has one to give — Android 16's
+/// codec store says hardware-accelerated, software-only or vendor software
+/// for a codec by name, which is what `MediaCodecInfo.isHardwareAccelerated`
+/// reads in Java — and before that, the rule apps had to use: the
+/// platform's own codecs are named `c2.android.`, `c2.google.` or
+/// `omx.google.`, and a few vendors mark a software one in its name.
+fn is_hardware(name: &str) -> Option<bool> {
+    type GetCodecInfo = unsafe extern "C" fn(*const c_char, *mut *const c_void) -> i32;
+    type GetInfoType = unsafe extern "C" fn(*const c_void) -> i32;
+    static STORE: OnceLock<Option<(GetCodecInfo, GetInfoType)>> = OnceLock::new();
+    let store = STORE.get_or_init(|| unsafe {
+        let info = dlsym(RTLD_DEFAULT, c"AMediaCodecStore_getCodecInfo".as_ptr());
+        let kind = dlsym(RTLD_DEFAULT, c"AMediaCodecInfo_getMediaCodecInfoType".as_ptr());
+        (!info.is_null() && !kind.is_null()).then(|| {
+            (
+                std::mem::transmute::<*mut c_void, GetCodecInfo>(info),
+                std::mem::transmute::<*mut c_void, GetInfoType>(kind),
+            )
+        })
+    });
+    if let (Some((get_info, get_type)), Ok(c_name)) = (store, CString::new(name)) {
+        let mut info: *const c_void = std::ptr::null();
+        if unsafe { get_info(c_name.as_ptr(), &mut info) } == AMEDIA_OK && !info.is_null() {
+            // AMediaCodecType: software only, hardware accelerated, and
+            // software with device access, which is a vendor's software.
+            match unsafe { get_type(info) } {
+                1 | 3 => return Some(false),
+                2 => return Some(true),
+                _ => {}
+            }
+        }
+    }
+    Some(!software_by_name(name))
+}
+
+/// Whether a codec's name marks it as software, as ExoPlayer and the
+/// platform's own tests decided it before there was an API for it.
+fn software_by_name(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    if name.starts_with("arc.") {
+        // ChromeOS's, which hand the stream to the host's hardware.
+        return false;
+    }
+    name.starts_with("omx.google.")
+        || name.starts_with("omx.ffmpeg.")
+        || (name.starts_with("omx.sec.") && name.contains(".sw."))
+        || name == "omx.qcom.video.decoder.hevcswvdec"
+        || name.starts_with("c2.android.")
+        || name.starts_with("c2.google.")
+        || (!name.starts_with("omx.") && !name.starts_with("c2."))
+}
+
+/// Where to cut an Annex B stream that is longer than `capacity`: the last
+/// start code that begins inside the first `capacity` bytes (its leading
+/// zero included, where it is the four-byte form), or `None` where there is
+/// none past the first.
+fn nal_boundary(data: &[u8], capacity: usize) -> Option<usize> {
+    let mut at = None;
+    let end = capacity.min(data.len());
+    let mut i = 3;
+    while i + 3 <= end {
+        if data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1 {
+            at = Some(if data[i - 1] == 0 { i - 1 } else { i });
+        }
+        i += 1;
+    }
+    at.filter(|&at| at > 0)
 }
 
 impl Drop for Decoder {
