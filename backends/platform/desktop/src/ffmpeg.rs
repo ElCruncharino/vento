@@ -157,6 +157,7 @@ mod sys {
         pub fn vento_video_name(video: *const Video) -> *const c_char;
         pub fn vento_video_method(video: *const Video) -> c_int;
         pub fn vento_video_software_reason(video: *const Video) -> *const c_char;
+        pub fn vento_video_vulkan_device() -> *const c_char;
         pub fn vento_video_device_state(method: c_int) -> c_int;
         pub fn vento_video_fail_next(video: *mut Video);
         pub fn vento_video_decode(
@@ -200,6 +201,15 @@ pub fn device_opened(hardware: Hardware) -> Option<bool> {
         0 => None,
         state => Some(state > 0),
     }
+}
+
+/// The Vulkan device a decoder that asks for Vulkan decodes on: the first
+/// GPU with a video decode queue (never a CPU implementation such as
+/// lavapipe), by name. `None` before any decoder has asked, or where no
+/// device can decode video.
+pub fn vulkan_device() -> Option<String> {
+    let name = unsafe { CStr::from_ptr(sys::vento_video_vulkan_device()) };
+    (!name.is_empty()).then(|| name.to_string_lossy().into_owned())
 }
 
 /// libavcodec's decoders, as a session is handed them, decoding as
@@ -375,6 +385,11 @@ impl Decoder {
                 );
                 decoder.reason = why;
             }
+            None if method == Hardware::Vulkan => log::info!(
+                "{} decoder ({name}, vulkan on {}) started for {width}x{height}",
+                codec.name(),
+                vulkan_device().unwrap_or_default()
+            ),
             None if method != Hardware::Off => log::info!(
                 "{} decoder ({name}, {}) started for {width}x{height}",
                 codec.name(),
@@ -440,9 +455,21 @@ impl Decoder {
             // stream started with, which the software decoder takes from the
             // start as the hardware's would have: nothing is missing.
             self.key_frame = self.pictures > 0;
-            self.hardware = Some((false, false));
             let why = self.software_reason().unwrap_or_default();
-            if self.key_frame {
+            let method = self.method();
+            // On `auto`'s next device, the one before it having had no
+            // decoder for the stream's profile, nothing is known until its
+            // first picture says whether it decodes them.
+            self.hardware = (method == Hardware::Off).then_some((false, false));
+            if method != Hardware::Off {
+                log::info!(
+                    "{} decoder moved to {} ({}), the device before it having no decoder \
+                     for the stream",
+                    self.codec.name(),
+                    method.name(),
+                    self.name()
+                );
+            } else if self.key_frame {
                 log::warn!(
                     "{} decoder fell back to software mid-stream: {why}",
                     self.codec.name()

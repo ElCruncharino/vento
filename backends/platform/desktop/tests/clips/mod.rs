@@ -9,6 +9,12 @@
 
 #![allow(dead_code)]
 
+use common::video::{Changes, Codec, Decoder};
+
+/// The fixtures' size.
+pub const W: usize = 128;
+pub const H: usize = 128;
+
 pub fn fixture(name: &str) -> Vec<u8> {
     let path = format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
     std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"))
@@ -57,4 +63,49 @@ pub fn h264_aud(header: u8) -> bool {
 
 pub fn h265_aud(header: u8) -> bool {
     (header >> 1) & 0x3f == 35
+}
+
+/// A fixture's codec, which its name says, and its frames.
+pub fn frames(name: &str) -> (Codec, Vec<Vec<u8>>) {
+    let bytes = fixture(name);
+    let (codec, frames) = match name.rsplit('.').next() {
+        Some("ivf") if name.starts_with("vp8") => (Codec::Vp8, ivf(&bytes)),
+        Some("ivf") if name.starts_with("vp9") => (Codec::Vp9, ivf(&bytes)),
+        Some("ivf") => (Codec::Av1, ivf(&bytes)),
+        Some("h264") => (Codec::H264, annex_b(&bytes, h264_aud)),
+        Some("h265") => (Codec::H265, annex_b(&bytes, h265_aud)),
+        _ => panic!("{name}: which codec?"),
+    };
+    (codec, frames.into_iter().map(<[u8]>::to_vec).collect())
+}
+
+/// Every frame of the clip decoded whole, each picture as it came out.
+pub fn pictures(decoder: &mut dyn Decoder, frames: &[Vec<u8>]) -> Vec<Vec<u32>> {
+    let mut out = Vec::new();
+    for frame in frames {
+        let mut picture = vec![0u32; W * H];
+        let mut changed = Changes::new();
+        changed.reset(H);
+        for row in 0..H {
+            changed.mark(row, 0, W);
+        }
+        assert!(
+            decoder.decode(frame, &mut picture, W, H, &mut changed),
+            "no picture came out"
+        );
+        out.push(picture);
+    }
+    out
+}
+
+/// The largest difference of any channel of any pixel.
+pub fn difference(a: &[u32], b: &[u32]) -> i32 {
+    a.iter()
+        .zip(b)
+        .flat_map(|(a, b)| {
+            (0..3).map(move |c| ((a >> (8 * c)) & 0xff) as i32 - ((b >> (8 * c)) & 0xff) as i32)
+        })
+        .map(i32::abs)
+        .max()
+        .unwrap_or(0)
 }

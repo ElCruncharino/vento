@@ -47,9 +47,13 @@ enum vento_video_hardware {
     // DRM render node.
     VENTO_VIDEO_HW_VAAPI = 1,
     // Vulkan Video, through libvulkan (loaded then), on the first Vulkan
-    // device. Read back by copy where the image cannot be mapped.
+    // device that is a GPU with a queue that decodes video (never a CPU
+    // implementation such as lavapipe). Read back by copy, since its images
+    // cannot be mapped.
     VENTO_VIDEO_HW_VULKAN = 2,
-    // VAAPI where there is a device for it, else Vulkan.
+    // VAAPI where it has a decoder for the stream, else Vulkan where that
+    // has, else software; decided per stream, and Vulkan not loaded where
+    // VAAPI takes it.
     VENTO_VIDEO_HW_AUTO = 3,
 };
 
@@ -114,11 +118,14 @@ struct vento_video_picture {
     int32_t packed;
     // The picture came out of the hardware, mapped for reading.
     int32_t hardware;
-    // Hardware failed on this packet, and the decoder is software from here
-    // on: the packet was given to the new decoder, but anything it refers to
-    // was decoded by the old one, so until a key frame there may be no
-    // picture or a broken one. The caller should ask the far end for one.
-    // Set on that one call, whatever its status.
+    // The decoder on this packet's way in could not take it, and another is
+    // in its place from here on: the next device asked for where the first
+    // had no decoder for the stream's profile (`auto`'s Vulkan after VAAPI),
+    // software where hardware failed or none is left. The packet was given
+    // to the new decoder, but anything it refers to was decoded by the old
+    // one, so until a key frame there may be no picture or a broken one.
+    // The caller should ask the far end for one, unless no picture had come
+    // out before. Set on that one call, whatever its status.
     int32_t fell_back;
     // The call's time, from the packet to the picture described (decode,
     // and on hardware the wait for it and the mapping), in microseconds.
@@ -144,9 +151,10 @@ int vento_video_decodable(int codec);
 // device (once for the whole process: every decoder that asks shares it,
 // whichever thread it is on, and it stays open until the process ends) and
 // decodes on it when the stream's profile is one it has. Where there is no
-// device, or the device has no decoder for the profile, the decoder is
-// software instead and `vento_video_software_reason` says why; the open
-// only fails where software would.
+// device, or the device has no decoder for the profile, the decoder is the
+// next device's (AUTO's Vulkan) or software, and
+// `vento_video_software_reason` says why; the open only fails where
+// software would.
 vento_video *vento_video_open(int codec, int width, int height, int hardware, char *error,
                               size_t error_len);
 
@@ -165,14 +173,21 @@ const char *vento_video_method_name(int method);
 
 // Why the decoder is not decoding in hardware though it was asked to, such as
 // "vaapi: no device (...)", "vaapi: H.264 High 10 is not supported" or
-// "vaapi: decode failed (...)", or "" where it was not asked to or nothing
-// has stood in the way. Valid until the next call on the decoder.
+// "vaapi: decode failed (...)", every device tried named in turn with "; "
+// between them ("vaapi: no device; vulkan: no video decode device"), or ""
+// where it was not asked to or nothing has stood in the way. Valid until the
+// next call on the decoder.
 const char *vento_video_software_reason(const vento_video *video);
 
 // Whether the shared device of a `vento_video_hardware` (VAAPI or VULKAN)
 // has been asked for in this process: 0 never, 1 open, -1 tried and failed.
 // For tests, and for whoever wants to know that OFF opened nothing.
 int vento_video_device_state(int method);
+
+// The name of the Vulkan device chosen to decode on ("Intel(R) Graphics
+// (LNL)", say), or "" before any decoder asked for Vulkan or where no device
+// can decode video. Valid until the process ends.
+const char *vento_video_vulkan_device(void);
 
 // For tests: the next hardware picture of this decoder fails as a device
 // that has gone away would, which is otherwise not something a test can

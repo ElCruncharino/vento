@@ -100,6 +100,8 @@ fn main() {
     println!("cargo:rerun-if-changed=c/vento_video.h");
     println!("cargo:rerun-if-changed=c/va_shim.c");
     println!("cargo:rerun-if-changed=c/va_shim.h");
+    println!("cargo:rerun-if-changed=c/vk_device.c");
+    println!("cargo:rerun-if-changed=c/vk_device.h");
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android") {
         return;
     }
@@ -179,9 +181,13 @@ fn main() {
         build_va_shim(&manifest, &root, &prefix);
     }
 
+    // With `vk_device.c`, which lists the Vulkan devices before FFmpeg opens
+    // one, through libvulkan loaded for the look: headers only here too.
     cc::Build::new()
         .file(manifest.join("c/vento_video.c"))
+        .file(manifest.join("c/vk_device.c"))
         .include(prefix.join("include"))
+        .include(vulkan.join("include"))
         .warnings(true)
         .compile("vento_video");
     // libavcodec and what it needs, in the order a static link wants them,
