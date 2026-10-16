@@ -18,6 +18,9 @@ pub mod realvnc;
 pub use session::kind::{CONNECT_TIMEOUT_MS, Connect, Dirs, Kind, Platform};
 pub use session::trust::{Pinned, pinned_as};
 
+pub use platform_desktop::ffmpeg::{FFmpeg, Hardware};
+use std::sync::Arc;
+
 /// What the far end lists this machine as, where a phone says its model.
 pub fn client_name() -> String {
     std::fs::read_to_string("/etc/hostname")
@@ -28,9 +31,18 @@ pub fn client_name() -> String {
 }
 
 /// What decodes video here: libavcodec, for RustDesk's picture, where the
-/// phone hands over MediaCodec.
-pub fn decoders() -> std::sync::Arc<dyn common::video::Decoders> {
-    std::sync::Arc::new(platform_desktop::ffmpeg::FFmpeg::default())
+/// phone hands over MediaCodec — decoding as `hardware` says, which is off
+/// unless the person asked.
+///
+/// One a session, and held by it as well as handed to its backend in
+/// [`Connect::decoders`]: switching the way of decoding under a running
+/// session is [`FFmpeg::set_hardware`] on this, which a backend decoding
+/// through it takes at its next picture (RustDesk), and which every backend
+/// is handed at connect through [`Connect::hardware`], the same answer.
+///
+/// [`FFmpeg::set_hardware`]: platform_desktop::ffmpeg::FFmpeg::set_hardware
+pub fn decoders(hardware: Hardware) -> Arc<FFmpeg> {
+    Arc::new(FFmpeg::new(hardware))
 }
 
 /// Every backend this binary has, in the picker's order. RealVNC is here

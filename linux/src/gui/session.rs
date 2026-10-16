@@ -187,6 +187,9 @@ pub struct Session {
     /// started with, then whatever the panel changed.
     pub settings: Settings,
     backend: Arc<dyn Backend>,
+    /// What decodes the session's video, also handed to the backend: the
+    /// hardware decoding setting is switched on it.
+    decoders: Arc<backends::FFmpeg>,
     mailbox: Arc<Mailbox>,
     desktop: Option<Desktop>,
     snapshot: Snapshot,
@@ -291,6 +294,7 @@ impl Session {
     ) -> Result<Session, String> {
         let mailbox = Mailbox::new(Some(wake));
         let client_name = backends::client_name();
+        let decoders = backends::decoders(settings.hw_decode);
         let connect = Connect {
             address: &request.address,
             user: &request.user,
@@ -303,7 +307,7 @@ impl Session {
             last_size: None,
             client_name: &client_name,
             platform: backends::Platform::Linux,
-            decoders: Some(backends::decoders()),
+            decoders: Some(Arc::clone(&decoders) as _),
         };
         let backend = request.kind.start(&connect)?;
         let title = request.address.clone();
@@ -319,6 +323,7 @@ impl Session {
             request,
             settings,
             backend,
+            decoders,
             mailbox,
             desktop: None,
             snapshot: Snapshot::default(),
@@ -1025,12 +1030,21 @@ impl Session {
             return;
         }
         log::info!(
-            "settings: send clipboard {}, receive clipboard {}, grab keyboard {}, software cursor {}",
+            "settings: send clipboard {}, receive clipboard {}, grab keyboard {}, software cursor {}, hardware \
+             decoding {}",
             on_off(settings.clipboard_out),
             on_off(settings.clipboard_in),
             on_off(settings.grab_keyboard),
-            on_off(settings.software_cursor)
+            on_off(settings.software_cursor),
+            settings.hw_decode.name()
         );
+        // Taken by a backend that decodes through these at its next picture
+        // (RustDesk, which asks for a key frame to start the new decoder
+        // on); one with decoders of its own was handed the setting at
+        // connect, and takes a change at the next.
+        if settings.hw_decode != self.settings.hw_decode {
+            self.decoders.set_hardware(settings.hw_decode);
+        }
         self.settings = settings;
     }
 

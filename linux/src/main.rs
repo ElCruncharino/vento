@@ -71,6 +71,8 @@ mod host {
         /// `--no-clipboard-in`'s opposite: whether what the far end copies is
         /// shown, which is the probe's way of taking it.
         clipboard_in: bool,
+        /// `--hw-decode`: how video is decoded.
+        hw_decode: backends::Hardware,
         out: Option<PathBuf>,
         thumb_step: usize,
         verbose: bool,
@@ -111,7 +113,13 @@ usage: vento                                   the connection dialog
   --software-cursor      draw the far end's cursor shape into the picture,
                          hiding this desktop's, instead of making it the
                          window's own pointer where this end owns the
-                         pointer (the dialog's Settings have all four)
+                         pointer
+  --hw-decode[=HOW]      decode video on the GPU: vaapi, vulkan, auto (VAAPI,
+                         else Vulkan; the default without =HOW) or off, which
+                         is what it is without the flag; where the device does
+                         not take a stream it is decoded in software. RustDesk
+                         is the backend that uses it (the dialog's Settings
+                         have all five, and the panel switches them live)
   --x11, --wayland       open the window on that display server (default:
                          Wayland where WAYLAND_DISPLAY is set, X11 otherwise)
   --library-dir DIR      where RealVNC's two libraries are (XDG data dir)
@@ -230,6 +238,8 @@ headless, any of which selects the probe instead of the window:
                 "--no-clipboard-in" => settings.clipboard_in = false,
                 "--no-grab-keyboard" => settings.grab_keyboard = false,
                 "--software-cursor" => settings.software_cursor = true,
+                "--hw-decode" => settings.hw_decode = backends::Hardware::Auto,
+                _ if arg.starts_with("--hw-decode=") => settings.hw_decode = hw_decode(&arg)?,
                 "--x11" | "--wayland" => {
                     let named = if arg == "--x11" { gui::Platform::X11 } else { gui::Platform::Wayland };
                     if platform.is_some_and(|p| p != named) {
@@ -370,6 +380,7 @@ headless, any of which selects the probe instead of the window:
             resize,
             layout,
             clipboard_in: settings.clipboard_in,
+            hw_decode: settings.hw_decode,
             out,
             thumb_step,
             verbose: false,
@@ -381,6 +392,13 @@ headless, any of which selects the probe instead of the window:
     /// A screen as the probe prints it: `id=N WxH+X+Y`, as heads.sh does.
     fn screen(m: &Monitor) -> String {
         format!("id={} {}x{}+{}+{}", m.id, m.width, m.height, m.x, m.y)
+    }
+
+    /// `--hw-decode=HOW`'s answer.
+    fn hw_decode(arg: &str) -> Result<backends::Hardware, String> {
+        let how = arg.split_once('=').map_or("", |(_, how)| how);
+        backends::Hardware::from_name(how)
+            .ok_or_else(|| format!("--hw-decode: {how:?} is not one of vaapi, vulkan, auto or off"))
     }
 
     /// `WxH`, neither of them zero.
@@ -455,7 +473,7 @@ headless, any of which selects the probe instead of the window:
                     last_size: None,
                     client_name: &client_name,
                     platform: Platform::Linux,
-                    decoders: Some(backends::decoders()),
+                    decoders: Some(backends::decoders(self.hw_decode)),
                 };
                 say("create");
                 match self.kind.start(&connect) {
@@ -775,6 +793,11 @@ headless, any of which selects the probe instead of the window:
                     fact.value
                 ));
             }
+            // The overlay's line, which says why a picture asked for in
+            // hardware is in software.
+            if let Some(status) = backend.decoder_status() {
+                say(&format!("decoder {status}"));
+            }
             match backend.traffic() {
                 Some(t) => say(&format!(
                     "traffic {} in{}",
@@ -854,6 +877,29 @@ headless, any of which selects the probe instead of the window:
                 "0o141", "0b101", "08", "0x", "", " ", "0x+61", "0x-61", "-1", "97 ", "1e3", "0x1ffffffff", "++1",
             ] {
                 assert!(keysym(refused).is_err(), "{refused:?}");
+            }
+        }
+
+        #[test]
+        fn hardware_decoding_is_off_unless_asked_and_auto_when_bare() {
+            let settings = |args: &[&str]| match parse(args.iter().map(|a| a.to_string()).collect()) {
+                Ok(Mode::Gui(launch)) => launch.settings.hw_decode,
+                Ok(Mode::Probe(probe)) => probe.hw_decode,
+                _ => panic!("{args:?} did not parse"),
+            };
+            use backends::Hardware;
+            assert_eq!(settings(&[]), Hardware::Off);
+            assert_eq!(settings(&["--hw-decode"]), Hardware::Auto);
+            assert_eq!(settings(&["--hw-decode=vaapi"]), Hardware::Vaapi);
+            assert_eq!(settings(&["--hw-decode=vulkan"]), Hardware::Vulkan);
+            assert_eq!(settings(&["--hw-decode=auto"]), Hardware::Auto);
+            assert_eq!(settings(&["--hw-decode", "--hw-decode=off"]), Hardware::Off);
+            assert_eq!(
+                settings(&["rustdesk", "127.0.0.1", "--probe", "1", "--hw-decode=vaapi"]),
+                Hardware::Vaapi
+            );
+            for refused in ["--hw-decode=", "--hw-decode=VAAPI", "--hw-decode=nvdec"] {
+                assert!(parse(vec![refused.to_string()]).is_err(), "{refused}");
             }
         }
 

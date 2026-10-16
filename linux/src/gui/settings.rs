@@ -12,6 +12,7 @@
 //! it back when it ends, so what was switched mid-session is what the next
 //! one starts with.
 
+use crate::backends::Hardware;
 use egui::{RichText, Ui};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,6 +32,11 @@ pub struct Settings {
     /// the far end. Off, neither is ever taken and they stay this
     /// desktop's.
     pub grab_keyboard: bool,
+    /// Decode video on the GPU where it can be: VAAPI, Vulkan Video, or
+    /// whichever opens (`auto`). Off, the default, no device is opened and
+    /// neither library is loaded. Like the rest, not saved: a run that
+    /// wants it asks for it (`--hw-decode`) or switches it on here.
+    pub hw_decode: Hardware,
 }
 
 impl Default for Settings {
@@ -40,12 +46,13 @@ impl Default for Settings {
             clipboard_in: true,
             software_cursor: false,
             grab_keyboard: true,
+            hw_decode: Hardware::Off,
         }
     }
 }
 
 impl Settings {
-    /// The four as rows of a two-column grid — a label and a box each, the
+    /// The five as rows of a two-column grid — a label and a box each, the
     /// shape the dialog's and the panel's options are drawn in, with the
     /// label `weak` where the panel's are. True if one was changed this
     /// frame.
@@ -86,6 +93,27 @@ impl Settings {
              own, instead of making it this window's pointer. Only where this end owns the pointer; in \
              relative mode the far end draws its cursor into the picture either way.",
         );
+        // A box like the others, on meaning `auto`; a device named on the
+        // command line is kept, and shown beside the box, until the box is
+        // switched off. Which backends use it is said in the summary, which
+        // grows as more of them decode through it.
+        let label = if weak { RichText::new("Hardware decoding").weak() } else { RichText::new("Hardware decoding") };
+        ui.label(label).on_hover_text(
+            "Decode video on the GPU (VAAPI, else Vulkan Video) where the device takes the stream, and in \
+             software where it does not. RustDesk switches at once; the other backends decode as their \
+             libraries do and do not use this.",
+        );
+        let mut on = self.hw_decode != Hardware::Off;
+        let note = match self.hw_decode {
+            Hardware::Vaapi => "VAAPI only",
+            Hardware::Vulkan => "Vulkan only",
+            Hardware::Off | Hardware::Auto => "",
+        };
+        if ui.checkbox(&mut on, RichText::new(note).weak().italics()).changed() {
+            self.hw_decode = if on { Hardware::Auto } else { Hardware::Off };
+            changed = true;
+        }
+        ui.end_row();
         changed
     }
 }

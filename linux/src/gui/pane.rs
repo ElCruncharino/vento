@@ -903,7 +903,15 @@ impl Pane {
             if host.focused { "focused" } else { "unfocused" },
         );
         let shortcuts = format!("{view}  inhibitor {}", host.inhibitor);
-        vec![first, second, third, fourth, fifth, window, shortcuts]
+        let mut lines = vec![first, second, third, fourth, fifth];
+        // How the video is decoded, where the backend decodes video through
+        // this end's decoders: the line is the decoder's, made on the
+        // protocol thread a couple of times a second, and only copied here.
+        if let Some(status) = s.backend.decoder_status() {
+            lines.push(format!("dec {status}"));
+        }
+        lines.extend([window, shortcuts]);
+        lines
     }
 }
 

@@ -121,7 +121,9 @@ functions of it declared by hand.
 
 **Hardware decoding is off by default**, and off it is the software decoder
 it always was: no device is opened, and neither libva nor libvulkan is
-loaded. Asked for, the Rust decoder (RustDesk's picture) decodes on VAAPI —
+loaded. Asked for — the **Hardware decoding** setting, or `--hw-decode`
+(`auto`, VAAPI else Vulkan; `=vaapi` or `=vulkan` for one of them) — the
+Rust decoder (RustDesk's picture) decodes on VAAPI —
 or Vulkan Video, which Mesa's ANV offers only under `ANV_DEBUG=video-decode`
 and Fedora's only for VP9 and AV1 — where the device has a decoder for the
 stream's profile, and in software where it has not (iHD has none for H.264
@@ -130,6 +132,14 @@ whole process, by the first decoder that asks. The picture is mapped for
 reading off the device (NV12, P010 or XV30) and converted like a software
 one, so the two look the same. A hardware failure mid-stream is a software
 decoder in its place and a key frame asked for, not a lost picture.
+RustDesk's **Encoding** row says which, after the codec: `AV1 (software)`,
+`H.264 (hardware)`, nothing before the first picture; and the debug overlay's
+`dec` line says how and what a frame costs (`dec H.264 vaapi map 2.1 ms`,
+`dec H.264 sw 3.2 ms (vaapi: no device)`). The setting reaches every backend:
+the session's decoders carry it, which RustDesk asks each frame and takes a
+change of at once — a new decoder, and a key frame asked for, on the same
+session — and a backend with decoders of its own is handed it at connect
+(`Connect::hardware`), though none of those uses it yet.
 
 The submodules must be initialised (`git submodule update --init --recursive`;
 RealVNC's four host-only submodules need `--recursive`) and patched
@@ -178,10 +188,13 @@ cargo run -- rdp
 # one's: the clipboard in each direction (both on unless told otherwise), the
 # keyboard grab that sends Alt+Tab and the rest on (on unless told), and the
 # far end's cursor drawn into the picture rather than made the window's own
-# (off unless told). The dialog's "Settings" section has the same four.
+# (off unless told), and video decoded on the GPU (off unless told; bare is
+# auto, VAAPI else Vulkan). The dialog's "Settings" section has the same five.
 cargo run -- tigervnc 127.0.0.1:5901 --no-clipboard-out --no-clipboard-in
 cargo run -- tigervnc 127.0.0.1:5901 --no-grab-keyboard
 cargo run -- tigervnc 127.0.0.1:5901 --software-cursor
+cargo run -- rustdesk 127.0.0.1 -o ConnectBy=address --hw-decode
+cargo run -- rustdesk 127.0.0.1 -o ConnectBy=address --hw-decode=vaapi
 
 # Straight into a session, with --connect. Without --password the credentials
 # prompt asks. Disconnecting it quits; if the far end ends it instead, the
@@ -224,7 +237,10 @@ with a cancel, since a second prompt is the far end refusing the first answer
 authentication failed and leaves with 1. The clipboard settings hold in the
 probe too: under `--no-clipboard-in` what the far end copies is printed as its
 size alone, and `--clipboard` with `--no-clipboard-out` is refused as a
-contradiction (status 2).
+contradiction (status 2). So does `--hw-decode`: the facts then say the
+codec with `(hardware)` or `(software)`, and a `decoder` line after them is
+the overlay's `dec` line, with the reason where hardware was asked for and
+the picture is software.
 
 The probe's exit status is 0 only if it connected within `--connect-timeout`,
 stayed connected for the time asked, wrote the framebuffer and the thumbnail
@@ -520,7 +536,7 @@ usual sizes, and asking `request_desktop_size` for the one picked — what
 arrives is what the far end granted, and the dropdown shows that rather than
 what was asked; and **Display**, where the far end sends one of several
 screens at a time (RustDesk), asking `request_display`. And **Follow window
-size**, below, the four **settings**, below, which a running session
+size**, below, the five **settings**, below, which a running session
 takes a change to at once, and **Debug overlay**, the overlay below, which is
 the session's and not a setting (Ctrl+Alt+D toggles it too).
 
@@ -563,8 +579,10 @@ a second screen asked of it is left out).
 **Settings** are the client's own, one answer for every connection, as the
 phone's `AppSettings` has them: **Send clipboard** and **Receive clipboard**
 (both on by default; `--no-clipboard-out`, `--no-clipboard-in`), **Grab
-keyboard** (on by default; `--no-grab-keyboard`), and **Software cursor** (off
-by default; `--software-cursor`), below. Grab keyboard is whether the window
+keyboard** (on by default; `--no-grab-keyboard`), **Software cursor** (off
+by default; `--software-cursor`), below, and **Hardware decoding** (off by
+default; `--hw-decode`, above, whose box on is `auto` and which shows a device
+named on the command line beside it). Grab keyboard is whether the window
 holds the window manager's or the compositor's shortcuts off at all — the X11
 keyboard grab, or Wayland's shortcuts inhibitor, below — so that Alt+Tab,
 Super and the rest reach the far end; off, neither is ever taken, and a
@@ -676,7 +694,12 @@ hovering, the buttons, how many keys are held at the far end, and VIEW ONLY
 when it is; the display server, the follower's state (off, waiting
 for the far end, or the size it asked for), the cursor shape (native, or
 software when that setting is on, its size and hotspot) and the two clipboard
-switches; three delays (below). Then the window's own: main or pop-out, the
+switches; three delays (below); and, where the backend decodes video through
+this end's decoders (RustDesk), `dec` and the decoder's line: the codec, the
+method (`sw`, `vaapi map`, `vulkan copy`), the smoothed time of the decoder's
+call, and why it is software where hardware was asked for — made on the
+protocol thread twice a second and copied, not built per frame. Then the
+window's own: main or pop-out, the
 monitor it shows, the local output it is on, whether it has the focus, its
 frames a second, its texture updates this frame and its pixels per point;
 its scale mode and scale in device pixels per desktop pixel, the desktop's
