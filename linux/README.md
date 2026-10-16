@@ -317,7 +317,8 @@ with **Monitor**, then **Pop out**:
   monitor, and the main window moves on to the next monitor that has no
   window (the whole desktop once every monitor has one).
 - **Pop out monitor N to output M** opens it fullscreen on that local
-  output. On Wayland this is the only way to say where a window goes — a
+  output, the outputs numbered left to right (then top to bottom) and named
+  as the display server names them. On Wayland this is the only way to say where a window goes — a
   Wayland client cannot place a window, only ask for it fullscreen on an
   output — so a pop-out in a window lands wherever the compositor puts new
   windows. On X11 it is whatever winit makes of the output: winit lists
@@ -384,7 +385,16 @@ pointer, Return and the window manager's close each giving the monitor back,
 `heads.sh 1` closing the pop-out of the monitor that went with the notice in
 the main window, one window minimised leaving the session live and both
 minimised pausing it, and the disconnect and the main window's close each
-closing the pop-out first.
+closing the pop-out first; and FreeRDP against `scripts/testrdp` with
+`-o Monitors=2`. On a headless sway with two outputs, the second at scale 2:
+Pop out all put the main window fullscreen on the left output with the first
+monitor and the pop-out fullscreen on the right one with the second, a drag
+from the pop-out into the main window carried the far end's window across,
+typing reached the far end through the pop-out, *to output 1* placed a
+pop-out fullscreen on that output, and Return and the compositor's close
+(`swaymsg kill`) each gave the monitor back. The capture's hand-over between
+windows is unit-tested only: no rig here has a far end of several monitors
+in relative mode.
 
 **The connection panel** is the phone's `ConnectionPanel`: controls above
 facts, in the top right corner, where it stays. It has no title bar: its first

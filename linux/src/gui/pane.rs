@@ -742,7 +742,13 @@ impl Pane {
         let response = ui.add_enabled(connected, icon_only(icons::OPEN_IN_NEW)).on_hover_text(
             "Pop out: a monitor of the far end's in a window of its own, or every monitor in one each",
         );
-        let outputs: Vec<MonitorHandle> = host.event_loop.available_monitors().collect();
+        // Numbered left to right (then top to bottom), as they are seen,
+        // rather than in the order the display server lists them.
+        let mut outputs: Vec<MonitorHandle> = host.event_loop.available_monitors().collect();
+        outputs.sort_by_key(|o| {
+            let at = o.position();
+            (at.x, at.y)
+        });
         egui::Popup::menu(&response).show(|ui| {
             match self.monitor {
                 Some(key) => {
