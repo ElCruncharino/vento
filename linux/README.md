@@ -87,20 +87,39 @@ from this directory, or with `--manifest-path linux/Cargo.toml` from the root;
 its binary lands in `linux/target/`.
 
 Host packages (the same the C host build needs, plus a libclang for bindgen):
-cmake, ninja, pkg-config, a C/C++ compiler — **clang** for the RealVNC backend
+cmake, ninja, make, meson, pkg-config, nasm (on x86, for the video decoders'
+assembly; without it they are built in plain C, with a build note, and decode
+several times slower), a C/C++ compiler — **clang** for the RealVNC backend
 (libc-shim does not build under GCC; without clang that one backend is left
 out, with a build note) — and the development files for openssl, gnutls, nettle
-(hogweed, gmp), libjpeg-turbo, pixman, zlib, FFmpeg (libavcodec, libavutil,
-libswscale), libpulse, alsa-lib, plus libclang. The window needs a Vulkan (or
-GLES) driver wgpu can use and a Wayland or X11 session.
+(hogweed, gmp), libjpeg-turbo, pixman, zlib, libpulse, alsa-lib, plus libclang.
+The window needs a Vulkan (or GLES) driver wgpu can use and a Wayland or X11
+session.
+
+**No FFmpeg of the system's**, neither its development files nor its
+libraries: the client's FFmpeg is built from `third_party/ffmpeg` (n8.1.3) and
+`third_party/dav1d` (1.5.4) by `backends/platform/desktop/build.rs`, once per
+target directory and profile (about a minute and a half; a stamp beside it
+says what it was built from, and it is built again only when that changes),
+as static libraries that the RustDesk decoder, TigerVNC's H.264 and FreeRDP's
+H.264, sound and scaling all link — the C backends through
+`VENTO_FFMPEG_PREFIX`, which `build.rs` hands their CMake build. It is
+configured `--disable-everything`, `--disable-autodetect`, without programs,
+network or the format, filter and device libraries, with exactly these
+decoders: H.264, H.265, VP8, VP9, AV1 (dav1d's), AAC, Opus and two PCM ones
+(FreeRDP's sound), the H.264 parser, libswscale and libswresample. Its own
+code (`backends/platform/desktop/c/vento_video.c`) is the only C that
+includes FFmpeg's headers for the Rust decoder, which calls six functions of
+it declared by hand.
 
 The submodules must be initialised (`git submodule update --init --recursive`;
 RealVNC's four host-only submodules need `--recursive`) and patched
-(`./patch.sh -n` at the root). One of them is this crate's alone: winit, at
-the tag of the release `Cargo.lock` names, which `Cargo.toml`'s
-`[patch.crates-io]` takes in place of the crates.io one so that our fixes to
-it live in `patches/winit/` like every other submodule's. Unpatched, it builds
-and is exactly crates.io's winit, with the defects the patches fix.
+(`./patch.sh -n` at the root). Three are this crate's alone: FFmpeg and
+dav1d, above, and winit, at the tag of the release `Cargo.lock` names, which
+`Cargo.toml`'s `[patch.crates-io]` takes in place of the crates.io one so that
+our fixes to it live in `patches/winit/` like every other submodule's.
+Unpatched, winit builds and is exactly crates.io's, with the defects the
+patches fix.
 
 Licences: the client is GPL-3.0-or-later like the rest of the repository, and
 what it takes from crates.io keeps each crate's own licence, as `Cargo.lock`
@@ -111,8 +130,13 @@ codepoints file. It comes from google/material-design-icons at commit
 49d4db35df87 (2026-10-09), which ships Material Symbols only as a variable
 font; egui sets none of a variable font's axes, so what is here is a static
 instance of it made with fontTools (unfilled, weight 400, grade 0, optical
-size 24; `src/gui/icons.rs` has the command), 1.4 MB of the binary. Nothing
-of this crate's graph reaches the Android app or its licence page.
+size 24; `src/gui/icons.rs` has the command), 1.4 MB of the binary. FFmpeg is
+linked statically into the binary and the TigerVNC and FreeRDP libraries, as
+configured LGPL 2.1 or later (no `--enable-gpl`, no `--enable-nonfree`;
+`third_party/ffmpeg/COPYING.LGPLv2.1`), with one patch of ours to its
+configure (`patches/ffmpeg/`); dav1d, inside it, is BSD-2-Clause
+(`third_party/dav1d/COPYING`). Nothing of this crate's graph reaches the
+Android app or its licence page.
 
 ```sh
 cd linux

@@ -54,6 +54,42 @@ endif()
 # its own includes and the libraries it stands on afterwards, through
 # `${VENTO_BACKEND_LINK}`: PUBLIC for a static library, whose probe has to
 # link them too, and PRIVATE for a shared one, which already holds them.
+# `VENTO_FFMPEG_PREFIX`: the FFmpeg to link, as the static libraries the
+# desktop platform crate builds from `third_party/ffmpeg` and
+# `third_party/dav1d` (backends/platform/desktop/build.rs, which `linux/build.rs`
+# hears the prefix from and hands on). Given, it is the one FFmpeg of every
+# backend here, and the Rust decoder links the same build, so a Linux client
+# has no system FFmpeg in it at all; left empty, a module finds the host's as
+# before, which is what a plain `cmake -S backends` for the probes does.
+#
+# One imported target per library, each carrying what a static link of it
+# needs after it — dav1d and libswresample after libavcodec (its AV1 and its
+# Opus decoder), libavutil after all, and the system's threads, libm and
+# libdl — so that a module names only the library it calls.
+set(VENTO_FFMPEG_PREFIX "" CACHE PATH "FFmpeg and dav1d built statically under this prefix, or empty for the host's FFmpeg")
+if(VENTO_FFMPEG_PREFIX AND NOT TARGET vento_ffmpeg::avcodec)
+    find_package(Threads REQUIRED)
+    foreach(lib avutil dav1d swresample swscale avcodec)
+        set(_file "${VENTO_FFMPEG_PREFIX}/lib/lib${lib}.a")
+        if(NOT EXISTS "${_file}")
+            message(FATAL_ERROR "VENTO_FFMPEG_PREFIX has no ${_file}")
+        endif()
+        add_library(vento_ffmpeg::${lib} STATIC IMPORTED GLOBAL)
+        set_target_properties(vento_ffmpeg::${lib} PROPERTIES
+                IMPORTED_LOCATION "${_file}"
+                INTERFACE_INCLUDE_DIRECTORIES "${VENTO_FFMPEG_PREFIX}/include")
+    endforeach()
+    target_link_libraries(vento_ffmpeg::avutil INTERFACE Threads::Threads m)
+    target_link_libraries(vento_ffmpeg::dav1d INTERFACE Threads::Threads ${CMAKE_DL_LIBS})
+    target_link_libraries(vento_ffmpeg::swresample INTERFACE vento_ffmpeg::avutil)
+    target_link_libraries(vento_ffmpeg::swscale INTERFACE vento_ffmpeg::avutil)
+    target_link_libraries(vento_ffmpeg::avcodec INTERFACE
+            vento_ffmpeg::dav1d vento_ffmpeg::swresample vento_ffmpeg::avutil)
+    # libavcodec's version, for a tree that checks it (FreeRDP's sound does).
+    file(STRINGS "${VENTO_FFMPEG_PREFIX}/lib/pkgconfig/libavcodec.pc" _version REGEX "^Version:")
+    string(REGEX REPLACE "^Version: *" "" VENTO_FFMPEG_AVCODEC_VERSION "${_version}")
+endif()
+
 if(VENTO_SHARED)
     set(VENTO_BACKEND_LINK PRIVATE)
 else()

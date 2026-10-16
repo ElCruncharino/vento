@@ -39,8 +39,9 @@ remotedesktop-common = { path = "../backends/common" }
 # (the `c` feature), which RealVNC's adapter here fills in.
 remotedesktop-session = { path = "../backends/session", features = ["c"] }
 # libavcodec, for RustDesk's picture: the one protocol here whose frames are
-# video, and the one dependency that makes this crate's build need FFmpeg's
-# development files.
+# video. Its build script builds FFmpeg and dav1d from `third_party/`
+# statically, and says where (`links`), so that `build.rs` hands the same
+# libraries to TigerVNC and FreeRDP: no FFmpeg of the system's is linked.
 remotedesktop-platform-desktop = { path = "../backends/platform/desktop" }
 # The backends, each with its adapter in its own crate: the four protocols,
 # and the three C libraries' crates, whose libraries `build.rs` links.

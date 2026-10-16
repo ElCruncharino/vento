@@ -159,10 +159,21 @@ else()
 
     # H.264 is upstream's own libavcodec context here, which is what their
     # viewer decodes with on Linux: HAVE_LIBAV is what selects it, and the
-    # three libraries it needs are what `common/rfb` links when it sees them.
-    find_package(AVCodec REQUIRED)
-    find_package(AVUtil REQUIRED)
-    find_package(SWScale REQUIRED)
+    # three libraries it needs are what `common/rfb` links when it sees them:
+    # the static FFmpeg of VENTO_FFMPEG_PREFIX (vento_desktop.cmake) where the
+    # Linux client's build gives one, and the host's otherwise.
+    if(TARGET vento_ffmpeg::avcodec)
+        foreach(lib AVCODEC AVUTIL SWSCALE)
+            string(TOLOWER ${lib} name)
+            set(${lib}_FOUND 1)
+            set(${lib}_INCLUDE_DIRS "${VENTO_FFMPEG_PREFIX}/include")
+            set(${lib}_LIBRARIES vento_ffmpeg::${name})
+        endforeach()
+    else()
+        find_package(AVCodec REQUIRED)
+        find_package(AVUtil REQUIRED)
+        find_package(SWScale REQUIRED)
+    endif()
     set(ENABLE_H264 ON)
     set(HAVE_H264 1)
     set(HAVE_LIBAV 1)

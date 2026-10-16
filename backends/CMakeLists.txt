@@ -29,11 +29,16 @@
 # does not build under GCC — with a message saying so rather than an error;
 # -DVENTO_SHARED=ON makes each `vento_<name>` a shared library under `lib/`
 # carrying its dependencies and the logger, which is how the Rust client under
-# `linux/` links them (its build.rs runs this file with that switch on).
+# `linux/` links them (its build.rs runs this file with that switch on);
+# -DVENTO_FFMPEG_PREFIX=DIR links TigerVNC and FreeRDP against the static
+# FFmpeg and dav1d under DIR instead of the host's, which is how that build
+# gives them the one `backends/platform/desktop/build.rs` made (see
+# cmake/vento_desktop.cmake).
 #
 # Needs, as development packages: openssl, gnutls, nettle (with hogweed and
-# gmp), libjpeg-turbo, pixman, zlib, FFmpeg's libavcodec, libavutil and
-# libswscale, libpulse and alsa-lib, plus pkg-config, and a C and C++ compiler
+# gmp), libjpeg-turbo, pixman, zlib, FFmpeg's libavcodec, libavutil,
+# libswscale and libswresample (unless VENTO_FFMPEG_PREFIX is given),
+# libpulse and alsa-lib, plus pkg-config, and a C and C++ compiler
 # CMake can find — clang for RealVNC (`CC=clang CXX=clang++ cmake ...`), whose
 # four host-only submodules are initialised with `--recursive`.
 

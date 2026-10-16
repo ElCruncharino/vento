@@ -46,6 +46,16 @@ when that crate's winit does (a `cargo update` there, its own job): the pin to
 the new release's tag, `patches/winit/` rebased onto it, and any patch
 upstream has taken dropped.
 
+`third_party/ffmpeg` and `third_party/dav1d` are the Linux client's too, and
+not in this round either: the static FFmpeg `backends/platform/desktop/build.rs`
+builds for every desktop decoder (the Rust one, TigerVNC's H.264 context and
+FreeRDP's H.264, sound and scaling), each pinned at a release tag. FFmpeg moves
+to a newer release's tag with `patches/ffmpeg/` rebased onto it; the decoders it
+is configured with are `DECODERS` and `PARSERS` in that build script, so a
+consumer that starts using another codec adds it there. Proven by the desktop
+crate's fixture tests, the RustDesk probe with each codec, and the TigerVNC
+H.264 and FreeRDP AVC probes. Android builds neither.
+
 A shared library can be blocked by a consumer: nettle 4 could not move until
 TigerVNC had upstream's nettle-4 compatibility. When an evaluation says "stay"
 because of a consumer, note it and come back after that consumer moves.

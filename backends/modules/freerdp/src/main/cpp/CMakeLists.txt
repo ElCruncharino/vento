@@ -130,6 +130,28 @@ else()
     foreach(off WITH_LIBSYSTEMD WITH_PKCS11 CHANNEL_URBDRC WITH_CLANG_FORMAT WITH_WEBVIEW)
         set(${off} OFF CACHE BOOL "" FORCE)
     endforeach()
+    # Their FindFFmpeg looks for eight libraries and skips the search when
+    # FFMPEG_LIBRARIES is cached. Where the Linux client's build gives a static
+    # FFmpeg (VENTO_FFMPEG_PREFIX, vento_desktop.cmake) its four are cached
+    # here, as the results that module would have come to, so that nothing of
+    # the host's — libavformat, libavfilter, libavdevice included, which it
+    # would otherwise find and link — is looked at.
+    if(TARGET vento_ffmpeg::avcodec)
+        set(_ffmpeg "")
+        foreach(lib AVCODEC AVUTIL SWSCALE SWRESAMPLE)
+            string(TOLOWER ${lib} name)
+            set(${lib}_INCLUDE_DIRS "${VENTO_FFMPEG_PREFIX}/include" CACHE PATH "" FORCE)
+            set(${lib}_LIBRARIES vento_ffmpeg::${name} CACHE STRING "" FORCE)
+            list(APPEND _ffmpeg vento_ffmpeg::${name})
+        endforeach()
+        set(AVCODEC_VERSION "${VENTO_FFMPEG_AVCODEC_VERSION}" CACHE STRING "" FORCE)
+        set(FFMPEG_LIBRARIES "${_ffmpeg}" CACHE STRING "" FORCE)
+        set(FFMPEG_INCLUDE_DIRS "${VENTO_FFMPEG_PREFIX}/include" CACHE STRING "" FORCE)
+        foreach(lib AVFORMAT AVFILTER AVDEVICE POSTPROCESS)
+            unset(${lib}_LIBRARIES CACHE)
+            unset(${lib}_INCLUDE_DIRS CACHE)
+        endforeach()
+    endif()
 endif()
 
 # The version from the hard-coded string in their cmake/GetProjectVersion.cmake
