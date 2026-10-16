@@ -13,6 +13,7 @@
 #include <stdbool.h>
 
 #include <vento/backend.h>
+#include <vento/video.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -31,6 +32,11 @@ typedef struct vento_tigervnc_config {
     int quality_level;       /* 0–9, -1 for lossless, or -2 to follow the line speed */
     int color_level;         /* 0 full, 1 for 64 colours, 2 for 8, or -2 to follow */
     bool h264;               /* whether to offer H.264 at all */
+    /* What decodes it: the platform's decoders (vento/video.h), copied, and
+       the session's from here on, released when it ends — even where this
+       call fails. NULL for none, and H.264 is then never offered whatever
+       `h264` says, since nothing could draw it. */
+    const vento_video_decoders *video;
     bool audio;              /* whether to ask for the server's sound, for the session */
     int connect_timeout_ms;  /* 0 or less for no deadline */
 } vento_tigervnc_config;

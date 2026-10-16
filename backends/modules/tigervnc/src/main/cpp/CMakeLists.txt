@@ -8,8 +8,8 @@
 # vendored libjpeg-turbo and pixman and the nettle and GnuTLS ports linked in,
 # since a phone has none of them. Under `backends/CMakeLists.txt` it is a
 # subdirectory on a Linux host and makes `vento_tigervnc`, the session with
-# the desktop's ALSA sink, against the libraries the host has and FFmpeg for
-# H.264, with a probe in front of it. What is shared is the middle — how
+# the desktop's ALSA sink, against the libraries the host has, with a probe in
+# front of it. What is shared is the middle — how
 # TigerVNC's `common/` itself is configured — and the two halves around it
 # are `if(ANDROID)` and `else()`, so that the Android build is the same
 # sequence of statements it was.
@@ -126,28 +126,11 @@ if(ANDROID)
     set(JPEG_INCLUDE_DIR "${THIRD_PARTY}/libjpeg-turbo/src" "${CMAKE_CURRENT_BINARY_DIR}/libjpeg-turbo")
     set(PIXMAN_LIBRARIES pixman)
     set(PIXMAN_INCLUDE_DIRS "${THIRD_PARTY}/pixman/pixman" "${CMAKE_CURRENT_BINARY_DIR}/pixman-gen")
-
-    # H.264, which their build has two implementations of — FFmpeg's libavcodec and
-    # Windows' Media Foundation — and this one has a third. Their
-    # `common/rfb/CMakeLists.txt` compiles the decoder itself whenever ENABLE_H264
-    # is on and adds either of theirs only where it found FFmpeg or is building for
-    # Windows, neither of which is true here; the context class is under
-    # `backends/platform/android/tigervnc`, H264_ANDROID is what selects it, and
-    # the six lines that do are the one patch it takes. HAVE_LIBAV stays unset,
-    # since that is what would ask for FFmpeg's.
-    #
-    # So the whole of H.264 here is the platform's own decoder through the NDK's C
-    # API: nothing vendored, nothing added to the APK, and it runs on the hardware
-    # every other video on the phone runs on.
-    set(ENABLE_H264 ON)
-    set(HAVE_H264 1)
-    add_definitions(-DH264_ANDROID)
-    set(H264_LIBRARIES mediandk)
 else()
     # The same five answers from the host, found the way their own root finds
     # them: CMake's modules for GnuTLS, JPEG and zlib, and theirs — on the
-    # module path for this directory and below — for nettle, pixman and the
-    # three FFmpeg libraries, which set exactly the variables `common/` reads.
+    # module path for this directory and below — for nettle and pixman, which
+    # set exactly the variables `common/` reads.
     list(APPEND CMAKE_MODULE_PATH "${THIRD_PARTY}/tigervnc/cmake/Modules")
     find_package(Nettle REQUIRED)
     set(HAVE_NETTLE 1)
@@ -157,31 +140,29 @@ else()
     find_package(JPEG REQUIRED)
     find_package(Pixman REQUIRED)
 
-    # H.264 is upstream's own libavcodec context here, which is what their
-    # viewer decodes with on Linux: HAVE_LIBAV is what selects it, and the
-    # three libraries it needs are what `common/rfb` links when it sees them:
-    # the static FFmpeg of VENTO_FFMPEG_PREFIX (vento_desktop.cmake) where the
-    # Linux client's build gives one, and the host's otherwise.
-    if(TARGET vento_ffmpeg::avcodec)
-        foreach(lib AVCODEC AVUTIL SWSCALE)
-            string(TOLOWER ${lib} name)
-            set(${lib}_FOUND 1)
-            set(${lib}_INCLUDE_DIRS "${VENTO_FFMPEG_PREFIX}/include")
-            set(${lib}_LIBRARIES vento_ffmpeg::${name})
-        endforeach()
-    else()
-        find_package(AVCodec REQUIRED)
-        find_package(AVUtil REQUIRED)
-        find_package(SWScale REQUIRED)
-    endif()
-    set(ENABLE_H264 ON)
-    set(HAVE_H264 1)
-    set(HAVE_LIBAV 1)
-
     # For the audio sink, which is ALSA's and not their viewer's PulseAudio
     # one; AlsaAudioOutput.h says why.
     find_package(ALSA REQUIRED)
 endif()
+
+# H.264, which their build has two implementations of — FFmpeg's libavcodec and
+# Windows' Media Foundation — and this one has a third, on both platforms: the
+# context beside this file, which hands each rectangle to vento's own video
+# decoders (the platform's, through `vento/video.h`: MediaCodec on the phone,
+# the Linux client's FFmpeg with its opt-in hardware decoding on a desktop).
+# Their `common/rfb/CMakeLists.txt` compiles the decoder itself whenever
+# ENABLE_H264 is on and adds either of theirs only where it found FFmpeg or is
+# building for Windows, neither of which is asked for here; H264_VENTO is what
+# selects ours, and the six lines that do are the one patch it takes.
+# HAVE_LIBAV stays unset, since that is what would compile FFmpeg's — and
+# with it a second FFmpeg into this library — and so do the three results
+# their build compiles the libav context on, whatever a cache left behind.
+set(ENABLE_H264 ON)
+set(HAVE_H264 1)
+add_definitions(-DH264_VENTO)
+foreach(lib AVCODEC AVUTIL SWSCALE)
+    set(${lib}_FOUND FALSE)
+endforeach()
 
 # Neither of the other things config.h can say is true of this build: gettext
 # is not in bionic, so every message stays in English and their no-NLS branch
@@ -205,28 +186,37 @@ endif()
 # `${CMAKE_SOURCE_DIR}/common`, which under the Gradle build is a directory
 # that does not exist and under the host root is `backends/common`, which has
 # no header of theirs in it — a stale -I either way and nothing worse, as long
-# as the real one is here. The platform's own sources go on the path too, for
-# the H.264 branch of theirs that includes the Android context by name.
-# libtool control files are for the autotools half of their build, of which
-# there is none here.
-include_directories("${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}")
-if(ANDROID)
-    include_directories("${VENTO_BACKENDS}/platform/android/tigervnc")
-endif()
+# as the real one is here. This directory goes on the path too, for the H.264
+# branch of theirs that includes our context by name, and the neutral headers
+# for the table it calls through. libtool control files are for the autotools
+# half of their build, of which there is none here.
+include_directories("${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${VENTO_BACKENDS}/common/include")
 include_directories(SYSTEM "${THIRD_PARTY}/tigervnc/common")
 macro(libtool_create_control_file)
 endmacro()
 add_subdirectory("${THIRD_PARTY}/tigervnc/common" tigervnc-common EXCLUDE_FROM_ALL)
 remotedesktop_vendored_warnings("${THIRD_PARTY}/tigervnc/common")
 
+# The H.264 context goes into their library, beside their own two, because it
+# is their factory that names it: inside `rfbclient`, the reference resolves
+# however the library ends up linked — the phone's shared library, the Linux
+# client's, or the static one a probe is built on, where an object of ours
+# that only their archive refers to would be dropped before it was looked
+# for. Compiled as a target of ours, with our warnings, and only its objects
+# handed over.
+add_library(vento_tigervnc_h264 OBJECT H264VentoDecoderContext.cxx)
+remotedesktop_warnings(vento_tigervnc_h264)
+target_sources(rfbclient PRIVATE $<TARGET_OBJECTS:vento_tigervnc_h264>)
+
 if(ANDROID)
     # The session, which is the shim over TigerVNC's client and names no
     # platform; the Rust crate beside it in `src/main/rust`, which is the
-    # backend over the session and the JNI layer every backend shares; and the
-    # H.264 context and audio output the phone's own decoders stand behind,
-    # from `backends/platform/android`.
+    # backend over the session and the JNI layer every backend shares — and
+    # MediaCodec's decoder, which the session's H.264 is decoded by; and the
+    # audio output the phone's own sink stands behind, from
+    # `backends/platform/android`.
     add_library(remotedesktop_tigervnc SHARED tigervnc_session.cxx
-            "${VENTO_BACKENDS}/platform/android/tigervnc/H264AndroidDecoderContext.cxx"
             "${VENTO_BACKENDS}/platform/android/tigervnc/AndroidAudioOutput.cxx")
     vento_android_library(remotedesktop_tigervnc remotedesktop_tigervnc)
     remotedesktop_warnings(remotedesktop_tigervnc)
@@ -239,7 +229,9 @@ else()
     # links them: the neutral include directory is the interface, and
     # `vento_log` is left to the platform — the probe's `vento_desktop`, or
     # the library's own copy of it under VENTO_SHARED (vento_desktop.cmake).
-    # The H.264 context is theirs and inside `rfbclient`.
+    # The H.264 context is inside `rfbclient`, and decodes with whatever the
+    # process hands the session: the Linux client's FFmpeg. The probe, which
+    # is C and hands it nothing, never offers H.264.
     vento_backend_library(vento_tigervnc tigervnc_session.cxx
             "${VENTO_BACKENDS}/platform/desktop/tigervnc/AlsaAudioOutput.cxx")
     target_link_libraries(vento_tigervnc ${VENTO_BACKEND_LINK} rfbclient rfb network rdr core

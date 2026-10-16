@@ -48,8 +48,9 @@ upstream has taken dropped.
 
 `third_party/ffmpeg` and `third_party/dav1d` are the Linux client's too, and
 not in this round either: the static FFmpeg `backends/platform/desktop/build.rs`
-builds for every desktop decoder (the Rust one, TigerVNC's H.264 context and
-FreeRDP's H.264, sound and scaling), each pinned at a release tag. FFmpeg moves
+builds for every desktop decoder (the Rust one, which TigerVNC's H.264 goes
+through too, and FreeRDP's H.264, sound and scaling), each pinned at a
+release tag. FFmpeg moves
 to a newer release's tag with `patches/ffmpeg/` rebased onto it; the decoders it
 is configured with are `DECODERS` and `PARSERS` in that build script, so a
 consumer that starts using another codec adds it there. Proven by the desktop
@@ -192,12 +193,14 @@ under the host locale (`export LC_ALL=C`).
   client holds; what a module's Java keeps is its provider and, for RDP and
   the two borrowed VNC clients, a `NativeBackend.Hooks`. An upgrade that
   keeps the adapter's `Kind` building has nothing to change on that side.
-- TigerVNC's two media sinks are platform code under
-  `backends/platform/{android,desktop}/tigervnc`: the H.264 decoder context
-  (the phone's, selected by `H264_ANDROID`; the host uses upstream's libav
-  one under `HAVE_LIBAV`) and the audio sink behind the shim's own
-  `AudioOutput.h`. An upstream change to `H264DecoderContext` or to the QEMU
-  audio calls in `CConnection` reaches both.
+- TigerVNC's H.264 decoder context is the shim's own on both platforms
+  (`H264VentoDecoderContext`, selected by `H264_VENTO` in their factory; their
+  libav one is not built, `HAVE_LIBAV` unset), and hands each rectangle to
+  vento's video decoders through `vento/video.h`'s table. Its audio sink is
+  platform code under `backends/platform/{android,desktop}/tigervnc`, behind
+  the shim's own `AudioOutput.h`. An upstream change to `H264DecoderContext`
+  or `H264Decoder` (the reset flags, the 64-context limit) or to the QEMU
+  audio calls in `CConnection` reaches both platforms.
 - Every comment of ours that names an upstream version or behaviour ("in
   3.19.1", "the assembly is GAS", "returns Some") is a claim to re-verify
   against the target and correct or remove. Grep for the old version string
@@ -379,8 +382,8 @@ One commit per upstream, after review, by the lead:
   port sets it itself.
 - **libvncserver** at upstream master; five patches. No releases since
   0.9.15.
-- **tigervnc** master dd416cbf, reporting 1.16.80; seven patches (the PAM one
-  dropped). The certificate check is the shim's now: what cannot be excused is
+- **tigervnc** master dd416cbf, reporting 1.16.80; six patches (the PAM one
+  dropped, and the libav context's pixel format fix with that context). The certificate check is the shim's now: what cannot be excused is
   refused and the rest goes to `trust_needed`, their viewer's known-hosts store
   not used at all; the RSA-AES key question is ported from
   `vncviewer/CConn.cxx`; audio is behind the `Audio` row, an

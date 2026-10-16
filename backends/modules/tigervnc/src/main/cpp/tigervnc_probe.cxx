@@ -7,7 +7,11 @@
 // them is not.
 //
 //   vento_tigervnc_probe HOST:DISPLAY --password vncpass --out shot.ppm
-//   vento_tigervnc_probe HOST:DISPLAY --encoding 50 --h264 --out shot.ppm
+//
+// H.264 is not among what it can show: the session decodes it with the
+// platform's decoders, handed over by a Rust caller, and this is C with none
+// to hand, so `--h264` is passed on and the session declines to offer it.
+// The Linux client's `vento tigervnc ... --probe` is the probe for H.264.
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,7 +37,7 @@ vento_session *create(void *config, const vento_callbacks *callbacks) {
             "  --compress N         0-9, or -1 for the server's default (-1)\n"
             "  --quality N          0-9 for JPEG, -1 lossless, -2 by line speed (-1)\n"
             "  --color N            0 full, 1 for 64 colours, 2 for 8, -2 by speed (0)\n"
-            "  --h264               offer H.264 as well\n"
+            "  --h264               offer H.264 as well (declined here: no decoders)\n"
             "  --audio              ask for the server's sound\n"
             "  --timeout MS         connect timeout, or 0 for none (0)\n"
             "%s",
