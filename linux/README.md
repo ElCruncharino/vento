@@ -46,8 +46,11 @@ clients, and what differs between them is each client's own code.
   Java over the viewer's JNI).
 - **`src/backends/`** — the list of the eight as this binary has them, in the
   catalog's order, and what a session here is told about this machine.
-- **`src/gui/`** — the window: `mod.rs` (the winit loop, the wgpu surface, egui
-  drawn into it), `session.rs` (a live session: the desktop, the input, the
+- **`src/gui/`** — the window: `mod.rs` (the winit loop; one GPU device, queue
+  and egui renderer shared by every window, each window a `Surface` of its own
+  with its wgpu surface, egui-winit state and egui viewport, all in one egui
+  context; the focus resolved between the windows once per turn of the loop,
+  with tests), `session.rs` (a live session: the desktop, the input, the
   toolbar, the prompts, the cursor), `desktop.rs` (the desktop as one
   texture, or as tiles where it is bigger than the device's largest, updated
   a damaged rectangle at a time), `view.rs` (scale modes, panning and the
@@ -57,7 +60,7 @@ clients, and what differs between them is each client's own code.
   the font and its codepoints file), `follow.rs` (the desktop
   following the window's size: the phone's `WindowFollower`, pure logic with
   tests), `keys.rs` (winit keys to X11 keysyms), `platform.rs` (which display
-  server the window is on, and the per-server shortcuts and capture choice),
+  server the window is on),
   `wayland.rs` (the Wayland keyboard shortcuts inhibitor), `x11.rs` (the X11
   keyboard grab that stands in for it), `cursor.rs` (the far end's cursor as
   the window's own, with tests), `hud.rs` (the debug overlay's box and rates,
@@ -546,8 +549,10 @@ winit picks the display server: Wayland where `WAYLAND_DISPLAY` (or
 `WAYLAND_SOCKET`) is set, X11 where only `DISPLAY` is, with no falling back
 from one to the other. `--x11` and `--wayland` override that, and the log's
 `display server:` line says which the window got. What differs between the two
-is behind one `match` in `src/gui/platform.rs` rather than a cfg: the keyboard
-shortcuts, the pointer capture, and the native cursor's alpha.
+is chosen at run time rather than by a cfg: the keyboard shortcuts (Wayland's
+inhibitor, one per window, or X11's keyboard grab, one for the client, moved to
+whichever of its windows has the focus), the pointer capture, and the native
+cursor's alpha.
 
 The dependency choice: winit, egui-winit and egui-wgpu are driven directly
 rather than through eframe, because eframe wraps away the things this window

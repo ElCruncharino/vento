@@ -66,11 +66,7 @@ pub struct Keyboard {
 /// winit's own connection and the window's id, or `None` on anything but
 /// an X11 window. `what` is for the log, should the connection be refused.
 fn winit_connection(window: &Window, what: &str) -> Option<(XCBConnection, u32)> {
-    let raw_window = match window.window_handle().ok()?.as_raw() {
-        RawWindowHandle::Xlib(w) => u32::try_from(w.window).ok()?,
-        RawWindowHandle::Xcb(w) => w.window.get(),
-        _ => return None,
-    };
+    let raw_window = window_id(window)?;
     let ptr = match window.display_handle().ok()?.as_raw() {
         RawDisplayHandle::Xlib(h) => {
             let display = h.display?;
@@ -93,6 +89,15 @@ fn winit_connection(window: &Window, what: &str) -> Option<(XCBConnection, u32)>
             log::warn!("X11: cannot use winit's connection for {what}: {e}");
             None
         }
+    }
+}
+
+/// The X window behind a winit window, or `None` on anything but X11.
+fn window_id(window: &Window) -> Option<u32> {
+    match window.window_handle().ok()?.as_raw() {
+        RawWindowHandle::Xlib(w) => u32::try_from(w.window).ok(),
+        RawWindowHandle::Xcb(w) => Some(w.window.get()),
+        _ => None,
     }
 }
 
@@ -126,6 +131,23 @@ impl Keyboard {
         self.wanted = true;
         if !self.held && self.retry_at.is_none_or(|t| t <= Instant::now()) {
             self.grab();
+        }
+    }
+
+    /// The grab is to be on `window` from now on, one of this client's: a
+    /// client holds one keyboard grab whichever of its windows it names,
+    /// and a second GrabKeyboard moves it rather than stacking, so one
+    /// held elsewhere is moved at once and a wanted one is asked for there.
+    pub fn retarget(&mut self, window: &Window) {
+        let Some(raw_window) = window_id(window) else {
+            return;
+        };
+        if raw_window != self.window {
+            self.window = raw_window;
+            if self.held {
+                self.held = false;
+                self.grab();
+            }
         }
     }
 

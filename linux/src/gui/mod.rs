@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The window: one winit event loop, one wgpu surface, egui drawn into it,
-//! and either the connection dialog or a session on screen.
+//! The window: one winit event loop, one GPU device with a wgpu surface for
+//! each window on it, egui drawn into them, and either the connection
+//! dialog or a session on screen.
 //!
 //! winit, egui-winit and egui-wgpu are driven directly rather than through
 //! eframe. eframe is less code for an ordinary application, but this one
@@ -15,6 +16,13 @@
 //! proxy, and egui's own repaint requests set a deadline it waits for. That
 //! is four things eframe would have to be worked around for, against a page
 //! of surface setup to do without it.
+//!
+//! Everything that can be shared between windows is, so that a session can
+//! show the far end in more than one: the GPU device, its queue and egui's
+//! renderer ([`Gpu`]) are the process's, and so is the one egui context,
+//! whose texture manager holds the desktop once whichever window draws it.
+//! What is a window's own is its [`Surface`]: the wgpu surface, egui-winit's
+//! state for it, and egui's viewport, the main window being the root one.
 //!
 //! The main thread never waits on a backend: a session is created
 //! connecting and asked questions that return at once, and everything it
@@ -42,18 +50,19 @@ use crate::backends::{Dirs, Kind};
 use crate::options::Options;
 use clipboard::{Clipboard, Why};
 use dialog::Dialog;
+use egui::ViewportId;
 pub use platform::Platform;
-use platform::Shortcuts;
 use session::{Session, Teardown};
 pub use settings::Settings;
-use toolbar::Placement;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use toolbar::Placement;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalPosition;
 use winit::event::{DeviceEvent, DeviceId, ElementState, StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, DeviceEvents, EventLoop, EventLoopProxy};
-use winit::window::{Window, WindowId};
+use winit::window::{Window, WindowAttributes, WindowId};
 
 /// A connection to open, as the command line or the dialog describes one.
 #[derive(Clone)]
@@ -83,9 +92,10 @@ pub struct Launch {
 /// Why the loop was woken from another thread or from egui.
 enum Wake {
     /// Something happened (the backend's mailbox, or egui wanting a frame
-    /// at once): repaint.
-    Now,
-    /// egui wants a frame later: only the deadline is looked at again, in
+    /// at once): repaint one viewport's window, or with `None` every
+    /// window, since the session's news may be any of theirs.
+    Now(Option<ViewportId>),
+    /// egui wants a frame later: only the deadlines are looked at again, in
     /// `about_to_wait`, in case the loop was waiting without one.
     Later,
 }
@@ -135,39 +145,38 @@ pub fn run(launch: Launch) -> i32 {
         settings: Settings::default(),
         placement: Placement::default(),
         proxy,
-        window: None,
         gpu: None,
         egui: egui::Context::default(),
-        winit: None,
+        windows: HashMap::new(),
+        main: None,
         screen: Screen::Dialog(Dialog::new()),
-        shortcuts: None,
+        keyboard: None,
         clipboard: None,
         platform: Platform::Other,
-        pointer: None,
-        focused: false,
+        focused: None,
+        focus_events: Vec::new(),
         modifiers: Default::default(),
-        occluded: false,
         shown: true,
-        repaint_at: Arc::new(Mutex::new(None)),
+        repaint_at: Arc::new(Mutex::new(HashMap::new())),
         teardowns: Vec::new(),
         launched: false,
         exit_code: 0,
     };
     let ran = event_loop.run_app(&mut app);
     let exit_code = app.exit_code;
-    // The window goes first, and then whatever backend is still being
+    // The windows go first, and then whatever backend is still being
     // destroyed is given a moment: a process that exits under a protocol
     // thread takes the C libraries' exit handlers down with it, but a window
     // that stays up while it waits is the freeze `Teardown` exists to avoid.
-    // Hidden rather than only dropped, because on X11 dropping it queues the
+    // Hidden rather than only dropped, because on X11 dropping one queues the
     // destroy without sending it, and the window stayed on screen until the
     // process was gone. (Wayland has no hiding; there it stays up for the
     // wait, which is the rare case of a backend that would not let go.)
     let teardowns = std::mem::take(&mut app.teardowns);
-    if teardowns.iter().any(|t| !t.is_finished())
-        && let Some(window) = &app.window
-    {
-        window.set_visible(false);
+    if teardowns.iter().any(|t| !t.is_finished()) {
+        for surface in app.windows.values() {
+            surface.window.set_visible(false);
+        }
     }
     drop(app);
     let deadline = Instant::now() + TEARDOWN_PATIENCE;
@@ -188,12 +197,50 @@ pub fn run(launch: Launch) -> i32 {
 /// that is still being destroyed.
 const TEARDOWN_PATIENCE: Duration = Duration::from_secs(2);
 
+/// What every window shares: the device, its queue and egui's renderer,
+/// whose textures (the desktop's among them) are uploaded once and drawn
+/// into any surface. The instance and the adapter are kept for the
+/// surfaces of windows opened later.
 struct Gpu {
-    surface: wgpu::Surface<'static>,
+    instance: wgpu::Instance,
+    adapter: wgpu::Adapter,
     device: wgpu::Device,
     queue: wgpu::Queue,
-    config: wgpu::SurfaceConfiguration,
+    /// The one format every surface is configured in: the renderer's
+    /// pipeline was made for it.
+    format: wgpu::TextureFormat,
     renderer: egui_wgpu::Renderer,
+}
+
+/// One window and what is its own: where it is drawn, egui-winit's state
+/// for its input, and what it has said about itself.
+struct Surface {
+    window: Arc<Window>,
+    /// `None` once another client has destroyed the window, from when
+    /// nothing may be drawn into it any more (see `window_event`).
+    surface: Option<wgpu::Surface<'static>>,
+    config: wgpu::SurfaceConfiguration,
+    winit: egui_winit::State,
+    /// egui's viewport for it: the root one for the main window.
+    viewport: ViewportId,
+    /// The last pointer position that was not swallowed (see `centred`).
+    pointer: Option<PhysicalPosition<f64>>,
+    /// The window cannot be seen, as winit's `Occluded` says: on X11 wholly
+    /// covered, by its visibility events; on Wayland suspended, by the
+    /// compositor.
+    occluded: bool,
+    /// winit's `is_minimized` when last asked: X11 says, elsewhere `None`.
+    minimized: Option<bool>,
+    /// Wayland's keyboard shortcuts inhibitor, which is a surface's own;
+    /// X11's grab is the client's, and the `App`'s.
+    inhibitor: Option<wayland::Shortcuts>,
+}
+
+impl Surface {
+    /// Whether the window can be seen (see `App::sync_shown`).
+    fn shown(&self) -> bool {
+        !self.occluded && self.minimized != Some(true)
+    }
 }
 
 enum Screen {
@@ -221,6 +268,52 @@ fn after_session(launched: bool, asked: bool) -> After {
     if launched && asked { After::Quit } else { After::Dialog }
 }
 
+/// What the focus events of one turn of the loop came to, between the
+/// windows of this process.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FocusChange<W> {
+    /// The focus is where it was: no events, or ones that undid each other.
+    Unchanged,
+    /// None of our windows had it, and `W` has.
+    Gained(W),
+    /// `W` had it, and none of ours has.
+    Lost(W),
+    /// It went from one of our windows to another: nothing has left the
+    /// process, so nothing is let go of — the keys held stay down, and the
+    /// clipboard is not read again.
+    Moved { from: W, to: W },
+}
+
+/// Where the focus is after `events`, in the order winit delivered them,
+/// starting from `focused`, and what that change was.
+///
+/// Resolved once the loop has delivered everything it had rather than
+/// event by event, because a move between two of our windows comes as a
+/// focus-out from one and a focus-in to the other in the same batch
+/// (measured on X11 in the same millisecond), and taken one at a time the
+/// first would let go of the keys and the grab as if the process had lost
+/// the focus. A focus-out from a window that no longer has it is stale and
+/// changes nothing, whichever order the pair came in; a window said twice
+/// to have it, as winit repeats itself around a keyboard grab, has it once.
+fn resolve_focus<W: Copy + Eq>(focused: Option<W>, events: &[(W, bool)]) -> (Option<W>, FocusChange<W>) {
+    let mut now = focused;
+    for &(window, gained) in events {
+        if gained {
+            now = Some(window);
+        } else if now == Some(window) {
+            now = None;
+        }
+    }
+    let change = match (focused, now) {
+        (a, b) if a == b => FocusChange::Unchanged,
+        (None, Some(to)) => FocusChange::Gained(to),
+        (Some(from), None) => FocusChange::Lost(from),
+        (Some(from), Some(to)) => FocusChange::Moved { from, to },
+        (None, None) => unreachable!("equal, matched above"),
+    };
+    (now, change)
+}
+
 struct App {
     launch: Option<Launch>,
     dirs: Dirs,
@@ -230,31 +323,37 @@ struct App {
     /// Where the toolbar sits, kept from one session to the next.
     placement: Placement,
     proxy: EventLoopProxy<Wake>,
-    window: Option<Arc<Window>>,
+    /// Made with the first window, whose surface the adapter is chosen for.
     gpu: Option<Gpu>,
+    /// The one context every window's frames run in, each as its own
+    /// viewport, so that they share its textures.
     egui: egui::Context,
-    winit: Option<egui_winit::State>,
+    windows: HashMap<WindowId, Surface>,
+    /// The main window: the root viewport, the one the dialog, the prompts
+    /// and the connection panel are in, and whose closing ends it all.
+    main: Option<WindowId>,
     screen: Screen,
-    shortcuts: Option<Shortcuts>,
-    /// The local clipboard: read when the window gets the focus, set when
-    /// the far end or egui copies (see `clipboard/`).
+    /// X11's keyboard grab, which a client holds on one of its windows at a
+    /// time: on the focused one, moved when the focus moves.
+    keyboard: Option<x11::Keyboard>,
+    /// The local clipboard: read when the focus comes to one of the windows
+    /// from elsewhere, set when the far end or egui copies (see
+    /// `clipboard/`).
     clipboard: Option<Clipboard>,
     /// Which display server the window is on, once it is open.
     platform: Platform,
-    /// The last pointer position that was not swallowed (see `centred`).
-    pointer: Option<PhysicalPosition<f64>>,
-    focused: bool,
+    /// Which of our windows has the keyboard focus, if any does.
+    focused: Option<WindowId>,
+    /// The focus events of this turn of the loop, resolved in
+    /// `about_to_wait` (see `resolve_focus`).
+    focus_events: Vec<(WindowId, bool)>,
     /// The modifiers held, as winit last said: for the paste command.
     modifiers: winit::keyboard::ModifiersState,
-    /// The window cannot be seen, as winit's `Occluded` says: on X11 wholly
-    /// covered, by its visibility events; on Wayland suspended, by the
-    /// compositor.
-    occluded: bool,
-    /// Whether the window could be seen when last looked, which is what the
+    /// Whether any window could be seen when last looked, which is what the
     /// session is told (see `sync_shown`).
     shown: bool,
-    /// When egui last asked to be repainted by.
-    repaint_at: Arc<Mutex<Option<Instant>>>,
+    /// When egui last asked for each viewport to be repainted by.
+    repaint_at: Arc<Mutex<HashMap<ViewportId, Instant>>>,
     /// The backends of sessions that have ended, still being destroyed.
     teardowns: Vec<Teardown>,
     /// The session on screen is the one `--connect` opened, which quits
@@ -269,24 +368,16 @@ impl App {
         let attributes = Window::default_attributes()
             .with_title("Vento")
             .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 800.0));
-        let window = match event_loop.create_window(attributes) {
-            Ok(window) => Arc::new(window),
+        let id = match self.add_window(event_loop, attributes, ViewportId::ROOT) {
+            Ok(id) => id,
             Err(e) => {
-                eprintln!("cannot create the window: {e}");
+                eprintln!("{e}");
                 self.exit_code = 1;
                 event_loop.exit();
                 return;
             }
         };
-        let gpu = match pollster::block_on(Gpu::new(Arc::clone(&window))) {
-            Ok(gpu) => gpu,
-            Err(e) => {
-                eprintln!("cannot set up the GPU: {e}");
-                self.exit_code = 1;
-                event_loop.exit();
-                return;
-            }
-        };
+        self.main = Some(id);
         // The toolbar's icons, Material Symbols, as a font family of their
         // own (see icons.rs).
         self.egui.add_font(icons::font_insert());
@@ -305,33 +396,32 @@ impl App {
             style.animation_time = 0.0;
             style.scroll_animation = egui::style::ScrollAnimation::none();
         });
-        let state = egui_winit::State::new(
-            self.egui.clone(),
-            egui::ViewportId::ROOT,
-            &*window,
-            Some(window.scale_factor() as f32),
-            None,
-            Some(gpu.device.limits().max_texture_dimension_2d as usize),
-        );
         {
-            // egui's repaint requests become a deadline the loop waits for;
-            // the proxy wakes it in case it is already waiting. A request
-            // for later must not draw at once: one made from inside a frame
-            // (the panel's once-a-second poll is one) would otherwise draw
-            // the next frame straight away, and that one ask again — a loop
-            // that a Wayland compositor's frame callbacks slow to the
-            // refresh rate and X11 does not slow at all.
+            // egui's repaint requests become a deadline the loop waits for,
+            // one per viewport; the proxy wakes it in case it is already
+            // waiting. A request for later must not draw at once: one made
+            // from inside a frame (the panel's once-a-second poll is one)
+            // would otherwise draw the next frame straight away, and that
+            // one ask again — a loop that a Wayland compositor's frame
+            // callbacks slow to the refresh rate and X11 does not slow at
+            // all.
             let repaint_at = Arc::clone(&self.repaint_at);
             let proxy = self.proxy.clone();
             self.egui.set_request_repaint_callback(move |info| {
                 let at = Instant::now() + info.delay;
-                let mut slot = repaint_at.lock().unwrap();
-                if slot.is_none_or(|t| at < t) {
-                    *slot = Some(at);
+                let mut slots = repaint_at.lock().unwrap();
+                let slot = slots.entry(info.viewport_id).or_insert(at);
+                if at < *slot {
+                    *slot = at;
                 }
-                let _ = proxy.send_event(if info.delay.is_zero() { Wake::Now } else { Wake::Later });
+                let _ = proxy.send_event(if info.delay.is_zero() {
+                    Wake::Now(Some(info.viewport_id))
+                } else {
+                    Wake::Later
+                });
             });
         }
+        let window = Arc::clone(&self.windows[&id].window);
         self.platform = Platform::of(&window);
         log::info!("display server: {}", self.platform.name());
         if self.platform == Platform::X11 {
@@ -344,23 +434,20 @@ impl App {
         }
         let proxy = self.proxy.clone();
         let wake: Box<dyn Fn() + Send + Sync> = Box::new(move || {
-            let _ = proxy.send_event(Wake::Now);
+            let _ = proxy.send_event(Wake::Now(None));
         });
         self.clipboard = Clipboard::new(&window, self.platform, wake);
-        self.shortcuts = Shortcuts::new(&window);
-        match &self.shortcuts {
-            Some(Shortcuts::Wayland(_)) => log::info!("Wayland: looking for the keyboard shortcuts inhibitor"),
-            Some(Shortcuts::X11(_)) => {
-                log::info!(
-                    "X11: the keyboard is grabbed while a session has focus and takes input, and not over the \
-                     toolbar, unless the grab keyboard setting is off"
-                )
-            }
-            None => log::info!("no shortcuts inhibitor on this display server"),
+        self.keyboard = x11::Keyboard::new(&window);
+        if self.keyboard.is_some() {
+            log::info!(
+                "X11: the keyboard is grabbed while a session has focus and takes input, and not over the \
+                 toolbar, unless the grab keyboard setting is off"
+            );
+        } else if self.windows[&id].inhibitor.is_some() {
+            log::info!("Wayland: looking for the keyboard shortcuts inhibitor");
+        } else {
+            log::info!("no shortcuts inhibitor on this display server");
         }
-        self.window = Some(window);
-        self.gpu = Some(gpu);
-        self.winit = Some(state);
 
         if let Some(launch) = self.launch.take() {
             self.dirs = launch.dirs;
@@ -374,18 +461,81 @@ impl App {
                 }
             }
         }
-        self.window.as_ref().unwrap().request_redraw();
+        window.request_redraw();
+    }
+
+    /// Opens a window as `viewport`, with a surface on the shared device —
+    /// made now, for the first window, with the adapter chosen to suit its
+    /// surface.
+    fn add_window(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        attributes: WindowAttributes,
+        viewport: ViewportId,
+    ) -> Result<WindowId, String> {
+        let window = event_loop
+            .create_window(attributes)
+            .map_err(|e| format!("cannot create the window: {e}"))?;
+        let window = Arc::new(window);
+        let surface = match &self.gpu {
+            None => {
+                let (gpu, surface) = pollster::block_on(Gpu::new(&window))
+                    .map_err(|e| format!("cannot set up the GPU: {e}"))?;
+                self.gpu = Some(gpu);
+                surface
+            }
+            Some(gpu) => gpu
+                .instance
+                .create_surface(Arc::clone(&window))
+                .map_err(|e| format!("cannot make the window's surface: {e}"))?,
+        };
+        let gpu = self.gpu.as_ref().expect("made above");
+        let config = gpu.configure(&window, &surface)?;
+        let winit = egui_winit::State::new(
+            self.egui.clone(),
+            viewport,
+            &*window,
+            Some(window.scale_factor() as f32),
+            None,
+            Some(gpu.device.limits().max_texture_dimension_2d as usize),
+        );
+        let id = window.id();
+        self.windows.insert(
+            id,
+            Surface {
+                inhibitor: wayland::Shortcuts::new(&window),
+                window,
+                surface: Some(surface),
+                config,
+                winit,
+                viewport,
+                pointer: None,
+                occluded: false,
+                minimized: None,
+            },
+        );
+        Ok(id)
+    }
+
+    /// The main window, while it is open.
+    fn main_surface(&mut self) -> Option<&mut Surface> {
+        self.windows.get_mut(&self.main?)
+    }
+
+    /// The window drawing `viewport`, if one is.
+    fn window_of(&self, viewport: ViewportId) -> Option<&Arc<Window>> {
+        self.windows.values().find(|s| s.viewport == viewport).map(|s| &s.window)
     }
 
     /// Starts a session, or shows why one could not be started.
     fn connect(&mut self, request: Request) {
-        let Some(window) = &self.window else {
+        let Some(window) = self.main_surface().map(|s| Arc::clone(&s.window)) else {
             return;
         };
         let size = window.inner_size();
         let proxy = self.proxy.clone();
         let wake: Box<dyn Fn() + Send + Sync> = Box::new(move || {
-            let _ = proxy.send_event(Wake::Now);
+            let _ = proxy.send_event(Wake::Now(None));
         });
         match Session::start(
             request.clone(),
@@ -418,39 +568,71 @@ impl App {
     }
 
     /// Keep the shortcuts inhibitor in step with the focus and the session:
-    /// held while the window has the focus and the session takes input,
-    /// released otherwise. Not merely connected, as it was: in view only, or
-    /// under a prompt, the keys go nowhere at the far end, and the grab kept
-    /// Alt+Tab and the rest from the window manager too. Released while the
-    /// pointer is on the toolbar as well, and never taken with the grab
-    /// keyboard setting off (`Session::holds_shortcuts`). This
-    /// runs after every frame and on focus changes, but the grab and the
+    /// held while one of the windows has the focus and the session takes
+    /// input, released otherwise. Not merely connected, as it was: in view
+    /// only, or under a prompt, the keys go nowhere at the far end, and the
+    /// grab kept Alt+Tab and the rest from the window manager too. Released
+    /// while the pointer is on the toolbar as well, and never taken with the
+    /// grab keyboard setting off (`Session::holds_shortcuts`). This runs
+    /// after every frame and on focus changes, but the grab and the
     /// inhibitor act only when what is wanted changes, so a pointer resting
     /// on the toolbar costs nothing.
+    ///
+    /// Wayland's inhibitor is a surface's, and only the focused window's is
+    /// asked for; X11's grab is the client's, and goes to the focused
+    /// window.
     fn sync_shortcuts(&mut self) {
         let takes_input = matches!(&self.screen, Screen::Session(s) if s.holds_shortcuts());
-        if let Some(shortcuts) = &mut self.shortcuts {
-            shortcuts.pump();
-            if self.focused && takes_input {
-                shortcuts.inhibit();
-                // A refused X grab is asked for again when due, without
-                // waiting for input to wake the loop.
-                if let Some(at) = shortcuts.retry_at() {
-                    let mut slot = self.repaint_at.lock().unwrap();
-                    if slot.is_none_or(|t| at < t) {
-                        *slot = Some(at);
+        let wanted = self.focused.filter(|_| takes_input);
+        for (id, surface) in &mut self.windows {
+            if let Some(inhibitor) = &mut surface.inhibitor {
+                inhibitor.pump();
+                if wanted == Some(*id) {
+                    inhibitor.inhibit();
+                } else {
+                    inhibitor.release();
+                }
+            }
+        }
+        if let Some(keyboard) = &mut self.keyboard {
+            keyboard.pump();
+            match wanted.and_then(|id| self.windows.get(&id)) {
+                Some(surface) => {
+                    keyboard.retarget(&surface.window);
+                    keyboard.inhibit();
+                    // A refused X grab is asked for again when due, without
+                    // waiting for input to wake the loop.
+                    if let Some(at) = keyboard.retry_at() {
+                        let mut slots = self.repaint_at.lock().unwrap();
+                        let slot = slots.entry(surface.viewport).or_insert(at);
+                        if at < *slot {
+                            *slot = at;
+                        }
                     }
                 }
-            } else {
-                shortcuts.release();
+                None => keyboard.release(),
             }
         }
     }
 
-    /// Tell the session whether the window can be seen, which is what lets
-    /// a backend pause: not while it merely lacks the keyboard focus, which
-    /// leaves the picture on screen, but while it is minimised or wholly
-    /// covered. `minimized` is winit's `is_minimized`, asked by the caller.
+    /// Wayland: dispatch what the compositor said to each inhibitor. X11:
+    /// retry a refused grab once it is due.
+    fn pump_shortcuts(&mut self) {
+        for surface in self.windows.values_mut() {
+            if let Some(inhibitor) = &mut surface.inhibitor {
+                inhibitor.pump();
+            }
+        }
+        if let Some(keyboard) = &mut self.keyboard {
+            keyboard.pump();
+        }
+    }
+
+    /// Tell the session whether it can be seen, which is what lets a
+    /// backend pause: not while a window merely lacks the keyboard focus,
+    /// which leaves the picture on screen, but while every window it is in
+    /// is minimised or wholly covered. One window that can be seen is a
+    /// picture someone is looking at.
     ///
     /// What can be told depends on the display server. X11 says both: the
     /// window manager's `_NET_WM_STATE_HIDDEN`, asked on every frame (a
@@ -468,8 +650,11 @@ impl App {
     /// 1.11, niri) never pauses a session: a hidden window's frame
     /// callbacks stop, and so do its frames, but the backend is not told
     /// and keeps receiving.
-    fn sync_shown(&mut self, minimized: Option<bool>) {
-        let shown = !self.occluded && minimized != Some(true);
+    fn sync_shown(&mut self) {
+        if self.windows.is_empty() {
+            return;
+        }
+        let shown = self.windows.values().any(Surface::shown);
         if shown != self.shown {
             self.shown = shown;
             if let Screen::Session(session) = &mut self.screen {
@@ -478,35 +663,51 @@ impl App {
         }
     }
 
-    /// The inhibitor's state in a word, for the session's overlay.
-    fn inhibitor(&self) -> &'static str {
-        self.shortcuts.as_ref().map(Shortcuts::state).unwrap_or("none")
+    /// The inhibitor's state in a word, for the session's overlay in `id`.
+    fn inhibitor(&self, id: WindowId) -> &'static str {
+        if let Some(keyboard) = &self.keyboard {
+            return keyboard.state();
+        }
+        self.windows
+            .get(&id)
+            .and_then(|s| s.inhibitor.as_ref())
+            .map(wayland::Shortcuts::state)
+            .unwrap_or("none")
     }
 
-    fn draw(&mut self, event_loop: &ActiveEventLoop) {
-        let inhibitor = self.inhibitor();
-        let Some(minimized) = self.window.as_ref().map(|w| w.is_minimized()) else {
+    fn draw(&mut self, event_loop: &ActiveEventLoop, id: WindowId) {
+        let Some(surface) = self.windows.get_mut(&id) else {
             return;
         };
-        self.sync_shown(minimized);
-        let (Some(window), Some(gpu), Some(state)) = (self.window.clone(), self.gpu.as_mut(), self.winit.as_mut())
-        else {
+        surface.minimized = surface.window.is_minimized();
+        let viewport = surface.viewport;
+        self.sync_shown();
+        self.repaint_at.lock().unwrap().remove(&viewport);
+        self.pump_shortcuts();
+        let inhibitor = self.inhibitor(id);
+        let focused = self.focused == Some(id);
+        // The read of the local clipboard is handled in the window it is
+        // for: the focused one, where a Ctrl+V asked for it, or the main
+        // window when none of ours has the focus.
+        let takes_clipboard = focused || (self.focused.is_none() && viewport == ViewportId::ROOT);
+        let (Some(gpu), Some(surface)) = (self.gpu.as_mut(), self.windows.get_mut(&id)) else {
             return;
         };
-        *self.repaint_at.lock().unwrap() = None;
-        if let Some(shortcuts) = &mut self.shortcuts {
-            shortcuts.pump();
-        }
+        let window = Arc::clone(&surface.window);
 
         // A read of the local clipboard that has come back: pasted where a
         // Ctrl+V asked for it, offered to the far end where the focus
         // coming back did, and egui's own clipboard kept in step.
-        if let Some((text, why)) = self.clipboard.as_ref().and_then(Clipboard::take) {
+        if takes_clipboard && let Some((text, why)) = self.clipboard.as_ref().and_then(Clipboard::take) {
             if let Some(text) = &text {
-                state.set_clipboard_text(text.clone());
+                surface.winit.set_clipboard_text(text.clone());
                 // As egui-winit pastes: CRLF made LF, nothing for nothing.
                 if why.paste && !text.is_empty() {
-                    state.egui_input_mut().events.push(egui::Event::Paste(text.replace("\r\n", "\n")));
+                    surface
+                        .winit
+                        .egui_input_mut()
+                        .events
+                        .push(egui::Event::Paste(text.replace("\r\n", "\n")));
                 }
             }
             if why.offer
@@ -515,17 +716,17 @@ impl App {
                 session.local_clipboard(text);
             }
         }
-        let raw_input = state.take_egui_input(&window);
+        let raw_input = surface.winit.take_egui_input(&window);
         let mut next: Option<Request> = None;
         let mut ended: Option<(String, bool)> = None;
         let mut host = Host {
             window: &window,
-            winit: state,
+            winit: &mut surface.winit,
             event_loop,
-            focused: self.focused,
+            focused,
             inhibitor,
             platform: self.platform,
-            pointer: self.pointer,
+            pointer: surface.pointer,
             clipboard: self.clipboard.as_ref(),
         };
         let egui = self.egui.clone();
@@ -562,76 +763,13 @@ impl App {
             session.cursor_after(&mut host, icon);
         }
 
-        let pixels_per_point = output.pixels_per_point;
-        let paint_jobs = egui.tessellate(output.shapes, pixels_per_point);
-        let descriptor = egui_wgpu::ScreenDescriptor {
-            size_in_pixels: [gpu.config.width, gpu.config.height],
-            pixels_per_point,
-        };
         for (id, deltas) in &output.textures_delta.set {
             for delta in deltas {
                 gpu.renderer.update_texture(&gpu.device, &gpu.queue, *id, delta);
             }
         }
-        // A minimised window shows nothing, so nothing is rendered into it:
-        // the frame has still run (the events taken, the poll made) and the
-        // textures still get their updates above, but there is no present
-        // until the window is back, which its first expose asks a redraw
-        // for. Only X11 says; elsewhere this is `None` and every frame is
-        // presented as before.
-        let frame = if minimized == Some(true) {
-            None
-        } else {
-            match gpu.surface.get_current_texture() {
-                wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => Some(t),
-                wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                    // A surface is lost too when another client has destroyed
-                    // the window, and configuring it again is then an error
-                    // wgpu would panic on; the `Destroyed` that follows closes
-                    // the window (see `window_event`).
-                    let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
-                    gpu.surface.configure(&gpu.device, &gpu.config);
-                    match pollster::block_on(scope.pop()) {
-                        Some(error) => log::warn!("the window's surface could not be configured again: {error}"),
-                        None => window.request_redraw(),
-                    }
-                    None
-                }
-                _ => None,
-            }
-        };
-        let mut presented = None;
-        if let Some(frame) = frame {
-            let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
-            let mut encoder = gpu
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("egui") });
-            let commands = gpu
-                .renderer
-                .update_buffers(&gpu.device, &gpu.queue, &mut encoder, &paint_jobs, &descriptor);
-            {
-                let mut pass = encoder
-                    .begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("egui"),
-                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view: &view,
-                            depth_slice: None,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                                store: wgpu::StoreOp::Store,
-                            },
-                        })],
-                        ..Default::default()
-                    })
-                    .forget_lifetime();
-                gpu.renderer.render(&mut pass, &paint_jobs, &descriptor);
-            }
-            gpu.queue.submit(commands.into_iter().chain(std::iter::once(encoder.finish())));
-            window.pre_present_notify();
-            gpu.queue.present(frame);
-            presented = Some(Instant::now());
-        }
+        let paint_jobs = egui.tessellate(output.shapes, output.pixels_per_point);
+        let presented = gpu.present(surface, &paint_jobs, output.pixels_per_point);
         // The overlay's render latency ends here: the frame's pixels have
         // been submitted and the surface handed to the compositor, which
         // is as far as this end can follow them.
@@ -664,10 +802,15 @@ impl App {
     /// Back to the dialog, filled in with what was connected to, and told
     /// why it ended where there is a why.
     fn end_session(&mut self, detail: &str, event_loop: &ActiveEventLoop) {
-        let inhibitor = self.inhibitor();
-        let (Some(window), Some(state)) = (self.window.clone(), self.winit.as_mut()) else {
+        let Some(main) = self.main else {
             return;
         };
+        let inhibitor = self.inhibitor(main);
+        let focused = self.focused == Some(main);
+        let Some(surface) = self.windows.get_mut(&main) else {
+            return;
+        };
+        let window = Arc::clone(&surface.window);
         let screen = std::mem::replace(&mut self.screen, Screen::Dialog(Dialog::new()));
         if let Screen::Session(session) = screen {
             let mut dialog = Dialog::from_request(&session.request);
@@ -676,12 +819,12 @@ impl App {
             }
             let mut host = Host {
                 window: &window,
-                winit: state,
+                winit: &mut surface.winit,
                 event_loop,
-                focused: self.focused,
+                focused,
                 inhibitor,
                 platform: self.platform,
-                pointer: self.pointer,
+                pointer: surface.pointer,
                 clipboard: self.clipboard.as_ref(),
             };
             self.settings = session.settings;
@@ -697,25 +840,32 @@ impl App {
     }
 
     fn close(&mut self, event_loop: &ActiveEventLoop) {
-        let inhibitor = self.inhibitor();
-        if let (Some(window), Some(state)) = (self.window.clone(), self.winit.as_mut()) {
-            let screen = std::mem::replace(&mut self.screen, Screen::Dialog(Dialog::new()));
-            if let Screen::Session(session) = screen {
-                let mut host = Host {
-                    window: &window,
-                    winit: state,
-                    event_loop,
-                    focused: self.focused,
-                    inhibitor,
-                    platform: self.platform,
-                    pointer: self.pointer,
-                    clipboard: self.clipboard.as_ref(),
-                };
-                let teardown = session.shutdown(&self.egui, &mut host);
-                self.reap(teardown);
+        if let Some(main) = self.main {
+            let inhibitor = self.inhibitor(main);
+            let focused = self.focused == Some(main);
+            if let Some(surface) = self.windows.get_mut(&main) {
+                let window = Arc::clone(&surface.window);
+                let screen = std::mem::replace(&mut self.screen, Screen::Dialog(Dialog::new()));
+                if let Screen::Session(session) = screen {
+                    let mut host = Host {
+                        window: &window,
+                        winit: &mut surface.winit,
+                        event_loop,
+                        focused,
+                        inhibitor,
+                        platform: self.platform,
+                        pointer: surface.pointer,
+                        clipboard: self.clipboard.as_ref(),
+                    };
+                    let teardown = session.shutdown(&self.egui, &mut host);
+                    self.reap(teardown);
+                }
             }
         }
-        self.shortcuts = None;
+        self.keyboard = None;
+        for surface in self.windows.values_mut() {
+            surface.inhibitor = None;
+        }
         event_loop.exit();
     }
 
@@ -724,33 +874,118 @@ impl App {
         self.teardowns.retain(|t| !t.is_finished());
         self.teardowns.push(teardown);
     }
+
+    /// The focus events of this turn of the loop, resolved (see
+    /// `resolve_focus`): the session and egui told of what changed, the
+    /// clipboard read where the focus came from outside, the shortcuts and
+    /// the windows' visibility brought up to date.
+    fn settle_focus(&mut self, event_loop: &ActiveEventLoop) {
+        if self.focus_events.is_empty() {
+            return;
+        }
+        let events = std::mem::take(&mut self.focus_events);
+        let (now, change) = resolve_focus(self.focused, &events);
+        self.focused = now;
+        // egui hears of each window's own change; the session only of the
+        // focus coming to the process or leaving it.
+        let (lost, gained, session) = match change {
+            FocusChange::Unchanged => return,
+            FocusChange::Gained(to) => (None, Some(to), Some((to, true))),
+            FocusChange::Lost(from) => (Some(from), None, Some((from, false))),
+            FocusChange::Moved { from, to } => {
+                log::debug!("the focus moved between our windows; nothing let go of");
+                (Some(from), Some(to), None)
+            }
+        };
+        for (id, focused) in lost.map(|id| (id, false)).into_iter().chain(gained.map(|id| (id, true))) {
+            if let Some(surface) = self.windows.get_mut(&id) {
+                let window = Arc::clone(&surface.window);
+                let _ = surface.winit.on_window_event(&window, &WindowEvent::Focused(focused));
+                window.request_redraw();
+            }
+        }
+        if let Some((id, focused)) = session {
+            let inhibitor = self.inhibitor(id);
+            if let (Screen::Session(session), Some(surface)) = (&mut self.screen, self.windows.get_mut(&id)) {
+                let window = Arc::clone(&surface.window);
+                let mut host = Host {
+                    window: &window,
+                    winit: &mut surface.winit,
+                    event_loop,
+                    focused,
+                    inhibitor,
+                    platform: self.platform,
+                    pointer: surface.pointer,
+                    clipboard: self.clipboard.as_ref(),
+                };
+                session.focus(focused, &mut host);
+            }
+            // What was copied elsewhere while the windows were away: read
+            // on the clipboard's thread, and handled when it comes back
+            // (see `draw`), dialog or session.
+            if focused && let Some(clipboard) = &self.clipboard {
+                clipboard.read(Why::OFFER);
+            }
+        }
+        self.sync_shortcuts();
+        // A minimise usually takes the focus with it: seen now rather than
+        // at the next frame.
+        for surface in self.windows.values_mut() {
+            surface.minimized = surface.window.is_minimized();
+        }
+        self.sync_shown();
+    }
+
+    /// Asks for a frame in every window whose deadline has come; the
+    /// earliest still to come, if any.
+    fn redraw_due(&self) -> Option<Instant> {
+        let now = Instant::now();
+        let slots = self.repaint_at.lock().unwrap();
+        let mut next: Option<Instant> = None;
+        for (viewport, &at) in slots.iter() {
+            if at <= now {
+                if let Some(window) = self.window_of(*viewport) {
+                    window.request_redraw();
+                }
+            } else if next.is_none_or(|t| at < t) {
+                next = Some(at);
+            }
+        }
+        next
+    }
 }
 
 impl ApplicationHandler<Wake> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_none() {
+        if self.main.is_none() {
             self.open(event_loop);
         }
     }
 
     fn user_event(&mut self, _: &ActiveEventLoop, wake: Wake) {
-        if let Wake::Now = wake
-            && let Some(window) = &self.window
-        {
-            window.request_redraw();
+        match wake {
+            Wake::Now(Some(viewport)) => {
+                if let Some(window) = self.window_of(viewport) {
+                    window.request_redraw();
+                }
+            }
+            Wake::Now(None) => {
+                for surface in self.windows.values() {
+                    surface.window.request_redraw();
+                }
+            }
+            Wake::Later => {}
         }
     }
 
     fn new_events(&mut self, _: &ActiveEventLoop, cause: StartCause) {
-        if let StartCause::ResumeTimeReached { .. } = cause
-            && let Some(window) = &self.window
-        {
-            window.request_redraw();
+        if let StartCause::ResumeTimeReached { .. } = cause {
+            self.redraw_due();
         }
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
-        let (Some(window), Some(state)) = (self.window.clone(), self.winit.as_mut()) else {
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        let Some(window) = self.windows.get(&id).map(|s| Arc::clone(&s.window)) else {
             return;
         };
         match &event {
@@ -765,22 +1000,26 @@ impl ApplicationHandler<Wake> for App {
                 // since a draw before the loop ends would configure one
                 // whose window is gone, which wgpu takes for fatal.
                 log::info!("the window was destroyed from outside; closing");
-                self.gpu = None;
+                if let Some(surface) = self.windows.get_mut(&id) {
+                    surface.surface = None;
+                }
                 self.close(event_loop);
                 return;
             }
             WindowEvent::RedrawRequested => {
-                self.draw(event_loop);
+                self.draw(event_loop, id);
                 return;
             }
             WindowEvent::Resized(size) => {
-                if let Some(gpu) = &mut self.gpu
+                if let (Some(gpu), Some(surface)) = (&self.gpu, self.windows.get_mut(&id))
                     && size.width > 0
                     && size.height > 0
                 {
-                    gpu.config.width = size.width;
-                    gpu.config.height = size.height;
-                    gpu.surface.configure(&gpu.device, &gpu.config);
+                    surface.config.width = size.width;
+                    surface.config.height = size.height;
+                    if let Some(s) = &surface.surface {
+                        s.configure(&gpu.device, &surface.config);
+                    }
                 }
                 if let Screen::Session(session) = &mut self.screen {
                     session.resized();
@@ -795,44 +1034,23 @@ impl ApplicationHandler<Wake> for App {
                 // On X11 the keyboard grab makes focus events of its own,
                 // which are not the focus moving (see `x11.rs`): neither
                 // the session nor egui hears of them.
-                if !*focused && self.shortcuts.as_ref().is_some_and(|s| s.focus_still_ours(&window)) {
+                if !*focused && self.keyboard.as_ref().is_some_and(|k| k.focus_still_ours(window.inner_size())) {
                     log::debug!("X11: a focus-out from our own keyboard grab; still focused");
                     return;
                 }
-                if *focused == self.focused {
-                    // winit repeats itself around a grab.
-                    return;
-                }
-                self.focused = *focused;
-                let inhibitor = self.shortcuts.as_ref().map(Shortcuts::state).unwrap_or("none");
-                let mut host = Host {
-                    window: &window,
-                    winit: state,
-                    event_loop,
-                    focused: *focused,
-                    inhibitor,
-                    platform: self.platform,
-                    pointer: self.pointer,
-                    clipboard: self.clipboard.as_ref(),
-                };
-                if let Screen::Session(session) = &mut self.screen {
-                    session.focus(*focused, &mut host);
-                }
-                // What was copied elsewhere while the window was away: read
-                // on the clipboard's thread, and handled when it comes back
-                // (see `draw`), dialog or session.
-                if *focused && let Some(clipboard) = &self.clipboard {
-                    clipboard.read(Why::OFFER);
-                }
-                self.sync_shortcuts();
-                // A minimise usually takes the focus with it: seen now
-                // rather than at the next frame.
-                self.sync_shown(window.is_minimized());
+                // Resolved with the rest of this turn's in `about_to_wait`,
+                // and egui told there: a move between two of our windows is
+                // two events, and only together are they a move.
+                self.focus_events.push((id, *focused));
+                return;
             }
             WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
             WindowEvent::Occluded(occluded) => {
-                self.occluded = *occluded;
-                self.sync_shown(window.is_minimized());
+                if let Some(surface) = self.windows.get_mut(&id) {
+                    surface.occluded = *occluded;
+                    surface.minimized = window.is_minimized();
+                }
+                self.sync_shown();
             }
             WindowEvent::KeyboardInput {
                 event: key,
@@ -877,7 +1095,9 @@ impl ApplicationHandler<Wake> for App {
                     }
                     return;
                 }
-                self.pointer = Some(*position);
+                if let Some(surface) = self.windows.get_mut(&id) {
+                    surface.pointer = Some(*position);
+                }
                 if let Screen::Session(session) = &mut self.screen {
                     session.pointer_event();
                 }
@@ -912,9 +1132,11 @@ impl ApplicationHandler<Wake> for App {
             }
             _ => {}
         }
-        let response = self.winit.as_mut().unwrap().on_window_event(&window, &event);
-        if response.repaint {
-            window.request_redraw();
+        if let Some(surface) = self.windows.get_mut(&id) {
+            let response = surface.winit.on_window_event(&window, &event);
+            if response.repaint {
+                window.request_redraw();
+            }
         }
     }
 
@@ -934,14 +1156,8 @@ impl ApplicationHandler<Wake> for App {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        let at = *self.repaint_at.lock().unwrap();
-        match at {
-            Some(at) if at <= Instant::now() => {
-                if let Some(window) = &self.window {
-                    window.request_redraw();
-                }
-                event_loop.set_control_flow(ControlFlow::Wait);
-            }
+        self.settle_focus(event_loop);
+        match self.redraw_due() {
             Some(at) => event_loop.set_control_flow(ControlFlow::WaitUntil(at)),
             None => event_loop.set_control_flow(ControlFlow::Wait),
         }
@@ -949,14 +1165,16 @@ impl ApplicationHandler<Wake> for App {
 }
 
 impl Gpu {
-    async fn new(window: Arc<Window>) -> Result<Gpu, String> {
+    /// The device, chosen to suit `window`'s surface, which comes back with
+    /// it unconfigured.
+    async fn new(window: &Arc<Window>) -> Result<(Gpu, wgpu::Surface<'static>), String> {
         // With the display handle, so the Vulkan instance enables the
         // surface extension this windowing system needs.
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle_from_env(
-            Box::new(Arc::clone(&window)),
+            Box::new(Arc::clone(window)),
         ));
         let surface = instance
-            .create_surface(Arc::clone(&window))
+            .create_surface(Arc::clone(window))
             .map_err(|e| format!("surface: {e}"))?;
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -977,7 +1195,6 @@ impl Gpu {
             })
             .await
             .map_err(|e| format!("device: {e}"))?;
-        let size = window.inner_size();
         let caps = surface.get_capabilities(&adapter);
         // A non-sRGB format, since egui does its own gamma; the first one
         // the surface offers otherwise.
@@ -988,12 +1205,6 @@ impl Gpu {
             .find(|f| matches!(f, wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Rgba8Unorm))
             .or_else(|| caps.formats.first().copied())
             .ok_or("the surface offers no format")?;
-        let mut config = surface
-            .get_default_config(&adapter, size.width.max(1), size.height.max(1))
-            .ok_or("the surface is not supported by the adapter")?;
-        config.format = format;
-        config.present_mode = wgpu::PresentMode::Fifo;
-        surface.configure(&device, &config);
         let renderer = egui_wgpu::Renderer::new(
             &device,
             format,
@@ -1005,13 +1216,101 @@ impl Gpu {
             },
         );
         log::info!("wgpu: {} ({:?})", adapter.get_info().name, adapter.get_info().backend);
-        Ok(Gpu {
-            surface,
+        let gpu = Gpu {
+            instance,
+            adapter,
             device,
             queue,
-            config,
+            format,
             renderer,
-        })
+        };
+        Ok((gpu, surface))
+    }
+
+    /// `surface` configured for `window` in the renderer's format, with
+    /// FIFO presentation; a surface without that format cannot be drawn by
+    /// the one renderer.
+    fn configure(&self, window: &Window, surface: &wgpu::Surface) -> Result<wgpu::SurfaceConfiguration, String> {
+        let size = window.inner_size();
+        let caps = surface.get_capabilities(&self.adapter);
+        if !caps.formats.contains(&self.format) {
+            return Err(format!("the window's surface does not offer {:?}", self.format));
+        }
+        let mut config = surface
+            .get_default_config(&self.adapter, size.width.max(1), size.height.max(1))
+            .ok_or("the surface is not supported by the adapter")?;
+        config.format = self.format;
+        config.present_mode = wgpu::PresentMode::Fifo;
+        surface.configure(&self.device, &config);
+        Ok(config)
+    }
+
+    /// Renders `paint_jobs` into `surface` and presents it; when, or `None`
+    /// where nothing was presented.
+    ///
+    /// A minimised window shows nothing, so nothing is rendered into it:
+    /// the frame has still run (the events taken, the poll made) and the
+    /// textures still get their updates, but there is no present until the
+    /// window is back, which its first expose asks a redraw for. Only X11
+    /// says; elsewhere every frame is presented. Each window's own: under
+    /// FIFO a present into a window that cannot be seen may wait for a
+    /// vertical blank its compositor never gives it, and that wait would
+    /// hold up every other window's frames behind it.
+    fn present(&mut self, surface: &mut Surface, paint_jobs: &[egui::ClippedPrimitive], pixels_per_point: f32) -> Option<Instant> {
+        if surface.minimized == Some(true) {
+            return None;
+        }
+        let target = surface.surface.as_ref()?;
+        let frame = match target.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                // A surface is lost too when another client has destroyed
+                // the window, and configuring it again is then an error
+                // wgpu would panic on; the `Destroyed` that follows closes
+                // the window (see `window_event`).
+                let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+                target.configure(&self.device, &surface.config);
+                match pollster::block_on(scope.pop()) {
+                    Some(error) => log::warn!("the window's surface could not be configured again: {error}"),
+                    None => surface.window.request_redraw(),
+                }
+                return None;
+            }
+            _ => return None,
+        };
+        let descriptor = egui_wgpu::ScreenDescriptor {
+            size_in_pixels: [surface.config.width, surface.config.height],
+            pixels_per_point,
+        };
+        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("egui") });
+        let commands = self
+            .renderer
+            .update_buffers(&self.device, &self.queue, &mut encoder, paint_jobs, &descriptor);
+        {
+            let mut pass = encoder
+                .begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("egui"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    ..Default::default()
+                })
+                .forget_lifetime();
+            self.renderer.render(&mut pass, paint_jobs, &descriptor);
+        }
+        self.queue.submit(commands.into_iter().chain(std::iter::once(encoder.finish())));
+        surface.window.pre_present_notify();
+        self.queue.present(frame);
+        Some(Instant::now())
     }
 }
 
@@ -1027,5 +1326,51 @@ mod tests {
         // Started from the dialog: back to it either way.
         assert_eq!(after_session(false, true), After::Dialog);
         assert_eq!(after_session(false, false), After::Dialog);
+    }
+
+    #[test]
+    fn the_focus_coming_and_going_is_gained_and_lost() {
+        assert_eq!(resolve_focus(None, &[(1, true)]), (Some(1), FocusChange::Gained(1)));
+        assert_eq!(resolve_focus(Some(1), &[(1, false)]), (None, FocusChange::Lost(1)));
+        // Nothing happened, or winit said it twice, as it does around a
+        // keyboard grab.
+        assert_eq!(resolve_focus(Some(1), &[]), (Some(1), FocusChange::Unchanged));
+        assert_eq!(resolve_focus(Some(1), &[(1, true)]), (Some(1), FocusChange::Unchanged));
+        assert_eq!(resolve_focus(None, &[(1, false)]), (None, FocusChange::Unchanged));
+    }
+
+    #[test]
+    fn a_move_between_our_windows_in_one_batch_is_a_handoff() {
+        // Out of one and into the other, in either order: a move, not the
+        // focus leaving and coming back.
+        let moved = (Some(2), FocusChange::Moved { from: 1, to: 2 });
+        assert_eq!(resolve_focus(Some(1), &[(1, false), (2, true)]), moved);
+        assert_eq!(resolve_focus(Some(1), &[(2, true), (1, false)]), moved);
+        // A second grab from the same client moves it and adds a
+        // duplicate focus-in, which changes nothing more.
+        assert_eq!(resolve_focus(Some(1), &[(1, false), (2, true), (2, true)]), moved);
+    }
+
+    #[test]
+    fn events_that_undo_each_other_are_no_change() {
+        // Out and back in, as an ungrab and a grab make: unchanged, so
+        // nothing is let go of and the clipboard is not read again.
+        assert_eq!(resolve_focus(Some(1), &[(1, false), (1, true)]), (Some(1), FocusChange::Unchanged));
+        // Over to the other and back within the batch.
+        assert_eq!(
+            resolve_focus(Some(1), &[(1, false), (2, true), (2, false), (1, true)]),
+            (Some(1), FocusChange::Unchanged)
+        );
+        // In and out again from nowhere: still nowhere.
+        assert_eq!(resolve_focus(None, &[(2, true), (2, false)]), (None, FocusChange::Unchanged));
+    }
+
+    #[test]
+    fn a_move_and_then_leaving_is_lost_from_the_first() {
+        // The process had it in 1 and ends up without it: lost, from where
+        // it was, which is the window the session last heard of.
+        assert_eq!(resolve_focus(Some(1), &[(1, false), (2, true), (2, false)]), (None, FocusChange::Lost(1)));
+        // A stale focus-out from a window that no longer has it is nothing.
+        assert_eq!(resolve_focus(Some(2), &[(1, false)]), (Some(2), FocusChange::Unchanged));
     }
 }
