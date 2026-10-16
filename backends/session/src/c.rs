@@ -505,6 +505,7 @@ impl Backend for CBackend {
             displays: Vec::new(),
             display: -1,
             can_resize: connected && self.session.can_resize(),
+            can_layout: false,
             view_only: self.options.lock().unwrap().bool("ViewOnly"),
             pointer_relative: false,
         }

@@ -1071,7 +1071,13 @@ mod tests {
     use super::*;
 
     fn monitor(x: i32, y: i32, width: i32, height: i32) -> Monitor {
-        Monitor { x, y, width, height }
+        Monitor {
+            id: 0,
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     #[test]

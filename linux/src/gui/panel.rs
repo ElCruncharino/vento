@@ -433,12 +433,14 @@ mod tests {
     fn the_window_comes_first_and_nothing_is_offered_twice() {
         let monitors = [
             Monitor {
+                id: 0,
                 x: 0,
                 y: 0,
                 width: 1920,
                 height: 1200,
             },
             Monitor {
+                id: 1,
                 x: 1920,
                 y: 0,
                 width: 1280,

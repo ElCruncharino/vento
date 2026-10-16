@@ -31,6 +31,11 @@ pub use common::Credentials;
 /// [`Facts::monitors`] and [`Facts::displays`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Monitor {
+    /// What the far end calls this screen, opaque, and only for handing back
+    /// in [`Backend::request_layout`]: RFB's screen id, which a server
+    /// matches a requested layout against the screens it has. Where the
+    /// protocol has no id of its own it is the screen's index in the list.
+    pub id: u32,
     pub x: i32,
     pub y: i32,
     pub width: i32,
@@ -41,16 +46,45 @@ impl Monitor {
     /// The shape every backend hands its layout over in: four ints per
     /// screen, x, y, width, height. One reader for all of them, so that an
     /// empty answer is the same answer whichever library read it off the wire;
-    /// a screen with no area is not a screen.
+    /// a screen with no area is not a screen. Each id is the screen's index
+    /// in `flat`, which is also what the phone's JNI layer flattens a layout
+    /// back into, so that four ints a screen stays the one shape Java reads.
     pub fn from_flat(flat: &[i32]) -> Vec<Monitor> {
         flat.chunks_exact(4)
-            .filter(|m| m[2] > 0 && m[3] > 0)
-            .map(|m| Monitor {
+            .enumerate()
+            .filter(|(_, m)| m[2] > 0 && m[3] > 0)
+            .map(|(i, m)| Monitor {
+                id: i as u32,
                 x: m[0],
                 y: m[1],
                 width: m[2],
                 height: m[3],
             })
+            .collect()
+    }
+
+    /// The same with the far end's own ids: five ints per screen, id, x, y,
+    /// width, height, the id's bits as they came. What a backend whose
+    /// protocol numbers its screens hands over, and the shape a layout is
+    /// asked for in across the C seam.
+    pub fn from_flat5(flat: &[i32]) -> Vec<Monitor> {
+        flat.chunks_exact(5)
+            .filter(|m| m[3] > 0 && m[4] > 0)
+            .map(|m| Monitor {
+                id: m[0] as u32,
+                x: m[1],
+                y: m[2],
+                width: m[3],
+                height: m[4],
+            })
+            .collect()
+    }
+
+    /// `screens` as [`from_flat5`](Monitor::from_flat5) reads them.
+    pub fn flat5(screens: &[Monitor]) -> Vec<i32> {
+        screens
+            .iter()
+            .flat_map(|m| [m.id as i32, m.x, m.y, m.width, m.height])
             .collect()
     }
 }
@@ -74,8 +108,13 @@ pub struct Facts {
     pub displays: Vec<Monitor>,
     /// Which of `displays` is on screen, or -1 where there is no choice.
     pub display: i32,
-    /// Whether the far end will take a new desktop size right now.
+    /// Whether the far end will take a new desktop size right now, as one
+    /// screen: false over a desktop of several, which one size would merge.
     pub can_resize: bool,
+    /// Whether the far end will take a layout of screens right now, any
+    /// number of them, through [`Backend::request_layout`]. Only a protocol
+    /// that can say where each screen goes says yes.
+    pub can_layout: bool,
     pub view_only: bool,
     /// Whether the far end owns the cursor. Pushed as
     /// [`Event::PointerMode`](crate::events::Event::PointerMode) too, and
@@ -93,6 +132,7 @@ impl Facts {
         displays: Vec::new(),
         display: -1,
         can_resize: false,
+        can_layout: false,
         view_only: false,
         pointer_relative: false,
     };
@@ -301,6 +341,25 @@ pub trait Backend: Send + Sync {
         let _ = (width, height);
     }
 
+    /// Ask the far end to make the desktop `width × height`, divided into
+    /// `screens` — a request, like [`request_desktop_size`], whose answer is
+    /// a desktop size and a new [`Facts::monitors`], or nothing at all.
+    ///
+    /// A screen's id is one [`Facts::monitors`] gave out, handed back so
+    /// that the far end changes the screen it has rather than replacing it;
+    /// an id it does not have, or one already used earlier in the list, is a
+    /// new screen, and the backend gives it an id of its own. The default,
+    /// for a protocol with no layout to send ([`Facts::can_layout`] false),
+    /// asks for the one size where there is one screen and nothing
+    /// otherwise.
+    ///
+    /// [`request_desktop_size`]: Backend::request_desktop_size
+    fn request_layout(&self, width: u32, height: u32, screens: &[Monitor]) {
+        if screens.len() == 1 {
+            self.request_desktop_size(width, height);
+        }
+    }
+
     /// Ask the far end to send another of its displays.
     fn request_display(&self, index: i32) {
         let _ = index;
@@ -418,6 +477,34 @@ mod tests {
         assert_eq!(monitors.len(), 2);
         assert_eq!(monitors[1].x, 1920);
         assert_eq!(monitors[1].width, 1280);
+        // An id is the place in the list the library gave, gaps and all.
+        assert_eq!(monitors[0].id, 0);
+        assert_eq!(monitors[1].id, 2);
+    }
+
+    #[test]
+    fn five_ints_a_screen_carry_the_far_ends_own_ids() {
+        let screens = [
+            Monitor {
+                id: 0x8000_0001,
+                x: 0,
+                y: 0,
+                width: 1280,
+                height: 800,
+            },
+            Monitor {
+                id: 7,
+                x: 1280,
+                y: 0,
+                width: 1024,
+                height: 768,
+            },
+        ];
+        let flat = Monitor::flat5(&screens);
+        assert_eq!(flat.len(), 10);
+        assert_eq!(Monitor::from_flat5(&flat), screens);
+        // And a screen with no area is dropped, as in four ints.
+        assert_eq!(Monitor::from_flat5(&[3, 0, 0, 0, 800, 9]), []);
     }
 
     #[test]

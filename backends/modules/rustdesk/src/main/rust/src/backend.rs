@@ -184,6 +184,7 @@ impl Backend for RustDesk {
             display: if flat.is_empty() { -1 } else { current },
             displays: Monitor::from_flat(&flat),
             can_resize: connected && client.can_resize(),
+            can_layout: false,
             view_only: self.options.lock().unwrap().bool("ViewOnly"),
             pointer_relative: false,
         }
