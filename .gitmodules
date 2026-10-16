@@ -98,6 +98,6 @@
 	ignore = all
 [submodule "third_party/dav1d"]
 	path = third_party/dav1d
-	url = https://code.videolan.org/videolan/dav1d.git
+	url = https://github.com/videolan/dav1d.git
 	shallow = true
 	ignore = all
