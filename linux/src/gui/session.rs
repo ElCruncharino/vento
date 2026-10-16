@@ -49,6 +49,15 @@
 //! clipboard.
 //! What one window has of its own — its view, its monitor, its toolbar,
 //! the pointer over it — is its [`Pane`] (`pane.rs`).
+//!
+//! A session with a far end of several monitors can be shown in several
+//! windows, one monitor in each: the main window's toolbar pops one out
+//! (`pane.rs`), and the session asks the window for a window to put it in
+//! ([`WindowOp`]), which it opens and gives back to the session as a pane.
+//! The mailbox is drained in whichever window draws first, and the others
+//! are asked to draw after it, so that no window draws a picture another
+//! has already moved on from; the prompts, the panel and the notices stay
+//! in the main window, whose closing is the end of the session.
 
 // A child of this module, though a file beside it, for the state it shares.
 #[path = "pane.rs"]
@@ -74,14 +83,15 @@ use crate::known_hosts::{self, KnownHosts, Store};
 use ::session::trust::{self, Decision};
 use crate::options::Options;
 use egui::{CursorIcon, TextureHandle, TextureOptions, Vec2, ViewportId, vec2};
-use pane::{Pane, PaneId};
+use pane::{MonitorKey, Pane, PaneId, Rebound};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta};
 use winit::keyboard::{Key as LogicalKey, PhysicalKey};
-use winit::window::CursorGrabMode;
+use winit::monitor::MonitorHandle;
+use winit::window::{CursorGrabMode, Window};
 use xkeysym::Keysym;
 
 /// RFB's button bits, which every backend takes.
@@ -119,6 +129,27 @@ enum Capture {
     Centred,
 }
 
+/// How long a notice stays on the main window.
+const NOTICE: Duration = Duration::from_secs(8);
+
+/// What the session asks of the window between frames: a window opened for
+/// a pane it has made, or a pane's window closed.
+pub enum WindowOp {
+    /// Open a window for `pane`, `size` in logical pixels, fullscreen on
+    /// `output` where there is one.
+    Open {
+        pane: PaneId,
+        title: String,
+        size: (u32, u32),
+        output: Option<MonitorHandle>,
+    },
+    /// Close `pane`'s window, which is a pop-out's: `returned` when it was
+    /// given back (its Return, or the window manager's close), which hands
+    /// its monitor back to the main window, rather than closed because its
+    /// monitor went away.
+    Close { pane: PaneId, returned: bool },
+}
+
 /// The far end's cursor, uploaded once per shape, and kept as it arrived
 /// for the native cursor, which resamples it to the view's scale.
 struct CursorShape {
@@ -127,6 +158,33 @@ struct CursorShape {
     size: Vec2,
     source: Cursor,
     hash: u64,
+}
+
+/// What a move of the focus out of window `from` does to the capture held
+/// in `holder`, the capture being `wanted` still: nothing where `from` did
+/// not hold it, and otherwise a move to the window the focus went to, or a
+/// release where it is no longer wanted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Handover {
+    Nothing,
+    Move,
+    Release,
+}
+
+fn handover(holder: Option<PaneId>, from: PaneId, wanted: bool) -> Handover {
+    match holder {
+        Some(holder) if holder == from && wanted => Handover::Move,
+        Some(holder) if holder == from => Handover::Release,
+        _ => Handover::Nothing,
+    }
+}
+
+/// A pop-out's first size, in logical pixels: a far-end monitor `w`×`h`'s
+/// shape, as large as the main window starts out at most.
+fn popout_size(w: i32, h: i32) -> (u32, u32) {
+    let (w, h) = (w.max(1) as f32, h.max(1) as f32);
+    let fit = (1280.0 / w).min(800.0 / h).min(1.0);
+    ((w * fit).round().max(200.0) as u32, (h * fit).round().max(150.0) as u32)
 }
 
 pub struct Session {
@@ -211,6 +269,22 @@ pub struct Session {
     /// The session is over, with the detail the backend gave (empty for an
     /// ending that was asked for).
     pub closed: Option<String>,
+    /// Windows to open and close, for the window to act on after the frame.
+    ops: Vec<WindowOp>,
+    /// How many pop-outs have been made, which names the next one.
+    popped: u64,
+    /// This frame took something off the mailbox, and the other windows
+    /// are to draw after it.
+    redraw_others: bool,
+    /// A prompt is up; `attention` once when it came up, for the window to
+    /// draw the main window's attention to it.
+    prompting: bool,
+    attention: bool,
+    /// Something to tell in the main window, and until when.
+    notice: Option<(String, Instant)>,
+    /// The main window's size in pixels as of its last frame: what the
+    /// follower follows, whichever window's frame ticks it.
+    main_size: Option<(u32, u32)>,
 }
 
 impl Session {
@@ -258,7 +332,7 @@ impl Session {
             desktop: None,
             snapshot: Snapshot::default(),
             last_poll: None,
-            panes: vec![Pane::new(ViewportId::ROOT, placement)],
+            panes: vec![Pane::new(ViewportId::ROOT, placement, None)],
             panel: Panel::default(),
             live,
             follower: Follower::default(),
@@ -292,6 +366,13 @@ impl Session {
             hud: Hud::default(),
             damage: 0,
             closed: None,
+            ops: Vec::new(),
+            popped: 0,
+            redraw_others: false,
+            prompting: false,
+            attention: false,
+            notice: None,
+            main_size: None,
         })
     }
 
@@ -349,12 +430,18 @@ impl Session {
     /// What the window is called: the desktop's name once known, with the
     /// bell on it while it rings.
     pub fn title(&self) -> String {
+        self.title_of(None)
+    }
+
+    /// A window's title: the session's, with the far end's `monitor` the
+    /// window shows, where it shows one of several.
+    pub fn title_of(&self, monitor: Option<usize>) -> String {
         let name = self.snapshot.desktop_name().unwrap_or(&self.title);
         let ringing = self.bell_until.is_some_and(|t| Instant::now() < t);
-        if ringing {
-            format!("🔔 {name} — Vento")
-        } else {
-            format!("{name} — Vento")
+        let bell = if ringing { "🔔 " } else { "" };
+        match monitor {
+            Some(i) => format!("{bell}{name} — monitor {} — Vento", i + 1),
+            None => format!("{bell}{name} — Vento"),
         }
     }
 
@@ -362,6 +449,7 @@ impl Session {
 
     fn drain(&mut self, ctx: &egui::Context, host: &mut Host) {
         while let Some(event) = self.mailbox.take() {
+            self.redraw_others = true;
             match event {
                 Event::Connected { width, height } | Event::DesktopSize { width, height } => {
                     if let Event::DesktopSize { .. } = event {
@@ -385,9 +473,6 @@ impl Session {
                             }],
                         );
                         self.desktop = Some(desktop);
-                    }
-                    for pane in &mut self.panes {
-                        pane.desktop_changed();
                     }
                     self.last_poll = None;
                     self.relative = self.mailbox.pointer_relative();
@@ -458,7 +543,7 @@ impl Session {
 
     /// The facts and the info, once a second: the window's title and the
     /// panel come from here, and so does the monitor list.
-    fn poll(&mut self, ctx: &egui::Context, host: &mut Host) {
+    fn poll(&mut self, ctx: &egui::Context) {
         if !self.connected() {
             return;
         }
@@ -476,14 +561,19 @@ impl Session {
             traffic: self.backend.traffic(),
         };
         ctx.request_repaint_after(POLL);
-        self.follow_tick(host);
+        // The other windows' titles and overlays come from the poll too.
+        self.redraw_others = true;
+        self.follow_tick();
     }
 
     // ---- the window's size, followed -----------------------------------------
 
-    /// The window changed shape; the follower is asked `DEBOUNCE` later.
-    pub fn resized(&mut self) {
-        self.follower.resized(Instant::now());
+    /// A window changed shape: the follower, which follows the main
+    /// window, is asked `DEBOUNCE` later if it was that one (`main`).
+    pub fn resized(&mut self, main: bool) {
+        if main {
+            self.follower.resized(Instant::now());
+        }
         self.refence();
     }
 
@@ -506,12 +596,17 @@ impl Session {
         (size.width > 0 && size.height > 0).then_some((size.width, size.height))
     }
 
-    /// One tick of the follower: on the poll, and after the debounce.
-    fn follow_tick(&mut self, host: &mut Host) {
-        if !self.connected() {
+    /// One tick of the follower: on the poll, and after the debounce. Not
+    /// while there are pop-outs: the follower asks for one screen the
+    /// main window's size, and a far end of several monitors shown in
+    /// several windows asked that would be left with one (following each
+    /// window as a monitor of its own is a layout, which no backend can be
+    /// asked for yet).
+    fn follow_tick(&mut self) {
+        if !self.connected() || self.panes.len() > 1 {
             return;
         }
-        let Some(window) = Self::window_size(host) else {
+        let Some(window) = self.main_size else {
             return;
         };
         if let Some((width, height)) = self.follower.tick(window, self.snapshot.facts.can_resize) {
@@ -520,14 +615,14 @@ impl Session {
         }
     }
 
-    fn set_follow(&mut self, follow: bool, host: &mut Host) {
+    fn set_follow(&mut self, follow: bool) {
         self.follower.set_enabled(follow);
         log::info!("follow window size: {}", if follow { "on" } else { "off" });
         if follow {
             // Asked at the next tick, which is brought forward: turning it
             // on takes effect where it was turned on.
             self.follower.resized(Instant::now());
-            self.follow_tick(host);
+            self.follow_tick();
         }
     }
 
@@ -578,11 +673,16 @@ impl Session {
     /// when the read is in (`local_clipboard`).
     pub fn focus(&mut self, focused: bool, host: &mut Host) {
         if !focused {
-            self.release_keys();
-            self.down.clear();
+            self.focus_lost();
         }
         // The capture follows the focus on the next frame.
         host.window.request_redraw();
+    }
+
+    /// The focus left the process, or went with a window that closed.
+    pub fn focus_lost(&mut self) {
+        self.release_keys();
+        self.down.clear();
     }
 
     /// What was copied here while the window was away, read when it got the
@@ -617,65 +717,113 @@ impl Session {
     /// Capture or free the pointer to match what the mode, the focus and
     /// the escape chord say, in `host`'s window: taken there when it has
     /// the focus and nothing holds it, let go there when it held it and
-    /// should not.
+    /// should not. Only ever in the focused window, so one at a time; a
+    /// move of the focus from one window to another hands it over at once
+    /// (`hand_over_capture`) rather than here, a frame of each window apart.
     fn sync_capture(&mut self, host: &mut Host) {
-        let want = self.relative && host.focused && !self.escaped && self.accepts_input();
+        let want = self.wants_capture() && host.focused;
         let holder = self.capture.map(|(pane, _)| pane);
         if want {
-            if holder.is_some() {
-                return;
-            }
-            let pane = host.viewport;
-            match host.platform {
-                Platform::X11 => {
-                    // winit's X11 `Locked` is unsupported, and `Confined` (an
-                    // active pointer grab) makes the X server deliver every
-                    // raw motion twice, once for the grab and once for the
-                    // root window's selection. So: no grab, the cursor
-                    // hidden, raw XI2 deltas, and the pointer warped back to
-                    // the centre whenever it moves (the window swallows
-                    // those motions; a warp makes no raw motion), with
-                    // barriers on the window's edges so that it cannot be
-                    // anywhere else before the warp (see `x11::Fence`).
-                    self.restore = host.pointer;
-                    host.window.set_cursor_visible(false);
-                    let _ = host.window.set_cursor_position(platform::centre(host.window));
-                    if self.fence.is_none() {
-                        self.fence = Fence::new(host.window);
-                    }
-                    if let Some(fence) = &mut self.fence {
-                        fence.raise();
-                    }
-                    self.capture = Some((pane, Capture::Centred));
-                    self.motion_rest = (0.0, 0.0);
-                    log::info!("pointer captured: hidden and held at the centre (Ctrl+Alt releases it)");
-                }
-                _ => match host.window.set_cursor_grab(CursorGrabMode::Locked) {
-                    Ok(()) => {
-                        host.window.set_cursor_visible(false);
-                        self.capture = Some((pane, Capture::Locked));
-                        self.motion_rest = (0.0, 0.0);
-                        log::info!("pointer locked (Ctrl+Alt releases it)");
-                    }
-                    Err(e) => log::warn!("pointer lock refused: {e}"),
-                },
+            if holder.is_none() {
+                self.take_capture(host.window, host.viewport, host.platform, host.pointer);
             }
         } else if holder == Some(host.viewport) {
-            self.let_go(host);
-            if self.captured_mask != 0 {
-                self.captured_mask = 0;
-                self.backend.pointer_relative(0, 0, 0);
+            self.let_go(host.window);
+            self.release_captured_buttons();
+            log::info!("pointer released");
+        }
+    }
+
+    /// Whether the pointer should be held, wherever the focus is.
+    fn wants_capture(&self) -> bool {
+        self.relative && !self.escaped && self.accepts_input()
+    }
+
+    /// The pointer captured in `window`, `pane`'s, where it is at `pointer`.
+    fn take_capture(&mut self, window: &Window, pane: PaneId, platform: Platform, pointer: Option<PhysicalPosition<f64>>) {
+        match platform {
+            Platform::X11 => {
+                // winit's X11 `Locked` is unsupported, and `Confined` (an
+                // active pointer grab) makes the X server deliver every
+                // raw motion twice, once for the grab and once for the
+                // root window's selection. So: no grab, the cursor
+                // hidden, raw XI2 deltas, and the pointer warped back to
+                // the centre whenever it moves (the window swallows
+                // those motions; a warp makes no raw motion), with
+                // barriers on the window's edges so that it cannot be
+                // anywhere else before the warp (see `x11::Fence`).
+                self.restore = pointer;
+                window.set_cursor_visible(false);
+                let _ = window.set_cursor_position(platform::centre(window));
+                match &mut self.fence {
+                    None => self.fence = Fence::new(window),
+                    Some(fence) => fence.retarget(window),
+                }
+                if let Some(fence) = &mut self.fence {
+                    fence.raise();
+                }
+                self.capture = Some((pane, Capture::Centred));
+                self.motion_rest = (0.0, 0.0);
+                log::info!("pointer captured: hidden and held at the centre (Ctrl+Alt releases it)");
             }
+            _ => match window.set_cursor_grab(CursorGrabMode::Locked) {
+                Ok(()) => {
+                    window.set_cursor_visible(false);
+                    self.capture = Some((pane, Capture::Locked));
+                    self.motion_rest = (0.0, 0.0);
+                    log::info!("pointer locked (Ctrl+Alt releases it)");
+                }
+                Err(e) => log::warn!("pointer lock refused: {e}"),
+            },
+        }
+    }
+
+    /// The buttons held at the far end through the capture let go of, now
+    /// that nothing will send their releases.
+    fn release_captured_buttons(&mut self) {
+        if self.captured_mask != 0 {
+            self.captured_mask = 0;
+            self.backend.pointer_relative(0, 0, 0);
+        }
+    }
+
+    /// The focus moved from one of our windows to another: the capture,
+    /// held in `from`, let go of there and taken in `to` in the same step,
+    /// with the buttons held through it still held — nothing left the
+    /// process, so nothing at the far end is let go of. The pointer is not
+    /// put back where it was before the capture, which was a place in the
+    /// other window; letting go in `to` later puts it back where it was in
+    /// `to`.
+    pub fn hand_over_capture(
+        &mut self,
+        (from, from_pane): (&Window, PaneId),
+        (to, to_pane): (&Window, PaneId),
+        platform: Platform,
+        pointer: Option<PhysicalPosition<f64>>,
+    ) {
+        let step = handover(self.capture.map(|(pane, _)| pane), from_pane, self.wants_capture());
+        if step == Handover::Nothing {
+            return;
+        }
+        self.restore = None;
+        self.let_go(from);
+        if step == Handover::Move {
+            self.take_capture(to, to_pane, platform, pointer);
+        }
+        if self.captured() {
+            log::info!("pointer capture handed to another window");
+        } else {
+            self.release_captured_buttons();
             log::info!("pointer released");
         }
     }
 
     /// The pointer as it was before the capture: unlocked, shown, and on
     /// X11 back where it was.
-    fn let_go(&mut self, host: &mut Host) {
+    fn let_go(&mut self, window: &Window) {
         match self.capture.take().map(|(_, how)| how) {
             Some(Capture::Locked) => {
-                let _ = host.window.set_cursor_grab(CursorGrabMode::None);
+                let _ = window.set_cursor_grab(CursorGrabMode::None);
             }
             Some(Capture::Centred) => {
                 if let Some(fence) = &mut self.fence {
@@ -684,9 +832,9 @@ impl Session {
             }
             None => {}
         }
-        host.window.set_cursor_visible(true);
+        window.set_cursor_visible(true);
         if let Some(at) = self.restore.take() {
-            let _ = host.window.set_cursor_position(at);
+            let _ = window.set_cursor_position(at);
         }
     }
 
@@ -879,14 +1027,16 @@ impl Session {
 
     // ---- the frame ---------------------------------------------------------
 
-    /// One frame of the window `host` is: in the main window first what is
-    /// the session's in every window (the events, the poll, the follower,
-    /// the disconnect's deadline), then the pane's own (see `pane.rs`).
+    /// One frame of the window `host` is: first what is the session's in
+    /// every window (the events, the poll, the follower, the disconnect's
+    /// deadline), in whichever window draws first, then the pane's own (see
+    /// `pane.rs`).
     pub fn frame(&mut self, root: &mut egui::Ui, host: &mut Host) {
         let ctx = root.ctx().clone();
         if host.viewport == ViewportId::ROOT {
-            self.frame_shared(&ctx, host);
+            self.main_size = Self::window_size(host);
         }
+        self.frame_shared(&ctx, host);
         // Out of the list while it draws, so that it can drive the session.
         let Some(i) = self.panes.iter().position(|p| p.id == host.viewport) else {
             return;
@@ -896,14 +1046,20 @@ impl Session {
         self.panes.insert(i, pane);
     }
 
-    /// The session's part of a frame: once, however many windows show it.
+    /// The session's part of a frame. In every window's frame rather than
+    /// the main window's alone: a window that cannot be seen may get no
+    /// frames at all (a Wayland compositor stops a hidden window's frame
+    /// callbacks), and a pop-out on screen must not wait on a main window
+    /// that is not. Draining an empty mailbox is nothing, and the poll and
+    /// the follower keep their own time.
     fn frame_shared(&mut self, ctx: &egui::Context, host: &mut Host) {
         self.drain(ctx, host);
-        self.poll(ctx, host);
+        self.poll(ctx);
+        self.rebind();
         if let Some(due) = self.follower.due() {
             let now = Instant::now();
             if due <= now {
-                self.follow_tick(host);
+                self.follow_tick();
             } else {
                 ctx.request_repaint_after(due - now);
             }
@@ -932,6 +1088,129 @@ impl Session {
         if !self.accepts_input() {
             self.release_keys();
         }
+        // A prompt is answered in the main window, which may not be the one
+        // in front: it is asked for once when one comes up.
+        let prompting = !self.prompts.is_empty();
+        if prompting && !self.prompting {
+            self.attention = true;
+        }
+        self.prompting = prompting;
+    }
+
+    // ---- the windows -------------------------------------------------------
+
+    /// What the window is to open and close, taken.
+    pub fn take_window_ops(&mut self) -> Vec<WindowOp> {
+        std::mem::take(&mut self.ops)
+    }
+
+    /// Whether the frame just drawn took news the other windows have not
+    /// drawn yet, taken.
+    pub fn take_redraw_others(&mut self) -> bool {
+        std::mem::take(&mut self.redraw_others)
+    }
+
+    /// Whether a prompt has just come up, which is answered in the main
+    /// window, taken.
+    pub fn take_attention(&mut self) -> bool {
+        std::mem::take(&mut self.attention)
+    }
+
+    /// A pane for `monitor`, and a window asked for to show it in:
+    /// fullscreen on `output` where one is given, otherwise a window the
+    /// monitor's shape. The pane is the session's from now on; its window
+    /// opens after the frame (or does not, and the pane is forgotten).
+    fn pop_out(&mut self, monitor: MonitorKey, output: Option<MonitorHandle>) {
+        self.popped += 1;
+        let id = ViewportId::from_hash_of(("pop-out", self.popped));
+        let (_, _, w, h) = monitor.rect;
+        let size = popout_size(w, h);
+        log::info!(
+            "popping out monitor {} ({w}×{h}){}",
+            monitor.index + 1,
+            output
+                .as_ref()
+                .and_then(MonitorHandle::name)
+                .map(|n| format!(", fullscreen on {n}"))
+                .unwrap_or_default()
+        );
+        self.panes.push(Pane::new(id, Placement::default(), Some(monitor)));
+        self.ops.push(WindowOp::Open {
+            pane: id,
+            title: self.title(),
+            size,
+            output,
+        });
+    }
+
+    /// The window for `pane` could not be opened: the pane goes, and the
+    /// main window says why.
+    pub fn forget_pane(&mut self, pane: PaneId, why: &str) {
+        self.panes.retain(|p| p.id != pane);
+        self.notify(format!("Could not open a window for the monitor: {why}"));
+    }
+
+    /// `pane`'s window, `host`, is closing: the capture let go of if it
+    /// held it, the drag it held ended, its cursor put back, and the pane
+    /// gone. A pop-out that was `returned` gives its monitor back to the
+    /// main window, if that is showing a monitor of its own.
+    pub fn close_pane(&mut self, ctx: &egui::Context, host: &mut Host, returned: bool) {
+        let Some(i) = self.panes.iter().position(|p| p.id == host.viewport) else {
+            return;
+        };
+        let mut pane = self.panes.remove(i);
+        if self.capture.is_some_and(|(holder, _)| holder == pane.id) {
+            self.let_go(host.window);
+            self.release_captured_buttons();
+        }
+        if self.pointer_owner == Some(pane.id) {
+            self.pointer_owner = None;
+            let (x, y, mask) = self.last_pointer;
+            if mask != 0 {
+                self.send_pointer((x, y), 0);
+            }
+        }
+        pane.close(ctx, host.window);
+        if returned
+            && let Some(monitor) = pane.monitor()
+            && let Some(main) = self.pane_mut(ViewportId::ROOT)
+        {
+            main.give_back(monitor);
+        }
+        self.redraw_others = true;
+    }
+
+    /// Something for the main window to say for a while.
+    fn notify(&mut self, text: String) {
+        log::info!("{text}");
+        self.notice = Some((text, Instant::now() + NOTICE));
+        self.redraw_others = true;
+    }
+
+    /// Every pane's monitor found again in the far end's layout as it is
+    /// now (see `MonitorKey::find`). A pop-out whose monitor is gone is
+    /// closed, and the main window says so; the main window's goes back to
+    /// the whole desktop. A layout of no monitors at all is a far end that
+    /// has said nothing about its screens, and changes nothing.
+    fn rebind(&mut self) {
+        let monitors = &self.snapshot.facts.monitors;
+        if monitors.is_empty() {
+            return;
+        }
+        let mut gone = Vec::new();
+        for pane in &mut self.panes {
+            match pane.rebind(monitors) {
+                Rebound::Kept => {}
+                Rebound::Gone(index) if pane.id == ViewportId::ROOT => {
+                    log::info!("monitor {} of the far end is gone; the main window shows the whole desktop", index + 1);
+                }
+                Rebound::Gone(index) => gone.push((pane.id, index)),
+            }
+        }
+        for (pane, index) in gone {
+            self.ops.push(WindowOp::Close { pane, returned: false });
+            self.notify(format!("Monitor {} of the far end is gone, and so is its window.", index + 1));
+        }
     }
 
     /// The connection panel, in the main window, and what was changed on it.
@@ -959,7 +1238,7 @@ impl Session {
                     self.backend.request_desktop_size(width, height);
                 }
                 Action::Display(index) => self.backend.request_display(index),
-                Action::Follow(follow) => self.set_follow(follow, host),
+                Action::Follow(follow) => self.set_follow(follow),
                 Action::Settings(settings) => self.set_settings(settings),
                 Action::Debug(on) => {
                     if on != self.hud.on {
@@ -1129,6 +1408,9 @@ impl Session {
     /// Ends the session and releases the texture, and starts releasing the
     /// backend: what comes back is its `destroy`, under way on a thread of
     /// its own.
+    ///
+    /// `host` is the main window; the pop-outs were closed before this
+    /// (`close_pane`), each letting go of what it held.
     pub fn shutdown(mut self, ctx: &egui::Context, host: &mut Host) -> Teardown {
         self.release_keys();
         for pane in &mut self.panes {
@@ -1136,8 +1418,8 @@ impl Session {
                 pane.close(ctx, host.window);
             }
         }
-        if self.captured() {
-            self.let_go(host);
+        if self.capture.is_some_and(|(holder, _)| holder == host.viewport) {
+            self.let_go(host.window);
         }
         // The screen was the session's; the dialog gets a window.
         if host.window.fullscreen().is_some() {
@@ -1226,3 +1508,31 @@ fn on_off(on: bool) -> &'static str {
     if on { "on" } else { "off" }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_capture_moves_with_the_focus_only_from_the_window_holding_it() {
+        let main = ViewportId::ROOT;
+        let other = ViewportId::from_hash_of("pop-out");
+        // Held in the window the focus left: taken in the one it went to.
+        assert_eq!(handover(Some(main), main, true), Handover::Move);
+        // Held there but no longer wanted (the escape chord, view only):
+        // let go of, not moved.
+        assert_eq!(handover(Some(main), main, false), Handover::Release);
+        // Held elsewhere, or nowhere: the move is none of its business.
+        assert_eq!(handover(Some(other), main, true), Handover::Nothing);
+        assert_eq!(handover(None, main, true), Handover::Nothing);
+    }
+
+    #[test]
+    fn a_pop_out_starts_the_shape_of_its_monitor() {
+        // As large as the main window starts at most, the monitor's shape.
+        assert_eq!(popout_size(1280, 800), (1280, 800));
+        assert_eq!(popout_size(1920, 1080), (1280, 720));
+        assert_eq!(popout_size(1080, 1920), (450, 800));
+        // A small monitor is not enlarged.
+        assert_eq!(popout_size(640, 480), (640, 480));
+    }
+}

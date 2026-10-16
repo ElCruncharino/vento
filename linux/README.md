@@ -52,9 +52,10 @@ clients, and what differs between them is each client's own code.
   context; the focus resolved between the windows once per turn of the loop,
   with tests), `session.rs` (a live session, and what of it is the same in
   every window: the backend and its events, the desktop, the keyboard and the
-  capture, the prompts, the far end's cursor), `pane.rs` (one window's part
-  of a session: its view, which monitor it shows, its toolbar, the pointer
-  over it and its cursor, with tests), `desktop.rs` (the desktop as one
+  capture, the prompts, the far end's cursor; the windows it asks for and
+  closes, with tests), `pane.rs` (one window's part of a session: its view,
+  which monitor it shows, its toolbar, the pointer over it and its cursor;
+  the main window's or a pop-out's, with tests), `desktop.rs` (the desktop as one
   texture, or as tiles where it is bigger than the device's largest, updated
   a damaged rectangle at a time), `view.rs` (scale modes, panning and the
   pointer's mapping, pure arithmetic with tests), `toolbar.rs` (where the
@@ -293,6 +294,10 @@ is showing is in the tooltip too. On it:
   screen), with the scale modes applied to that. Where a
   backend offers *displays* instead (RustDesk sends one screen at a time) the
   button (`monitor`) asks the far end for the next one.
+- **Pop out** (`open_in_new`, beside Monitor, when the far end reports more
+  than one monitor) is a menu: this window's monitor in a window of its own
+  or fullscreen on one of the local outputs, and **Pop out all**. See
+  [pop-out windows](#pop-out-windows).
 - **View only** stops the mouse, the keyboard and the clipboard going to the
   far end, and tells the backend so: an eye while on, a mouse while off.
 - **Info** opens the connection panel, below.
@@ -300,6 +305,86 @@ is showing is in the tooltip too. On it:
   current monitor); the toolbar still slides in at the top edge, and the same
   button, or disconnecting, leaves it.
 - **Disconnect**.
+
+### Pop-out windows
+
+A far end with several monitors can be shown in several windows, one monitor
+in each — the session is still one connection, one desktop texture drawn in
+every window, one set of keys and one pointer at the far end. Pick a monitor
+with **Monitor**, then **Pop out**:
+
+- **Pop out monitor N (window)** opens a window for it, the shape of the
+  monitor, and the main window moves on to the next monitor that has no
+  window (the whole desktop once every monitor has one).
+- **Pop out monitor N to output M** opens it fullscreen on that local
+  output. On Wayland this is the only way to say where a window goes — a
+  Wayland client cannot place a window, only ask for it fullscreen on an
+  output — so a pop-out in a window lands wherever the compositor puts new
+  windows. On X11 it is whatever winit makes of the output: winit lists
+  RandR's CRTCs, not its 1.5 monitors, so a server that has one CRTC (Xvfb,
+  and the X server of many virtual machines) offers one output whatever the
+  monitors say, and on real multi-head hardware under an ordinary window
+  manager each output is its own.
+- **Pop out all** gives every monitor without a window one: the main window
+  keeps the first, and with more than one local output each window goes
+  fullscreen on one, the far end's monitors and the local outputs each taken
+  left to right (then top to bottom); a monitor past the last output, or
+  every monitor with a single output, gets a window.
+
+A pop-out's toolbar is a window's own: **Scale** and **Monitor** (any
+monitor, or the whole desktop) are its own, **Fullscreen** is its own
+window's, **View only** is the session's, and **Return** (`pip_exit`) closes
+it and gives its monitor back to the main window, which shows it if it was
+showing a single monitor. Closing it from the window manager is the same as
+Return. Each window's title names the monitor it shows. The panel, the
+prompts and the disconnect stay in the main window; a pop-out with a prompt
+waiting says *Answer in the main window*, and the main window asks the
+window manager for attention when one comes up while another window has the
+focus. Closing the main window, or the session ending, closes every pop-out
+first (each letting go of the pointer capture and anything it held), and
+then the main window goes back to the dialog or quits as before.
+
+What follows the focus between the windows: the keys (typed into whichever
+window has the focus, and not let go of at the far end when the focus moves
+from one of ours to another — only when it leaves the process), X11's
+keyboard grab (moved to the focused window), Wayland's shortcuts inhibitor
+(the focused window's only), relative mode's capture (taken only in the
+focused window, and handed to the next one in the same step when the focus
+moves, any buttons held through it still held), and the clipboard (read
+when the focus comes to one of our windows from elsewhere, never on a move
+between them). A drag belongs to the window it was pressed in until every
+button is up — the display server keeps sending that window the pointer
+outside it — and the other windows send nothing meanwhile; past the window's
+edge the pointer carries on at that window's scale onto the rest of the far
+end's desktop, as far as the desktop's own edges, so dragging a window of the
+far end's from one pop-out into the window showing the monitor beside it
+moves it there. The session pauses (see below) only while every window is
+minimised or covered. The texture is sampled nearest only while every
+window draws the desktop one to one, and linear otherwise (at one to one, on
+whole device pixels, linear draws the same picture), so that two windows at
+different scales do not change the sampler back and forth every frame.
+
+A far end's monitors change under the windows — another client resizes, a
+screen is added or taken away: each window finds its monitor again by its
+rectangle, then by its place in the list; a pop-out whose monitor is gone is
+closed, and the main window says so (*Monitor 2 of the far end is gone, and
+so is its window*); the main window goes back to the whole desktop. A local
+output going away is the display server's to deal with: it moves the windows
+that were on it, and the window reads which output it is on again when it
+moves or changes scale. **Follow window size** follows the main window only
+while there are no pop-outs: it asks for one screen, and a far end of
+several monitors asked that would be left with one. Asking the far end for
+a layout of a screen per window is still to come.
+
+Proven on `scripts/testx11` against a private `scripts/testvnc` given two
+1280×800 heads with `heads.sh 2`: two windows each showing its own monitor,
+typing into the pop-out reaching the far end, a far end's window dragged from
+the pop-out into the main window and landing on the other monitor under the
+pointer, Return and the window manager's close each giving the monitor back,
+`heads.sh 1` closing the pop-out of the monitor that went with the notice in
+the main window, one window minimised leaving the session live and both
+minimised pausing it, and the disconnect and the main window's close each
+closing the pop-out first.
 
 **The connection panel** is the phone's `ConnectionPanel`: controls above
 facts, in the top right corner, where it stays. It has no title bar: its first
@@ -454,18 +539,23 @@ the deadline, with the window responsive meanwhile.
 **Ctrl+Alt+D**) is the
 phone's `SessionHud`: a small monospace box in the bottom left of the
 desktop, with its lines in its order where they apply here, and sampled
-rates over a one-second window. The state, the desktop's size, frames a
-second, damage rectangles in all and a second, the pixel path (texture
-updates this frame, bytes a second through `read_region`, the last
+rates over a one-second window. First what is the session's, the same in
+every window: the state, the desktop's size, damage rectangles in all and a
+second, the pixel path (bytes a second through `read_region`, the last
 rectangle), and the clipboard's length as the far end would be given it;
-the cursor's desktop position (or *theirs* in relative mode), the buttons
-held, the scale mode and scale in device pixels per desktop pixel, the
-desktop's origin and size on screen; whether the mouse is captured or
+the cursor's desktop position (or *theirs* in relative mode) and the buttons
+held; whether the mouse is captured (here, or in another window) or
 hovering, the buttons, how many keys are held at the far end, and VIEW ONLY
-when it is; the shortcuts inhibitor's state, the follower's (off, waiting
+when it is; the display server, the follower's state (off, waiting
 for the far end, or the size it asked for), the cursor shape (native, or
 software when that setting is on, its size and hotspot) and the two clipboard
-switches; and three delays, each as the last, then the mean and the worst of
+switches; three delays (below). Then the window's own: main or pop-out, the
+monitor it shows, the local output it is on, whether it has the focus, its
+frames a second, its texture updates this frame and its pixels per point;
+its scale mode and scale in device pixels per desktop pixel, the desktop's
+origin and size in it, and the shortcuts inhibitor's state as this window
+has it (X11's grab being the client's, a window it is not on says *on another
+window*). The three delays, each as the last, then the mean and the worst of
 the last 32: **render**, from a backend's `frame_end` (stamped when the
 mailbox queues the frame; a frame that took in later ones while unread keeps
 the oldest) to that frame's pixels being submitted and presented, which

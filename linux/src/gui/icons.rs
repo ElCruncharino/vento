@@ -78,6 +78,8 @@ symbols! {
     LINK_OFF = "link_off" "\u{e16f}";
     MONITOR = "monitor" "\u{ef5b}";
     MOUSE = "mouse" "\u{e323}";
+    OPEN_IN_NEW = "open_in_new" "\u{e89e}";
+    PIP_EXIT = "pip_exit" "\u{f70d}";
     TV_DISPLAYS = "tv_displays" "\u{f3ec}";
     VIEW_REAL_SIZE = "view_real_size" "\u{f4c2}";
     VISIBILITY = "visibility" "\u{e8f4}";

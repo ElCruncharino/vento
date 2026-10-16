@@ -24,6 +24,19 @@
 //! What is a window's own is its [`Surface`]: the wgpu surface, egui-winit's
 //! state for it, and egui's viewport, the main window being the root one.
 //!
+//! A session shows the far end in the main window, and in a window of its
+//! own for each monitor popped out of it (`session.rs`, `pane.rs`): the
+//! session asks for those between frames ([`WindowOp`]) and this opens and
+//! closes them. The main window is the one that matters most — the dialog,
+//! the prompts and the panel are only ever there, and closing it ends the
+//! session — and the rest come and go with the session: closed before it
+//! ends, each letting go of what it held. What is the process's rather than
+//! a window's follows the focus between them: X11's keyboard grab, the
+//! pointer capture, the shortcuts inhibitor (one per surface, only the
+//! focused one's asked for); the clipboard is read once when the focus
+//! comes to one of the windows from elsewhere, and not when it moves
+//! between them.
+//!
 //! The main thread never waits on a backend: a session is created
 //! connecting and asked questions that return at once, and everything it
 //! has to say arrives through the mailbox between frames.
@@ -52,7 +65,7 @@ use clipboard::{Clipboard, Why};
 use dialog::Dialog;
 use egui::ViewportId;
 pub use platform::Platform;
-use session::{Session, Teardown};
+use session::{Session, Teardown, WindowOp};
 pub use settings::Settings;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -62,7 +75,7 @@ use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalPosition;
 use winit::event::{DeviceEvent, DeviceId, ElementState, StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, DeviceEvents, EventLoop, EventLoopProxy};
-use winit::window::{Window, WindowAttributes, WindowId};
+use winit::window::{Fullscreen, UserAttentionType, Window, WindowAttributes, WindowId};
 
 /// A connection to open, as the command line or the dialog describes one.
 #[derive(Clone)]
@@ -115,6 +128,8 @@ pub struct Host<'a> {
     /// Where the pointer last was in the window, as the window saw it
     /// (not while the session holds it at the centre).
     pub pointer: Option<PhysicalPosition<f64>>,
+    /// The local output the window is on, by name, for the overlay.
+    pub output: Option<String>,
     /// The local clipboard, where there is one (see `clipboard/`).
     pub clipboard: Option<&'a Clipboard>,
 }
@@ -236,6 +251,10 @@ struct Surface {
     /// Wayland's keyboard shortcuts inhibitor, which is a surface's own;
     /// X11's grab is the client's, and the `App`'s.
     inhibitor: Option<wayland::Shortcuts>,
+    /// The local output the window is on, by name: read when it opens and
+    /// again whenever it moves or changes scale, which is also when an
+    /// output that went away has had its windows moved elsewhere.
+    output: Option<String>,
 }
 
 impl Surface {
@@ -511,6 +530,7 @@ impl App {
             id,
             Surface {
                 inhibitor: wayland::Shortcuts::new(&window),
+                output: window.current_monitor().and_then(|m| m.name()),
                 window,
                 surface: Some(surface),
                 config,
@@ -675,7 +695,10 @@ impl App {
     /// The inhibitor's state in a word, for the session's overlay in `id`.
     fn inhibitor(&self, id: WindowId) -> &'static str {
         if let Some(keyboard) = &self.keyboard {
-            return keyboard.state();
+            return match self.windows.get(&id) {
+                Some(surface) => keyboard.state_in(&surface.window),
+                None => keyboard.state(),
+            };
         }
         self.windows
             .get(&id)
@@ -743,6 +766,7 @@ impl App {
             inhibitor,
             platform: self.platform,
             pointer: surface.pointer,
+            output: surface.output.clone(),
             clipboard: self.clipboard.as_ref(),
         };
         let egui = self.egui.clone();
@@ -812,6 +836,32 @@ impl App {
         // Applied above; epaint asserts that nobody drops one unapplied.
         output.textures_delta.clear();
 
+        // What the frame asked of the other windows: to draw what it took
+        // off the mailbox, which they have not drawn yet; and the main
+        // window, a prompt that has come up there while another window may
+        // be the one in front.
+        let (redraw_others, attention) = match &mut self.screen {
+            Screen::Session(session) => (session.take_redraw_others(), session.take_attention()),
+            Screen::Dialog(_) => (false, false),
+        };
+        if redraw_others {
+            for (other, surface) in &self.windows {
+                if *other != id {
+                    surface.window.request_redraw();
+                }
+            }
+        }
+        if attention
+            && let Some(main) = self.main
+            && let Some(surface) = self.windows.get(&main)
+        {
+            surface.window.request_redraw();
+            if self.windows.len() > 1 && self.focused != Some(main) {
+                log::info!("a prompt is up in the main window; asking for attention to it");
+                surface.window.request_user_attention(Some(UserAttentionType::Informational));
+            }
+        }
+
         // After the frame, so that the session's last picture was drawn.
         if let Some((detail, asked)) = ended {
             match after_session(self.launched, asked) {
@@ -826,7 +876,130 @@ impl App {
         if let Some(request) = next {
             self.connect(request);
         }
+        self.window_ops(event_loop);
         self.sync_shortcuts();
+    }
+
+    /// Opens and closes the windows the session asked for in its frame.
+    fn window_ops(&mut self, event_loop: &ActiveEventLoop) {
+        let ops = match &mut self.screen {
+            Screen::Session(session) => session.take_window_ops(),
+            Screen::Dialog(_) => return,
+        };
+        if ops.is_empty() {
+            return;
+        }
+        for op in ops {
+            match op {
+                WindowOp::Open {
+                    pane,
+                    title,
+                    size,
+                    output,
+                } => {
+                    let mut attributes = Window::default_attributes()
+                        .with_title(title)
+                        .with_inner_size(winit::dpi::LogicalSize::new(size.0, size.1));
+                    // Fullscreen from the start, on the output asked for: on
+                    // Wayland the one way a window can be put somewhere.
+                    if let Some(output) = output {
+                        attributes = attributes.with_fullscreen(Some(Fullscreen::Borderless(Some(output))));
+                    }
+                    match self.add_window(event_loop, attributes, pane) {
+                        Ok(id) => self.windows[&id].window.request_redraw(),
+                        Err(e) => {
+                            log::warn!("{e}");
+                            if let Some(session) = self.session() {
+                                session.forget_pane(pane, &e);
+                            }
+                        }
+                    }
+                }
+                WindowOp::Close { pane, returned } => {
+                    let found = self.windows.iter().find(|(_, s)| s.viewport == pane).map(|(id, _)| *id);
+                    match found {
+                        Some(id) if Some(id) != self.main => self.close_window(event_loop, id, returned),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        // The main window's pass is where egui is told which viewports
+        // there are now.
+        if let Some(surface) = self.main_surface() {
+            surface.window.request_redraw();
+        }
+    }
+
+    /// Closes pop-out `id`: the session lets go of what its pane held (the
+    /// capture, a drag, its cursor) and forgets it, `returned` handing its
+    /// monitor back to the main window, and the window goes. A window that
+    /// had the focus takes it with it, as far as the session can tell: the
+    /// keys held are let go of, and the window manager says where the focus
+    /// goes next.
+    fn close_window(&mut self, event_loop: &ActiveEventLoop, id: WindowId, returned: bool) {
+        let Some(viewport) = self.windows.get(&id).map(|s| s.viewport) else {
+            return;
+        };
+        if let Some(()) = self.with_host(event_loop, id, |session, host, egui| session.close_pane(egui, host, returned)) {
+            log::info!("closed a pop-out{}", if returned { "; its monitor is back in the main window" } else { "" });
+        }
+        if let Some(surface) = self.windows.remove(&id) {
+            // Hidden first: on X11 a dropped window's destroy waits in the
+            // queue for the next request that flushes it.
+            surface.window.set_visible(false);
+        }
+        self.repaint_at.lock().unwrap().remove(&viewport);
+        self.focus_events.retain(|(w, _)| *w != id);
+        if self.focused == Some(id) {
+            self.focused = None;
+            if let Some(session) = self.session() {
+                session.focus_lost();
+            }
+        }
+        if let Some(surface) = self.main_surface() {
+            surface.window.request_redraw();
+        }
+        self.sync_shortcuts();
+        self.sync_shown();
+    }
+
+    /// Every window but the main one closed, before the session ends.
+    fn close_popouts(&mut self, event_loop: &ActiveEventLoop) {
+        let popouts: Vec<WindowId> = self.windows.keys().copied().filter(|id| Some(*id) != self.main).collect();
+        for id in popouts {
+            self.close_window(event_loop, id, false);
+        }
+    }
+
+    /// Runs `f` on the session with a `Host` for window `id`, if there is a
+    /// session and the window is open.
+    fn with_host<R>(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        id: WindowId,
+        f: impl FnOnce(&mut Session, &mut Host, &egui::Context) -> R,
+    ) -> Option<R> {
+        let inhibitor = self.inhibitor(id);
+        let focused = self.focused == Some(id);
+        let Screen::Session(session) = &mut self.screen else {
+            return None;
+        };
+        let surface = self.windows.get_mut(&id)?;
+        let window = Arc::clone(&surface.window);
+        let mut host = Host {
+            window: &window,
+            viewport: surface.viewport,
+            winit: &mut surface.winit,
+            event_loop,
+            focused,
+            inhibitor,
+            platform: self.platform,
+            pointer: surface.pointer,
+            output: surface.output.clone(),
+            clipboard: self.clipboard.as_ref(),
+        };
+        Some(f(session, &mut host, &self.egui))
     }
 
     /// Back to the dialog, filled in with what was connected to, and told
@@ -835,6 +1008,7 @@ impl App {
         let Some(main) = self.main else {
             return;
         };
+        self.close_popouts(event_loop);
         let inhibitor = self.inhibitor(main);
         let focused = self.focused == Some(main);
         let Some(surface) = self.windows.get_mut(&main) else {
@@ -856,6 +1030,7 @@ impl App {
                 inhibitor,
                 platform: self.platform,
                 pointer: surface.pointer,
+                output: surface.output.clone(),
                 clipboard: self.clipboard.as_ref(),
             };
             self.settings = session.settings;
@@ -870,6 +1045,7 @@ impl App {
     }
 
     fn close(&mut self, event_loop: &ActiveEventLoop) {
+        self.close_popouts(event_loop);
         if let Some(main) = self.main {
             let inhibitor = self.inhibitor(main);
             let focused = self.focused == Some(main);
@@ -886,6 +1062,7 @@ impl App {
                         inhibitor,
                         platform: self.platform,
                         pointer: surface.pointer,
+                        output: surface.output.clone(),
                         clipboard: self.clipboard.as_ref(),
                     };
                     let teardown = session.shutdown(&self.egui, &mut host);
@@ -914,7 +1091,8 @@ impl App {
         if self.focus_events.is_empty() {
             return;
         }
-        let events = std::mem::take(&mut self.focus_events);
+        let mut events = std::mem::take(&mut self.focus_events);
+        events.retain(|(id, _)| self.windows.contains_key(id));
         let (now, change) = resolve_focus(self.focused, &events);
         self.focused = now;
         // egui hears of each window's own change; the session only of the
@@ -925,6 +1103,14 @@ impl App {
             FocusChange::Lost(from) => (Some(from), None, Some((from, false))),
             FocusChange::Moved { from, to } => {
                 log::debug!("the focus moved between our windows; nothing let go of");
+                // The capture goes with it in one step, carrying the
+                // buttons held, rather than let go of in one window's frame
+                // and taken in the other's.
+                if let (Screen::Session(session), Some(f), Some(t)) =
+                    (&mut self.screen, self.windows.get(&from), self.windows.get(&to))
+                {
+                    session.hand_over_capture((&f.window, f.viewport), (&t.window, t.viewport), self.platform, t.pointer);
+                }
                 (Some(from), Some(to), None)
             }
         };
@@ -948,6 +1134,7 @@ impl App {
                     inhibitor,
                     platform: self.platform,
                     pointer: surface.pointer,
+                    output: surface.output.clone(),
                     clipboard: self.clipboard.as_ref(),
                 };
                 session.focus(focused, &mut host);
@@ -1021,6 +1208,12 @@ impl ApplicationHandler<Wake> for App {
             return;
         };
         match &event {
+            // A pop-out closed by the window manager is given back, as its
+            // Return does; the main window closed is the end of it all.
+            WindowEvent::CloseRequested if Some(id) != self.main => {
+                self.close_window(event_loop, id, true);
+                return;
+            }
             WindowEvent::CloseRequested => {
                 self.close(event_loop);
                 return;
@@ -1035,7 +1228,11 @@ impl ApplicationHandler<Wake> for App {
                 if let Some(surface) = self.windows.get_mut(&id) {
                     surface.surface = None;
                 }
-                self.close(event_loop);
+                if Some(id) != self.main {
+                    self.close_window(event_loop, id, true);
+                } else {
+                    self.close(event_loop);
+                }
                 return;
             }
             WindowEvent::RedrawRequested => {
@@ -1054,10 +1251,15 @@ impl ApplicationHandler<Wake> for App {
                     }
                 }
                 if let Screen::Session(session) = &mut self.screen {
-                    session.resized();
+                    session.resized(Some(id) == self.main);
                 }
             }
-            WindowEvent::Moved(_) => {
+            WindowEvent::Moved(_) | WindowEvent::ScaleFactorChanged { .. } => {
+                // Moved to another output, or its output went away and the
+                // display server re-homed it: which one it is now.
+                if let Some(surface) = self.windows.get_mut(&id) {
+                    surface.output = window.current_monitor().and_then(|m| m.name());
+                }
                 if let Screen::Session(session) = &mut self.screen {
                     session.refence();
                 }
@@ -1066,8 +1268,12 @@ impl ApplicationHandler<Wake> for App {
                 // On X11 the keyboard grab makes focus events of its own,
                 // which are not the focus moving (see `x11.rs`): neither
                 // the session nor egui hears of them.
-                if !*focused && self.keyboard.as_ref().is_some_and(|k| k.focus_still_ours(window.inner_size())) {
-                    log::debug!("X11: a focus-out from our own keyboard grab; still focused");
+                // Asked of every window of ours: the focus gone from one to
+                // another is not the process losing it either, and the
+                // focus-in that says where it went is enough.
+                let ours: Vec<&Window> = self.windows.values().map(|s| &*s.window).collect();
+                if !*focused && self.keyboard.as_ref().is_some_and(|k| k.focus_still_ours(&ours)) {
+                    log::debug!("X11: a focus-out to our own keyboard grab or another of our windows; still ours");
                     return;
                 }
                 // Resolved with the rest of this turn's in `about_to_wait`,

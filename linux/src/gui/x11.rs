@@ -226,29 +226,45 @@ impl Keyboard {
         self.retry_at.filter(|_| self.wanted && !self.held)
     }
 
-    /// Whether the X focus is still this window although winit said
-    /// otherwise: the focus is the window itself, or PointerRoot with the
-    /// pointer inside it. Two round trips, and only on a focus-out while
-    /// the grab is held.
-    pub fn focus_still_ours(&self, size: PhysicalSize<u32>) -> bool {
+    /// Where the grab is as `window`'s overlay should say it: the grab is
+    /// the client's, so a window it is not on says so rather than taking
+    /// another window's "grabbed" for its own.
+    pub fn state_in(&self, window: &Window) -> &'static str {
+        if self.held && window_id(window) != Some(self.window) {
+            return "on another window";
+        }
+        self.state()
+    }
+
+    /// Whether the X focus is still one of `ours` although winit said
+    /// otherwise: the focus is one of our windows, or PointerRoot with the
+    /// pointer inside one. Any of them, and not only the one the grab is
+    /// on: a focus-out from one window of ours to another is a move, which
+    /// the window resolves as one (see `resolve_focus`), and not the
+    /// process losing the focus. Two round trips, and only on a focus-out
+    /// while the grab is held.
+    pub fn focus_still_ours(&self, ours: &[&Window]) -> bool {
         if !self.held {
             return false;
         }
         let Some(focus) = self.conn.get_input_focus().ok().and_then(|c| c.reply().ok()) else {
             return false;
         };
-        if focus.focus == self.window {
+        let ids: Vec<(u32, PhysicalSize<u32>)> =
+            ours.iter().filter_map(|w| Some((window_id(w)?, w.inner_size()))).collect();
+        if ids.iter().any(|&(id, _)| id == focus.focus) {
             return true;
         }
         if focus.focus == u32::from(InputFocus::POINTER_ROOT) {
-            let Some(p) = self.conn.query_pointer(self.window).ok().and_then(|c| c.reply().ok()) else {
-                return false;
-            };
-            return p.same_screen
-                && p.win_x >= 0
-                && p.win_y >= 0
-                && (p.win_x as u32) < size.width
-                && (p.win_y as u32) < size.height;
+            return ids.iter().any(|&(id, size)| {
+                self.conn.query_pointer(id).ok().and_then(|c| c.reply().ok()).is_some_and(|p| {
+                    p.same_screen
+                        && p.win_x >= 0
+                        && p.win_y >= 0
+                        && (p.win_x as u32) < size.width
+                        && (p.win_y as u32) < size.height
+                })
+            });
         }
         false
     }
@@ -316,6 +332,19 @@ impl Fence {
             }
         }
         Some(Fence { conn, window: raw_window, barriers: Vec::new(), around: None })
+    }
+
+    /// The barriers are to be on `window` from now on, one of this
+    /// client's: the fence is the session's, one for every window, and
+    /// goes with the capture to whichever window holds it. Lowered from
+    /// where they were; `raise` puts them up around the new one.
+    pub fn retarget(&mut self, window: &Window) {
+        if let Some(id) = window_id(window)
+            && id != self.window
+        {
+            self.lower();
+            self.window = id;
+        }
     }
 
     /// Barriers on the window's edges as it is now, moved there if they

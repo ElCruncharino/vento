@@ -12,8 +12,17 @@
 //! which of the far end's monitors it shows, where its toolbar sits and
 //! whether the pointer is on it, whether the pointer is over its desktop,
 //! the cursor its window was last given, and its own frame counts and
-//! latencies. There is one pane today, the main window's; a pane is keyed
-//! by its window's egui viewport.
+//! latencies. A pane is keyed by its window's egui viewport.
+//!
+//! The main window's pane is there for the whole session. The others are
+//! pop-outs: one of the far end's monitors in a window of its own, opened
+//! from the main window's toolbar (Pop out, which moves the main window on
+//! to the next monitor; or Pop out all, a window per monitor) and closed
+//! by their own (Return, or the window manager's close, either of which
+//! gives the monitor back to the main window). A pop-out's toolbar has
+//! what is a window's own — the scale, the monitor, fullscreen — and view
+//! only, which is the session's; the panel, the prompts and the
+//! disconnect are the main window's alone.
 //!
 //! A child of the session's module, though a file beside it, so that a
 //! pane's frame can read and drive the session's state as it did when the
@@ -23,17 +32,17 @@ use super::super::cursor::{Key, Native};
 use super::super::desktop::Desktop;
 use super::super::hud::{self, Rate};
 use super::super::icons;
-use super::super::panel::Snapshot;
 use super::super::toolbar::{self, Placement};
 use super::super::view::{Layout, ScaleMode, View};
 use super::super::Host;
-use super::{Capture, LEFT, MIDDLE, NOTCH_POINTS, RIGHT, Session, on_off};
+use super::{Capture, LEFT, MIDDLE, NOTCH_POINTS, RIGHT, Session, WindowOp, on_off};
 use crate::backend::Monitor;
 use egui::{
-    Color32, CursorIcon, Frame, Id, LayerId, Margin, Order, PointerButton, Pos2, Rect, Response, RichText, Sense,
-    Stroke, Vec2, ViewportId, pos2, vec2,
+    Align2, Color32, CursorIcon, Frame, Id, LayerId, Margin, Order, PointerButton, Pos2, Rect, Response, RichText,
+    Sense, Stroke, Vec2, ViewportId, pos2, vec2,
 };
 use std::time::{Duration, Instant};
+use winit::monitor::MonitorHandle;
 use winit::window::Fullscreen;
 
 /// A pane is known by its window's egui viewport: the root one for the
@@ -81,6 +90,45 @@ impl MonitorKey {
     }
 }
 
+/// What became of a pane's monitor when the far end's layout was read again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Rebound {
+    /// Still there (or the pane shows the whole desktop).
+    Kept,
+    /// Gone: the monitor that was `index` in the list.
+    Gone(usize),
+}
+
+/// The main window's monitor once monitor `popped` of `count` has been
+/// popped out of it: the next one after it, going round, that no pop-out
+/// shows (`shown`), or the whole desktop (`None`) once every monitor has a
+/// window of its own.
+pub fn next_free(popped: usize, count: usize, shown: &[usize]) -> Option<usize> {
+    (1..count).map(|k| (popped + k) % count).find(|i| !shown.contains(i))
+}
+
+/// Pop out all: for each monitor not yet in a window of its own (`free`,
+/// in the far end's order, the first of which the main window keeps), the
+/// local output it goes fullscreen on, if any. Paired by position, the far
+/// end's monitors (`monitors`, their top left corners) and the local
+/// outputs (`outputs`, likewise) each taken left to right and then top to
+/// bottom, so that the leftmost goes on the leftmost; only with more than
+/// one output, since one would be covered by every window in turn, and a
+/// monitor past the last output stays a window.
+pub fn plan_all(monitors: &[(i32, i32)], free: &[usize], outputs: &[(i32, i32)]) -> Vec<(usize, Option<usize>)> {
+    let mut by_place: Vec<usize> = free.to_vec();
+    by_place.sort_by_key(|&i| monitors.get(i).map(|&(x, y)| (x, y)));
+    let mut out_by_place: Vec<usize> = (0..outputs.len()).collect();
+    out_by_place.sort_by_key(|&i| outputs[i]);
+    free.iter()
+        .map(|&m| {
+            let rank = by_place.iter().position(|&i| i == m).expect("from free");
+            let output = (outputs.len() > 1).then(|| out_by_place.get(rank).copied()).flatten();
+            (m, output)
+        })
+        .collect()
+}
+
 /// Whether `pane` may send pointer events while `owner` holds the pointer:
 /// a button pressed in one window and dragged across another is the first
 /// window's until it is let go of, and the second sends nothing meanwhile.
@@ -117,6 +165,9 @@ pub struct Pane {
     hovered: bool,
     /// The far end's cursor as this window's own.
     pub native: Native,
+    /// The desktop is drawn one to one here, as of the last frame: the
+    /// texture is sampled nearest only while every window draws it so.
+    exact: bool,
     /// The shape the window's cursor should be this frame, if the far
     /// end's: the software cursor setting off, absolute mode, the pointer
     /// over the desktop, and a shape to show.
@@ -137,11 +188,11 @@ pub struct Pane {
 }
 
 impl Pane {
-    pub fn new(id: PaneId, placement: Placement) -> Pane {
+    pub fn new(id: PaneId, placement: Placement, monitor: Option<MonitorKey>) -> Pane {
         Pane {
             id,
             view: View::default(),
-            monitor: None,
+            monitor,
             placement,
             drag_from: None,
             toolbar_size: vec2(0.0, 40.0),
@@ -149,6 +200,7 @@ impl Pane {
             opened: Instant::now(),
             hovered: false,
             native: Native::default(),
+            exact: true,
             native_key: None,
             frames: 0,
             fps: Rate::default(),
@@ -181,10 +233,32 @@ impl Pane {
         self.native.reset(window);
     }
 
-    /// The far end's layout was replaced (a new desktop size): the pane
-    /// goes back to the whole desktop.
-    pub fn desktop_changed(&mut self) {
-        self.monitor = None;
+    /// Which of the far end's monitors the pane shows, if one.
+    pub fn monitor(&self) -> Option<MonitorKey> {
+        self.monitor
+    }
+
+    /// A pop-out's monitor, given back: shown here, if this pane shows a
+    /// monitor at all (one showing the whole desktop has it already).
+    pub fn give_back(&mut self, monitor: MonitorKey) {
+        if self.monitor.is_some() {
+            self.monitor = Some(monitor);
+            self.view.pan = Vec2::ZERO;
+        }
+    }
+
+    /// The pane's monitor found again in `monitors`, the far end's layout
+    /// as it is now (see `MonitorKey::find`); one that is gone leaves the
+    /// pane on the whole desktop, and says so.
+    pub fn rebind(&mut self, monitors: &[Monitor]) -> Rebound {
+        let Some(key) = self.monitor else {
+            return Rebound::Kept;
+        };
+        self.monitor = key.find(monitors);
+        match self.monitor {
+            Some(_) => Rebound::Kept,
+            None => Rebound::Gone(key.index),
+        }
     }
 
     /// This pane's frame: the desktop, the pointer over it, the toolbar,
@@ -194,12 +268,13 @@ impl Pane {
         let ctx = &root.ctx().clone();
         s.sync_capture(host);
 
-        if self.main() {
-            let title = s.title();
-            if title != self.title_set(ctx) {
-                host.window.set_title(&title);
-                ctx.data_mut(|d| d.insert_temp(self.title_id(), title));
-            }
+        // Each window names the monitor it shows, so that a window list or
+        // a task bar tells the pop-outs apart.
+        let count = s.snapshot.facts.monitors.len();
+        let title = s.title_of(self.monitor.map(|k| k.index).filter(|_| count > 1));
+        if title != self.title_set(ctx) {
+            host.window.set_title(&title);
+            ctx.data_mut(|d| d.insert_temp(self.title_id(), title));
         }
 
         let pixels_per_point = ctx.pixels_per_point();
@@ -214,11 +289,21 @@ impl Pane {
                     s.waiting(ui);
                     return;
                 };
-                let source = self.source_rect(&s.snapshot, width, height);
+                let source = self.source_rect(width, height);
                 let l = self.view.layout(source, window, pixels_per_point);
+                // Nearest only while every window draws the desktop one to
+                // one, since the sampler is the texture's and not a
+                // window's: two windows at different scales asking for
+                // their own would change it back and forth every frame,
+                // re-reading a pixel of every tile each time. One drawn
+                // scaled anywhere makes it linear everywhere, which at one
+                // to one, on whole device pixels, samples each pixel's
+                // centre and so draws the same picture.
                 let exact = (l.scale * pixels_per_point - 1.0).abs() < 1e-3;
+                self.exact = exact;
+                let everywhere = exact && s.panes.iter().all(|p| p.exact);
                 let desktop = s.desktop.as_mut().expect("checked above");
-                desktop.set_exact(ctx, &*s.backend, exact);
+                desktop.set_exact(ctx, &*s.backend, everywhere);
                 desktop.paint(ui.painter(), &l);
                 response = Some(ui.interact(window, Id::new("desktop"), Sense::click_and_drag()));
                 layout = Some(l);
@@ -259,18 +344,28 @@ impl Pane {
         }
         if self.main() {
             s.prompt(ctx);
+            if let Some((text, until)) = &s.notice {
+                let now = Instant::now();
+                if now < *until {
+                    notice(ctx, text, Align2::CENTER_BOTTOM);
+                    ctx.request_repaint_after(*until - now);
+                } else {
+                    s.notice = None;
+                }
+            }
+        } else if !s.prompts.is_empty() {
+            // The prompt is the main window's, which has been asked to be
+            // brought to attention (see `App::draw`).
+            notice(ctx, "Answer in the main window", Align2::CENTER_CENTER);
         }
     }
 
-    /// The desktop pixels on screen: one monitor's, or all of them. A
-    /// monitor that has moved in the far end's list is followed there, and
-    /// one that has gone leaves the whole desktop.
-    fn source_rect(&mut self, snapshot: &Snapshot, width: usize, height: usize) -> Rect {
+    /// The desktop pixels on screen: one monitor's, or all of them. The
+    /// session follows a monitor that has moved in the far end's list
+    /// before the frame (`Session::rebind`); a rectangle that has fallen
+    /// off the desktop shows the whole of it.
+    fn source_rect(&self, width: usize, height: usize) -> Rect {
         let whole = Rect::from_min_size(Pos2::ZERO, vec2(width as f32, height as f32));
-        let Some(key) = self.monitor else {
-            return whole;
-        };
-        self.monitor = key.find(&snapshot.facts.monitors);
         match self.monitor {
             Some(MonitorKey { rect: (x, y, w, h), .. }) => {
                 let r = Rect::from_min_size(pos2(x as f32, y as f32), vec2(w as f32, h as f32)).intersect(whole);
@@ -322,11 +417,23 @@ impl Pane {
         let events = ctx.input(|i| i.events.clone());
         let (_, _, mut mask) = s.last_pointer;
         let mut sent = false;
+        let desktop = s.desktop.as_ref().map(Desktop::size).unwrap_or((0, 0));
+        // With a button held the pointer is this window's even outside it
+        // (the display server's implicit grab, and `may_send`), and is
+        // carried on past its edges onto the rest of the desktop; without
+        // one it stays on the monitor shown, pressing its edge.
+        let at_point = |p: Pos2, mask: i32| {
+            if mask != 0 {
+                layout.desktop_beyond(p, desktop)
+            } else {
+                layout.desktop_at(p)
+            }
+        };
         if over && let Some(pos) = pos {
-            let mut at = layout.desktop_at(pos);
+            let mut at = at_point(pos, mask);
             for event in &events {
                 match event {
-                    egui::Event::PointerMoved(p) => at = layout.desktop_at(*p),
+                    egui::Event::PointerMoved(p) => at = at_point(*p, mask),
                     egui::Event::PointerButton {
                         pos: p,
                         button,
@@ -339,7 +446,7 @@ impl Pane {
                             PointerButton::Secondary => RIGHT,
                             _ => continue,
                         };
-                        at = layout.desktop_at(*p);
+                        at = at_point(*p, mask);
                         mask = if *pressed { mask | bit } else { mask & !bit };
                     }
                     egui::Event::MouseWheel { unit, delta, .. } => {
@@ -404,7 +511,10 @@ impl Pane {
         let left = self.placement.left(screen, width);
         let at_edge = pointer.is_some_and(|p| toolbar::reveals(screen, left, width, fullscreen, ctx.pixels_per_point(), p));
         let reveal = self.opened.elapsed() < TOOLBAR_REVEAL;
-        let show = at_edge || self.toolbar_hovered || self.drag_from.is_some() || reveal || s.disconnecting.is_some();
+        // A menu of the toolbar's (Pop out's) keeps it out while it is
+        // open, as the pointer on it would: the menu hangs from it.
+        let menu = egui::Popup::is_any_open(ctx);
+        let show = at_edge || self.toolbar_hovered || menu || self.drag_from.is_some() || reveal || s.disconnecting.is_some();
         let style = ctx.global_style();
         // Square, and flush with the top edge: nothing between it and the
         // edge for the pointer to fall into. Flat, too: a popup's frame
@@ -487,7 +597,7 @@ impl Pane {
         self.toolbar_size = response.rect.size();
         // A drag that has run off the toolbar is still the toolbar's, and
         // so is the keyboard while it lasts.
-        self.toolbar_hovered = response.contains_pointer() || self.drag_from.is_some();
+        self.toolbar_hovered = response.contains_pointer() || self.drag_from.is_some() || menu;
     }
 
     /// The toolbar's buttons: Material Symbols and no words, each with its
@@ -495,6 +605,10 @@ impl Pane {
     /// its icon — one per scale mode, all monitors or one, view only on or
     /// off — and the tooltip says the rest (which monitor or display);
     /// Info and view only are highlighted while they are on.
+    ///
+    /// The main window's: Scale, Monitor, Pop out, View only, Info,
+    /// Fullscreen, Disconnect. A pop-out's: Scale, Monitor, View only,
+    /// Fullscreen, Return.
     fn toolbar_items(&mut self, s: &mut Session, ui: &mut egui::Ui, host: &mut Host) {
         let connected = s.connected();
         let mode = self.view.mode;
@@ -531,6 +645,9 @@ impl Pane {
                 self.monitor = next_monitor(current, count).map(|i| MonitorKey::of(i, &facts.monitors[i]));
                 self.view.pan = Vec2::ZERO;
             }
+            if self.main() {
+                self.pop_out_menu(s, ui, host, connected);
+            }
         } else if facts.displays.len() > 1 {
             let count = facts.displays.len();
             let next = (facts.display + 1).rem_euclid(count as i32);
@@ -566,10 +683,11 @@ impl Pane {
             s.set_option("ViewOnly", if view_only { "false" } else { "true" });
         }
 
-        if ui
-            .add_enabled(connected, toggle(ui.visuals(), icons::INFO, s.panel.open))
-            .on_hover_text("Info: the connection's facts, and the settings it can still be told")
-            .clicked()
+        if self.main()
+            && ui
+                .add_enabled(connected, toggle(ui.visuals(), icons::INFO, s.panel.open))
+                .on_hover_text("Info: the connection's facts, and the settings it can still be told")
+                .clicked()
         {
             s.panel.open = !s.panel.open;
         }
@@ -590,6 +708,17 @@ impl Pane {
                 .set_fullscreen((!fullscreen).then_some(Fullscreen::Borderless(None)));
         }
 
+        if !self.main() {
+            if ui
+                .add(icon_only(icons::PIP_EXIT))
+                .on_hover_text("Return: close this window, and give its monitor back to the main window")
+                .clicked()
+            {
+                s.ops.push(WindowOp::Close { pane: self.id, returned: true });
+            }
+            return;
+        }
+
         if ui
             .add_enabled(s.disconnecting.is_none() && s.closed.is_none(), icon_only(icons::LINK_OFF))
             .on_hover_text(if s.relative {
@@ -603,13 +732,97 @@ impl Pane {
         }
     }
 
+    /// The main window's Pop out, beside Monitor: a menu, since where a
+    /// window goes is a choice — a window of its own, or fullscreen on one
+    /// of the local outputs, which on Wayland is the only way there is to
+    /// say where a window goes (a Wayland client cannot place a window,
+    /// only ask for it fullscreen on an output); and all of the monitors
+    /// at once. One monitor only while this window shows one.
+    fn pop_out_menu(&mut self, s: &mut Session, ui: &mut egui::Ui, host: &mut Host, connected: bool) {
+        let response = ui.add_enabled(connected, icon_only(icons::OPEN_IN_NEW)).on_hover_text(
+            "Pop out: a monitor of the far end's in a window of its own, or every monitor in one each",
+        );
+        let outputs: Vec<MonitorHandle> = host.event_loop.available_monitors().collect();
+        egui::Popup::menu(&response).show(|ui| {
+            match self.monitor {
+                Some(key) => {
+                    let n = key.index + 1;
+                    if ui
+                        .button(format!("Pop out monitor {n} (window)"))
+                        .on_hover_text("In a window of its own; this window moves on to the next monitor")
+                        .clicked()
+                    {
+                        self.pop_out(s, key, None);
+                    }
+                    for (i, output) in outputs.iter().enumerate() {
+                        if ui
+                            .button(format!("Pop out monitor {n} to output {} ({})", i + 1, output_name(output)))
+                            .on_hover_text("Fullscreen on that output")
+                            .clicked()
+                        {
+                            self.pop_out(s, key, Some(output.clone()));
+                        }
+                    }
+                }
+                None => {
+                    ui.label(RichText::new("Choose a monitor with Monitor to pop out one").weak());
+                }
+            }
+            ui.separator();
+            let placed = if outputs.len() > 1 { ", fullscreen on the outputs in order" } else { "" };
+            if ui
+                .button("Pop out all")
+                .on_hover_text(format!("A window for every monitor, this one keeping the first{placed}"))
+                .clicked()
+            {
+                self.pop_out_all(s, host, &outputs);
+            }
+        });
+    }
+
+    /// `key`, this window's monitor, popped out to a window of its own
+    /// (fullscreen on `output`, if given), and this window on to the next
+    /// monitor that has no window.
+    fn pop_out(&mut self, s: &mut Session, key: MonitorKey, output: Option<MonitorHandle>) {
+        s.pop_out(key, output);
+        let monitors = &s.snapshot.facts.monitors;
+        let shown: Vec<usize> = s.panes.iter().filter_map(|p| p.monitor.map(|k| k.index)).collect();
+        self.monitor = next_free(key.index, monitors.len(), &shown).map(|i| MonitorKey::of(i, &monitors[i]));
+        self.view.pan = Vec2::ZERO;
+    }
+
+    /// A window for every monitor that has none: this one keeps the first,
+    /// and each goes fullscreen on a local output in order where there are
+    /// outputs enough (see `plan_all`).
+    fn pop_out_all(&mut self, s: &mut Session, host: &mut Host, outputs: &[MonitorHandle]) {
+        let monitors = s.snapshot.facts.monitors.clone();
+        let shown: Vec<usize> = s.panes.iter().filter_map(|p| p.monitor.map(|k| k.index)).collect();
+        let free: Vec<usize> = (0..monitors.len()).filter(|i| !shown.contains(i)).collect();
+        let corners: Vec<(i32, i32)> = monitors.iter().map(|m| (m.x, m.y)).collect();
+        let places: Vec<(i32, i32)> = outputs.iter().map(|o| (o.position().x, o.position().y)).collect();
+        for (k, (monitor, output)) in plan_all(&corners, &free, &places).into_iter().enumerate() {
+            let key = MonitorKey::of(monitor, &monitors[monitor]);
+            let output = output.map(|i| outputs[i].clone());
+            if k == 0 {
+                self.monitor = Some(key);
+                self.view.pan = Vec2::ZERO;
+                if let Some(output) = output {
+                    host.window.set_fullscreen(Some(Fullscreen::Borderless(Some(output))));
+                }
+            } else {
+                s.pop_out(key, output);
+            }
+        }
+    }
+
     // ---- the debug overlay -------------------------------------------------
 
     /// `SessionHud.draw`'s lines, in its order where they apply here: the
-    /// state and the pixel path, the cursor and the view, the physical
-    /// mouse and keyboard, and the things this window has that the phone
-    /// has not. The session's, with this pane's frame rate, uploads, view
-    /// and hover in them.
+    /// state and the pixel path, the cursor, the physical mouse and
+    /// keyboard, and the things this window has that the phone has not —
+    /// the session's, the same in every window — and under them this
+    /// window's own: which window it is and what it shows, on which output,
+    /// its frame rate and uploads, its view, its shortcuts and the capture.
     fn hud_lines(&mut self, s: &mut Session, host: &Host, layout: Option<&Layout>, pixels_per_point: f32) -> Vec<String> {
         let now = Instant::now();
         self.frames += 1;
@@ -627,7 +840,7 @@ impl Pane {
         };
         let state = format!("{:?}", s.mailbox.state()).to_ascii_lowercase();
         let first = format!(
-            "state {state}  desktop {width}x{height}  fps {fps}  dmg {} ({damage_rate}/s)  tex {per_frame}/frame  rd {}  last {}  clip {clip}",
+            "state {state}  desktop {width}x{height}  dmg {} ({damage_rate}/s)  rd {}  last {}  clip {clip}",
             s.damage,
             hud::bytes_per_second(read_rate),
             last.map(|r| format!("{},{} {}x{}", r.x, r.y, r.width, r.height))
@@ -656,11 +869,12 @@ impl Pane {
             }
             None => "scale -".to_string(),
         };
-        let second = format!("cursor {cursor}  btn {}  {view}", hud::buttons_name(mask));
+        let second = format!("cursor {cursor}  btn {}", hud::buttons_name(mask));
 
         let mouse = match s.capture {
-            Some((_, Capture::Locked)) => "captured (locked)",
-            Some((_, Capture::Centred)) => "captured (centred)",
+            Some((pane, Capture::Locked)) if pane == self.id => "captured here (locked)",
+            Some((pane, Capture::Centred)) if pane == self.id => "captured here (centred)",
+            Some(_) => "captured in another window",
             None if self.hovered => "hover",
             None => "-",
         };
@@ -700,9 +914,8 @@ impl Pane {
             }
         };
         let fourth = format!(
-            "{} inhibitor {}  follow {follow}  shape {shape}  clipboard out {} in {}",
+            "{}  follow {follow}  shape {shape}  clipboard out {} in {}",
             host.platform.name(),
-            host.inhibitor,
             on_off(s.settings.clipboard_out),
             on_off(s.settings.clipboard_in)
         );
@@ -715,7 +928,19 @@ impl Pane {
             s.hud.pointer.summary(),
             s.hud.keys.summary()
         );
-        vec![first, second, third, fourth, fifth]
+        let count = s.snapshot.facts.monitors.len();
+        let window = format!(
+            "window {}  monitor {}  output {}  {}  fps {fps}  tex {per_frame}/frame  ppp {pixels_per_point:.2}",
+            if self.main() { "main" } else { "pop-out" },
+            match self.monitor {
+                Some(k) => format!("{} of {count}", k.index + 1),
+                None => "all".to_string(),
+            },
+            host.output.as_deref().unwrap_or("-"),
+            if host.focused { "focused" } else { "unfocused" },
+        );
+        let shortcuts = format!("{view}  inhibitor {}", host.inhibitor);
+        vec![first, second, third, fourth, fifth, window, shortcuts]
     }
 }
 
@@ -742,6 +967,24 @@ fn draw_cursor(s: &Session, ctx: &egui::Context, response: &Response) {
             Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)),
             Color32::WHITE,
         );
+}
+
+/// A local output in words: its name where it has one.
+fn output_name(output: &MonitorHandle) -> String {
+    output.name().unwrap_or_else(|| "unnamed".to_string())
+}
+
+/// A line of text over the desktop, in a box, at `align`: a notice in the
+/// main window, or a pop-out pointing at the main window's prompt.
+fn notice(ctx: &egui::Context, text: &str, align: Align2) {
+    let offset = vec2(0.0, if align == Align2::CENTER_BOTTOM { -48.0 } else { 0.0 });
+    egui::Area::new(Id::new("notice"))
+        .order(Order::Foreground)
+        .anchor(align, offset)
+        .interactable(false)
+        .show(ctx, |ui| {
+            Frame::popup(&ctx.global_style()).show(ui, |ui| ui.label(text));
+        });
 }
 
 /// A toolbar icon, at the toolbar's size.
@@ -899,5 +1142,51 @@ mod tests {
         assert!(may_send(owner_after(main, 0), other));
         // Moving with nothing pressed holds nothing.
         assert_eq!(owner_after(other, 0), None);
+    }
+
+    #[test]
+    fn a_popped_out_monitor_moves_the_main_window_on_to_the_next_free_one() {
+        // Two monitors, the main window on the first: popped out, the main
+        // window shows the second.
+        assert_eq!(next_free(0, 2, &[0]), Some(1));
+        // Going round: the last popped out, the first is next.
+        assert_eq!(next_free(2, 3, &[2]), Some(0));
+        // One that already has a window is passed over.
+        assert_eq!(next_free(0, 3, &[0, 1]), Some(2));
+        // Every monitor in a window of its own: the whole desktop.
+        assert_eq!(next_free(1, 2, &[0, 1]), None);
+    }
+
+    #[test]
+    fn pop_out_all_pairs_monitors_and_outputs_left_to_right() {
+        let side_by_side = [(0, 0), (1280, 0)];
+        // Two outputs listed right one first: still the left monitor on the
+        // left output.
+        assert_eq!(plan_all(&side_by_side, &[0, 1], &[(1920, 0), (0, 0)]), vec![(0, Some(1)), (1, Some(0))]);
+        // One output: nothing fullscreen, a window each.
+        assert_eq!(plan_all(&side_by_side, &[0, 1], &[(0, 0)]), vec![(0, None), (1, None)]);
+        // Three monitors on two outputs: the third stays a window.
+        let three = [(0, 0), (1280, 0), (2560, 0)];
+        assert_eq!(plan_all(&three, &[0, 1, 2], &[(0, 0), (1920, 0)]), vec![(0, Some(0)), (1, Some(1)), (2, None)]);
+        // A monitor already popped out is not planned again; the rest keep
+        // their places among the free ones.
+        assert_eq!(plan_all(&three, &[0, 2], &[(0, 0), (1920, 0)]), vec![(0, Some(0)), (2, Some(1))]);
+        // Listed out of order on the far end too: by place, not by list.
+        assert_eq!(plan_all(&[(1280, 0), (0, 0)], &[0, 1], &[(0, 0), (1920, 0)]), vec![(0, Some(1)), (1, Some(0))]);
+    }
+
+    #[test]
+    fn a_pane_s_gone_monitor_is_said_to_be_gone() {
+        let two = [monitor(0, 0, 1280, 800), monitor(1280, 0, 1280, 800)];
+        let mut pane = Pane::new(ViewportId::from_hash_of("pop-out"), Placement::default(), Some(MonitorKey::of(1, &two[1])));
+        // Still there, moved along the list by a screen added before it.
+        let three = [monitor(-1280, 0, 1280, 800), two[0], two[1]];
+        assert_eq!(pane.rebind(&three), Rebound::Kept);
+        assert_eq!(pane.monitor().map(|k| k.index), Some(2));
+        // Down to one screen of another shape: gone, from where it last was.
+        assert_eq!(pane.rebind(&[monitor(0, 0, 1920, 1080)]), Rebound::Gone(2));
+        assert_eq!(pane.monitor(), None);
+        // The whole desktop is never gone.
+        assert_eq!(pane.rebind(&[]), Rebound::Kept);
     }
 }

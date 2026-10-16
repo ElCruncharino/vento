@@ -194,6 +194,35 @@ impl Layout {
         )
     }
 
+    /// The desktop pixel under a point outside the window, during a drag
+    /// that began in it: the window's own mapping carried on past its edges
+    /// at the same scale, and clamped to the whole `desktop` (its width and
+    /// height) rather than to the monitor the window shows. A drag that
+    /// leaves a window showing one monitor for a window showing the one
+    /// beside it is still the first window's (it holds the pointer until
+    /// the buttons are up), and so it is this mapping that carries the far
+    /// end's pointer onto the next monitor rather than pressing it against
+    /// the edge of the first. Inside the window it is [`desktop_at`]'s.
+    ///
+    /// [`desktop_at`]: Layout::desktop_at
+    pub fn desktop_beyond(&self, pos: Pos2, desktop: (usize, usize)) -> (i32, i32) {
+        if self.window.contains(pos) {
+            return self.desktop_at(pos);
+        }
+        // By the device pixel's centre, as `desktop_at` maps, so that the
+        // two agree at the edge where one hands over to the other.
+        let ppp = self.pixels_per_point;
+        let axis = |pos: f32, min: f32, len: f32, source_min: f32, source_len: f32, whole: usize| -> i32 {
+            let pixel = ((pos - min) * ppp + 1e-3).floor();
+            let at = source_min + (pixel + 0.5) * source_len / (len * ppp).max(f32::EPSILON);
+            (at.floor() as i64).clamp(0, (whole as i64 - 1).max(0)) as i32
+        };
+        (
+            axis(pos.x, self.rect.min.x, self.rect.width(), self.source.min.x, self.source.width(), desktop.0),
+            axis(pos.y, self.rect.min.y, self.rect.height(), self.source.min.y, self.source.height(), desktop.1),
+        )
+    }
+
     /// The pan velocity a pointer at `pointer` asks for, in points per
     /// second: zero away from the edges, and towards an edge faster the
     /// nearer it is, in each direction the pan can still go. A pan already
@@ -394,5 +423,28 @@ mod tests {
         let layout = view.layout(desktop, window, 1.0);
         assert_eq!(layout.edge_velocity(pos2(640.0, 0.0)), vec2(0.0, -EDGE_SPEED));
         assert_eq!(layout.edge_velocity(pos2(0.0, 700.0)), vec2(0.0, EDGE_SPEED));
+    }
+
+    #[test]
+    fn a_drag_out_of_the_window_carries_on_onto_the_next_monitor() {
+        let mut view = View {
+            mode: ScaleMode::FitWidth,
+            ..View::default()
+        };
+        // The left of two 1280x800 monitors, shown at half size.
+        let layout = view.layout(rect(0.0, 0.0, 1280.0, 800.0), rect(0.0, 0.0, 640.0, 400.0), 1.0);
+        let desktop = (2560, 800);
+        // Inside the window: as ever.
+        assert_eq!(layout.desktop_beyond(pos2(10.0, 10.0), desktop), layout.desktop_at(pos2(10.0, 10.0)));
+        // Past its right edge: on into the right monitor at the same scale,
+        // where `desktop_at` would press against the left one's edge.
+        assert_eq!(layout.desktop_at(pos2(700.0, 100.0)), (1279, 201));
+        assert_eq!(layout.desktop_beyond(pos2(700.0, 100.0), desktop), (1401, 201));
+        // And held at the whole desktop's edges, not the monitor's.
+        assert_eq!(layout.desktop_beyond(pos2(5000.0, -50.0), desktop), (2559, 0));
+        assert_eq!(layout.desktop_beyond(pos2(-50.0, 900.0), desktop), (0, 799));
+        // The right monitor, dragged out leftwards: back onto the left one.
+        let layout = view.layout(rect(1280.0, 0.0, 1280.0, 800.0), rect(0.0, 0.0, 1280.0, 800.0), 1.0);
+        assert_eq!(layout.desktop_beyond(pos2(-100.0, 10.0), desktop), (1180, 10));
     }
 }
