@@ -52,6 +52,15 @@ import java.util.function.Consumer;
  * so the handle is taken out of circulation under {@link #pixels} before it is
  * freed.
  *
+ * <p>What is decided rather than shown is not here either: whether a far
+ * end's identity matches its pin, whether a first sight of one is pinned
+ * without asking, and what an RDP prompt's name starts with are
+ * {@code session::trust} and {@code session::credentials}, the Linux client's
+ * rules too, applied in the JNI layer. A question arrives here already worked
+ * out, to be shown; the pins themselves stay in {@link KnownHosts}, which that
+ * layer reads and writes through {@link #knownHostsPins} and
+ * {@link #knownHostsPin}.
+ *
  * <p>Events arrive on the protocol thread, through the {@code on…} methods
  * below, in the order the session said them. Damage arrives once per frame, as
  * one array of rectangles, and is handed to the listener a rectangle at a
@@ -111,10 +120,16 @@ public final class NativeBackend implements Backend {
         void answerCredentials(long handle, String userName, String password);
 
         /**
-         * The answer to {@link #onTrustNeeded}, {@link #onUnverified},
-         * {@link #onQuestion}, {@link #onMessage} or {@link #onSecurityNeeded}.
+         * The answer to {@link #onUnverified}, {@link #onQuestion},
+         * {@link #onMessage} or {@link #onSecurityNeeded}.
          */
         void answerTrust(long handle, boolean accept);
+
+        /**
+         * The answer to {@link #onTrustNeeded}: the session is answered
+         * {@code accept}, and {@code fingerprint} pinned where both are true.
+         */
+        void answerPin(long handle, String fingerprint, boolean accept, boolean remember);
 
         void disconnect(long handle);
 
@@ -207,28 +222,6 @@ public final class NativeBackend implements Backend {
         /** Words under a credentials prompt, or empty. */
         default String credentialsHint() {
             return "";
-        }
-
-        /** The user name a credentials prompt starts with, from the record's. */
-        default String credentialsUser(String userName) {
-            return userName;
-        }
-
-        /**
-         * What a pin is kept under: the address, unless an identity means
-         * something only together with something else.
-         */
-        default String pinnedAs(String address, Map<String, String> options) {
-            return address;
-        }
-
-        /**
-         * Whether an identity seen for the first time is pinned without asking:
-         * true only where something has already vouched for it, so a prompt
-         * would ask a question that has an answer. A change is always asked.
-         */
-        default boolean pinsFirstSight() {
-            return false;
         }
     }
 
@@ -663,14 +656,17 @@ public final class NativeBackend implements Backend {
      * Credentials are wanted. Answered through {@link Natives#answerCredentials}
      * with what was typed: what the protocol makes of a blank or a domain is
      * the session's to say.
+     *
+     * @param user what the box starts with: the record's name, with an RDP
+     *             domain written into it
      */
-    void onCredentialsNeeded(boolean needsUserName) {
+    void onCredentialsNeeded(boolean needsUserName, String user) {
         Log.i(tag, "credentials wanted (user name: " + needsUserName + ")");
         main.post(() -> {
             final Prompt.Handler h = prompts;
             final Prompt.Credentials prompt = new Prompt.Credentials(address,
                     hooks.credentialsHint(), needsUserName,
-                    needsUserName ? hooks.credentialsUser(userName) : "", true, "", "") {
+                    needsUserName ? user : "", true, "", "") {
                 @Override
                 protected void deliver(boolean ok, String user, String secret) {
                     final long session = handle;
@@ -689,25 +685,51 @@ public final class NativeBackend implements Backend {
     }
 
     /**
-     * The far end's identity, against what it was accepted with before: a
-     * match goes on without asking, from this thread, and anything else is a
-     * person's question — except a first sight a backend's {@link Hooks} says
-     * is already vouched for, which is pinned without one.
+     * The far end's identity did not match its pin, and somebody has to say
+     * whether to go on: what the JNI layer decided, with why. A match, and a
+     * first sight a backend's identity is vouched for at, never come here —
+     * they are answered there.
+     *
+     * <p>The interesting distinction is between "never seen" and "seen, and
+     * different now", which {@code identity} carries and a screen says the
+     * second of loudly. Answered through {@link Natives#answerPin}, which pins
+     * it when it was accepted with <em>remember</em> ticked.
+     *
+     * @param key             what it is pinned under: the address as written,
+     *                        or a RustDesk id with its network
+     * @param identity        a {@link Prompt.Trust.Identity}'s name
+     * @param matchingAddress the key it is pinned under elsewhere, or empty
      */
-    void onTrustNeeded(String fingerprint) {
-        final String key = hooks.pinnedAs(address, options);
-        if (KnownHosts.matches(context, key, fingerprint)) {
-            Log.i(tag, "identity matches the pin for " + key);
-            answerTrust(true);
-            return;
-        }
-        if (hooks.pinsFirstSight() && KnownHosts.pinned(context, key) == null) {
-            KnownHosts.pin(context, key, fingerprint);
-            Log.i(tag, "pinned " + key);
-            answerTrust(true);
-            return;
-        }
-        main.post(() -> KnownHosts.ask(context, key, fingerprint, prompts, this::answerTrust));
+    void onTrustNeeded(String key, String fingerprint, String identity, String matchingAddress) {
+        main.post(() -> {
+            final Prompt.Handler h = prompts;
+            final Prompt.Trust prompt = new Prompt.Trust(key,
+                    Prompt.Trust.Encryption.ENCRYPTED, Prompt.Trust.Identity.valueOf(identity),
+                    fingerprint, "", matchingAddress.isEmpty() ? null : matchingAddress) {
+                @Override
+                protected void deliver(boolean accept, boolean remember) {
+                    final long session = handle;
+                    if (session != 0) {
+                        natives.answerPin(session, fingerprint, accept, remember);
+                    }
+                }
+            };
+            if (h == null) {
+                prompt.cancel();
+            } else {
+                h.trust(prompt);
+            }
+        });
+    }
+
+    /** The pins, key then fingerprint, for the JNI layer to decide against. */
+    String[] knownHostsPins() {
+        return KnownHosts.pins(context);
+    }
+
+    /** A pin the JNI layer decided on: a first sight, or an answer. */
+    void knownHostsPin(String key, String fingerprint) {
+        KnownHosts.put(context, key, fingerprint);
     }
 
     /**
@@ -721,9 +743,10 @@ public final class NativeBackend implements Backend {
      * is not one. Nothing is remembered and it is asked every time. RustDesk
      * asks it of a peer with no key, and the two borrowed VNC clients of a TLS
      * with no certificate; the others have an identity or nothing to ask.
+     *
+     * @param key what an identity would have been pinned under
      */
-    void onUnverified(String why) {
-        final String key = hooks.pinnedAs(address, options);
+    void onUnverified(String key, String why) {
         Log.w(tag, "cannot verify " + key + ": " + why);
         main.post(() -> {
             final Prompt.Handler h = prompts;

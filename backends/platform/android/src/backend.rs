@@ -26,6 +26,13 @@
 //! the library's words, a message, RealVNC's security prompt) come through
 //! here like any other event.
 //!
+//! What is decided about a session rather than shown is decided here, by the
+//! rules the Linux client keeps too: a far end's identity against the pins
+//! (`session::trust`, over the phone's `known_hosts` preferences, which
+//! `NativeBackend` reads and writes for it), and the name an RDP credentials
+//! prompt starts with (`session::credentials`). What crosses to Java is the
+//! question, when there is one.
+//!
 //! The handle Java holds is a `Box<Handle>`: the backend, and the mailbox its
 //! events go through. Java retires the handle under its own lock before
 //! `destroy` frees it, so the drawing thread is never inside a pixel read of
@@ -49,9 +56,11 @@ use jni::strings::JNIStr;
 use jni::sys::{jboolean, jint, jlong, jvalue};
 use jni::{Env, JavaVM, NativeMethod, jni_sig, jni_str, native_method};
 use session::backend::{Backend, Credentials, Field};
-use session::events::{Event, Mailbox};
+use session::events::{Event, Identity, Mailbox};
 use session::kind::{Connect, Dirs, Kind, Platform};
 use session::options::Options;
+use session::trust::{self, Decision, Pinned};
+use std::cell::RefCell;
 use std::ffi::CStr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -157,16 +166,23 @@ struct Handle {
     /// Kept so that a handle outlives every event it could still deliver; the
     /// outlet holds only a weak reference back to it.
     _mailbox: Arc<Mailbox>,
+    /// Where an answer to a trust question is pinned through.
+    outlet: Arc<Outlet>,
 }
 
 /// SAFETY: `handle` must be one `create` returned that `destroy` has not been
 /// called for. Zero is the ordinary "already retired" case.
-unsafe fn backend<'a>(handle: jlong) -> Option<&'a dyn Backend> {
+unsafe fn handle<'a>(handle: jlong) -> Option<&'a Handle> {
     if handle == 0 {
         None
     } else {
-        Some(unsafe { &*(handle as *const Handle) }.backend.as_ref())
+        Some(unsafe { &*(handle as *const Handle) })
     }
+}
+
+/// SAFETY: as [`handle`].
+unsafe fn backend<'a>(h: jlong) -> Option<&'a dyn Backend> {
+    unsafe { handle(h) }.map(|h| h.backend.as_ref())
 }
 
 /// The table [`on_load`] registers, in [`surface::NATIVES`]' order. Each entry
@@ -198,6 +214,10 @@ pub const METHODS: &[NativeMethod] = &[
         error_policy = LogErrorAndDefault,
     },
     native_method! { fn answer_trust(handle: jlong, accept: jboolean), error_policy = LogErrorAndDefault },
+    native_method! {
+        fn answer_pin(handle: jlong, fingerprint: JString, accept: jboolean, remember: jboolean),
+        error_policy = LogErrorAndDefault,
+    },
     native_method! { fn disconnect(handle: jlong), error_policy = LogErrorAndDefault },
     native_method! { fn destroy(handle: jlong), error_policy = LogErrorAndDefault },
     native_method! {
@@ -293,13 +313,18 @@ fn create<'local>(
         }
     }
 
-    let outlet = Arc::new(Outlet::new(env, &events)?);
+    let address = string(env, &address)?.unwrap_or_default();
+    let user = string(env, &user_name)?.unwrap_or_default();
+
+    let asks = Asks {
+        pinned: trust::pinned_as(kind, &address, &o),
+        prompt_user: session::credentials::prompt_user(kind, &user),
+    };
+    let outlet = Arc::new(Outlet::new(env, &events, asks)?);
     let wake = Arc::clone(&outlet);
     let mailbox = Mailbox::new(Some(Box::new(move || wake.wake())));
     let _ = outlet.mailbox.set(Arc::downgrade(&mailbox));
 
-    let address = string(env, &address)?.unwrap_or_default();
-    let user = string(env, &user_name)?.unwrap_or_default();
     // Empty is not a password: something that looks like a stored secret
     // and is not one fails the connection instead of asking for the real one.
     let password = string(env, &password)?;
@@ -326,10 +351,14 @@ fn create<'local>(
         decoders: (module.decoders)(),
     };
     match kind.start(&connect) {
-        Ok(backend) => Ok(Box::into_raw(Box::new(Handle {
-            backend,
-            _mailbox: mailbox,
-        })) as jlong),
+        Ok(backend) => {
+            outlet.started(&backend);
+            Ok(Box::into_raw(Box::new(Handle {
+                backend,
+                _mailbox: mailbox,
+                outlet,
+            })) as jlong)
+        }
         Err(why) => {
             log::warn!("{}: {why}", kind.id);
             Ok(0)
@@ -367,6 +396,28 @@ fn answer_trust<'local>(_env: &mut Env<'local>, _this: JObject<'local>, handle: 
     if let Some(backend) = unsafe { backend(handle) } {
         backend.answer_trust(accept);
     }
+    Ok(())
+}
+
+/// A person's answer to a trust question [`Outlet`] put to them: the
+/// session is answered, and the identity pinned where they accepted it and
+/// said to remember it.
+fn answer_pin<'local>(
+    env: &mut Env<'local>,
+    _this: JObject<'local>,
+    handle: jlong,
+    fingerprint: JString<'local>,
+    accept: jboolean,
+    remember: jboolean,
+) -> Result<(), Error> {
+    let Some(handle) = (unsafe { self::handle(handle) }) else {
+        return Ok(());
+    };
+    let fingerprint = string(env, &fingerprint)?.unwrap_or_default();
+    let outlet = &handle.outlet;
+    let pins = Pins::new(outlet, env);
+    let accept = trust::answered(&pins, &outlet.asks.pinned, &fingerprint, accept, remember);
+    handle.backend.answer_trust(accept);
     Ok(())
 }
 
@@ -640,11 +691,26 @@ fn read_thumbnail<'local>(
     true
 }
 
+/// What a session's questions are asked about, worked out once at `create`.
+struct Asks {
+    /// What its far end's identity is pinned under, and whether a first
+    /// sight is.
+    pinned: Pinned,
+    /// The user name a credentials prompt starts with.
+    prompt_user: String,
+}
+
 /// Where a session's events leave for Java: `NativeBackend`'s `on…` methods,
 /// resolved once, and the mailbox they are drained from.
 struct Outlet {
     vm: JavaVM,
     target: Global<JObject<'static>>,
+    asks: Asks,
+    /// The session, once `create` has it, for the trust questions answered
+    /// here; and an answer decided before then, kept for it.
+    started: Mutex<Started>,
+    known_hosts_pins: JMethodID,
+    known_hosts_pin: JMethodID,
     connected: JMethodID,
     desktop_size: JMethodID,
     frame: JMethodID,
@@ -674,12 +740,20 @@ impl Outlet {
     /// protocol thread that delivers later has no class loader that could
     /// find `NativeBackend` by name, and resolving per call would be the most
     /// expensive thing in the path.
-    fn new(env: &mut Env, target: &JObject) -> jni::errors::Result<Outlet> {
+    fn new(env: &mut Env, target: &JObject, asks: Asks) -> jni::errors::Result<Outlet> {
         let class = env.get_object_class(target)?;
         let id = |env: &mut Env, name, sig| env.get_method_id(&class, name, sig);
         Ok(Outlet {
             vm: env.get_java_vm()?,
             target: env.new_global_ref(target)?,
+            asks,
+            started: Mutex::new(Started::default()),
+            known_hosts_pins: id(env, jni_str!("knownHostsPins"), jni_sig!("()[Ljava/lang/String;"))?,
+            known_hosts_pin: id(
+                env,
+                jni_str!("knownHostsPin"),
+                jni_sig!("(Ljava/lang/String;Ljava/lang/String;)V"),
+            )?,
             connected: id(env, jni_str!("onConnected"), jni_sig!("(II)V"))?,
             desktop_size: id(env, jni_str!("onDesktopSize"), jni_sig!("(II)V"))?,
             frame: id(env, jni_str!("onFrame"), jni_sig!("([I)V"))?,
@@ -687,9 +761,17 @@ impl Outlet {
             pointer_mode: id(env, jni_str!("onPointerMode"), jni_sig!("(Z)V"))?,
             bell: id(env, jni_str!("onBell"), jni_sig!("()V"))?,
             clipboard: id(env, jni_str!("onClipboard"), jni_sig!("(Ljava/lang/String;)V"))?,
-            credentials_needed: id(env, jni_str!("onCredentialsNeeded"), jni_sig!("(Z)V"))?,
-            trust_needed: id(env, jni_str!("onTrustNeeded"), jni_sig!("(Ljava/lang/String;)V"))?,
-            unverified: id(env, jni_str!("onUnverified"), jni_sig!("(Ljava/lang/String;)V"))?,
+            credentials_needed: id(env, jni_str!("onCredentialsNeeded"), jni_sig!("(ZLjava/lang/String;)V"))?,
+            trust_needed: id(
+                env,
+                jni_str!("onTrustNeeded"),
+                jni_sig!("(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V"),
+            )?,
+            unverified: id(
+                env,
+                jni_str!("onUnverified"),
+                jni_sig!("(Ljava/lang/String;Ljava/lang/String;)V"),
+            )?,
             question: id(
                 env,
                 jni_str!("onQuestion"),
@@ -793,10 +875,19 @@ impl Outlet {
                 Event::Bell => self.call(env, self.bell, &[]),
                 Event::Clipboard(text) => self.text(env, self.clipboard, &text),
                 Event::CredentialsNeeded { needs_user } => {
-                    self.call(env, self.credentials_needed, &[jvalue { z: needs_user }])
+                    let user = env.new_string(if needs_user { self.asks.prompt_user.as_str() } else { "" })?;
+                    self.call(
+                        env,
+                        self.credentials_needed,
+                        &[jvalue { z: needs_user }, jvalue { l: user.as_raw() }],
+                    )
                 }
-                Event::TrustNeeded { fingerprint } => self.text(env, self.trust_needed, &fingerprint),
-                Event::Unverified { why } => self.text(env, self.unverified, &why),
+                Event::TrustNeeded { fingerprint } => self.trust_needed(env, &fingerprint),
+                Event::Unverified { why } => {
+                    let key = env.new_string(&self.asks.pinned.key)?;
+                    let why = env.new_string(&why)?;
+                    self.call(env, self.unverified, &[jvalue { l: key.as_raw() }, jvalue { l: why.as_raw() }])
+                }
                 Event::Question { title, text } => {
                     let title = env.new_string(&title)?;
                     let text = env.new_string(&text)?;
@@ -834,6 +925,75 @@ impl Outlet {
         }
     }
 
+    /// An identity, against the pins: a match, or a first sight that is
+    /// vouched for, answers the session from here, and anything else is
+    /// `onTrustNeeded`'s question, whose answer comes back as `answerPin`.
+    fn trust_needed(&self, env: &mut Env, fingerprint: &str) -> jni::errors::Result<()> {
+        let pinned = &self.asks.pinned;
+        let decision = trust::decide(&Pins::new(self, env), pinned, fingerprint);
+        match decision {
+            Decision::Matches => {
+                log::info!("identity matches the pin for {}", pinned.key);
+                self.answer_trust(true);
+                Ok(())
+            }
+            Decision::FirstSight => {
+                self.answer_trust(true);
+                Ok(())
+            }
+            Decision::Ask {
+                identity,
+                matching_address,
+            } => {
+                log::info!("asking about the identity of {}: {identity:?}", pinned.key);
+                let key = env.new_string(&pinned.key)?;
+                let fingerprint = env.new_string(fingerprint)?;
+                let identity = env.new_string(identity_name(identity))?;
+                let matching = env.new_string(&matching_address)?;
+                self.call(
+                    env,
+                    self.trust_needed,
+                    &[
+                        jvalue { l: key.as_raw() },
+                        jvalue { l: fingerprint.as_raw() },
+                        jvalue { l: identity.as_raw() },
+                        jvalue { l: matching.as_raw() },
+                    ],
+                )
+            }
+        }
+    }
+
+    /// The session now exists: an answer decided before it did is its.
+    fn started(&self, backend: &Arc<dyn Backend>) {
+        let early = {
+            let mut started = self.started.lock().unwrap();
+            started.backend = Some(Arc::downgrade(backend));
+            started.early.take()
+        };
+        if let Some(accept) = early {
+            backend.answer_trust(accept);
+        }
+    }
+
+    /// Answers the session's trust question from this side. One asked before
+    /// `create` has returned the session — its thread is already running —
+    /// is kept for [`Outlet::started`] rather than lost, which would leave
+    /// the session waiting on it for good.
+    fn answer_trust(&self, accept: bool) {
+        let backend = {
+            let mut started = self.started.lock().unwrap();
+            if started.backend.is_none() {
+                started.early = Some(accept);
+                return;
+            }
+            started.backend.as_ref().and_then(Weak::upgrade)
+        };
+        if let Some(backend) = backend {
+            backend.answer_trust(accept);
+        }
+    }
+
     fn call(&self, env: &mut Env, method: JMethodID, args: &[jvalue]) -> jni::errors::Result<()> {
         unsafe { env.call_method_unchecked(&self.target, method, ReturnType::Primitive(Primitive::Void), args) }?;
         Ok(())
@@ -842,5 +1002,103 @@ impl Outlet {
     fn text(&self, env: &mut Env, method: JMethodID, text: &str) -> jni::errors::Result<()> {
         let s = env.new_string(text)?;
         self.call(env, method, &[jvalue { l: s.as_raw() }])
+    }
+}
+
+/// See [`Outlet::answer_trust`].
+#[derive(Default)]
+struct Started {
+    backend: Option<Weak<dyn Backend>>,
+    early: Option<bool>,
+}
+
+/// `Prompt.Trust.Identity`'s name for one, which Java reads back with
+/// `valueOf`.
+fn identity_name(identity: Identity) -> &'static str {
+    match identity {
+        Identity::Ok => "OK",
+        Identity::New => "NEW",
+        Identity::MatchesAnother => "MATCHES_ANOTHER",
+        Identity::Changed => "CHANGED",
+        Identity::Missing => "MISSING",
+        Identity::Preshared => "PRESHARED",
+        Identity::Ard => "ARD",
+    }
+}
+
+/// The phone's pins, as a [`trust::Store`]: `KnownHosts`' preferences,
+/// through the session's `NativeBackend`, on whatever thread asks — the
+/// protocol thread for a decision, the main one for an answer. The
+/// preferences are the ones the app has always kept, keys and values as
+/// they were, so a pin made before this layer decided is one it matches.
+struct Pins<'a, 'local> {
+    outlet: &'a Outlet,
+    env: RefCell<&'a mut Env<'local>>,
+}
+
+impl<'a, 'local> Pins<'a, 'local> {
+    fn new(outlet: &'a Outlet, env: &'a mut Env<'local>) -> Self {
+        Pins {
+            outlet,
+            env: RefCell::new(env),
+        }
+    }
+
+    fn read(&self) -> jni::errors::Result<Vec<(String, String)>> {
+        let env = &mut **self.env.borrow_mut();
+        let flat = unsafe {
+            env.call_method_unchecked(&self.outlet.target, self.outlet.known_hosts_pins, ReturnType::Array, &[])
+        }?
+        .l()?;
+        let flat = env.cast_local::<JObjectArray<JString>>(flat)?;
+        let n = flat.len(env)?;
+        let mut pins = Vec::with_capacity(n / 2);
+        for i in (0..n.saturating_sub(1)).step_by(2) {
+            let key = flat.get_element(env, i)?;
+            let value = flat.get_element(env, i + 1)?;
+            pins.push((
+                string(env, &key)?.unwrap_or_default(),
+                string(env, &value)?.unwrap_or_default(),
+            ));
+        }
+        Ok(pins)
+    }
+
+    fn write(&self, key: &str, fingerprint: &str) -> jni::errors::Result<()> {
+        let env = &mut **self.env.borrow_mut();
+        let key = env.new_string(key)?;
+        let fingerprint = env.new_string(fingerprint)?;
+        unsafe {
+            env.call_method_unchecked(
+                &self.outlet.target,
+                self.outlet.known_hosts_pin,
+                ReturnType::Primitive(Primitive::Void),
+                &[jvalue { l: key.as_raw() }, jvalue { l: fingerprint.as_raw() }],
+            )
+        }?;
+        Ok(())
+    }
+
+    /// A Java exception from the store, taken off the thread so that the
+    /// calls after it still work, and described.
+    fn failure(&self, e: Error) -> String {
+        let caught = self.env.borrow_mut().exception_catch();
+        match caught {
+            Err(Error::CaughtJavaException { name, msg, .. }) => format!("{name}: {msg}"),
+            _ => e.to_string(),
+        }
+    }
+}
+
+impl trust::Store for Pins<'_, '_> {
+    fn pins(&self) -> Vec<(String, String)> {
+        self.read().unwrap_or_else(|e| {
+            log::warn!("reading the known hosts: {}; treated as empty", self.failure(e));
+            Vec::new()
+        })
+    }
+
+    fn put(&self, key: &str, fingerprint: &str) -> Result<(), String> {
+        self.write(key, fingerprint).map_err(|e| self.failure(e))
     }
 }

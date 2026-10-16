@@ -18,9 +18,10 @@ import android.content.Context;
  *       reports is remembered for the next.
  *   <li><b>The domain is part of the user name.</b> {@code DOMAIN&#92;user} and
  *       {@code user@domain} are what every RDP client takes and every user
- *       types, so the prompt has no third field: it says so under the box, and
- *       starts with the record's name in the first form. What is typed back is
- *       split by the session.
+ *       types, so the prompt has no third field: it says so under the box.
+ *       The box starts with the record's name in the first form, and what is
+ *       typed back is split, both by {@code session::credentials} on the far
+ *       side of the JNI layer.
  * </ul>
  */
 public final class RdpHooks implements NativeBackend.Hooks {
@@ -46,11 +47,5 @@ public final class RdpHooks implements NativeBackend.Hooks {
     @Override
     public String credentialsHint() {
         return "Use DOMAIN\\user for another domain, .\\user for a local account.";
-    }
-
-    @Override
-    public String credentialsUser(String userName) {
-        final String[] split = RdpIdentity.split(userName);
-        return split[0].isEmpty() ? split[1] : split[0] + "\\" + split[1];
     }
 }

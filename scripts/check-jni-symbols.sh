@@ -24,8 +24,10 @@
 #               is made of — the library exports `JNI_OnLoad`, names the class
 #               it registers on, and carries each native's name and JNI
 #               descriptor, as the compiled class declares them, as strings;
-#               and every `on…` callback `NativeBackend` declares has its name
-#               and descriptor there too, since those are looked up by string.
+#               and every `on…` callback `NativeBackend` declares, and the
+#               two `knownHosts…` methods the layer keeps its pins through,
+#               has its name and descriptor there too, since those are looked
+#               up by string.
 #               A descriptor that drifted on either side is a string the other
 #               does not have. (That each Rust function matches its descriptor
 #               is checked when it compiles, by `jni::native_method!`.)
@@ -175,7 +177,7 @@ for entry in "${MODULES[@]}"; do
                 "$name" "$desc" "$(basename "$so")"
             fail=1
         fi
-    done < <(methods "$events_class" ' on[A-Z][A-Za-z]*[(]')
+    done < <(methods "$events_class" ' (on|knownHosts)[A-Z][A-Za-z]*[(]')
     if [ "$callbacks" = 0 ]; then
         printf 'MISSING  NativeBackend declares no callbacks\n'
         fail=1
