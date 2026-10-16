@@ -329,11 +329,19 @@ with **Monitor**, then **Pop out**:
   as the display server names them. On Wayland this is the only way to say where a window goes — a
   Wayland client cannot place a window, only ask for it fullscreen on an
   output — so a pop-out in a window lands wherever the compositor puts new
-  windows. On X11 it is whatever winit makes of the output: winit lists
-  RandR's CRTCs, not its 1.5 monitors, so a server that has one CRTC (Xvfb,
-  and the X server of many virtual machines) offers one output whatever the
-  monitors say, and on real multi-head hardware under an ordinary window
-  manager each output is its own.
+  windows. On X11 the outputs are RandR 1.5's monitors, those of `xrandr
+  --listmonitors`, which are what the window manager goes by (through
+  Xinerama): one per output on multi-head hardware, but a screen split with
+  `xrandr --setmonitor` — an ultrawide used as two, or the one framebuffer
+  of Xvfb or of many virtual machines' X servers — is a monitor for each
+  part. winit listed RandR's CRTCs instead, one for such a screen, so it
+  offered one output whatever the monitors said; `patches/winit/0006` lists
+  the monitors (the CRTCs still where the server is older than RandR 1.5),
+  and `patches/winit/0007` lists them again when a monitor is added or
+  taken away while the client runs, which comes with no RandR event of its
+  own. Fullscreen on one is winit's: the window moved to the monitor's
+  corner, then `_NET_WM_STATE_FULLSCREEN`, which an EWMH window manager
+  carries out on the monitor the window is on.
 - **Pop out all** gives every monitor without a window one: the main window
   keeps the first, and with more than one local output each window goes
   fullscreen on one, the far end's monitors and the local outputs each taken
@@ -403,7 +411,16 @@ monitor and the pop-out fullscreen on the right one with the second, a drag
 from the pop-out into the main window carried the far end's window across,
 typing reached the far end through the pop-out, *to output 1* placed a
 pop-out fullscreen on that output, and Return and the compositor's close
-(`swaymsg kill`) each gave the monitor back. The capture's hand-over between
+(`swaymsg kill`) each gave the monitor back. On `scripts/testx11` at
+2560×800 split into two monitors of 1280×800 with `xrandr --setmonitor`
+(Openbox), against the same two-head far end: the menu offers *to output 1
+(LEFT)* and *to output 2 (RIGHT)*, where before it offered one output
+(`screen`); *to output 2* made the pop-out exactly the right monitor,
+1280×800 at 1280,0, fullscreen; Pop out all put the main window fullscreen on
+the left monitor with the far end's first and the pop-out on the right one
+with its second, where before it gave two windows on the left; a monitor
+split off or joined back while the client ran was in the next menu; and with
+the screen whole again Fullscreen still filled the 2560×800. The capture's hand-over between
 windows is unit-tested only: no rig here has a far end of several monitors
 in relative mode.
 
@@ -889,7 +906,12 @@ handles.
   client (on the rig, `xclip -o` then found no owner).
 - **Fullscreen** is `_NET_WM_STATE_FULLSCREEN`, which needs an EWMH window
   manager; under Openbox the window became the screen's 1600×1000, and
-  with follow window size on the far end followed it there and back.
+  with follow window size on the far end followed it there and back. It is
+  on the RandR 1.5 monitor the window is on (see
+  [pop-out windows](#pop-out-windows)): with the screen split in two by
+  `xrandr --setmonitor`, a window on the right half went fullscreen on the
+  right half, where with winit's list of CRTCs it was moved to the CRTC's
+  corner first and went fullscreen on the left.
 - **The scale factor** is `WINIT_X11_SCALE_FACTOR` if set (a number, or
   `randr`), otherwise `Xft.dpi` over 96 from XSETTINGS or the resources,
   otherwise RandR's idea of the monitor's DPI (1 on Xvfb, which reports a

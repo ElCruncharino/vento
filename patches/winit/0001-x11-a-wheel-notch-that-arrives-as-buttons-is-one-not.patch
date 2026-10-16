@@ -1,7 +1,7 @@
 From a04878021064da6130538845da928d29a366e629 Mon Sep 17 00:00:00 2001
 From: "Claude Opus 5.5" <noreply@anthropic.com>
 Date: Wed, 14 Oct 2026 23:53:39 -0400
-Subject: [PATCH 1/5] x11: a wheel notch that arrives as buttons is one notch
+Subject: [PATCH 1/7] x11: a wheel notch that arrives as buttons is one notch
 
 XInput2 reports a wheel without smooth-scroll valuators as a press and
 a release of buttons 4 to 7 for every notch, and xinput2_button_input
