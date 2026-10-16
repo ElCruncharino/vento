@@ -88,6 +88,7 @@ enum {
     CMD_CLIPBOARD,
     CMD_FOCUS,
     CMD_RESIZE,
+    CMD_LAYOUT,
     CMD_DISCONNECT,
 };
 
@@ -165,6 +166,24 @@ struct Session {
        xrdp offers the codec only to a client that calls its link a LAN. */
     _Atomic UINT32 lastCodec;
     pSurfaceBits gdiSurfaceBits;
+    /* The GDI's handler for the pipeline's reset, chained through: the reset
+       is where a server on the pipeline states its monitors. */
+    pcRdpgfxResetGraphics gdiResetGraphics;
+
+    /* The desktop's monitors, x, y, width, height each, under `lock`: as the
+       server last stated them (`serverCount`, -1 before it has), and as this
+       end last asked for them (`askedCount`, at connect and on every layout
+       sent). The server's is the answer where it has given one that covers the
+       desktop as it now is; what was asked is the answer where the desktop
+       came out that size; anything else is a desktop nothing here can divide.
+       `wantCount` is the layout op_request_layout left for the protocol thread
+       to send, the latest one only. */
+    int32_t serverLayout[4 * VENTO_MAX_MONITORS];
+    int serverCount;
+    int32_t askedLayout[4 * VENTO_MAX_MONITORS];
+    int askedCount;
+    int32_t wantLayout[4 * VENTO_MAX_MONITORS];
+    int wantCount;
 
     /* What this phone has copied, as the wire wants it — UTF-16 with its
        terminator — held until something over there pastes. RDP's clipboard is a
@@ -450,6 +469,152 @@ static BOOL onDesktopResize(rdpContext *context) {
     return TRUE;
 }
 
+/* ---- the monitors ------------------------------------------------------- */
+
+/* Whether `n` screens, four ints each, are a division of a desktop `w × h`:
+   their bounding box is it. A layout that is not is one from before the
+   desktop last changed size, and says nothing about the desktop now. */
+static bool covers(const int32_t *flat, int n, int w, int h) {
+    if (n < 1) {
+        return false;
+    }
+    int right = 0, bottom = 0;
+    for (int i = 0; i < n; i++) {
+        const int32_t *m = flat + 4 * i;
+        if (m[0] < 0 || m[1] < 0) {
+            return false;
+        }
+        right = m[0] + m[2] > right ? m[0] + m[2] : right;
+        bottom = m[1] + m[3] > bottom ? m[1] + m[3] : bottom;
+    }
+    return right == w && bottom == h;
+}
+
+/* The monitors as the server states them, in its order, which is the only
+   identity RDP gives a monitor. A MONITOR_DEF's corners are inclusive and
+   relative to the primary monitor, which others may sit above or to the left
+   of; the desktop's pixel 0,0 is the top left of them all, so that is where
+   the seam's coordinates start. Two places say it: the Monitor Layout PDU of
+   the connection sequence (update->RemoteMonitors), and on the graphics
+   pipeline every reset, which is how such a server answers a layout. */
+static void heardLayout(Session *s, const MONITOR_DEF *defs, UINT32 count, const char *where) {
+    const int n = count > VENTO_MAX_MONITORS ? VENTO_MAX_MONITORS : (int) count;
+    int32_t flat[4 * VENTO_MAX_MONITORS];
+    INT32 left = 0, top = 0;
+    for (int i = 0; i < n; i++) {
+        left = i == 0 || defs[i].left < left ? defs[i].left : left;
+        top = i == 0 || defs[i].top < top ? defs[i].top : top;
+    }
+    for (int i = 0; i < n; i++) {
+        flat[4 * i + 0] = defs[i].left - left;
+        flat[4 * i + 1] = defs[i].top - top;
+        flat[4 * i + 2] = defs[i].right - defs[i].left + 1;
+        flat[4 * i + 3] = defs[i].bottom - defs[i].top + 1;
+        LOGI("%s: monitor %d of %d %dx%d+%d+%d%s", where, i + 1, n, flat[4 * i + 2], flat[4 * i + 3],
+             flat[4 * i + 0], flat[4 * i + 1],
+             (defs[i].flags & MONITOR_PRIMARY) ? ", primary" : "");
+    }
+    pthread_mutex_lock(&s->lock);
+    memcpy(s->serverLayout, flat, sizeof(int32_t) * 4 * (size_t) n);
+    s->serverCount = n;
+    pthread_mutex_unlock(&s->lock);
+}
+
+static BOOL onRemoteMonitors(rdpContext *context, UINT32 count, const MONITOR_DEF *monitors) {
+    heardLayout(sessionOf(context), monitors, count, "monitor layout");
+    return TRUE;
+}
+
+static UINT onGfxResetGraphics(RdpgfxClientContext *context,
+                               const RDPGFX_RESET_GRAPHICS_PDU *reset) {
+    rdpGdi *gdi = (rdpGdi *) context->custom;
+    Session *s = sessionOf(gdi->context);
+    if (reset->monitorCount > 0 && reset->monitorDefArray) {
+        heardLayout(s, reset->monitorDefArray, reset->monitorCount, "graphics reset");
+    }
+    return s->gdiResetGraphics ? s->gdiResetGraphics(context, reset) : CHANNEL_RC_OK;
+}
+
+/* `n` screens, x, y, width, height each, as a display-control layout, into
+   `out`, and what that layout makes of the desktop into `asked`. The
+   protocol's rules rather than ours: the first screen is the primary and sits
+   at the origin, so the lot moves to put it there; a monitor is 200 to 8192
+   pixels each way and its width is even. A screen made narrower or shorter by
+   that moves those right of or below it along by as much, so that screens
+   side by side stay side by side. Returns how many went in. */
+static int buildLayout(const int32_t *rects, int n, int scale, DISPLAY_CONTROL_MONITOR_LAYOUT *out,
+                       int32_t *asked) {
+    n = n > VENTO_MAX_MONITORS ? VENTO_MAX_MONITORS : n;
+    int32_t w[VENTO_MAX_MONITORS], h[VENTO_MAX_MONITORS];
+    for (int i = 0; i < n; i++) {
+        const int32_t *r = rects + 4 * i;
+        w[i] = r[2] < 200 ? 200 : (r[2] > 8192 ? 8192 : r[2]);
+        w[i] &= ~1;
+        h[i] = r[3] < 200 ? 200 : (r[3] > 8192 ? 8192 : r[3]);
+    }
+    int32_t x[VENTO_MAX_MONITORS], y[VENTO_MAX_MONITORS];
+    for (int i = 0; i < n; i++) {
+        const int32_t *r = rects + 4 * i;
+        x[i] = r[0];
+        y[i] = r[1];
+        for (int j = 0; j < n; j++) {
+            const int32_t *o = rects + 4 * j;
+            if (o[0] + o[2] <= r[0]) {
+                x[i] -= o[2] - w[j];
+            }
+            if (o[1] + o[3] <= r[1]) {
+                y[i] -= o[3] - h[j];
+            }
+        }
+    }
+    int32_t left = 0, top = 0;
+    for (int i = 0; i < n; i++) {
+        left = i == 0 || x[i] < left ? x[i] : left;
+        top = i == 0 || y[i] < top ? y[i] : top;
+    }
+    for (int i = 0; i < n; i++) {
+        DISPLAY_CONTROL_MONITOR_LAYOUT *m = &out[i];
+        memset(m, 0, sizeof(*m));
+        m->Flags = i == 0 ? DISPLAY_CONTROL_MONITOR_PRIMARY : 0;
+        m->Left = x[i] - x[0];
+        m->Top = y[i] - y[0];
+        m->Width = (UINT32) w[i];
+        m->Height = (UINT32) h[i];
+        m->Orientation = ORIENTATION_LANDSCAPE;
+        /* The connection's, not 100: a layout re-states the whole of it, so
+           leaving these at the default would undo the interface size the
+           session was opened with. */
+        m->DesktopScaleFactor = (UINT32) scale;
+        m->DeviceScaleFactor = (UINT32) scale;
+        asked[4 * i + 0] = x[i] - left;
+        asked[4 * i + 1] = y[i] - top;
+        asked[4 * i + 2] = w[i];
+        asked[4 * i + 3] = h[i];
+    }
+    return n;
+}
+
+/* A layout of `n` screens on the display-control channel, remembered as what
+   was asked for. A refusal is silence: the server makes a new desktop, a
+   different one, or nothing. */
+static void sendLayout(Session *s, const int32_t *rects, int n) {
+    if (!s->disp || !s->disp->SendMonitorLayout || n < 1) {
+        return;
+    }
+    DISPLAY_CONTROL_MONITOR_LAYOUT layout[VENTO_MAX_MONITORS];
+    int32_t asked[4 * VENTO_MAX_MONITORS];
+    n = buildLayout(rects, n, s->scale, layout, asked);
+    for (int i = 0; i < n; i++) {
+        LOGI("asking for monitor %d of %d: %ux%u%+d%+d", i + 1, n, layout[i].Width, layout[i].Height,
+             layout[i].Left, layout[i].Top);
+    }
+    pthread_mutex_lock(&s->lock);
+    memcpy(s->askedLayout, asked, sizeof(int32_t) * 4 * (size_t) n);
+    s->askedCount = n;
+    pthread_mutex_unlock(&s->lock);
+    s->disp->SendMonitorLayout(s->disp, (UINT32) n, layout);
+}
+
 /* ---- the remote cursor -------------------------------------------------- */
 
 static void fireCursor(Session *s, const uint32_t *rgba, int w, int h, int hotX, int hotY) {
@@ -714,6 +879,9 @@ static void onChannelConnected(void *context, const ChannelConnectedEventArgs *e
         RdpgfxClientContext *gfx = (RdpgfxClientContext *) e->pInterface;
         gdi_graphics_pipeline_init(ctx->gdi, gfx);
         gfx->CapsConfirm = onGfxCapsConfirm;
+        /* Chained, as SurfaceBits is: the GDI's handler is what resizes. */
+        s->gdiResetGraphics = gfx->ResetGraphics;
+        gfx->ResetGraphics = onGfxResetGraphics;
         s->gfxOpen = 1;
     } else if (strcmp(e->name, CLIPRDR_SVC_CHANNEL_NAME) == 0) {
         wireCliprdr(s, (CliprdrClientContext *) e->pInterface);
@@ -1215,28 +1383,36 @@ static void doFocus(Session *s, int focused) {
     gdi_send_suppress_output(s->instance->context->gdi, focused ? FALSE : TRUE);
 }
 
+/* A desktop `width × height`, which is the whole of it and not one monitor:
+   the seam's size is the framebuffer's everywhere else. So the monitors the
+   session asks for divide the width between them, side by side, the last
+   taking what the division leaves over; asking each for the whole width made
+   a desktop of two monitors twice as wide as the one asked for. (IronRDP's
+   backend divides it the same way.) */
 static void doResize(Session *s, int width, int height) {
-    if (!s->disp || !s->disp->SendMonitorLayout) {
-        return;
-    }
-    DISPLAY_CONTROL_MONITOR_LAYOUT layout[16] = {0};
-    const int count = s->monitors < 1 ? 1 : (s->monitors > 16 ? 16 : s->monitors);
+    const int count = s->monitors < 1 ? 1
+                      : (s->monitors > VENTO_MAX_MONITORS ? VENTO_MAX_MONITORS : s->monitors);
+    const int each = width / count;
+    int32_t rects[4 * VENTO_MAX_MONITORS];
     for (int i = 0; i < count; i++) {
-        layout[i].Flags = i == 0 ? DISPLAY_CONTROL_MONITOR_PRIMARY : 0;
-        layout[i].Left = i * width;
-        layout[i].Top = 0;
-        layout[i].Width = (UINT32) width;
-        layout[i].Height = (UINT32) height;
-        layout[i].PhysicalWidth = 0;
-        layout[i].PhysicalHeight = 0;
-        layout[i].Orientation = 0;
-        /* The connection's, not 100: a resize re-states the whole layout, so
-           leaving these at the default would undo the interface size the
-           session was opened with. */
-        layout[i].DesktopScaleFactor = (UINT32) s->scale;
-        layout[i].DeviceScaleFactor = (UINT32) s->scale;
+        rects[4 * i + 0] = i * each;
+        rects[4 * i + 1] = 0;
+        rects[4 * i + 2] = i == count - 1 ? width - each * (count - 1) : each;
+        rects[4 * i + 3] = height;
     }
-    s->disp->SendMonitorLayout(s->disp, (UINT32) count, layout);
+    sendLayout(s, rects, count);
+}
+
+/* The layout op_request_layout left, the latest one: requests made faster
+   than the thread drains are the same question asked again. */
+static void doLayout(Session *s) {
+    int32_t rects[4 * VENTO_MAX_MONITORS];
+    pthread_mutex_lock(&s->lock);
+    const int n = s->wantCount;
+    memcpy(rects, s->wantLayout, sizeof(int32_t) * 4 * (size_t) n);
+    s->wantCount = 0;
+    pthread_mutex_unlock(&s->lock);
+    sendLayout(s, rects, n);
 }
 
 static void drainCommands(Session *s) {
@@ -1259,6 +1435,7 @@ static void drainCommands(Session *s) {
             case CMD_CLIPBOARD: doClipboard(s, c.text, c.textLen); c.text = NULL; break;
             case CMD_FOCUS: doFocus(s, c.a); break;
             case CMD_RESIZE: doResize(s, c.a, c.b); break;
+            case CMD_LAYOUT: doLayout(s); break;
             case CMD_DISCONNECT:
                 doReleaseAll(s);
                 freerdp_abort_connect_context(s->instance->context);
@@ -1275,6 +1452,9 @@ static BOOL onPreConnect(freerdp *instance) {
     rdpContext *ctx = instance->context;
     PubSub_SubscribeChannelConnected(ctx->pubSub, onChannelConnected);
     PubSub_SubscribeChannelDisconnected(ctx->pubSub, onChannelDisconnected);
+    /* Before the connection, since the connection sequence is where the
+       Monitor Layout PDU comes. */
+    ctx->update->RemoteMonitors = onRemoteMonitors;
     return TRUE;
 }
 
@@ -1534,6 +1714,17 @@ static void applySettings(Session *s, rdpSettings *settings) {
                 m->attributes.deviceScaleFactor = (UINT32) s->scale;
             }
         }
+        /* What the connection asks for is the first layout asked for, which
+           is the answer until the server says otherwise. */
+        pthread_mutex_lock(&s->lock);
+        s->askedCount = s->monitors > VENTO_MAX_MONITORS ? VENTO_MAX_MONITORS : s->monitors;
+        for (int i = 0; i < s->askedCount; i++) {
+            s->askedLayout[4 * i + 0] = i * s->width;
+            s->askedLayout[4 * i + 1] = 0;
+            s->askedLayout[4 * i + 2] = s->width;
+            s->askedLayout[4 * i + 3] = s->height;
+        }
+        pthread_mutex_unlock(&s->lock);
     }
 }
 
@@ -1709,6 +1900,7 @@ vento_session *vento_freerdp_create(const vento_freerdp_config *cfg, const vento
     s->width = cfg->width;
     s->height = cfg->height;
     s->monitors = cfg->monitors;
+    s->serverCount = -1;
     s->keyboardLayout = cfg->keyboard_layout;
     s->connectTimeoutMs = cfg->connect_timeout_ms;
 
@@ -1867,30 +2059,59 @@ void vento_freerdp_set_monitor_count(vento_session *base, int count) {
     sessionOfBase(base)->monitors = count < 1 ? 1 : (count > 16 ? 16 : count);
 }
 
-/* The monitors the desktop is made of; none for a single-monitor session and
-   for a layout the server did not grant. */
+/* The monitors the desktop is made of, in the server's order: as it last
+   stated them, or as they were last asked for, whichever covers the desktop as
+   it is now (see `covers`). None for a desktop of one monitor, which is not a
+   layout, and none for a desktop neither covers. */
 static int op_monitors(vento_session *base, int32_t *out) {
     Session *s = sessionOfBase(base);
-    if (!s->connected || !s->ctx) {
+    if (!s->connected) {
         return 0;
     }
-    rdpSettings *settings = s->ctx->client.context.settings;
-    const UINT32 count = freerdp_settings_get_uint32(settings, FreeRDP_MonitorCount);
-    if (count < 2 || count > VENTO_MAX_MONITORS) {
-        return 0;
+    pthread_rwlock_rdlock(&s->fbLock);
+    const int w = s->fbW, h = s->fbH;
+    pthread_rwlock_unlock(&s->fbLock);
+    pthread_mutex_lock(&s->lock);
+    const int32_t *from = NULL;
+    int n = 0;
+    if (s->serverCount > 0 && covers(s->serverLayout, s->serverCount, w, h)) {
+        from = s->serverLayout;
+        n = s->serverCount;
+    } else if (covers(s->askedLayout, s->askedCount, w, h)) {
+        from = s->askedLayout;
+        n = s->askedCount;
     }
-    for (UINT32 i = 0; i < count; i++) {
-        const rdpMonitor *m = freerdp_settings_get_pointer_array(settings,
-                                                                 FreeRDP_MonitorDefArray, i);
-        if (!m) {
-            return 0;
-        }
-        out[4 * i + 0] = m->x;
-        out[4 * i + 1] = m->y;
-        out[4 * i + 2] = m->width;
-        out[4 * i + 3] = m->height;
+    if (n < 2) {
+        n = 0;
+    } else {
+        memcpy(out, from, sizeof(int32_t) * 4 * (size_t) n);
     }
-    return (int) count;
+    pthread_mutex_unlock(&s->lock);
+    return n;
+}
+
+/* RDP has no name for a monitor but its place in the list, so the ids here
+   are indices (no `screens` member) and a layout is sent in the order given:
+   the first is the primary, and a screen past the far end's last is a new
+   one. The desktop's size is the layout's bounding box, which is what
+   `width` and `height` are anyway. */
+static void op_request_layout(vento_session *base, int width, int height, const int32_t *screens,
+                              int n) {
+    (void) width;
+    (void) height;
+    Session *s = sessionOfBase(base);
+    if (n < 1) {
+        return;
+    }
+    n = n > VENTO_MAX_MONITORS ? VENTO_MAX_MONITORS : n;
+    pthread_mutex_lock(&s->lock);
+    for (int i = 0; i < n; i++) {
+        memcpy(s->wantLayout + 4 * i, screens + 5 * i + 1, sizeof(int32_t) * 4);
+    }
+    s->wantCount = n;
+    pthread_mutex_unlock(&s->lock);
+    Cmd c = {CMD_LAYOUT, 0, 0, 0, NULL, 0};
+    post(s, &c);
 }
 
 /* Held as the wire wants it, UTF-16 with its terminator, from the moment it
@@ -2075,4 +2296,5 @@ static const vento_session_ops OPS = {
         .answer_trust = op_answer_trust,
         .disconnect = op_disconnect,
         .destroy = op_destroy,
+        .request_layout = op_request_layout,
 };
