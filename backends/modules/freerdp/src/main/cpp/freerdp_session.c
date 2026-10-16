@@ -236,7 +236,7 @@ struct Session {
     int scale; /* percent; what the far end is asked to draw its own interface at */
     int compression;
     int connectTimeoutMs;
-    int hardware; /* vento_freerdp_config's: 0 off, 1 VAAPI, 2 Vulkan, 3 either */
+    int hardware; /* vento_freerdp_config's: 0 off, 1 VAAPI, 2 auto */
 };
 
 static const vento_session_ops OPS;
@@ -1612,10 +1612,9 @@ static void applySettings(Session *s, rdpSettings *settings) {
     /* The GDI is software whatever this says — it draws into a buffer of
        ours — and what the library reads it for is whether to ask its H.264
        decoder for the GPU (patches/freerdp: off asks), which is the person's
-       hardware decoding at connect. Its decoder is FFmpeg's on VAAPI, or
-       nothing: Vulkan alone is software here. */
-    freerdp_settings_set_bool(settings, FreeRDP_SoftwareGdi,
-                              !(s->hardware == 1 || s->hardware == 3));
+       hardware decoding at connect: VAAPI and auto alike are FFmpeg's decoder
+       on VAAPI. */
+    freerdp_settings_set_bool(settings, FreeRDP_SoftwareGdi, s->hardware == 0);
     freerdp_settings_set_uint32(settings, FreeRDP_TcpConnectTimeout,
                                 (UINT32) (s->connectTimeoutMs > 0 ? s->connectTimeoutMs : 20000));
 
@@ -2308,8 +2307,6 @@ static bool op_decoder_status(vento_session *base, char *out, size_t len) {
     const char *why = "";
     if (hardware == 0 && s->h264Failed) {
         why = " (vaapi: failed mid-stream)";
-    } else if (hardware == 0 && s->hardware == 2) {
-        why = " (vulkan: FreeRDP decodes on VAAPI only)";
     } else if (hardware == 0 && s->hardware) {
         why = " (vaapi: the library fell back, and its log says why)";
     }

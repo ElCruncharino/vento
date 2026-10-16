@@ -21,37 +21,26 @@
 //
 // And the hardware's, when it is asked for:
 //
-// - **One device per kind, for the process.** Opening a VAAPI device is tens
-//   of milliseconds (the driver loads and initialises), and a session makes a
+// - **One device, for the process.** Opening a VAAPI device is tens of
+//   milliseconds (the driver loads and initialises), and a session makes a
 //   decoder on every resize and codec switch, on whichever protocol thread it
 //   runs on. So the first decoder to ask opens it, under a lock, and every
 //   later one takes a reference to the same; it is kept until the process
 //   ends. A device that failed to open is not tried again: a machine without
 //   one does not grow one mid-session, and a retry per decoder would be the
 //   same delay and the same log line every time.
-// - **Vulkan's device is a GPU that decodes.** FFmpeg's default is the first
-//   physical device the loader lists, which is lavapipe where the GPU's
-//   driver cannot open the GPU, and a GPU without a decode queue where the
-//   driver keeps it behind a switch (ANV's `ANV_DEBUG=video-decode`); so
-//   `vk_device.c` lists them first and FFmpeg is given the first GPU with a
-//   decode queue, or not asked at all. Its queue's codecs are kept, and a
-//   stream of a codec it has none for does not open it.
 // - **The stream's profile decides, through `get_format`.** libavcodec offers
 //   the hardware's format when it has a hardware decoder for the codec, and
 //   when the driver then has no decoder for the profile (iHD has none for
-//   H.264 High 10) it asks again without it. With another device asked for
-//   still to try (`auto`: VAAPI, then Vulkan), nothing is chosen, the decode
-//   fails, and the packet is given to a decoder on that device; with none,
-//   what comes back is the software format, the reason is kept, and the
-//   stream decodes in software from the same context. AV1 is the exception:
-//   `av1` decodes only on hardware, so without it the decoder is reopened as
-//   dav1d. The reason names every device tried.
+//   H.264 High 10) it asks again without it. What comes back then is the
+//   software format, the reason is kept, and the stream decodes in software
+//   from the same context. AV1 is the exception: `av1` decodes only on
+//   hardware, so without it the decoder is reopened as dav1d.
 // - **Mapped, not copied.** The decoded surface is mapped for reading
 //   (`av_hwframe_map`) and described in place, which measured about 40% less
 //   time and half the CPU of `av_hwframe_transfer_data`'s copy into a frame
 //   of our own; the caller's conversion reads the planes once either way.
-//   Where a surface cannot be mapped (Vulkan's images) it is copied, which
-//   Vulkan does on the GPU into memory the CPU reads fast.
+//   Where the driver will not map a surface at all, it is copied.
 // - **VAAPI's surface mapped in place, where that measures faster.** A map
 //   for reading is, in libavcodec, a new image the driver copies the
 //   surface into (`vaGetImage`), since the surface's own memory may be
@@ -74,7 +63,7 @@
 //   plane (`R8` and `GR88` for NV12), which FFmpeg's own DRM mapping would
 //   need libdrm for; mapped after all, it is the same `av_hwframe_map` a
 //   decode makes. Only NV12 and P010: XV30 has no two-layer form the caller
-//   could convert the same way, and Vulkan's images are not DMA-BUFs here.
+//   could convert the same way.
 // - **A failure is a fallback, not an error.** A hardware decode or map that
 //   fails mid-stream closes the decoder, opens the software one in its place
 //   within the same handle, gives it the packet again and says so
@@ -97,7 +86,6 @@
 #include <libavcodec/avcodec.h>
 #include <libavutil/error.h>
 #include <libavutil/hwcontext.h>
-#include <libavutil/hwcontext_vulkan.h>
 #include <libavutil/pixdesc.h>
 
 // libva's declarations as `va_shim.c` defines them, hidden: the two calls
@@ -108,7 +96,6 @@
 #pragma GCC visibility pop
 
 #include "va_shim.h"
-#include "vk_device.h"
 
 // What one packet's decode came to when the hardware failed it, which the
 // caller never sees: the decoder falls back and decodes the packet again.
@@ -141,14 +128,9 @@ struct vento_video {
     // format its surfaces come out in.
     int method;
     enum AVPixelFormat hw_format;
-    // The devices asked for, in the order they are tried (`auto` is VAAPI's
-    // and then Vulkan's), and how many of them have been.
-    int chain[2];
-    int chained;
-    int tried;
-    // `get_format` found the stream is not the device's and another device
-    // is still to be tried: the packet is to be given to that one.
-    int next;
+    // VAAPI was asked for and not yet tried: a decoder falls back to
+    // software once and is not put on the device again.
+    int untried;
     // Copied rather than mapped, once a map has been refused as impossible.
     int copy;
     // Pictures out of the device; how VAAPI's are mapped for reading (a
@@ -161,10 +143,8 @@ struct vento_video {
     uint64_t trial_us[2][MAP_TRIALS];
     int held_trial;
     int fail_next;
-    // Why the decoder is not on hardware: each device tried before this one,
-    // "; " between them, and then this one's (from `said` on), if any.
+    // Why the decoder is not on hardware, if anything stands in its way.
     char reason[256];
-    size_t said;
     // The surfaces the last held picture came from, referenced so that their
     // address is not another set's while the number is in use, and their
     // number (see `pools`).
@@ -245,8 +225,6 @@ const char *vento_video_method_name(int method) {
         return "off";
     case VENTO_VIDEO_HW_VAAPI:
         return "vaapi";
-    case VENTO_VIDEO_HW_VULKAN:
-        return "vulkan";
     case VENTO_VIDEO_HW_AUTO:
         return "auto";
     default:
@@ -261,132 +239,63 @@ static uint64_t now_us(void) {
 }
 
 
-// The shared devices, by `vento_video_hardware` (VAAPI and VULKAN).
+// The shared VAAPI device.
 static struct {
     AVBufferRef *ref;
     // 0 not tried, 1 open, -1 failed (why says why).
     int state;
     char why[128];
-} devices[3];
-// The Vulkan device FFmpeg is to open (`vk_device.c`), looked for by the
-// first decoder that asks for Vulkan, and not again.
-static struct {
-    int looked;
-    int found;
-    struct vento_vk_choice choice;
-} vulkan;
-static pthread_mutex_t devices_lock = PTHREAD_MUTEX_INITIALIZER;
+} vaapi;
+static pthread_mutex_t device_lock = PTHREAD_MUTEX_INITIALIZER;
 
 int vento_video_device_state(int method) {
-    if (method != VENTO_VIDEO_HW_VAAPI && method != VENTO_VIDEO_HW_VULKAN)
+    if (method != VENTO_VIDEO_HW_VAAPI)
         return 0;
-    pthread_mutex_lock(&devices_lock);
-    int state = devices[method].state;
-    pthread_mutex_unlock(&devices_lock);
+    pthread_mutex_lock(&device_lock);
+    int state = vaapi.state;
+    pthread_mutex_unlock(&device_lock);
     return state;
 }
 
-const char *vento_video_vulkan_device(void) {
-    pthread_mutex_lock(&devices_lock);
-    // Written once, under the lock, before `found` is.
-    const char *name = vulkan.found ? vulkan.choice.name : "";
-    pthread_mutex_unlock(&devices_lock);
-    return name;
-}
-
-// Whether the Vulkan device FFmpeg opened is the one chosen.
-static int vulkan_chosen(AVBufferRef *ref) {
-    const AVVulkanDeviceContext *vk = ((const AVHWDeviceContext *)ref->data)->hwctx;
-    return vento_vk_is(&vulkan.choice, (void *)vk->get_proc_addr, vk->inst, vk->phys_dev);
-}
-
-// A reference to the device of `method` for a decoder of `codec`, opening it
-// if nobody has, or NULL with "<method>: <why>" in `why`.
-static AVBufferRef *device(int method, int codec, char *why, size_t why_len) {
-    static const enum AVHWDeviceType types[] = {
-        [VENTO_VIDEO_HW_VAAPI] = AV_HWDEVICE_TYPE_VAAPI,
-        [VENTO_VIDEO_HW_VULKAN] = AV_HWDEVICE_TYPE_VULKAN,
-    };
-    pthread_mutex_lock(&devices_lock);
-    if (method == VENTO_VIDEO_HW_VULKAN) {
-        if (!vulkan.looked) {
-            vulkan.looked = 1;
-            vulkan.found = vento_vk_choose(&vulkan.choice, devices[method].why,
-                                           sizeof(devices[method].why));
-            if (!vulkan.found)
-                devices[method].state = -1;
-        }
-        // Its decode queue says which codecs it has: for one it has not, the
-        // device is not opened (it may never be needed), and the decoder is
-        // the next one asked for.
-        if (vulkan.found && !(vulkan.choice.codecs & (1u << codec))) {
-            snprintf(why, why_len, "vulkan: %s has no %s decoder", vulkan.choice.name,
-                     codec_name(codec));
-            pthread_mutex_unlock(&devices_lock);
-            return NULL;
-        }
-    }
-    if (devices[method].state == 0) {
-        // VAAPI's first DRM render node; and the Vulkan device chosen, by
-        // its index in the loader's list, rather than FFmpeg's default,
-        // which is whatever comes first.
-        char index[16] = "";
-        if (method == VENTO_VIDEO_HW_VULKAN)
-            snprintf(index, sizeof(index), "%d", vulkan.choice.index);
-        int made = av_hwdevice_ctx_create(&devices[method].ref, types[method],
-                                          index[0] ? index : NULL, NULL, 0);
-        if (made >= 0 && method == VENTO_VIDEO_HW_VULKAN && !vulkan_chosen(devices[method].ref)) {
-            av_buffer_unref(&devices[method].ref);
-            made = AVERROR(ENODEV);
-        }
+// A reference to the VAAPI device, opening it if nobody has, or NULL with
+// "vaapi: <why>" in `why`.
+static AVBufferRef *device(char *why, size_t why_len) {
+    pthread_mutex_lock(&device_lock);
+    if (vaapi.state == 0) {
+        // The first DRM render node, which is FFmpeg's default.
+        int made = av_hwdevice_ctx_create(&vaapi.ref, AV_HWDEVICE_TYPE_VAAPI, NULL, NULL, 0);
         if (made >= 0) {
-            devices[method].state = 1;
+            vaapi.state = 1;
         } else {
-            devices[method].state = -1;
+            vaapi.state = -1;
             const char *missing = NULL;
-            if (method == VENTO_VIDEO_HW_VAAPI && !vento_va_loaded(&missing)) {
-                snprintf(devices[method].why, sizeof(devices[method].why), "no libva (%s)",
-                         missing);
+            if (!vento_va_loaded(&missing)) {
+                snprintf(vaapi.why, sizeof(vaapi.why), "no libva (%s)", missing);
             } else if (made == AVERROR_EXTERNAL) {
                 // Which is all libavcodec says when there is no render node
                 // or the driver would not initialise; what it logged said
                 // which.
-                snprintf(devices[method].why, sizeof(devices[method].why), "no device");
+                snprintf(vaapi.why, sizeof(vaapi.why), "no device");
             } else {
                 char error[64];
                 vento_video_strerror(made, error, sizeof(error));
-                snprintf(devices[method].why, sizeof(devices[method].why), "no device (%s)",
-                         error);
+                snprintf(vaapi.why, sizeof(vaapi.why), "no device (%s)", error);
             }
         }
     }
-    AVBufferRef *ref = devices[method].ref ? av_buffer_ref(devices[method].ref) : NULL;
+    AVBufferRef *ref = vaapi.ref ? av_buffer_ref(vaapi.ref) : NULL;
     if (!ref)
-        snprintf(why, why_len, "%s: %s", vento_video_method_name(method),
-                 devices[method].ref ? "out of memory" : devices[method].why);
-    pthread_mutex_unlock(&devices_lock);
+        snprintf(why, why_len, "vaapi: %s", vaapi.ref ? "out of memory" : vaapi.why);
+    pthread_mutex_unlock(&device_lock);
     return ref;
 }
 
-// Why the device decoded on is not decoding the stream, after what the
-// devices before it said.
+// Why the decoder is not decoding the stream on the device.
 static void say(vento_video *video, const char *fmt, ...) {
-    size_t at = video->said;
-    if (at > 0 && at + 2 < sizeof(video->reason)) {
-        memcpy(video->reason + at, "; ", 2);
-        at += 2;
-    }
-    if (at >= sizeof(video->reason) - 1)
-        return;
     va_list ap;
     va_start(ap, fmt);
-    vsnprintf(video->reason + at, sizeof(video->reason) - at, fmt, ap);
+    vsnprintf(video->reason, sizeof(video->reason), fmt, ap);
     va_end(ap);
-}
-
-// What `say` said kept, for the next device's words to follow.
-static void said(vento_video *video) {
-    video->said = strlen(video->reason);
 }
 
 // libavcodec's choice of format, made the hardware's where it is offered and
@@ -411,13 +320,6 @@ static enum AVPixelFormat get_format(AVCodecContext *context, const enum AVPixel
     else
         say(video, "%s: %s in %s is not supported", vento_video_method_name(video->method),
             codec_name(video->codec), sw ? sw : "this format");
-    // With another device still to try, nothing at all: the decode fails,
-    // and the packet is given to a decoder on that one. (Software here would
-    // decode the key frame for nothing.)
-    if (video->tried < video->chained) {
-        video->next = 1;
-        return AV_PIX_FMT_NONE;
-    }
     for (const enum AVPixelFormat *f = formats; *f != AV_PIX_FMT_NONE; f++) {
         const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(*f);
         if (desc && !(desc->flags & AV_PIX_FMT_FLAG_HWACCEL))
@@ -459,34 +361,29 @@ static int open_context(vento_video *video, int method, AVBufferRef *device) {
     avcodec_free_context(&video->context);
     video->context = context;
     video->method = device ? method : VENTO_VIDEO_HW_OFF;
-    video->hw_format = !device                         ? AV_PIX_FMT_NONE
-                       : method == VENTO_VIDEO_HW_VAAPI ? AV_PIX_FMT_VAAPI
-                                                        : AV_PIX_FMT_VULKAN;
+    video->hw_format = device ? AV_PIX_FMT_VAAPI : AV_PIX_FMT_NONE;
     video->copy = 0;
-    video->next = 0;
     return 0;
 }
 
-// A decoder on the next device asked for that opens and has one, from
-// `video->tried` on, or the software decoder when none is left: the reason
-// for each that would not added to the decoder's. A libavcodec error where
-// not even software opens.
-static int open_next(vento_video *video) {
-    while (video->tried < video->chained) {
-        int method = video->chain[video->tried++];
+// A decoder on the VAAPI device where it was asked for and has not been
+// tried, if the device opens and so does a decoder on it; else the software
+// decoder, with why the device would not added to the decoder's reason. A
+// libavcodec error where not even software opens.
+static int open_decoder(vento_video *video) {
+    if (video->untried) {
+        video->untried = 0;
         char why[sizeof(video->reason)];
-        AVBufferRef *ref = device(method, video->codec, why, sizeof(why));
-        int opened = ref ? open_context(video, method, ref) : -1;
+        AVBufferRef *ref = device(why, sizeof(why));
+        int opened = ref ? open_context(video, VENTO_VIDEO_HW_VAAPI, ref) : -1;
         if (opened >= 0)
             return 0;
         if (ref) {
             char e[64];
             vento_video_strerror(opened, e, sizeof(e));
-            snprintf(why, sizeof(why), "%s: the decoder did not open (%s)",
-                     vento_video_method_name(method), e);
+            snprintf(why, sizeof(why), "vaapi: the decoder did not open (%s)", e);
         }
         say(video, "%s", why);
-        said(video);
     }
     return open_context(video, VENTO_VIDEO_HW_OFF, NULL);
 }
@@ -531,17 +428,11 @@ vento_video *vento_video_open(int codec, int width, int height, int hardware, ch
         return NULL;
     }
 
-    // The first device of those asked for that opens, and a decoder on it
-    // that opens; anything else is the software decoder, with why. `auto` is
-    // VAAPI and then Vulkan, so libvulkan is not loaded where VAAPI takes
-    // the stream.
-    if (hardware == VENTO_VIDEO_HW_VAAPI || hardware == VENTO_VIDEO_HW_VULKAN) {
-        video->chain[video->chained++] = hardware;
-    } else if (hardware == VENTO_VIDEO_HW_AUTO) {
-        video->chain[video->chained++] = VENTO_VIDEO_HW_VAAPI;
-        video->chain[video->chained++] = VENTO_VIDEO_HW_VULKAN;
-    }
-    int opened = open_next(video);
+    // The VAAPI device where it opens, and a decoder on it that opens;
+    // anything else is the software decoder, with why. `auto` is the same,
+    // VAAPI and then software: the one device there is to try.
+    video->untried = hardware == VENTO_VIDEO_HW_VAAPI || hardware == VENTO_VIDEO_HW_AUTO;
+    int opened = open_decoder(video);
     if (opened < 0) {
         vento_video_strerror(opened, error, error_len);
         vento_video_close(video);
@@ -559,10 +450,6 @@ int vento_video_method(const vento_video *video) {
 }
 
 const char *vento_video_software_reason(const vento_video *video) {
-    // On a device that has said nothing against the stream (yet), what the
-    // devices before it said is not why: it may well decode in hardware.
-    if (video->method != VENTO_VIDEO_HW_OFF && strlen(video->reason) <= video->said)
-        return "";
     return video->reason;
 }
 
@@ -673,7 +560,7 @@ static int describe(const AVFrame *f, struct vento_video_picture *out) {
 // which is the better reason: `av1` fails its first frame for want of a
 // device that can take the stream, and that is what is worth reading.
 static int hardware_failed(vento_video *video, const char *what, int error) {
-    if (strlen(video->reason) > video->said)
+    if (video->reason[0])
         return HARDWARE_FAILED;
     char e[64];
     vento_video_strerror(error, e, sizeof(e));
@@ -781,8 +668,6 @@ static int decode_packet(vento_video *video, const uint8_t *data, size_t len, in
     int sent = avcodec_send_packet(video->context, video->packet);
     video->packet->data = NULL;
     video->packet->size = 0;
-    if (video->next)
-        return HARDWARE_FAILED;
     if (sent < 0) {
         if (device_error(video, sent))
             return hardware_failed(video, "decode failed", sent);
@@ -793,11 +678,6 @@ static int decode_packet(vento_video *video, const uint8_t *data, size_t len, in
     int got = 0;
     for (;;) {
         int received = avcodec_receive_frame(video->context, video->newer);
-        if (video->next) {
-            av_frame_unref(video->newer);
-            av_frame_unref(video->frame);
-            return HARDWARE_FAILED;
-        }
         if (received < 0) {
             if (device_error(video, received)) {
                 av_frame_unref(video->frame);
@@ -830,7 +710,6 @@ static int decode_packet(vento_video *video, const uint8_t *data, size_t len, in
         video->hw_pictures++;
         out->hardware = 3;
         video->reason[0] = '\0';
-        video->said = 0;
         return VENTO_VIDEO_PICTURE;
     }
     if (video->hw_format != AV_PIX_FMT_NONE && picture->format == video->hw_format) {
@@ -843,13 +722,10 @@ static int decode_packet(vento_video *video, const uint8_t *data, size_t len, in
         } else {
             if (!video->copy) {
                 int direct = 0;
-                if (video->method == VENTO_VIDEO_HW_VAAPI) {
-                    if (video->map_verdict != MAP_UNKNOWN)
-                        direct = video->map_verdict == MAP_DIRECT;
-                    else if (video->hw_pictures >= MAP_TRIALS_FROM &&
-                             video->trials < 2 * MAP_TRIALS)
-                        direct = trial = video->trials & 1;
-                }
+                if (video->map_verdict != MAP_UNKNOWN)
+                    direct = video->map_verdict == MAP_DIRECT;
+                else if (video->hw_pictures >= MAP_TRIALS_FROM && video->trials < 2 * MAP_TRIALS)
+                    direct = trial = video->trials & 1;
                 // Into the surfaces' own software format (NV12, P010, ...),
                 // which is what a format of NONE asks for.
                 video->mapped->format = AV_PIX_FMT_NONE;
@@ -890,10 +766,9 @@ static int decode_packet(vento_video *video, const uint8_t *data, size_t len, in
         video->hw_pictures++;
         picture = video->mapped;
         out->hardware = video->copy ? 2 : 1;
-        // On hardware, so nothing stands in its way, whatever the devices
-        // before it (or this one, for the stream's earlier profile) said.
+        // On hardware, so nothing stands in its way, whatever the device
+        // said of the stream's earlier profile.
         video->reason[0] = '\0';
-        video->said = 0;
     }
     if (!describe(picture, out)) {
         const char *name = av_get_pix_fmt_name((enum AVPixelFormat)picture->format);
@@ -936,21 +811,14 @@ int vento_video_decode(vento_video *video, const uint8_t *data, size_t len, int 
         return VENTO_VIDEO_REFUSED;
     }
     int status = decode_packet(video, data, len, hold, out, format, format_len);
-    // At most once a device asked for and once more for software.
-    for (int changes = 0; status == HARDWARE_FAILED && changes <= video->chained; changes++) {
-        // Another decoder in the hardware one's place, given the same
+    if (status == HARDWARE_FAILED) {
+        // The software decoder in the hardware one's place, given the same
         // packet: a key frame comes out of it at once, and anything else
-        // waits for the key frame the caller is told to ask for. That is
-        // the next device asked for where this one's only fault was not
-        // having the stream's profile, and software otherwise: a device
-        // that failed mid-stream is not the stream's, and neither is one
-        // after it.
-        int next = video->next;
-        said(video);
+        // waits for the key frame the caller is told to ask for. A device
+        // that failed mid-stream is not the stream's, so it is not tried
+        // again.
         memset(out, 0, sizeof(*out));
-        if (!next)
-            video->tried = video->chained;
-        int opened = open_next(video);
+        int opened = open_decoder(video);
         out->fell_back = 1;
         if (opened < 0) {
             // Not even software: the decoder is no decoder now, and every

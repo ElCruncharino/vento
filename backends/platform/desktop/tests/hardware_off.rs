@@ -3,7 +3,7 @@
 
 //! Hardware decoding off, which is the default, opens nothing: after every
 //! clip has been decoded with it off, no device has been asked for and
-//! neither libva nor libvulkan is in the process. A binary of its own, since a
+//! libva is not in the process. A binary of its own, since a
 //! test of `hardware.rs` beside it would open the device this says is not.
 
 #![cfg(not(target_os = "android"))]
@@ -44,9 +44,8 @@ fn off_opens_no_device_and_loads_no_library() {
         assert!(decoder.status().unwrap().contains(" sw "), "{name}");
     }
     assert_eq!(device_opened(Hardware::Vaapi), None);
-    assert_eq!(device_opened(Hardware::Vulkan), None);
     let maps = std::fs::read_to_string("/proc/self/maps").unwrap();
-    for library in ["libva.so", "libva-drm.so", "libvulkan.so"] {
+    for library in ["libva.so", "libva-drm.so"] {
         assert!(!maps.contains(library), "{library} is loaded with hardware decoding off");
     }
 }

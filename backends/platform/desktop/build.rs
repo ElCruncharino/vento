@@ -20,22 +20,21 @@
 //!
 //! **Built once.** The two builds take about a minute and a half together
 //! (dav1d with Meson and Ninja, FFmpeg with its configure and make), and are
-//! made again only when what they are made from changes — any of the four
-//! submodules' commits, the configure line, the compiler or whether NASM is there — which a
-//! stamp beside them records. Any other reason this script runs (a change to
+//! made again only when what they are made from changes — any of the three
+//! submodules' commits, the configure line, the compiler or whether NASM is
+//! there — which a stamp beside them records. Any other reason this script runs (a change to
 //! the wrapper, a new `PATH`) finds the stamp the same and only recompiles the
 //! wrapper. A debug and a release build each have an `OUT_DIR` and so a copy
 //! of their own; FFmpeg is optimised in both, as its configure does by
 //! default.
 //!
-//! **Hardware decoders, from headers alone.** FFmpeg's VAAPI and Vulkan Video
-//! decoders (`HWACCELS`) are built against `third_party/libva`'s headers,
-//! installed into the prefix with the one libva generates, and
-//! `third_party/Vulkan-Headers`, through pkg-config files of ours that say so.
-//! Nothing of either is linked: libva's functions are `c/va_shim.c`'s, which
-//! loads the real ones when hardware decoding is first asked for, and
-//! FFmpeg's Vulkan code loads libvulkan itself. So the binary runs where
-//! neither is installed, and loads neither while hardware decoding is off.
+//! **Hardware decoders, from headers alone.** FFmpeg's VAAPI decoders
+//! (`HWACCELS`) are built against `third_party/libva`'s headers, installed
+//! into the prefix with the one libva generates, through pkg-config files of
+//! ours that say so. Nothing of libva is linked: its functions are
+//! `c/va_shim.c`'s, which loads the real ones when hardware decoding is first
+//! asked for. So the binary runs where libva is not installed, and does not
+//! load it while hardware decoding is off.
 //!
 //! **Assembly** is NASM's on x86: without it dav1d and libavcodec fall back to
 //! their C, which works and decodes a fraction as fast, so its absence is a
@@ -73,21 +72,15 @@ const DECODERS: &[&str] = &[
 ];
 
 /// The hardware decoders of the codecs above, for the Rust decoder when
-/// hardware decoding is asked for (`c/vento_video.c`): VAAPI's for each, and
-/// Vulkan Video's for each FFmpeg has one of (no VP8). Neither needs a library
-/// at build time: libva is reached through `c/va_shim.c`, and FFmpeg's Vulkan
-/// code loads `libvulkan.so.1` itself when a Vulkan device is made, so both
-/// are headers here (`third_party/libva`, `third_party/Vulkan-Headers`).
+/// hardware decoding is asked for (`c/vento_video.c`) and for FreeRDP's own
+/// H.264: VAAPI's for each. libva is no library at build time: it is reached
+/// through `c/va_shim.c`, so it is headers here (`third_party/libva`).
 const HWACCELS: &[&str] = &[
     "h264_vaapi",
     "hevc_vaapi",
     "vp8_vaapi",
     "vp9_vaapi",
     "av1_vaapi",
-    "h264_vulkan",
-    "hevc_vulkan",
-    "vp9_vulkan",
-    "av1_vulkan",
 ];
 
 /// TigerVNC and FreeRDP each split their H.264 stream into frames with
@@ -100,8 +93,6 @@ fn main() {
     println!("cargo:rerun-if-changed=c/vento_video.h");
     println!("cargo:rerun-if-changed=c/va_shim.c");
     println!("cargo:rerun-if-changed=c/va_shim.h");
-    println!("cargo:rerun-if-changed=c/vk_device.c");
-    println!("cargo:rerun-if-changed=c/vk_device.h");
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android") {
         return;
     }
@@ -117,17 +108,15 @@ fn main() {
     let dav1d = third_party.join("dav1d");
     let ffmpeg = third_party.join("ffmpeg");
     let libva = third_party.join("libva");
-    let vulkan = third_party.join("Vulkan-Headers");
     for (source, marker) in [
         (&dav1d, "meson.build"),
         (&ffmpeg, "configure"),
         (&libva, "va/va.h"),
-        (&vulkan, "include/vulkan/vulkan.h"),
     ] {
         assert!(
             source.join(marker).is_file(),
             "{} is empty; run: git submodule update --init third_party/dav1d third_party/ffmpeg \
-             third_party/libva third_party/Vulkan-Headers",
+             third_party/libva",
             source.display()
         );
         if let Some(head) = git_head(source) {
@@ -153,11 +142,10 @@ fn main() {
     let prefix = root.join("prefix");
     let configure = configure_args(&prefix, &cc, asm);
     let stamp = format!(
-        "dav1d {}\nffmpeg {}\nlibva {}\nvulkan {}\ncc {} {}\nasm {asm}\n{}\n",
+        "dav1d {}\nffmpeg {}\nlibva {}\ncc {} {}\nasm {asm}\n{}\n",
         revision(&dav1d),
         revision(&ffmpeg),
         revision(&libva),
-        revision(&vulkan),
         cc.display(),
         version(&cc),
         configure.join(" ")
@@ -171,7 +159,7 @@ fn main() {
         fs::create_dir_all(&root).unwrap();
         build_dav1d(&dav1d, &root, &prefix, &cc, asm);
         install_libva_headers(&libva, &prefix);
-        write_pkg_config(&prefix, &vulkan);
+        write_pkg_config(&prefix);
         build_va_shim(&manifest, &root, &prefix);
         build_ffmpeg(&ffmpeg, &root, &prefix, &configure);
         fs::write(&stamp_path, &stamp).unwrap();
@@ -181,13 +169,9 @@ fn main() {
         build_va_shim(&manifest, &root, &prefix);
     }
 
-    // With `vk_device.c`, which lists the Vulkan devices before FFmpeg opens
-    // one, through libvulkan loaded for the look: headers only here too.
     cc::Build::new()
         .file(manifest.join("c/vento_video.c"))
-        .file(manifest.join("c/vk_device.c"))
         .include(prefix.join("include"))
-        .include(vulkan.join("include"))
         .warnings(true)
         .compile("vento_video");
     // libavcodec and what it needs, in the order a static link wants them,
@@ -236,7 +220,6 @@ fn configure_args(prefix: &Path, cc: &Path, asm: bool) -> Vec<String> {
         // everything that is not; nothing else of the machine's is looked
         // for, so no libdrm and no X11.
         "--enable-vaapi",
-        "--enable-vulkan",
         // dav1d's pkg-config file is the only one it reads, and the static
         // half of it is what a static link needs.
         "--pkg-config-flags=--static",
@@ -341,12 +324,10 @@ fn install_libva_headers(source: &Path, prefix: &Path) {
     }
 }
 
-/// What FFmpeg's configure is told libva and Vulkan are, through the
-/// pkg-config files it reads (the prefix's alone, as for dav1d): libva and
-/// libva-drm are the headers just installed and the shim, and Vulkan is its
-/// headers and nothing to link, which is what configure asks of it when
-/// Vulkan is not linked statically.
-fn write_pkg_config(prefix: &Path, vulkan: &Path) {
+/// What FFmpeg's configure is told libva is, through the pkg-config files it
+/// reads (the prefix's alone, as for dav1d): libva and libva-drm are the
+/// headers just installed and the shim.
+fn write_pkg_config(prefix: &Path) {
     let dir = prefix.join("lib/pkgconfig");
     fs::create_dir_all(&dir).unwrap();
     let head = format!(
@@ -379,33 +360,6 @@ fn write_pkg_config(prefix: &Path, vulkan: &Path) {
             "{head}Name: libva-drm\nDescription: libva-drm's header over vento's dlopen shim\n\
              Version: {libva_version}\nRequires: libva\nCflags: -I${{includedir}}\n\
              Libs: -L${{libdir}} -lvento_va\n"
-        ),
-    )
-    .unwrap();
-    let include = vulkan.join("include");
-    let registry = fs::read_to_string(include.join("vulkan/vulkan_core.h")).unwrap();
-    let header = registry
-        .lines()
-        .find_map(|l| l.strip_prefix("#define VK_HEADER_VERSION "))
-        .map(|v| v.trim().to_string())
-        .expect("vulkan_core.h has VK_HEADER_VERSION");
-    let complete = registry
-        .lines()
-        .find_map(|l| l.strip_prefix("#define VK_HEADER_VERSION_COMPLETE VK_MAKE_API_VERSION("))
-        .and_then(|v| {
-            let parts: Vec<&str> = v.trim_end_matches(')').split(',').map(str::trim).collect();
-            (parts.len() == 4).then(|| format!("{}.{}.{header}", parts[1], parts[2]))
-        })
-        .expect("vulkan_core.h has VK_HEADER_VERSION_COMPLETE");
-    fs::write(
-        dir.join("vulkan.pc"),
-        // configure reads `includedir` as well as the flags: it checks the
-        // version by including the header at that path.
-        format!(
-            "includedir={}\n\nName: Vulkan-Headers\n\
-             Description: Vulkan's headers; FFmpeg loads libvulkan itself\n\
-             Version: {complete}\nCflags: -I${{includedir}}\n",
-            include.display()
         ),
     )
     .unwrap();

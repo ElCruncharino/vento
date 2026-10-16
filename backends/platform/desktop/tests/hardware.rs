@@ -49,15 +49,12 @@ fn vaapi(test: &str) -> bool {
 /// whether the device is expected to take it (on iHD); where it is not, the
 /// reason is expected to name `reason`.
 fn compare(name: &str, hardware: bool, reason: &str) {
-    if vaapi(name) {
-        compare_on(Hardware::Vaapi, name, hardware, reason);
+    if !vaapi(name) {
+        return;
     }
-}
-
-fn compare_on(method: Hardware, name: &str, hardware: bool, reason: &str) {
     let (codec, frames) = frames(name);
     let mut sw = Decoder::with_hardware(codec, W, H, Hardware::Off).expect("a software decoder");
-    let mut hw = Decoder::with_hardware(codec, W, H, method).expect("a decoder");
+    let mut hw = Decoder::with_hardware(codec, W, H, Hardware::Vaapi).expect("a decoder");
     let want = pictures(&mut sw, &frames);
     let got = pictures(&mut hw, &frames);
     let status = hw.status().unwrap();
@@ -65,10 +62,8 @@ fn compare_on(method: Hardware, name: &str, hardware: bool, reason: &str) {
     let on_hardware = hw.hardware() == Some(true);
     if on_hardware != hardware {
         let why = hw.software_reason().unwrap_or_default();
-        // `require` is iHD's profiles: Vulkan's are the driver's to have
-        // (Fedora's Mesa has no H.264 or H.265), and only noted.
         assert!(
-            mode() != "require" || method != Hardware::Vaapi,
+            mode() != "require",
             "{name}: on hardware {on_hardware}, expected {hardware} ({why})"
         );
         eprintln!("{name}: on hardware {on_hardware}, expected {hardware}: {why}");
@@ -79,9 +74,8 @@ fn compare_on(method: Hardware, name: &str, hardware: bool, reason: &str) {
         assert!(status.contains(" sw ") && status.contains(reason), "{status}");
     }
     if on_hardware {
-        let how = if method == Hardware::Vulkan { "copy" } else { "map" };
         assert!(
-            status.starts_with(&format!("{} {} {how} ", codec.name(), method.name())),
+            status.starts_with(&format!("{} vaapi map ", codec.name())),
             "{status}"
         );
         assert_eq!(hw.software_reason(), None);
@@ -330,29 +324,21 @@ fn mapped_either_way_the_picture_is_the_same() {
     assert!(verdict.is_some(), "no verdict after {} pictures", frames.len());
 }
 
-/// Held by the tests that count render nodes and by the one that opens the
-/// Vulkan device, which is one more render node: the count is the process's.
-static RENDER_NODES: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 /// Every decoder that asks for VAAPI decodes on the same device: a second
 /// decoder (and a tenth) opens no render node of its own, and the device
 /// outlives the decoders.
 #[test]
 fn one_device_for_every_decoder() {
-    if vaapi("one_device_for_every_decoder") {
-        one_device_on(Hardware::Vaapi, "h264.h264");
+    if !vaapi("one_device_for_every_decoder") {
+        return;
     }
-}
-
-fn one_device_on(method: Hardware, name: &str) {
-    let _counting = RENDER_NODES.lock().unwrap_or_else(|e| e.into_inner());
-    let (codec, frames) = frames(name);
-    let mut first = Decoder::with_hardware(codec, W, H, method).unwrap();
+    let (codec, frames) = frames("h264.h264");
+    let mut first = Decoder::with_hardware(codec, W, H, Hardware::Vaapi).unwrap();
     pictures(&mut first, &frames);
     let open = render_nodes();
-    assert!(open >= 1, "no render node open with a {} decoder", method.name());
+    assert!(open >= 1, "no render node open with a VAAPI decoder");
     let mut more: Vec<Decoder> = (0..10)
-        .map(|_| Decoder::with_hardware(codec, W, H, method).unwrap())
+        .map(|_| Decoder::with_hardware(codec, W, H, Hardware::Vaapi).unwrap())
         .collect();
     for decoder in &mut more {
         pictures(decoder, &frames);
@@ -361,7 +347,7 @@ fn one_device_on(method: Hardware, name: &str) {
     assert_eq!(render_nodes(), open, "a decoder opened a device of its own");
     drop(more);
     drop(first);
-    assert_eq!(platform_desktop::ffmpeg::device_opened(method), Some(true));
+    assert_eq!(platform_desktop::ffmpeg::device_opened(Hardware::Vaapi), Some(true));
     assert_eq!(render_nodes(), open, "the device closed with its decoders");
 }
 
@@ -370,16 +356,13 @@ fn one_device_on(method: Hardware, name: &str) {
 /// key frame is a whole, right picture.
 #[test]
 fn a_failure_mid_stream_falls_back_to_software() {
-    if vaapi("a_failure_mid_stream_falls_back_to_software") {
-        fallback_on(Hardware::Vaapi, "h264.h264");
+    if !vaapi("a_failure_mid_stream_falls_back_to_software") {
+        return;
     }
-}
-
-fn fallback_on(method: Hardware, name: &str) {
-    let (codec, frames) = frames(name);
+    let (codec, frames) = frames("h264.h264");
     let mut sw = Decoder::with_hardware(codec, W, H, Hardware::Off).unwrap();
     let want = pictures(&mut sw, &frames[..1]);
-    let mut hw = Decoder::with_hardware(codec, W, H, method).unwrap();
+    let mut hw = Decoder::with_hardware(codec, W, H, Hardware::Vaapi).unwrap();
     pictures(&mut hw, &frames[..1]);
     assert_eq!(hw.hardware(), Some(true));
 
@@ -395,12 +378,10 @@ fn fallback_on(method: Hardware, name: &str) {
     assert_eq!(hw.method(), Hardware::Off);
     assert_eq!(hw.hardware(), Some(false));
     let why = hw.software_reason().unwrap_or_default();
-    // Vulkan's images are copied, not mapped.
-    let failed = if method == Hardware::Vulkan { "copy failed" } else { "map failed" };
-    assert!(why.starts_with(&format!("{}: {failed}", method.name())), "{why}");
+    assert!(why.starts_with("vaapi: map failed"), "{why}");
     let status = hw.status().unwrap();
     assert!(
-        status.starts_with(&format!("{} sw ", codec.name())) && status.contains(failed),
+        status.starts_with(&format!("{} sw ", codec.name())) && status.contains("map failed"),
         "{status}"
     );
 
@@ -434,84 +415,12 @@ fn without_a_device_it_is_software() {
     assert_eq!(platform_desktop::ffmpeg::device_opened(Hardware::Vaapi), Some(false));
 }
 
-/// With `/dev/dri` hidden the only Vulkan device left is a CPU's (lavapipe),
-/// which is not one to decode on: asking for Vulkan is software, with the
-/// reason, no device is opened, and nothing of lavapipe stays loaded from
-/// the look at the devices.
-#[test]
-fn without_a_gpu_vulkan_opens_no_cpu_device() {
-    if mode() != "absent" || render_nodes_present() {
-        eprintln!("without_a_gpu_vulkan_opens_no_cpu_device: skipped, /dev/dri is not hidden");
-        return;
-    }
-    let (codec, frames) = frames("vp9.ivf");
-    let mut hw = Decoder::with_hardware(codec, W, H, Hardware::Vulkan).unwrap();
-    assert_eq!(hw.method(), Hardware::Off);
-    let why = hw.software_reason().unwrap_or_default();
-    assert!(
-        why == "vulkan: no video decode device" || why.starts_with("vulkan: no libvulkan"),
-        "{why}"
-    );
-    pictures(&mut hw, &frames);
-    assert_eq!(hw.hardware(), Some(false));
-    assert_eq!(platform_desktop::ffmpeg::device_opened(Hardware::Vulkan), Some(false));
-    let maps = std::fs::read_to_string("/proc/self/maps").unwrap();
-    assert!(!maps.contains("libvulkan_lvp"), "lavapipe is still loaded");
-}
-
-/// Whether there is any DRM render node to open at all.
-fn render_nodes_present() -> bool {
-    std::fs::read_dir("/dev/dri")
-        .map(|entries| {
-            entries
-                .filter_map(Result::ok)
-                .any(|e| e.file_name().to_string_lossy().starts_with("renderD"))
-        })
-        .unwrap_or(false)
-}
-
-/// Vulkan Video, which only a run that asks for it tries
-/// (`VENTO_TEST_VULKAN=1`, and on Mesa's ANV `ANV_DEBUG=video-decode`): what
-/// the device has a decoder for comes out as software's does, and what it has
-/// not is software, with a note; one device for every decoder, and a failure
-/// mid-stream software, as on VAAPI.
-#[test]
-fn vulkan() {
-    if std::env::var_os("VENTO_TEST_VULKAN").is_none() {
-        eprintln!("vulkan: skipped, VENTO_TEST_VULKAN is not set");
-        return;
-    }
-    let _counting = RENDER_NODES.lock().unwrap_or_else(|e| e.into_inner());
-    let probe = Decoder::with_hardware(Codec::Av1, W, H, Hardware::Vulkan).unwrap();
-    if probe.method() != Hardware::Vulkan {
-        eprintln!("vulkan: no device ({:?})", probe.software_reason());
-        return;
-    }
-    // The device chosen is a GPU's, not lavapipe's (`llvmpipe (LLVM ...)`),
-    // which the loader may well list first.
-    let device = platform_desktop::ffmpeg::vulkan_device().expect("a Vulkan device chosen");
-    eprintln!("vulkan: on {device}");
-    assert!(!device.contains("llvmpipe"), "{device}");
-    for name in [
-        "h264.h264",
-        "h265.h265",
-        "h265-main10.h265",
-        "vp9.ivf",
-        "vp9-444-10bit.ivf",
-        "av1.ivf",
-    ] {
-        compare_on(Hardware::Vulkan, name, true, "");
-    }
-    drop(_counting);
-    one_device_on(Hardware::Vulkan, "av1.ivf");
-    fallback_on(Hardware::Vulkan, "av1.ivf");
-}
-
 /// What a frame costs, software against VAAPI (or the methods
-/// `VENTO_BENCH_HW` names, comma-separated: `off,vaapi,vulkan`), on the clips
+/// `VENTO_BENCH_HW` names, comma-separated: `off,vaapi`), on the clips
 /// `VENTO_BENCH` names (comma-separated Annex B `.h264`/`.h265` at
-/// `VENTO_BENCH_SIZE`, or IVF, which says its own size): the decoder's own time (decode, and on
-/// hardware the wait for it and the map) as `status` has it, the whole of
+/// `VENTO_BENCH_SIZE`, or IVF, which says its own size): the decoder's own
+/// time (decode, and on hardware the wait for it and the map) as `status`
+/// has it, the whole of
 /// `decode` with every row converted, and the CPU the process spent. Run
 /// with `--release --ignored --nocapture`, since the conversion is Rust's.
 /// `VENTO_BENCH_FRAMES` decodes only the first so many, and

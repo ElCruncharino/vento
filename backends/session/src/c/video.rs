@@ -119,7 +119,7 @@ unsafe extern "C" fn mode(user: *mut c_void) -> c_int {
 /// bound. It holds for both platforms' decoders. MediaCodec's handle is the
 /// NDK's, whose calls may come from any thread one at a time — the C++
 /// context this replaced made the same calls from the same worker threads —
-/// and libavcodec's context, with its VAAPI or Vulkan device, is likewise
+/// and libavcodec's context, with its VAAPI device, is likewise
 /// any thread's as long as it is one thread's at a time. Neither keeps
 /// anything thread-local between calls.
 unsafe fn decoder<'a>(d: *mut ffi::vento_video_decoder) -> &'a mut Open {

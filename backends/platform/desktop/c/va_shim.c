@@ -5,16 +5,16 @@
 // than linked.
 //
 // FFmpeg's VAAPI device and its hardware decoders call the libva functions
-// defined below (and its Vulkan device one of them, deriving itself from a
-// VAAPI one), and nothing else of libva or libva-drm; `vento_video.c` calls
-// two of the same, to wait for a held picture's surface and export it. Linked against the
-// real libraries, every vento would need libva installed just to start, and
-// would load it into every process, though hardware decoding is off unless it
-// is asked for and most sessions never touch it. So each function is defined
-// here instead, forwarding to the real one, and the real ones are looked up
-// the first time any of them is called: `libva.so.2` and `libva-drm.so.2`, the
-// sonames every libva 2 has had. With hardware decoding off nothing calls
-// them, and neither library is ever opened (`/proc/PID/maps` shows no libva).
+// defined below, and nothing else of libva or libva-drm; `vento_video.c` calls
+// two of the same, to wait for a held picture's surface and export it. Linked
+// against the real libraries, every vento would need libva installed just to
+// start, and would load it into every process, though hardware decoding is off
+// unless it is asked for and most sessions never touch it. So each function is
+// defined here instead, forwarding to the real one, and the real ones are
+// looked up the first time any of them is called: `libva.so.2` and
+// `libva-drm.so.2`, the sonames every libva 2 has had. With hardware decoding
+// off nothing calls them, and neither library is ever opened (`/proc/PID/maps`
+// shows no libva).
 //
 // **Without libva everything fails the way a machine without a device does.**
 // FFmpeg's first call is `vaGetDisplayDRM`, which then returns NULL, so

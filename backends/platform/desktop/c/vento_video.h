@@ -15,7 +15,7 @@
 //
 // Hardware decoding is the caller's to ask for and off unless it does: a
 // decoder opened with VENTO_VIDEO_HW_OFF is the software decoder it always
-// was, and nothing of libva or Vulkan is loaded for it. Asked for, the
+// was, and nothing of libva is loaded for it. Asked for, the
 // picture still comes out as planes in memory the caller reads (the surface
 // mapped for reading, not copied), so the caller cannot tell the two apart
 // except by asking; and the decoder is software whenever hardware cannot
@@ -46,22 +46,18 @@ enum vento_video_codec {
     VENTO_VIDEO_AV1 = 5,
 };
 
-// How a decoder may decode, as the caller asks for it.
+// How a decoder may decode, as the caller asks for it: numbered as
+// `common::video::Hardware` declares them.
 enum vento_video_hardware {
     // libavcodec's software decoders, and nothing else: the default.
     VENTO_VIDEO_HW_OFF = 0,
     // VAAPI, through libva (loaded then, if it is installed) on the first
     // DRM render node.
     VENTO_VIDEO_HW_VAAPI = 1,
-    // Vulkan Video, through libvulkan (loaded then), on the first Vulkan
-    // device that is a GPU with a queue that decodes video (never a CPU
-    // implementation such as lavapipe). Read back by copy, since its images
-    // cannot be mapped.
-    VENTO_VIDEO_HW_VULKAN = 2,
-    // VAAPI where it has a decoder for the stream, else Vulkan where that
-    // has, else software; decided per stream, and Vulkan not loaded where
-    // VAAPI takes it.
-    VENTO_VIDEO_HW_AUTO = 3,
+    // VAAPI where it has a decoder for the stream, else software: the same
+    // as VAAPI here, which is the one device there is; the person's "use the
+    // GPU where it can" rather than a choice of API.
+    VENTO_VIDEO_HW_AUTO = 2,
 };
 
 // Samples packed into words rather than laid out in planes, for a picture's
@@ -125,10 +121,9 @@ struct vento_video_picture {
     int32_t packed;
     // The picture came out of the hardware, mapped for reading.
     int32_t hardware;
-    // The decoder on this packet's way in could not take it, and another is
-    // in its place from here on: the next device asked for where the first
-    // had no decoder for the stream's profile (`auto`'s Vulkan after VAAPI),
-    // software where hardware failed or none is left. The packet was given
+    // The decoder on this packet's way in could not take it, and the
+    // software one is in its place from here on: the hardware failed, or
+    // `av1` had no device decoder for the stream. The packet was given
     // to the new decoder, but anything it refers to was decoded by the old
     // one, so until a key frame there may be no picture or a broken one.
     // The caller should ask the far end for one, unless no picture had come
@@ -188,47 +183,39 @@ int vento_video_decodable(int codec);
 // size it is), or NULL with the reason in `error` (NUL-terminated, cut to
 // `error_len`). Low delay, slice threads as many as the machine has.
 //
-// `hardware` is a `vento_video_hardware`. Anything but OFF opens that
+// `hardware` is a `vento_video_hardware`. Anything but OFF opens the VAAPI
 // device (once for the whole process: every decoder that asks shares it,
 // whichever thread it is on, and it stays open until the process ends) and
 // decodes on it when the stream's profile is one it has. Where there is no
-// device, or the device has no decoder for the profile, the decoder is the
-// next device's (AUTO's Vulkan) or software, and
-// `vento_video_software_reason` says why; the open only fails where
-// software would.
+// device, or the device has no decoder for the profile, the decoder is
+// software, and `vento_video_software_reason` says why; the open only fails
+// where software would.
 vento_video *vento_video_open(int codec, int width, int height, int hardware, char *error,
                               size_t error_len);
 
 // The name of libavcodec's decoder behind it ("h264", "libdav1d", ...).
 const char *vento_video_name(const vento_video *video);
 
-// The device the decoder decodes on, a `vento_video_hardware` (VAAPI or
-// VULKAN), or OFF for software — which it is from the start without a
+// The device the decoder decodes on, a `vento_video_hardware` (VAAPI), or
+// OFF for software — which it is from the start without a
 // device, and from a mid-stream fallback on. A decoder on a device whose
 // stream it cannot take is still on it: its pictures say they are not
 // `hardware`, and the reason is kept.
 int vento_video_method(const vento_video *video);
 
-// A `vento_video_hardware`'s name: "vaapi", "vulkan", "auto" or "off".
+// A `vento_video_hardware`'s name: "vaapi", "auto" or "off".
 const char *vento_video_method_name(int method);
 
 // Why the decoder is not decoding in hardware though it was asked to, such as
 // "vaapi: no device (...)", "vaapi: H.264 High 10 is not supported" or
-// "vaapi: decode failed (...)", every device tried named in turn with "; "
-// between them ("vaapi: no device; vulkan: no video decode device"), or ""
-// where it was not asked to or nothing has stood in the way. Valid until the
-// next call on the decoder.
+// "vaapi: decode failed (...)", or "" where it was not asked to or nothing
+// has stood in the way. Valid until the next call on the decoder.
 const char *vento_video_software_reason(const vento_video *video);
 
-// Whether the shared device of a `vento_video_hardware` (VAAPI or VULKAN)
-// has been asked for in this process: 0 never, 1 open, -1 tried and failed.
-// For tests, and for whoever wants to know that OFF opened nothing.
+// Whether the shared device of a `vento_video_hardware` (VAAPI) has been
+// asked for in this process: 0 never, 1 open, -1 tried and failed. For
+// tests, and for whoever wants to know that OFF opened nothing.
 int vento_video_device_state(int method);
-
-// The name of the Vulkan device chosen to decode on ("Intel(R) Graphics
-// (LNL)", say), or "" before any decoder asked for Vulkan or where no device
-// can decode video. Valid until the process ends.
-const char *vento_video_vulkan_device(void);
 
 // Whether the decoder maps VAAPI's pictures in place (1) rather than as an
 // image the driver copies each surface into (0), which it decides once it

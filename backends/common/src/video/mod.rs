@@ -60,8 +60,8 @@ impl Codec {
     }
 }
 
-/// How a desktop's decoders may decode: on the GPU or not, and through which
-/// API. The person's choice (a setting, `--hw-decode`), off unless asked for.
+/// How a desktop's decoders may decode: on the GPU or not. The person's
+/// choice (a setting, `--hw-decode`), off unless asked for.
 ///
 /// Here rather than beside the desktop's decoder because it is what a
 /// session is started with, whichever backend it is: RustDesk's picture is
@@ -76,30 +76,23 @@ pub enum Hardware {
     Off,
     /// VAAPI, through libva, on the first DRM render node.
     Vaapi,
-    /// Vulkan Video, through libvulkan, on the first Vulkan device that is a
-    /// GPU with a video decode queue (never a CPU implementation such as
-    /// lavapipe).
-    Vulkan,
     /// Per stream: VAAPI where it takes the stream (a device, with a decoder
-    /// for the profile), else Vulkan where that does, else software.
+    /// for the profile), else software. The same as [`Vaapi`](Self::Vaapi)
+    /// while VAAPI is the one API there is; what the setting means is "the
+    /// GPU where it can", whatever decodes there.
     Auto,
 }
 
 impl Hardware {
-    pub const ALL: [Hardware; 4] = [
-        Hardware::Off,
-        Hardware::Vaapi,
-        Hardware::Vulkan,
-        Hardware::Auto,
-    ];
+    /// Every mode, in declaration order, which is also how the C side numbers
+    /// them (`vento_video_hardware`, `vento_video_decoders.mode`).
+    pub const ALL: [Hardware; 3] = [Hardware::Off, Hardware::Vaapi, Hardware::Auto];
 
-    /// The name a setting or a command line uses: "off", "vaapi", "vulkan"
-    /// or "auto".
+    /// The name a setting or a command line uses: "off", "vaapi" or "auto".
     pub fn name(self) -> &'static str {
         match self {
             Hardware::Off => "off",
             Hardware::Vaapi => "vaapi",
-            Hardware::Vulkan => "vulkan",
             Hardware::Auto => "auto",
         }
     }

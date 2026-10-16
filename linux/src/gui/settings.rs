@@ -32,10 +32,10 @@ pub struct Settings {
     /// the far end. Off, neither is ever taken and they stay this
     /// desktop's.
     pub grab_keyboard: bool,
-    /// Decode video on the GPU where it can be: VAAPI, Vulkan Video, or
-    /// whichever opens (`auto`). Off, the default, no device is opened and
-    /// neither library is loaded. Like the rest, not saved: a run that
-    /// wants it asks for it (`--hw-decode`) or switches it on here.
+    /// Decode video on the GPU where it can be, through VAAPI (`vaapi`, or
+    /// `auto`, which is the same). Off, the default, no device is opened and
+    /// libva is not loaded. Like the rest, not saved: a run that wants it
+    /// asks for it (`--hw-decode`) or switches it on here.
     pub hw_decode: Hardware,
 }
 
@@ -93,26 +93,20 @@ impl Settings {
              own, instead of making it this window's pointer. Only where this end owns the pointer; in \
              relative mode the far end draws its cursor into the picture either way.",
         );
-        // A box like the others, on meaning `auto`; a device named on the
-        // command line is kept, and shown beside the box, until the box is
-        // switched off. Which backends use it is said in the summary, which
-        // grows as more of them decode through it.
+        // A box like the others, on meaning `auto`; `vaapi` from the command
+        // line, which decodes the same, is kept until the box is switched
+        // off. Which backends use it is said in the summary, which grows as
+        // more of them decode through it.
         let label = if weak { RichText::new("Hardware decoding").weak() } else { RichText::new("Hardware decoding") };
         ui.label(label).on_hover_text(
-            "Decode video on the GPU (VAAPI, else Vulkan Video) where the device takes the stream, and in \
-             software where it does not. RustDesk and TigerVNC's H.264 switch at once (at the next picture \
-             the far end sends whole), and RustDesk's VAAPI pictures are drawn from the GPU without being \
-             read back where the window's Vulkan device can; FreeRDP's H.264 takes it at the next \
-             connection, and decodes on VAAPI only; the other backends decode as their libraries do and do \
-             not use this.",
+            "Decode video on the GPU (VAAPI) where the device takes the stream, and in software where it \
+             does not. RustDesk and TigerVNC's H.264 switch at once (at the next picture the far end sends \
+             whole), and RustDesk's VAAPI pictures are drawn from the GPU without being read back where the \
+             window's Vulkan device can; FreeRDP's H.264 takes it at the next connection; the other \
+             backends decode as their libraries do and do not use this.",
         );
         let mut on = self.hw_decode != Hardware::Off;
-        let note = match self.hw_decode {
-            Hardware::Vaapi => "VAAPI only",
-            Hardware::Vulkan => "Vulkan only",
-            Hardware::Off | Hardware::Auto => "",
-        };
-        if ui.checkbox(&mut on, RichText::new(note).weak().italics()).changed() {
+        if ui.checkbox(&mut on, "").changed() {
             self.hw_decode = if on { Hardware::Auto } else { Hardware::Off };
             changed = true;
         }

@@ -114,13 +114,14 @@ usage: vento                                   the connection dialog
                          hiding this desktop's, instead of making it the
                          window's own pointer where this end owns the
                          pointer
-  --hw-decode[=HOW]      decode video on the GPU: vaapi, vulkan, auto (VAAPI,
-                         else Vulkan; the default without =HOW) or off, which
-                         is what it is without the flag; where the device does
-                         not take a stream it is decoded in software. RustDesk
-                         and TigerVNC's H.264 use it (the dialog's Settings
-                         have all five, and the panel switches them live), and
-                         FreeRDP's H.264 (VAAPI only) at the next connection
+  --hw-decode[=HOW]      decode video on the GPU: vaapi, auto (the same, VAAPI
+                         then software; the default without =HOW) or off,
+                         which is what it is without the flag; where the
+                         device does not take a stream it is decoded in
+                         software. RustDesk and TigerVNC's H.264 use it (the
+                         dialog's Settings have all five, and the panel
+                         switches them live), and FreeRDP's H.264 at the next
+                         connection
   --x11, --wayland       open the window on that display server (default:
                          Wayland where WAYLAND_DISPLAY is set, X11 otherwise)
   --library-dir DIR      where RealVNC's two libraries are (XDG data dir)
@@ -399,7 +400,7 @@ headless, any of which selects the probe instead of the window:
     fn hw_decode(arg: &str) -> Result<backends::Hardware, String> {
         let how = arg.split_once('=').map_or("", |(_, how)| how);
         backends::Hardware::from_name(how)
-            .ok_or_else(|| format!("--hw-decode: {how:?} is not one of vaapi, vulkan, auto or off"))
+            .ok_or_else(|| format!("--hw-decode: {how:?} is not one of vaapi, auto or off"))
     }
 
     /// `WxH`, neither of them zero.
@@ -892,14 +893,13 @@ headless, any of which selects the probe instead of the window:
             assert_eq!(settings(&[]), Hardware::Off);
             assert_eq!(settings(&["--hw-decode"]), Hardware::Auto);
             assert_eq!(settings(&["--hw-decode=vaapi"]), Hardware::Vaapi);
-            assert_eq!(settings(&["--hw-decode=vulkan"]), Hardware::Vulkan);
             assert_eq!(settings(&["--hw-decode=auto"]), Hardware::Auto);
             assert_eq!(settings(&["--hw-decode", "--hw-decode=off"]), Hardware::Off);
             assert_eq!(
                 settings(&["rustdesk", "127.0.0.1", "--probe", "1", "--hw-decode=vaapi"]),
                 Hardware::Vaapi
             );
-            for refused in ["--hw-decode=", "--hw-decode=VAAPI", "--hw-decode=nvdec"] {
+            for refused in ["--hw-decode=", "--hw-decode=VAAPI", "--hw-decode=nvdec", "--hw-decode=vulkan"] {
                 assert!(parse(vec![refused.to_string()]).is_err(), "{refused}");
             }
         }

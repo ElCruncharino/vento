@@ -43,7 +43,7 @@
 //! info row that still names the codec.
 //!
 //! **Hardware decoding is opt-in** ([`Hardware`], off by default): asked for,
-//! a decoder decodes on VAAPI (or Vulkan Video) where the device has a decoder
+//! a decoder decodes on VAAPI where the device has a decoder
 //! for the stream's profile, and in software where it has not, with the
 //! reason kept for [`status`](common::video::Decoder::status). What comes back
 //! is still planes in memory — the hardware's surface mapped for reading, in
@@ -51,7 +51,7 @@
 //! picture is the same either way. A hardware failure mid-stream is a
 //! software decoder in its place and a key frame asked for
 //! ([`take_key_frame_request`](common::video::Decoder::take_key_frame_request)),
-//! not a lost picture. Off, nothing of libva or Vulkan is loaded.
+//! not a lost picture. Off, nothing of libva is loaded.
 //!
 //! **Or left on the GPU**, for a window that draws there and says so
 //! ([`FFmpeg::set_gpu_pictures`]): a caller that asks
@@ -206,7 +206,6 @@ mod sys {
         pub fn vento_video_name(video: *const Video) -> *const c_char;
         pub fn vento_video_method(video: *const Video) -> c_int;
         pub fn vento_video_software_reason(video: *const Video) -> *const c_char;
-        pub fn vento_video_vulkan_device() -> *const c_char;
         pub fn vento_video_maps_in_place(video: *const Video) -> c_int;
         pub fn vento_video_device_state(method: c_int) -> c_int;
         pub fn vento_video_fail_next(video: *mut Video);
@@ -238,16 +237,14 @@ fn hardware_number(hardware: Hardware) -> c_int {
     match hardware {
         Hardware::Off => 0,
         Hardware::Vaapi => 1,
-        Hardware::Vulkan => 2,
-        Hardware::Auto => 3,
+        Hardware::Auto => 2,
     }
 }
 
 fn hardware_of(number: c_int) -> Hardware {
     match number {
         1 => Hardware::Vaapi,
-        2 => Hardware::Vulkan,
-        3 => Hardware::Auto,
+        2 => Hardware::Auto,
         _ => Hardware::Off,
     }
 }
@@ -261,15 +258,6 @@ pub fn device_opened(hardware: Hardware) -> Option<bool> {
         0 => None,
         state => Some(state > 0),
     }
-}
-
-/// The Vulkan device a decoder that asks for Vulkan decodes on: the first
-/// GPU with a video decode queue (never a CPU implementation such as
-/// lavapipe), by name. `None` before any decoder has asked, or where no
-/// device can decode video.
-pub fn vulkan_device() -> Option<String> {
-    let name = unsafe { CStr::from_ptr(sys::vento_video_vulkan_device()) };
-    (!name.is_empty()).then(|| name.to_string_lossy().into_owned())
 }
 
 /// libavcodec's decoders, as a session is handed them, decoding as
@@ -476,11 +464,6 @@ impl Decoder {
                 );
                 decoder.reason = why;
             }
-            None if method == Hardware::Vulkan => log::info!(
-                "{} decoder ({name}, vulkan on {}) started for {width}x{height}",
-                codec.name(),
-                vulkan_device().unwrap_or_default()
-            ),
             None if method != Hardware::Off => log::info!(
                 "{} decoder ({name}, {}) started for {width}x{height}",
                 codec.name(),
@@ -559,20 +542,8 @@ impl Decoder {
             // start as the hardware's would have: nothing is missing.
             self.key_frame = self.pictures > 0;
             let why = self.software_reason().unwrap_or_default();
-            let method = self.method();
-            // On `auto`'s next device, the one before it having had no
-            // decoder for the stream's profile, nothing is known until its
-            // first picture says whether it decodes them.
-            self.hardware = (method == Hardware::Off).then_some(0);
-            if method != Hardware::Off {
-                log::info!(
-                    "{} decoder moved to {} ({}), the device before it having no decoder \
-                     for the stream",
-                    self.codec.name(),
-                    method.name(),
-                    self.name()
-                );
-            } else if self.key_frame {
+            self.hardware = Some(0);
+            if self.key_frame {
                 log::warn!(
                     "{} decoder fell back to software mid-stream: {why}",
                     self.codec.name()
@@ -728,7 +699,8 @@ impl common::video::Decoder for Decoder {
     }
 
     /// `H.264 vaapi map 7.1 ms`, `copy` for a picture copied rather than
-    /// mapped (Vulkan's), `dmabuf` for one left on the GPU, where the time
+    /// mapped (where the driver will not map it), `dmabuf` for one left on
+    /// the GPU, where the time
     /// is the decode and the wait for it and nothing else.
     fn status(&self) -> Option<String> {
         let mut line = self.codec.name().to_string();

@@ -3,11 +3,10 @@
 
 // The platform's video decoders, as a C backend is handed them: a table of
 // calls over `common::video::Decoders` (MediaCodec on the phone, the Linux
-// client's FFmpeg with its opt-in VAAPI and Vulkan), filled in by
-// `session::c::video` and passed in a backend's config. Function pointers
-// rather than symbols, so that a backend library links nothing of the
-// process it is loaded into — the Linux client's `libvento_tigervnc.so` is
-// one, and has no Rust in it.
+// client's FFmpeg with its opt-in VAAPI), filled in by `session::c::video` and
+// passed in a backend's config. Function pointers rather than symbols, so that
+// a backend library links nothing of the process it is loaded into — the Linux
+// client's `libvento_tigervnc.so` is one, and has no Rust in it.
 //
 // TigerVNC is the one user: its H.264 rectangles are decoded through this
 // rather than through a decoder of the library's own, so that the hardware
