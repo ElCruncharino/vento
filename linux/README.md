@@ -14,8 +14,11 @@ over that seam, and a headless probe for proving a backend without one.
 ## What is here
 
 The seam itself is not this crate's: it is `backends/session`
-(`remotedesktop-session`), which the phone's backends are written against too,
-and every backend's adapter to it is in that backend's own crate.
+(`remotedesktop-session`), which the phone holds every session but RealVNC's
+through too, and every backend's adapter to it is in that backend's own
+crate. On the phone the same adapters sit behind one JNI layer
+(`backends/platform/android`), so a backend is written once for both
+clients, and what differs between them is each client's own code.
 
 - **`backends/session`** — the `Backend` trait and the value types around it
   (`Facts`, `ConnectionFact`, `Monitor`, `Traffic`, `Picture`); the `Event`
@@ -23,8 +26,10 @@ and every backend's adapter to it is in that backend's own crate.
   `message`) and the `Mailbox` a session pushes them onto, with a wake hook
   the window hands its repaint request to; the option descriptions and the
   catalog of the eight backends, so `-o key=value` and the dialog's rows are
-  generic; `Kind` and `Connect`; the credentials and known-hosts rules the
-  phone keeps too (held to `backends/vectors/` from both sides); and, under
+  generic; `Kind` and `Connect`; the credentials and trust rules — how a
+  prompt's answer is read, and `trust::decide`, which meets a far end's
+  identity with the pins in whatever `trust::Store` the client keeps — which
+  the phone's JNI layer applies too, held to `backends/vectors/`; and, under
   its `c` feature, the one adapter over the vtable in `vento/backend.h`.
   Damage is coalesced into a dirty-rect list behind a mutex and delivered one
   `Event::Frame` per update, never a message per rectangle; a window that
@@ -34,9 +39,11 @@ and every backend's adapter to it is in that backend's own crate.
 - **The adapters** — `src/backend.rs` in each Rust protocol crate
   (`backends/modules/{rfb,ironrdp,rustdesk,spice}/src/main/rust`), and a small
   crate beside each open C library (`backends/modules/{libvnc,tigervnc,
-  freerdp}/src/main/rust`) over the session crate's C adapter. RealVNC's is
-  the one still here, **`src/backends/realvnc.rs`**, since its library is the
-  viewer's own and hosted for this client alone.
+  freerdp}/src/main/rust`) over the session crate's C adapter, linked on the
+  phone into the library CMake makes of the C. RealVNC's is the one still
+  here, **`src/backends/realvnc.rs`**, since its library is the viewer's own
+  and hosted for this client alone (the phone's RealVNC backend is its own
+  Java over the viewer's JNI).
 - **`src/backends/`** — the list of the eight as this binary has them, in the
   catalog's order, and what a session here is told about this machine.
 - **`src/gui/`** — the window: `mod.rs` (the winit loop, the wgpu surface, egui
@@ -57,9 +64,10 @@ and every backend's adapter to it is in that backend's own crate.
   with tests), `settings.rs` (the client's own settings and their rows),
   `dialog.rs` (the connection dialog), `panel.rs` (the connection-info panel,
   with the live controls), `prompts.rs` (the modal prompts).
-- **`src/known_hosts.rs`** — where this client keeps its pins (what they
-  mean is `session::trust`) and RealVNC's identities, as files under
-  `$XDG_CONFIG_HOME/vento`, with tests.
+- **`src/known_hosts.rs`** — this client's `session::trust::Store`: where
+  it keeps its pins (what they mean, and what is asked, is `session::trust`)
+  and RealVNC's identities, as files under `$XDG_CONFIG_HOME/vento`, with
+  tests.
 - **`src/main.rs`** — the `vento` binary: the window, `--list`, and the
   headless probe.
 

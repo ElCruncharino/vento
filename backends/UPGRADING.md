@@ -152,6 +152,16 @@ under the host locale (`export LC_ALL=C`).
   a shared middle: a vendored tree's new option goes in the middle, a new
   port or NDK library in the Android half, a new system library in the host
   half (see `backends/CMakeLists.txt`).
+- A Rust backend's shim is its protocol crate, and its adapter is that
+  crate's `src/backend.rs`: the `Kind`, the config read from the options, and
+  the rows. An upstream change (IronRDP, hbb_common, ryll) reaches the
+  protocol code; `backend.rs` changes only when an option or a row does.
+- Next to nothing about a protocol is in Java or JNI any more. The phone
+  reaches every backend but RealVNC through one JNI layer,
+  `backends/platform/android`, over the same `session::Backend` the Linux
+  client holds; what a module's Java keeps is its provider and, for RDP and
+  the two borrowed VNC clients, a `NativeBackend.Hooks`. An upgrade that
+  keeps the adapter's `Kind` building has nothing to change on that side.
 - TigerVNC's two media sinks are platform code under
   `backends/platform/{android,desktop}/tigervnc`: the H.264 decoder context
   (the phone's, selected by `H264_ANDROID`; the host uses upstream's libav
@@ -180,17 +190,73 @@ under the host locale (`export LC_ALL=C`).
 
 ## Options
 
-A backend advertises its settings as `BackendOption`s in its
-`*Provider.java`. When an upstream change adds something a person would
-switch (a new encoding or codec, a security type, a behaviour toggle), add a
-row in the shape, wording and scope of its neighbours, plumb it through Java,
-JNI and the client, and default it to upstream's answer. Do not add rows for
-what the app already decides, what nobody would set, or what cannot be
-exercised here (an H.264 path with no decoder behind it).
+A backend's settings are its table in `backends/session/src/options.rs`, one
+`Spec` per row, and the one copy: the Linux client builds its dialog and
+`-o key=value` from it, and on the phone `vento-codegen` writes it into the
+module's generated `<Name>Catalog` at build time, which the provider answers
+from. When an upstream change adds something a person would switch (a new
+encoding or codec, a security type, a behaviour toggle), add a row in the
+shape, wording and scope of its neighbours, read it in the adapter (`o.get`,
+`o.bool`, `o.int`) into the config — for a C backend a new field in
+`vento_<name>_config`, which `session/build.rs` reads into Rust with
+bindgen — and default it to upstream's answer, and add its key to the
+test `the_keys_are_the_ones_records_hold`, which is there because a stored
+key renamed is a setting forgotten. The value reaches a session
+in the options it is created with, every key and value as strings, so
+nothing in Java or JNI changes for a row. Where the phone's words are wrong
+on a desktop ("this phone"), give the row a `desktop_summary` or the choice
+a `desktop_label`. Do not add rows for what the app already decides, what nobody would set, or
+what cannot be exercised here (an H.264 path with no decoder behind it).
 
 The user-facing strings in this app are hand-written by its owner. A new
 row's label and summary are a draft; name them in the report so they get
 rewritten.
+
+## Adding a backend
+
+Not part of an upgrade round, but the same layers, so here once. A backend
+is a module under `backends/modules/<name>/`, and each layer of it is one
+line or one file somewhere that already has seven:
+
+- **The protocol.** A Rust crate in `src/main/rust` (`crate-type = ["lib",
+  "cdylib"]`), or a C shim in `src/main/cpp` over `vento/backend.h` with its
+  config in `backends/common/include/vento/<name>.h` (added to
+  `session/build.rs`'s bindgen header), a host probe `<name>_probe.c`, and a
+  small crate in `src/main/rust` beside it (`remotedesktop-session` with the `c` feature; `session::c::start`
+  and a `Behaviour` do the rest).
+- **The session crate.** An `About` in `catalog.rs` (and in `ALL`), its
+  options table in `options.rs`, and in the backend's own crate a `Kind`:
+  the `About`, the version, and `create`, which turns a `Connect` into an
+  `Arc<dyn Backend>`. Credentials prompts, the trust decision
+  (`session::trust::decide` over each client's `Store`), the bell and the
+  events are the session crate's and are not written again.
+- **The Linux client.** The crate in `linux/Cargo.toml` and its `KIND` in
+  `linux/src/backends/mod.rs`'s `all()`; a C module also goes into
+  `backends/CMakeLists.txt`, which `linux/build.rs` builds, and into the
+  lists of directories and libraries there that it watches and links.
+- **The phone's library.** One `platform_android::natives!` line in the
+  crate's `lib.rs` under `cfg(target_os = "android")`, naming the module's
+  natives class and the `Kind` (`decoders =` for a backend whose picture is
+  video, `on_load =` for a linked library that wanted a `JNI_OnLoad` of its
+  own), with `remotedesktop-platform-android` as an Android-only dependency.
+  A Rust module's `build.gradle` has cargo-ndk build the cdylib into its
+  `jniLibs` (rfb's, copied); a C module's builds the crate as a static library
+  (`rustStaticLibrary`), passes CMake `-DVENTO_RUST_LIBRARY_DIR`, and its
+  CMakeLists calls `vento_android_library(<target> <crate>)` from
+  `backends/cmake/vento_android.cmake` in its Android half.
+- **The phone's Java.** The module's `build.gradle` registers
+  `generateCatalog` and `generateNatives` from `:backends`; its
+  `<Name>Provider` answers from `<Name>Catalog` and creates a
+  `NativeBackend` on `new <Name>Natives()`, and is declared in
+  `src/main/resources/META-INF/services/`, as a `BackendProvider`.
+  What the protocol needs of the phone that the layer does not do goes in
+  a `NativeBackend.Hooks` (`RdpHooks` remembers RDP's desktop sizes and words
+  the prompt's hint, `VncHooks` words an anonymous TLS question); most
+  backends need none. `settings.gradle` includes the module, and the app
+  takes it from `backendModules` in `app/build.gradle` — or an add-on under
+  `plugins/` does, as RustDesk's.
+- **The checks.** A line in `scripts/check-jni-symbols.sh`'s `MODULES`, and
+  the probe (below) against a test desktop.
 
 ## Verification
 
@@ -217,17 +283,32 @@ Rust modules:
     cargo clippy --locked --workspace
     ./gradlew :backends:<module>:assembleRelease
 
-Always: `./patch.sh check`, and `scripts/check-jni-symbols.sh` after any
-change to a native surface. At the end of the round:
-`./gradlew :app:assembleDebug :plugins:realvnc:assembleDebug
-:plugins:rustdesk:assembleDebug`.
+Every backend through the seam, on the host: the Linux client (`linux/`,
+its own workspace; see its README) builds all eight (RealVNC under clang
+only), and its headless probe connects one, writes the picture out and
+exits — the run that goes through the same adapters the phone does, RealVNC's
+aside:
+
+    (cd linux && cargo build && cargo test && cargo clippy --all-targets)
+    linux/target/debug/vento <backend> <address> --password ... --trust \
+        --probe 3 --out build/scratch/<backend>.ppm
+
+Always `./patch.sh check`. After an options change, `cargo test --locked -p
+remotedesktop-session` and `./gradlew :backends:testDebugUnitTest`: the
+first checks every table's defaults against its own rows and the keys
+records hold, and both hold `settle`, and its Java copy, to
+`backends/vectors/options.json`. After
+any change to a native surface — `platform_android`'s `surface.rs`,
+`NativeBackend`, or a module's natives class or library —
+`scripts/check-jni-symbols.sh`. At the end of the round: `./gradlew :app:assembleDebug
+:plugins:realvnc:assembleDebug :plugins:rustdesk:assembleDebug`.
 
 Nothing in the Gradle or cargo steps runs on a device or against a real
-server. The host probes are the exception: they run against the Docker
-desktops under `scripts/` (`testvnc`, `testrdp`; `testh264` for TigerVNC's
-H.264, which needs a Wayland session and a GPU to nest in). Say in the
-report which were run and which were not, rather than implying otherwise;
-the other harnesses under `scripts/` need VMs.
+server. The probes are the exception: they run against the Docker desktops
+under `scripts/` (`testvnc`, `testrdp`, `testspice`, `testrustdesk`;
+`testh264` for TigerVNC's H.264, which needs a Wayland session and a GPU to
+nest in). Say in the report which were run and which were not, rather than
+implying otherwise; the other harnesses under `scripts/` need VMs.
 
 Build in the repository's own `target/` and `.cxx`. `/tmp` is a RAM-backed
 tmpfs: no cargo target directories, scratch workspaces, unpacks or clones
@@ -280,8 +361,8 @@ One commit per upstream, after review, by the lead:
   `remotedesktop_vendored_warnings` silences their tree.
 - **ironrdp** master 9b151c4c. No patches. A submodule rather than crates.io
   because the bitmap stride fix (80bb81b3) is still unreleased; revisit at
-  the next ironrdp-session release. EGFX is deliberately off; the provider's
-  javadoc says why.
+  the next ironrdp-session release. EGFX is deliberately off; the doc
+  comment on `session::options::IRONRDP` says why.
 - **hbb_common** 3d6fb2c, and terminal there: the next upstream commit moved
   `message.proto` into rustdesk's own repository
   (`libs/base/protos/message.proto`). Moving further means a second source
