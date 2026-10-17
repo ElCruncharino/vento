@@ -485,7 +485,19 @@ channel that does not open, or ends, costs the sound and not the session,
 and hiding the window holds back only the picture's acknowledgements, so the
 sound plays on. On the audio guest heard over SPICE (`scripts/testqemu`,
 `AUDIO=spice`) the guest's card to the null sink took 133-140 ms as Opus,
-flat over two minutes, and 132-134 ms as PCM. The probe prints `audio playing` and `audio stopped` as a session's
+flat over two minutes, and 132-134 ms as PCM. IronRDP's sound (Sound =
+"This computer", FreeRDP's row less the remote machine, which IronRDP has no
+way to ask for) is IronRDP's own rdpsnd channel with a handler over the same
+output (`backends/modules/ironrdp/src/main/rust/src/sound.rs`): it offers
+the part of the server's format list it plays — PCM, and AAC or Opus where
+the platform decodes them — so Windows picks AAC here as it does from
+FreeRDP. Device redirection goes with it, announcing no devices, since
+Windows sends no sound to a client without it, and Windows sends its format
+list only once something first plays. The stream closes two seconds after
+the last wave has been heard, and plays on while the window is hidden. To
+Windows 10 (`winbursts.py`) the tone reached the null sink 323 ms after
+Windows was handed it, as AAC, and 604 ms as PCM (AAC withheld in a scratch
+build: Windows' long PCM waves). The probe prints `audio playing` and `audio stopped` as a session's
 sound starts and stops; the window shows a **Sound** button on its toolbar
 for as long as it plays, which mutes it (below), and says what is playing
 in the connection panel and the debug overlay.

@@ -12,7 +12,9 @@ use crate::clipboard::{Clipboard, Want};
 use crate::error::{Error, Result, describe};
 use crate::framebuffer::Framebuffer;
 use crate::keymap::{self, Key};
+use crate::sound::{QUIET, Sound};
 use crate::tls;
+use common::audio::{Outputs, Player};
 use common::{Credentials, Handler, Hangup};
 
 use ironrdp_blocking::{Framed, connect_begin, connect_finalize, mark_as_upgraded};
@@ -27,6 +29,7 @@ use ironrdp_core::WriteBuf;
 use ironrdp_displaycontrol::client::DisplayControlClient;
 use ironrdp_displaycontrol::pdu::{DisplayControlMonitorLayout, DisplayControlPdu, MonitorLayoutEntry};
 use ironrdp_dvc::{DrdynvcClient, encode_dvc_messages};
+use ironrdp_rdpdr::{NoopRdpdrBackend, Rdpdr};
 use ironrdp_svc::ChannelFlags;
 use ironrdp_input::{Database, MouseButton, MousePosition, Operation, Scancode, WheelRotations};
 use ironrdp_pdu::input::fast_path::{FastPathInput, FastPathInputEvent, KeyboardFlags};
@@ -98,6 +101,10 @@ pub struct Config {
     /// `keymap`).
     pub keyboard_layout: u32,
     pub connect_timeout: Duration,
+    /// Where the server's sound goes, or `None` for a session that asks for
+    /// none: the server is told not to play it here, and no rdpsnd channel
+    /// is offered.
+    pub audio: Option<Arc<dyn Outputs>>,
 }
 
 impl Default for Config {
@@ -119,6 +126,7 @@ impl Default for Config {
             // The same twenty seconds both other backends wait: a mistyped
             // address must not be a spinner that never stops.
             connect_timeout: Duration::from_secs(20),
+            audio: None,
         }
     }
 }
@@ -722,6 +730,21 @@ impl Client {
         // client asks for more than one monitor at all. The callback fires when
         // the server's capabilities arrive, which is the moment the channel
         // becomes usable; it answers with no messages of its own.
+        // The server's sound, where the session plays it. The player is held
+        // here as well as by the channel, so that this thread can close a
+        // stream that has gone quiet: the server's own Close says nothing
+        // about when the sound will have been heard.
+        //
+        // Device redirection goes with it, announcing no devices at all:
+        // Windows sends nothing on rdpsnd to a client without it (MS-RDPEFS,
+        // appendix A, note 1), which is also why FreeRDP turns it on for its
+        // sound.
+        let player = config.audio.clone().map(|audio| {
+            let (sound, player) = Sound::new(audio);
+            connector.attach_static_channel(sound);
+            connector.attach_static_channel(Rdpdr::new(Box::new(NoopRdpdrBackend), config.client_name.clone()));
+            player
+        });
         let display_control = Arc::clone(&self.shared);
         connector.attach_static_channel(DrdynvcClient::new().with_dynamic_channel(
             DisplayControlClient::new(move |caps| {
@@ -826,7 +849,7 @@ impl Client {
         handler.connected(usize::from(desktop.width), usize::from(desktop.height));
 
         let writer = self.spawn_writer(Counting::new(wire.clone_handle(), &self.shared));
-        let outcome = self.active_stage(result, &mut framed, handler);
+        let outcome = self.active_stage(result, &mut framed, handler, player.as_deref());
         let _ = self.shared.out.send(Out::Stop);
         let _ = socket.shutdown(std::net::Shutdown::Both);
         let _ = writer.join();
@@ -858,6 +881,7 @@ impl Client {
         result: ConnectionResult,
         framed: &mut Framed<S>,
         handler: &mut dyn Handler,
+        player: Option<&Mutex<Player>>,
     ) -> Result<()> {
         let io_channel_id = result.io_channel_id;
         let user_channel_id = result.user_channel_id;
@@ -1034,6 +1058,11 @@ impl Client {
                 }
                 Err(e) if timed_out(&e) => {}
                 Err(e) => return Err(Error::Io(e)),
+            }
+
+            // At least every poll, so a stream closes on an idle desktop too.
+            if let Some(player) = player {
+                player.lock().unwrap().close_if_quiet(QUIET);
             }
 
             // The clipboard, in both directions. What the channel decided while
@@ -1453,7 +1482,10 @@ fn connector_config(
         // connected — so there is never a reason for the server to draw its own
         // login screen over the session it has just opened.
         autologon: true,
-        enable_audio_playback: false,
+        // Without it the server plays its sound nowhere, which is what the
+        // Sound row's "Off" is; leaving it on the remote machine would be a
+        // client-info flag IronRDP does not expose.
+        enable_audio_playback: config.audio.is_some(),
         enable_audio_capture: false,
         compression_type: config.compression,
         pointer_software_rendering: false,

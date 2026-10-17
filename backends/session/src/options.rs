@@ -706,6 +706,24 @@ pub static IRONRDP: &[Spec] = &[
             choice("plain", "As little as possible"),
         ],
     ),
+    // FreeRDP's key, words and default, less the remote machine: leaving the
+    // sound there is a flag in the client info that IronRDP does not let a
+    // client set, and "Off" is the server playing it nowhere.
+    choices(
+        "Sound",
+        "Sound",
+        Some("Controls where sound is played, if supported by the server."),
+        "off",
+        Scope::Layered,
+        false,
+        &[
+            choice("off", "Off"),
+            Choice {
+                desktop_label: Some("This computer"),
+                ..choice("local", "This phone")
+            },
+        ],
+    ),
     bool(
         "Compression",
         "Compression",
@@ -720,13 +738,12 @@ pub static IRONRDP: &[Spec] = &[
 /// What the FreeRDP backend can be told.
 ///
 /// It began as the other RDP backend's rows copied so the two would be
-/// comparable, and three of these are now things that client cannot be asked
-/// at all: **EGFX**, the graphics pipeline, which is how a machine since
-/// Windows 8 would rather send a desktop and the only path that carries H.264;
-/// the **sound**, which is the one whole subsystem no backend behind this seam
-/// has ever had; and the **interface size**, which is the only answer the phone
-/// has to a desktop whose text is sized for a monitor and is being read on
-/// it.
+/// comparable, and two of these are things that client cannot be asked at
+/// all: **EGFX**, the graphics pipeline, which is how a machine since Windows
+/// 8 would rather send a desktop and the only path that carries H.264; and the
+/// **interface size**, which is the only answer the phone has to a desktop
+/// whose text is sized for a monitor and is being read on it. The **sound**
+/// began here too, and the other has it now, all but the remote machine.
 ///
 /// What is deliberately **not** here:
 ///
@@ -1460,6 +1477,7 @@ mod tests {
                 "Monitors",
                 "Graphics",
                 "Experience",
+                "Sound",
                 "Compression",
                 "ViewOnly"
             ]
