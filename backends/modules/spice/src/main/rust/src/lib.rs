@@ -21,9 +21,10 @@
 //! | Input | absolute or relative pointer, five buttons and a wheel; keys as AT scancodes |
 //! | Live | the image compression the server encodes with |
 //! | Agent | the clipboard both ways and a desktop size asked for, where the guest runs `spice-vdagent` |
+//! | Sound | the playback channel, PCM or Opus, on the session's output (`playback`) |
 //!
-//! What it does not, and why: **audio**, which is one sink in this whole app
-//! and it is inside FreeRDP's tree; **USB redirection**, **WebDAV** and
+//! What it does not, and why: **the microphone** (the record channel), which
+//! no backend here sends; **USB redirection**, **WebDAV** and
 //! **smartcard**, which are not a desktop; **file transfer**, which the agent
 //! carries and a phone has nowhere to put; and **H.264 streams**, whose decoder
 //! would be the platform's — a `common::video::Decoders`, as RustDesk's is —
@@ -39,12 +40,15 @@
 pub mod backend;
 
 // The library the app loads: this backend, registered on the module's
-// generated natives class. Android only — everything else is the protocol, and
-// it builds and tests on the host with none of this compiled.
+// generated natives class, with AAudio for the guest's sound (and MediaCodec
+// for its Opus, through the same object). Android only — everything else is
+// the protocol, and it builds and tests on the host with none of this
+// compiled.
 #[cfg(target_os = "android")]
 platform_android::natives!(
     class = c"net/pgaskin/remotedesktop/backend/spice/SpiceNatives",
     kind = backend::KIND,
+    audio = || Some(std::sync::Arc::new(platform_android::aaudio::AAudio::new())),
 );
 
 mod agent;
@@ -56,6 +60,7 @@ mod error;
 mod framebuffer;
 mod images;
 mod keymap;
+mod playback;
 mod tls;
 
 pub use client::{Client, Config, Info, VERSION, compression_of};

@@ -125,6 +125,9 @@ fn main() {
             .ok()
             .and_then(|name| remotedesktop_spice::compression_of(&name)),
         view_only: false,
+        // The picture is what this example is about; the client's own probe
+        // (`vento --probe`) plays the sound.
+        audio: None,
     };
 
     let session = {

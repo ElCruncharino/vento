@@ -23,8 +23,10 @@ use crate::display::Display;
 use crate::error::{Error, Result};
 use crate::framebuffer::Framebuffer;
 use crate::keymap::{self, Key};
+use crate::playback::Playback;
 use crate::tls;
 use common::Handler;
+use common::audio::Outputs;
 use common::address::Ports;
 use shakenfist_spice_protocol::constants::{
     MOUSE_MODE_CLIENT, MOUSE_MODE_SERVER, cursor_client, display_client, image_compression,
@@ -61,6 +63,10 @@ pub struct Config {
     /// it does by itself — which for QEMU is `auto_glz`.
     pub compression: Option<u8>,
     pub view_only: bool,
+    /// Where the guest's sound goes, or `None` for a session that does not
+    /// open the playback channel at all — which is what keeps a server from
+    /// encoding sound nobody hears.
+    pub audio: Option<Arc<dyn Outputs>>,
 }
 
 /// Everything the connection panel can be told about a live session.
@@ -331,17 +337,18 @@ impl Client {
             connected: false,
             described: (0, 0, 0),
             ticket: config.password.clone(),
+            playback: config.audio.clone().map(Playback::new),
         };
 
         // The main channel first, and everything else with the id its INIT
         // hands out: that id is the whole of what ties four sockets into one
         // session.
         let main = session
-            .connect(Kind::Main, config, connector.as_ref(), 0, handler, &queue, &ends)
+            .connect(Kind::Main, 0, config, connector.as_ref(), 0, handler, &queue, &ends)
             .await?;
         session.channels.insert(Kind::Main, main);
 
-        let session_id = tokio::time::timeout(
+        let (session_id, sound) = tokio::time::timeout(
             config.connect_timeout,
             session.handshake(&mut messages, handler),
         )
@@ -350,9 +357,29 @@ impl Client {
 
         for kind in [Kind::Inputs, Kind::Display, Kind::Cursor] {
             let channel = session
-                .connect(kind, config, connector.as_ref(), session_id, handler, &queue, &ends)
+                .connect(kind, 0, config, connector.as_ref(), session_id, handler, &queue, &ends)
                 .await?;
             session.channels.insert(kind, channel);
+        }
+        // The guest's sound, where the server has some and this session plays
+        // it. A channel that will not open costs the sound and not the
+        // session, as one that ends later does.
+        if !sound {
+            session.playback = None;
+        }
+        if let Some(caps) = session.playback.as_ref().map(Playback::caps) {
+            match session
+                .connect(Kind::Playback, caps, config, connector.as_ref(), session_id, handler, &queue, &ends)
+                .await
+            {
+                Ok(channel) => {
+                    session.channels.insert(Kind::Playback, channel);
+                }
+                Err(e) => {
+                    log::warn!("playback: the channel did not open ({e}); the guest's sound is not played");
+                    session.playback = None;
+                }
+            }
         }
 
         // What the display channel is told before it says anything: how much of
@@ -382,7 +409,15 @@ impl Client {
                 .join(", ");
         }
         loop {
+            // A stream that has gone quiet is closed after whichever turn of
+            // the loop finds it so, and the half-second wake below finds it
+            // on a session where nothing else is arriving.
+            if let Some(playback) = &mut session.playback {
+                playback.tick();
+            }
+            let sounding = session.playback.as_ref().is_some_and(Playback::is_open);
             tokio::select! {
+                () = tokio::time::sleep(Duration::from_millis(500)), if sounding => {}
                 message = messages.recv() => {
                     let Some(message) = message else { return Ok(()) };
                     session.message(message, handler).await?;
@@ -405,9 +440,18 @@ impl Client {
                 }
                 end = ended.recv() => {
                     if let Some(end) = end {
-                        // Any channel ending ends the session: three of the
-                        // four are the picture, the pointer and the keyboard,
-                        // and a session missing one of those is not one.
+                        // Except for the sound, which the session can do
+                        // without.
+                        if end.kind == Kind::Playback {
+                            log::warn!("playback ended ({:?}); the guest's sound is not played", end.error);
+                            session.channels.remove(&Kind::Playback);
+                            session.playback = None;
+                            continue;
+                        }
+                        // Any other channel ending ends the session: three of
+                        // the four are the picture, the pointer and the
+                        // keyboard, and a session missing one of those is not
+                        // one.
                         log::info!("{} ended", end.kind.name());
                         return match end.error {
                             Some(e) => Err(e),
@@ -486,6 +530,9 @@ struct Session<'a> {
     /// the main channel has to be the one the others present too — or each
     /// of them is refused and asks again.
     ticket: Option<String>,
+    /// The guest's sound, while the session plays it: `None` where it was
+    /// not asked for, the server has none, or its channel has ended.
+    playback: Option<Playback>,
 }
 
 impl Session<'_> {
@@ -493,6 +540,7 @@ impl Session<'_> {
     async fn connect(
         &mut self,
         kind: Kind,
+        caps: u32,
         config: &Config,
         connector: Option<&tls::Connector>,
         session_id: u32,
@@ -521,6 +569,7 @@ impl Session<'_> {
                 // may stop to ask.
                 Channel::open(
                     kind,
+                    caps,
                     (&self.server.0, self.server.1),
                     session_id,
                     password.as_deref(),
@@ -562,12 +611,13 @@ impl Session<'_> {
 
     /// The main channel up to the point where the rest of the session can be
     /// opened: its `INIT` carries the session id, and the channel list says
-    /// what the server has.
+    /// what the server has — of which the one that may be missing is the
+    /// sound, the second answer.
     async fn handshake(
         &mut self,
         messages: &mut mpsc::Receiver<Message>,
         handler: &mut dyn Handler,
-    ) -> Result<u32> {
+    ) -> Result<(u32, bool)> {
         let mut session_id = 0;
         while let Some(message) = messages.recv().await {
             match (message.kind, message.message_type) {
@@ -599,7 +649,9 @@ impl Session<'_> {
                     self.acknowledge(&message).await?;
                     let list = ChannelsList::read(&message.body)?;
                     log::info!("{} channels offered", list.channels.len());
-                    return Ok(session_id);
+                    let playback = Kind::Playback.channel_type() as u8;
+                    let sound = list.channels.iter().any(|c| c.channel_type == playback);
+                    return Ok((session_id, sound));
                 }
                 _ => self.message(message, handler).await?,
             }
@@ -661,6 +713,11 @@ impl Session<'_> {
                     .store(u32::from(self.display.max_heads()), Ordering::Relaxed);
             }
             Kind::Cursor => self.cursors.message(message.message_type, &message.body, handler)?,
+            Kind::Playback => {
+                if let Some(playback) = &mut self.playback {
+                    playback.message(message.message_type, &message.body);
+                }
+            }
             Kind::Inputs => {}
         }
         Ok(())

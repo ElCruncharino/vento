@@ -474,7 +474,18 @@ before a wave arrives — which varies by up to 100 ms from one connection to
 the next — and about 100 ms is the client's, the queue (23-80 ms as the
 waves come and go) and the device. With the queue's 100 ms in front of the
 device it took 331-451 ms, and PulseAudio's device, on another day, 224-309
-ms. The probe prints `audio playing` and `audio stopped` as a session's
+ms. SPICE's sound (the `Audio` option, on unless turned off, decided at
+connect) is the playback channel, opened only where the server lists one:
+the client offers Opus where the platform decodes it (the client's FFmpeg
+here, MediaCodec on the phone), which QEMU then sends, and takes PCM
+otherwise. The stream follows the server's start and stop, closing two
+seconds after a stop once what was queued has been heard; the guest's own
+volume and mute arrive as messages and are the stream's gain. A playback
+channel that does not open, or ends, costs the sound and not the session,
+and hiding the window holds back only the picture's acknowledgements, so the
+sound plays on. On the audio guest heard over SPICE (`scripts/testqemu`,
+`AUDIO=spice`) the guest's card to the null sink took 133-140 ms as Opus,
+flat over two minutes, and 132-134 ms as PCM. The probe prints `audio playing` and `audio stopped` as a session's
 sound starts and stops; the window shows a **Sound** button on its toolbar
 for as long as it plays, which mutes it (below), and says what is playing
 in the connection panel and the debug overlay.
