@@ -125,23 +125,28 @@ impl Queue {
     /// less the device's buffer, but never less than what keeps the queue
     /// from running dry between the far end's writes — a period of the
     /// device's, which it takes at once, two of the largest recent writes,
-    /// and [`MARGIN`] — and never more than the target itself.
+    /// and [`MARGIN`].
     ///
     /// Two writes because the queue is at its lowest just before one lands,
     /// a whole write after the last, and a far end that sends in chunks
-    /// sends one late now and then: RDP's 23 ms waves arrive 18 to 41 ms
+    /// sends one late now and then: RDP's 23 ms AAC waves arrive 18 to 41 ms
     /// apart, where QEMU's 10 ms of audio keeps to within a few. Measured
     /// rather than assumed, since a fixed floor for RDP's waves would hold
     /// QEMU's sound further behind than it needs, and one for QEMU's ran
     /// RDP's queue dry on the rig. The writes before the queue first fills
     /// are what it is set by, so the level is right from the first sample
     /// played.
+    ///
+    /// Past the target where the far end makes it: Windows sends PCM in
+    /// 186 ms waves, two at once every 372 ms, whatever the client confirms,
+    /// which a queue that kept 100 ms ran dry from and dropped most of. Such
+    /// a stream is heard as far behind as its rhythm makes it, rather than
+    /// in pieces.
     fn target(&self, inner: &Inner) -> usize {
         let buffer = Duration::from_micros(self.buffer.load(Ordering::Relaxed));
         let period = self.format.frames(Duration::from_micros(self.period.load(Ordering::Relaxed)));
         let least = period + 2 * inner.chunk + self.format.frames(MARGIN);
-        let target = self.format.frames(TARGET);
-        self.format.frames(TARGET.saturating_sub(buffer)).max(least).min(target)
+        self.format.frames(TARGET.saturating_sub(buffer)).max(least)
     }
 
     /// The queue's share of [`LIMIT`], in frames of the stream: never so
@@ -193,10 +198,13 @@ impl Queue {
             self.trim(inner);
         }
         // A write larger than the ones before is how the far end sends from
-        // now on; one that was a burst (a stall's backlog) is forgotten over
-        // the next few dozen writes, and the target with it.
+        // now on, and one that is gone from the writes is forgotten over the
+        // next few dozen, the target with it. One past the limit is a burst
+        // (a stall's backlog, all at once), no rhythm the queue could keep
+        // up with, and does not count.
         let decayed = inner.chunk - inner.chunk / 16;
-        inner.chunk = decayed.max(frames.min(self.format.frames(TARGET)));
+        let rhythm = if frames <= self.format.frames(LIMIT) { frames } else { 0 };
+        inner.chunk = decayed.max(rhythm);
     }
 
     /// Drops the oldest down to the queue's share of [`TARGET`]. A skip is
@@ -318,9 +326,9 @@ mod tests {
     #[test]
     fn nothing_plays_until_the_target_is_queued() {
         let q = queue();
-        q.write(&frames(1, 50));
+        write_steady(&q, 1, 50);
         assert!(pull(&q).iter().all(|&s| s == 0), "silence while priming");
-        q.write(&frames(2401, 50));
+        write_steady(&q, 2401, 50);
         assert_eq!(q.queued(), TARGET);
         let out = pull(&q);
         assert_eq!(&out[..4], &[1, 1, 2, 2], "then from the first frame written");
@@ -341,7 +349,7 @@ mod tests {
     #[test]
     fn running_dry_is_silence_and_then_the_target_again() {
         let q = queue();
-        q.write(&frames(1, 100));
+        write_steady(&q, 1, 100);
         for _ in 0..10 {
             pull(&q);
         }
@@ -353,10 +361,10 @@ mod tests {
         assert!(out[240 * 2..].iter().all(|&s| s == 0));
         assert_eq!(q.stats().underruns, 1);
         // Less than the target is not enough to start again...
-        q.write(&frames(100, 60));
+        write_steady(&q, 100, 60);
         assert!(pull(&q).iter().all(|&s| s == 0));
         // ...and the target is.
-        q.write(&frames(100, 40));
+        write_steady(&q, 100, 40);
         assert_eq!(pull(&q)[0], 100);
         assert_eq!(q.stats().underruns, 1);
     }
@@ -385,7 +393,7 @@ mod tests {
     #[test]
     fn what_arrived_before_the_device_started_is_cut_to_the_target() {
         let q = queue();
-        q.write(&frames(0, 240));
+        write_steady(&q, 0, 240);
         assert_eq!(q.queued(), Duration::from_millis(240));
         pull(&q);
         assert_eq!(q.queued(), Duration::from_millis(90));
@@ -469,14 +477,41 @@ mod tests {
         write_steady(&q, 1, 10);
         assert_ne!(pull(&q)[0], 0, "a burst, two writes and the margin start it");
 
-        // A burst raises the least kept for a few dozen writes and no more.
+        // A burst past the limit is no rhythm, and leaves the target alone.
         let q = queue();
-        q.write(&frames(0, 200));
-        q.write(&frames(0, 200));
-        assert_eq!(q.queued(), TARGET, "the least kept is never past the target");
         q.set_device(Duration::from_millis(50), Duration::ZERO);
-        assert_eq!(q.target(&q.inner.lock().unwrap()), STEREO.frames(TARGET));
-        for _ in 0..80 {
+        q.write(&frames(0, 10));
+        q.write(&frames(0, 2000));
+        assert_eq!(q.target(&q.inner.lock().unwrap()), STEREO.frames(Duration::from_millis(50)));
+    }
+
+    #[test]
+    fn windows_pcm_is_kept_whole() {
+        // 186 ms waves, two at once every 372 ms, in front of ALSA: the
+        // queue keeps two of them and a period and the margin, and plays
+        // them through without running dry or dropping any.
+        let wave = 8192 * 48 / 44; // 186 ms at 48 kHz, near enough
+        let q = queue();
+        open(&q, 50, 12_500);
+        let mut playing = false;
+        for round in 0..20 {
+            q.write(&vec![1i16; wave * 2]);
+            q.write(&vec![1i16; wave * 2]);
+            for _ in 0..wave * 2 / 480 {
+                let out = pull(&q);
+                if round > 1 {
+                    assert!(out.iter().all(|&s| s == 1), "round {round} ran dry");
+                }
+                playing |= out[0] == 1;
+            }
+        }
+        assert!(playing);
+        assert_eq!(q.stats().underruns, 0);
+        // Once, at the start: what arrived before the first pair was heard.
+        assert!(q.stats().dropped <= (2 * wave) as u64, "{:?}", q.stats());
+        // And when the waves get smaller, so does the target, a few dozen
+        // writes later.
+        for _ in 0..100 {
             q.write(&frames(0, 10));
             pull(&q);
         }
@@ -501,7 +536,9 @@ mod tests {
     fn gain_and_mute_apply_to_what_the_device_takes() {
         let controls = Arc::new(Controls::new());
         let q = Queue::new(STEREO, Arc::clone(&controls));
-        q.write(&[20_000i16; 4800 * 2]);
+        for _ in 0..10 {
+            q.write(&[20_000i16; 480 * 2]);
+        }
         assert!(pull(&q).iter().all(|&s| s == 20_000));
         controls.set_gain(0.5);
         assert!(pull(&q).iter().all(|&s| s == 10_000));
@@ -520,7 +557,9 @@ mod tests {
     #[test]
     fn another_device_rate_and_layout_are_converted() {
         let q = Queue::new(Format::new(44_100, 1).unwrap(), Arc::new(Controls::new()));
-        q.write(&vec![1000i16; 4410]);
+        for _ in 0..10 {
+            q.write(&[1000i16; 441]);
+        }
         let mut out = vec![0i16; 480 * 2];
         q.pull(&mut out, STEREO);
         assert!(out.iter().all(|&s| s == 1000));
