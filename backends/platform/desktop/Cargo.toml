@@ -3,7 +3,8 @@
 # protocol whose picture is video — RustDesk's — can be run, probed and tested
 # on the machine it is developed on with the picture in; and a sound output,
 # which on a phone is AAudio and here is ALSA's default device (`src/alsa.rs`,
-# libasound declared by hand and linked by name, as libasound.so.2).
+# libasound declared by hand and linked by name, as libasound.so.2), with
+# libavcodec's AAC and Opus decoders for the sound that arrives compressed.
 #
 # The mirror of `remotedesktop-platform-android`, cfg for cfg: on Android the
 # crate is empty and has no dependencies, which is what keeps FFmpeg out of
@@ -31,10 +32,11 @@ name = "platform_desktop"
 [target.'cfg(not(target_os = "android"))'.dependencies]
 log.workspace = true
 remotedesktop-common.workspace = true
-# Nothing of FFmpeg's own API: `src/ffmpeg.rs` calls the dozen functions of
-# `c/vento_video.h`, declared by hand, and only that C file includes FFmpeg's
-# headers. No bindgen, no generated bindings, and nothing on the Rust side
-# that changes with an FFmpeg release.
+# Nothing of FFmpeg's own API: `src/ffmpeg.rs` and `src/ffmpeg_audio.rs` call
+# the functions of `c/vento_video.h` and `c/vento_ffaudio.h`, declared by
+# hand, and only those C files include FFmpeg's headers. No bindgen, no
+# generated bindings, and nothing on the Rust side that changes with an
+# FFmpeg release.
 
 [build-dependencies]
 # For the wrapper. Unconditional, since a build script is one program for

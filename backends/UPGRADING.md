@@ -48,14 +48,17 @@ upstream has taken dropped.
 
 `third_party/ffmpeg` and `third_party/dav1d` are the Linux client's too, and
 not in this round either: the static FFmpeg `backends/platform/desktop/build.rs`
-builds for every desktop decoder (the Rust one, which TigerVNC's and
-FreeRDP's H.264 go through too, and FreeRDP's sound and scaling), each pinned at a
-release tag. FFmpeg moves
+builds for every desktop decoder (the Rust ones, which TigerVNC's and
+FreeRDP's H.264 and FreeRDP's AAC and Opus sound go through too, and
+FreeRDP's scaling, which links libswscale alone), each pinned at a release
+tag. FFmpeg moves
 to a newer release's tag with `patches/ffmpeg/` rebased onto it; the decoders it
-is configured with are `DECODERS` and `PARSERS` in that build script, so a
+is configured with are `DECODERS` and `HWACCELS` in that build script, so a
 consumer that starts using another codec adds it there. Proven by the desktop
-crate's fixture tests, the RustDesk probe with each codec, and the TigerVNC
-H.264 and FreeRDP AVC probes. Android builds neither.
+crate's fixture tests (`tests/decode.rs` for the video, `tests/sound.rs` for
+AAC and Opus), the RustDesk probe with each codec, the TigerVNC H.264 and
+FreeRDP AVC probes, and `scripts/testaudio/winbursts.py` for FreeRDP's AAC.
+Android builds neither.
 
 `third_party/libva` goes with FFmpeg: headers only, for its VAAPI decoders
 (`HWACCELS` in the same build script). Nothing of it is compiled or linked;
@@ -405,10 +408,17 @@ One commit per upstream, after review, by the lead:
   that `rdpsndDevicePlugin` (FormatSupported, Open, PlayEx returning the
   latency, SetVolume, ServerFormatAnnounce) still means the same, that the
   channel still offers the server what its DSP decodes *or* the device
-  plays and hands a DSP-decoded wave over as PCM, and that the Close PDU
-  still does not reach the device (it closes its own stream when idle). No
-  `WITH_PULSE`, `WITH_ALSA`, `WITH_OSS`, `WITH_SNDIO` or `WITH_OPENSLES`;
-  their "fake" device is still built and is what Sound = off gets.
+  plays, and hands a wave of a format the device claims to PlayEx as it
+  came (the device claims AAC, `WAVE_FORMAT_AAC_MS`, and Opus where vento's
+  decoders take them, and decodes them through `vento/audio.h`), and that
+  the Close PDU still does not reach the device (it closes its own stream
+  when idle). No `WITH_PULSE`, `WITH_ALSA`, `WITH_OSS`, `WITH_SNDIO`,
+  `WITH_OPENSLES` or `WITH_DSP_FFMPEG`; their "fake" device is still built
+  and is what Sound = off gets. On Linux `WITH_SWSCALE` is the one FFmpeg
+  switch on, and `WITH_FFMPEG` is off so that their swscale branch does not
+  link libavcodec for the camera channel's MJPEG; check that scaling still
+  needs only libswscale and libavutil, and that rdpgfx still offers 10.5
+  and 10.6 only with a scaler (the session is EGFX 10.4 without).
   `LegacyTls` row for TLS 1.0 at level 0; `remotedesktop_vendored_warnings`
   silences their tree.
 - **ironrdp** master 9b151c4c. No patches. A submodule rather than crates.io

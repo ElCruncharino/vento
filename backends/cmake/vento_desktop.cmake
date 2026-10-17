@@ -58,9 +58,11 @@ endif()
 # desktop platform crate builds from `third_party/ffmpeg` and
 # `third_party/dav1d` (backends/platform/desktop/build.rs, which `linux/build.rs`
 # hears the prefix from and hands on). Given, it is the one FFmpeg of every
-# backend here, and the Rust decoder links the same build, so a Linux client
-# has no system FFmpeg in it at all; left empty, a module finds the host's as
-# before, which is what a plain `cmake -S backends` for the probes does.
+# backend here — which is FreeRDP's scaler alone now, since every backend's
+# H.264 and sound is decoded by the Rust side through vento's decoders — and
+# the Rust decoders link the same build, so a Linux client has no system
+# FFmpeg in it at all; left empty, a module finds the host's as before, which
+# is what a plain `cmake -S backends` for the probes does.
 #
 # One imported target per library, each carrying what a static link of it
 # needs after it — dav1d and libswresample after libavcodec (its AV1 and its
@@ -89,9 +91,6 @@ if(VENTO_FFMPEG_PREFIX AND NOT TARGET vento_ffmpeg::avcodec)
     target_link_libraries(vento_ffmpeg::swscale INTERFACE vento_ffmpeg::avutil)
     target_link_libraries(vento_ffmpeg::avcodec INTERFACE
             vento_ffmpeg::dav1d vento_ffmpeg::swresample vento_ffmpeg::avutil)
-    # libavcodec's version, for a tree that checks it (FreeRDP's sound does).
-    file(STRINGS "${VENTO_FFMPEG_PREFIX}/lib/pkgconfig/libavcodec.pc" _version REGEX "^Version:")
-    string(REGEX REPLACE "^Version: *" "" VENTO_FFMPEG_AVCODEC_VERSION "${_version}")
 endif()
 
 if(VENTO_SHARED)

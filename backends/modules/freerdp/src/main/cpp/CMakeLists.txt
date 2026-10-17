@@ -6,11 +6,13 @@
 # module's Rust crate linked in as the JNI layer over it, and the OpenSSL port.
 # Under `backends/CMakeLists.txt` it is a subdirectory on a Linux host and
 # makes `vento_freerdp`, the session alone, against the host's OpenSSL, with
-# FFmpeg for the sound's AAC, and a probe in front of it. Its H.264 is
-# vento's decoders on both, the phone's MediaCodec and the Linux client's
-# FFmpeg, through the subsystem in h264_vento.c; and its sound is vento's
-# output on both, AAudio on the phone and ALSA's default device on the Linux
-# client, through the rdpsnd device in rdpsnd_vento.c. What is shared is the middle — how FreeRDP itself is
+# libswscale for the graphics pipeline's scaling, and a probe in front of it.
+# Its H.264 is vento's decoders on both, the phone's MediaCodec and the Linux
+# client's FFmpeg, through the subsystem in h264_vento.c; and its sound is
+# vento's output and vento's AAC and Opus decoders on both, AAudio and
+# MediaCodec on the phone, ALSA's default device and the client's FFmpeg on
+# the Linux client, through the rdpsnd device in rdpsnd_vento.c. What is
+# shared is the middle — how FreeRDP itself is
 # configured — and the two halves around it are `if(ANDROID)` and `else()`,
 # so that the Android build is the same sequence of statements it was.
 
@@ -111,29 +113,34 @@ set(WITH_H264_EXTERNAL ON CACHE BOOL "" FORCE)
 # sound libraries they would link (PulseAudio and the fifteen libraries behind
 # it, ALSA, OSS, sndio, OpenSL ES) is looked for. The microphone channel's
 # devices go with them, which is no loss: it is built and never loaded.
-foreach(off WITH_PULSE WITH_ALSA WITH_OSS WITH_SNDIO WITH_OPENSLES)
+#
+# The AAC and Opus a server sends are decoded by the platform's decoders, in
+# the same table, so the library's DSP decodes nothing it is not given as
+# PCM and is built without FFmpeg (`WITH_DSP_FFMPEG`) on both: the device
+# claims those formats itself and gets the packets as they came.
+foreach(off WITH_PULSE WITH_ALSA WITH_OSS WITH_SNDIO WITH_OPENSLES WITH_DSP_FFMPEG)
     set(${off} OFF CACHE BOOL "" FORCE)
 endforeach()
 
 if(ANDROID)
-    # No FFmpeg on the phone, so the host's codec libraries are off by name,
-    # and the sound channel plays PCM only; and its H.264 is MediaCodec's
-    # through vento's decoders, so FreeRDP's own MediaCodec subsystem is off
-    # too.
-    foreach(off WITH_OPENH264 WITH_FFMPEG WITH_SWSCALE WITH_DSP_FFMPEG WITH_MEDIACODEC)
+    # No FFmpeg on the phone, so the host's codec libraries are off by name;
+    # and its H.264 is MediaCodec's through vento's decoders, so FreeRDP's own
+    # MediaCodec subsystem is off too.
+    foreach(off WITH_OPENH264 WITH_FFMPEG WITH_SWSCALE WITH_MEDIACODEC)
         set(${off} OFF CACHE BOOL "" FORCE)
     endforeach()
 else()
-    # FFmpeg, through the same `WITH_FFMPEG` their Linux client builds with,
-    # for the AAC the sound channel can carry (`WITH_DSP_FFMPEG`: the channel
-    # decodes it to PCM before the device sees it) and libswscale for the
-    # scaling the graphics pipeline does — but not for the video
-    # (`WITH_VIDEO_FFMPEG`), which is the Linux client's own FFmpeg through
-    # vento's decoders.
-    foreach(on WITH_FFMPEG WITH_DSP_FFMPEG WITH_SWSCALE)
-        set(${on} ON CACHE BOOL "" FORCE)
-    endforeach()
-    foreach(off WITH_VIDEO_FFMPEG WITH_FFMPEG_HWACCEL WITH_OPENH264)
+    # libswscale, and of FFmpeg nothing else: the library has nothing left
+    # to decode (its H.264 and its sound are vento's decoders), but its
+    # graphics pipeline scales a surface the server maps onto a scaled
+    # output with it (`freerdp_image_scale`), and offers the server the
+    # capability versions that may ask for that — 10.5 and 10.6, which
+    # Windows 10 confirms — only where it has a scaler (rdpgfx_main.c), so
+    # without it a session is EGFX 10.4, as the phone's is. libavcodec is
+    # not linked (`WITH_FFMPEG` off, which their swscale branch would also
+    # set for the camera channel's MJPEG where it finds libavcodec).
+    set(WITH_SWSCALE ON CACHE BOOL "" FORCE)
+    foreach(off WITH_FFMPEG WITH_VIDEO_FFMPEG WITH_FFMPEG_HWACCEL WITH_OPENH264)
         set(${off} OFF CACHE BOOL "" FORCE)
     endforeach()
     # Under the host root the three vendored trees share one cache, and
@@ -152,25 +159,26 @@ else()
     endforeach()
     # Their FindFFmpeg looks for eight libraries and skips the search when
     # FFMPEG_LIBRARIES is cached. Where the Linux client's build gives a static
-    # FFmpeg (VENTO_FFMPEG_PREFIX, vento_desktop.cmake) its four are cached
-    # here, as the results that module would have come to, so that nothing of
-    # the host's — libavformat, libavfilter, libavdevice included, which it
+    # FFmpeg (VENTO_FFMPEG_PREFIX, vento_desktop.cmake) the two the scaler
+    # needs are cached here, as the results that module would have come to,
+    # and the other six as not found, so that nothing of the host's —
+    # libavcodec, libavformat, libavfilter and libavdevice included, which it
     # would otherwise find and link — is looked at.
-    if(TARGET vento_ffmpeg::avcodec)
+    if(TARGET vento_ffmpeg::swscale)
         set(_ffmpeg "")
-        foreach(lib AVCODEC AVUTIL SWSCALE SWRESAMPLE)
+        foreach(lib SWSCALE AVUTIL)
             string(TOLOWER ${lib} name)
             set(${lib}_INCLUDE_DIRS "${VENTO_FFMPEG_PREFIX}/include" CACHE PATH "" FORCE)
             set(${lib}_LIBRARIES vento_ffmpeg::${name} CACHE STRING "" FORCE)
             list(APPEND _ffmpeg vento_ffmpeg::${name})
         endforeach()
-        set(AVCODEC_VERSION "${VENTO_FFMPEG_AVCODEC_VERSION}" CACHE STRING "" FORCE)
         set(FFMPEG_LIBRARIES "${_ffmpeg}" CACHE STRING "" FORCE)
         set(FFMPEG_INCLUDE_DIRS "${VENTO_FFMPEG_PREFIX}/include" CACHE STRING "" FORCE)
-        foreach(lib AVFORMAT AVFILTER AVDEVICE POSTPROCESS)
+        foreach(lib AVCODEC SWRESAMPLE AVFORMAT AVFILTER AVDEVICE POSTPROCESS)
             unset(${lib}_LIBRARIES CACHE)
             unset(${lib}_INCLUDE_DIRS CACHE)
         endforeach()
+        unset(AVCODEC_VERSION CACHE)
     endif()
 endif()
 

@@ -7,13 +7,14 @@
 //! client links no FFmpeg of the system's and needs none of its development
 //! files.
 //!
-//! **One FFmpeg for every desktop consumer.** The Rust decoder here is one;
-//! TigerVNC's libavcodec H.264 context and FreeRDP's H.264, sound and scaling
-//! are the others, built by `linux/build.rs` through CMake. That build is told
+//! **One FFmpeg for every desktop consumer.** The Rust decoders here are one
+//! (the video's, and the sound's AAC and Opus); TigerVNC's libavcodec H.264
+//! context and FreeRDP's scaling are the others, built by `linux/build.rs`
+//! through CMake. That build is told
 //! where this one put its libraries through the `links` metadata
 //! (`DEP_VENTO_VIDEO_PREFIX`), so all of them link the same configuration of
 //! the same source. FFmpeg is configured with `--disable-everything` and then
-//! exactly what those consumers use (`DECODERS`, `PARSERS`, the two scaling
+//! exactly what those consumers use (`DECODERS`, `HWACCELS`, the two scaling
 //! libraries), with `--disable-autodetect` so that nothing the build machine
 //! happens to have installed is linked in, and without `--enable-gpl`: what is
 //! built is LGPL 2.1 or later, and dav1d is BSD-2-Clause.
@@ -62,18 +63,17 @@ const DECODERS: &[&str] = &[
     // decodes only with hardware acceleration, and is there for that alone.
     "libdav1d",
     "av1",
-    // FreeRDP's sound channel: the AAC and Opus a server may send, and the
-    // two PCM decoders FreeRDP asks for before it plays PCM, which it then
-    // only resamples.
+    // The sound (`c/vento_ffaudio.c`): the AAC an RDP server sends, which
+    // Windows does whenever it is offered, and the Opus RDP and RustDesk can
+    // send. libavcodec's Opus decoder resamples its SILK half with
+    // libswresample, which is why that is built.
     "aac",
     "opus",
-    "pcm_u8",
-    "pcm_u16le",
 ];
 
 /// The hardware decoders of the codecs above, for the Rust decoder when
-/// hardware decoding is asked for (`c/vento_video.c`) and for FreeRDP's own
-/// H.264: VAAPI's for each. libva is no library at build time: it is reached
+/// hardware decoding is asked for (`c/vento_video.c`), which TigerVNC's and
+/// FreeRDP's H.264 go through as well: VAAPI's for each. libva is no library at build time: it is reached
 /// through `c/va_shim.c`, so it is headers here (`third_party/libva`).
 const HWACCELS: &[&str] = &[
     "h264_vaapi",
@@ -82,11 +82,6 @@ const HWACCELS: &[&str] = &[
     "vp9_vaapi",
     "av1_vaapi",
 ];
-
-/// TigerVNC and FreeRDP each split their H.264 stream into frames with
-/// libavcodec's parser. VP9's parser and superframe filter come in on their
-/// own: the decoder selects them.
-const PARSERS: &[&str] = &["h264"];
 
 fn main() {
     println!("cargo:rerun-if-changed=c/vento_video.c");
@@ -232,7 +227,6 @@ fn configure_args(prefix: &Path, cc: &Path, asm: bool) -> Vec<String> {
     args.push(format!("--prefix={}", prefix.display()));
     args.push(format!("--cc={}", cc.display()));
     args.push(format!("--enable-decoder={}", DECODERS.join(",")));
-    args.push(format!("--enable-parser={}", PARSERS.join(",")));
     args.push(format!("--enable-hwaccel={}", HWACCELS.join(",")));
     if !asm {
         args.push("--disable-x86asm".into());

@@ -103,24 +103,25 @@ libraries: the client's FFmpeg is built from `third_party/ffmpeg` (n8.1.3) and
 `third_party/dav1d` (1.5.4) by `backends/platform/desktop/build.rs`, once per
 target directory and profile (about a minute and a half; a stamp beside it
 says what it was built from, and it is built again only when that changes),
-as static libraries that the Rust decoder (RustDesk's video, and TigerVNC's
-and FreeRDP's H.264) and FreeRDP's sound and scaling link — FreeRDP through
-`VENTO_FFMPEG_PREFIX`, which `build.rs` hands the CMake build. TigerVNC
-links none of it: its H.264 decoder context hands each rectangle to the Rust
-decoder through a table of function pointers in its config, and FreeRDP's
-H.264 subsystem hands it each frame the same way. It is
-configured `--disable-everything`, `--disable-autodetect`, without programs,
-network or the format, filter and device libraries, with exactly these
-decoders: H.264, H.265, VP8, VP9, AV1 (dav1d's), AAC, Opus and two PCM ones
-(FreeRDP's sound), the H.264 parser, libswscale and libswresample, and the
-hardware decoders of those video codecs: VAAPI's for each (with libavcodec's
+as static libraries that the Rust decoders (RustDesk's video, and TigerVNC's
+and FreeRDP's H.264; FreeRDP's AAC and Opus sound) and FreeRDP's scaling
+link — FreeRDP through `VENTO_FFMPEG_PREFIX`, which `build.rs` hands the
+CMake build, and only libswscale and libavutil of it. TigerVNC links none of
+it: its H.264 decoder context hands each rectangle to the Rust decoder
+through a table of function pointers in its config, and FreeRDP's H.264
+subsystem and its rdpsnd device hand it each frame and each wave the same
+way. It is configured `--disable-everything`, `--disable-autodetect`,
+without programs, network or the format, filter and device libraries, with
+exactly these decoders: H.264, H.265, VP8, VP9, AV1 (dav1d's), AAC and Opus,
+libswscale and libswresample (which libavcodec's Opus decoder needs), and
+the hardware decoders of those video codecs: VAAPI's for each (with libavcodec's
 own AV1 decoder, which decodes only on hardware), built against headers from
 `third_party/libva` (2.23.0) and nothing else of it: FFmpeg's VAAPI code
 reaches libva through `c/va_shim.c`, which loads `libva.so.2` and
 `libva-drm.so.2` on first use, so the binary does not depend on it. Its own code
-(`backends/platform/desktop/c/vento_video.c`) is the only C that
-includes FFmpeg's headers for the Rust decoder, which calls a dozen
-functions of it declared by hand.
+(`backends/platform/desktop/c/vento_video.c` and `vento_ffaudio.c`) is the
+only C that includes FFmpeg's headers for the Rust decoders, which call a
+few dozen functions of it declared by hand.
 
 **Hardware decoding is off by default**, and off it is the software decoder
 it always was: no device is opened, and libva is not loaded. Asked for — the
@@ -223,8 +224,9 @@ planes, and FreeRDP's own code does the rest as it does with the decoders it
 ships: the rectangles, AVC444's combine of its two pictures (two frames of
 one stream through the surface's one decoder), the conversion into the
 surface. None of FreeRDP's own H.264 decoders is built (no
-`WITH_VIDEO_FFMPEG`, no `WITH_MEDIACODEC`); its FFmpeg is for the sound's
-AAC and for scaling. A decoder per surface, at most four of them on VAAPI,
+`WITH_VIDEO_FFMPEG`, no `WITH_MEDIACODEC`); what it links of FFmpeg is
+libswscale, for the graphics pipeline's scaling (a surface mapped onto a
+scaled output), without which it offers Windows nothing past EGFX 10.4. A decoder per surface, at most four of them on VAAPI,
 and a change of the setting applies at once: the session advertises the
 graphics pipeline's capabilities again, which Windows answers with new
 surfaces, whose decoders are made in the new mode (one picture may be
@@ -430,7 +432,10 @@ more than 250 ms, past which the oldest is dropped, so that a burst costs a
 skip rather than a delay that stays. The queue keeps what the device leaves
 of the 100 ms, but never less than the far end's own rhythm needs to not run
 dry — a period of the device's, two of the far end's writes and 10 ms, which
-is 50 ms for QEMU's 10 ms chunks and 69 ms for RDP's 23 ms waves. TigerVNC's QEMU audio (the
+is 50 ms for QEMU's 10 ms chunks and 69 ms for RDP's 23 ms waves, and
+for Windows' PCM, which comes in 186 ms waves two at a time, 395 ms (and
+twice that before anything is dropped), since a quarter of a second of it
+was mostly dropped. TigerVNC's QEMU audio (the
 `Audio` option, decided at connect) plays there: the stream opens when the
 server begins sending, closes two seconds after it stops and its tail has
 been heard, and closes while the session is paused, since nothing is read
@@ -448,9 +453,14 @@ caught up. FreeRDP's sound
 device (`rdpsnd_vento.c`) in place of FreeRDP's PulseAudio one, so the client
 no longer links libpulse and the fifteen libraries behind it; a session
 handed no output does not ask the server for sound. The device plays PCM
-itself and is handed AAC already decoded by FreeRDP's FFmpeg, which Windows
-picks when it is offered (Windows 10 offers AAC, PCM, ADPCM, A-law and GSM,
-and sends AAC at 44.1 kHz stereo); it tells the server how far behind it
+itself, and AAC and Opus through the platform's decoders
+(`common::audio::decode`: the client's FFmpeg here, MediaCodec on the phone)
+rather than FreeRDP's, which is built without FFmpeg for its sound; Windows
+picks AAC when it is offered (Windows 10 offers AAC, PCM, ADPCM, A-law and
+GSM, and sends raw AAC LC frames at 44.1 kHz stereo, one 23 ms frame a
+wave). The log says which (`sound: the server sends AAC_MS 44100 Hz 2 ch
+16-bit, which the platform decodes`, `audio: decoding AAC ... with aac
+(libavcodec)`). It tells the server how far behind it
 plays in every wave's confirm, applies the server's volume as the stream's
 gain, and closes its stream two seconds after the last wave has been heard,
 since FreeRDP passes the server's close on to no device. The sound keeps
