@@ -73,12 +73,15 @@ resume after the stall are heard; how much of the burst was heard, and the
 stream's own latency (queue plus device) over the run. `results.json` beside
 the recording has all of it.
 
-What to expect, from the policy in `common::audio`: the queue keeps about
-100 ms and never more than 250 ms, so the burst is heard for about 100 ms
-(the rest is dropped, `dropped` in the stats) and the clicks after it are no
-later than before; after the stall the tone comes back 100 ms plus the
-device's buffer after it is written; a mute is heard after the device's
-buffer only (about 50 ms), not after what is queued.
+What to expect, from the policy in `common::audio`: the queue and the
+device's buffer (50 ms) together keep about 100 ms and never more than
+250 ms, so the clicks are heard about 100 ms after they are written, the
+burst is heard for about the queue's 50 ms (the rest is dropped, `dropped`
+in the stats) and the clicks after it are no more than a period later than
+before; after the stall the tone comes back 100 ms after it is written; a
+mute is heard after the device's buffer only (about 50 ms), not after what
+is queued. (Measured: clicks 102 ms before the burst and after the stall,
+114.5 ms after the burst, 50 ms of the burst heard, the resume 100 ms.)
 
 ## A backend end to end: bursts.py
 

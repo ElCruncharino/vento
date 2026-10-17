@@ -424,22 +424,26 @@ no commits) while suspended, live again when it was not.
 **Sound** plays on ALSA's `default` device (PipeWire's or PulseAudio's
 plugin on a desktop that has a sound server), opened per stream on a thread
 of its own (`backends/platform/desktop/src/alsa.rs`), behind one queue for
-every backend (`common::audio`): about 100 ms kept ahead of the device and
-never more than 250 ms, past which the oldest is dropped, so that a burst
-costs a skip rather than a delay that stays. TigerVNC's QEMU audio (the
+every backend (`common::audio`): about 100 ms between a sample arriving and
+its being heard, the queue and the device's 50 ms buffer together, and never
+more than 250 ms, past which the oldest is dropped, so that a burst costs a
+skip rather than a delay that stays. The queue keeps what the device leaves
+of the 100 ms, but never less than the far end's own rhythm needs to not run
+dry — a period of the device's, two of the far end's writes and 10 ms, which
+is 50 ms for QEMU's 10 ms chunks and 69 ms for RDP's 23 ms waves. TigerVNC's QEMU audio (the
 `Audio` option, decided at connect) plays there: the stream opens when the
 server begins sending, closes two seconds after it stops and its tail has
 been heard, and closes while the session is paused, since nothing is read
 then. What the server sent meanwhile arrives at once on restore, and the
 queue keeps only the newest of it. On `scripts/testqemu`'s audio guest
 (`AUDIO=1`, timed by `scripts/testaudio/bursts.py`) the guest's card to the
-null sink took 121-150 ms, wherever the queue settled when it first filled,
-and stayed within 3 ms of that over five minutes; after 25 s minimised the
-burst sent at the restore was heard 208 ms after it played and every one
-after that at 121 ms. TigerVNC's own ALSA sink, which this replaced, took
-83-88 ms until the first pause and 1013 ms after it, for as long as the
-stream ran: its second's buffer filled with the backlog, and a device that
-drains no faster than the server sends never caught up. FreeRDP's sound
+null sink takes 125-136 ms, depending on the connection, and stayed within
+5 ms of that over five minutes; with the queue's 100 ms in front of the
+device rather than around it, it took 121-150 ms. TigerVNC's own ALSA sink,
+which this replaced, took 83-88 ms until the first pause and 1013 ms after
+it, for as long as the stream ran: its second's buffer filled with the
+backlog, and a device that drains no faster than the server sends never
+caught up. FreeRDP's sound
 (Sound = "This computer") plays there too, through the module's rdpsnd
 device (`rdpsnd_vento.c`) in place of FreeRDP's PulseAudio one, so the client
 no longer links libpulse and the fifteen libraries behind it; a session
@@ -453,13 +457,15 @@ since FreeRDP passes the server's close on to no device. The sound keeps
 playing while the window is hidden: hiding pauses only the picture, the
 server keeps sending sound as it plays it, and nothing arrives late on the
 restore. Against Windows 10 (`scripts/testaudio/winbursts.py`, a tone played
-in the RDP session) the tone reaches the null sink 334-451 ms after Windows
+in the RDP session) the tone reaches the null sink 320-359 ms after Windows
 was handed it, depending on the connection, and stays within 0.1 ms of that
-for five minutes and across 25 s minimised; about 200 ms of it is Windows'
-own and the network's before a wave arrives, and 140-170 ms is the queue's
-tenth of a second and the device. PulseAudio's device took 224-309 ms, the
-queue's tenth of a second less. The probe prints `audio playing` and
-`audio stopped` as a session's sound starts and stops.
+for five minutes; about 200 ms of it is Windows' own and the network's
+before a wave arrives — which varies by up to 100 ms from one connection to
+the next — and about 100 ms is the client's, the queue (23-80 ms as the
+waves come and go) and the device. With the queue's 100 ms in front of the
+device it took 331-451 ms, and PulseAudio's device, on another day, 224-309
+ms. The probe prints `audio playing` and `audio stopped` as a session's
+sound starts and stops.
 
 **The toolbar** sits flush with the top edge, square-cornered, edged on its
 sides and bottom but not along the top, which is the window's edge, and stays

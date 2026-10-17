@@ -33,8 +33,8 @@
 /* The library's channel drops a wave of its own accord where it thinks the
    device is too far behind, by the wall clock since the stream began: more
    than two waves plus the latency it was given, which is nothing unless the
-   arguments say otherwise. The table's queue already keeps a tenth of a
-   second ahead and drops the oldest past a quarter (vento/audio.h), so the
+   arguments say otherwise. The table's queue already keeps about a tenth of
+   a second ahead and drops the oldest past a quarter (vento/audio.h), so the
    channel is given that quarter: its own check then never fires before the
    queue's, and a burst that arrives at once after the network held it is
    the queue's to trim rather than the channel's to lose a wave of. */
