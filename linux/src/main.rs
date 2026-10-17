@@ -475,7 +475,7 @@ headless, any of which selects the probe instead of the window:
                     client_name: &client_name,
                     platform: Platform::Linux,
                     decoders: Some(backends::decoders(self.hw_decode)),
-                    audio: None,
+                    audio: Some(backends::audio()),
                 };
                 say("create");
                 match self.kind.start(&connect) {

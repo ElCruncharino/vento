@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The parts of a backend that are about a desktop rather than about a
-//! protocol: so far [`ffmpeg`], which is libavcodec speaking
-//! `common::video::Decoders`.
+//! protocol: [`ffmpeg`], which is libavcodec speaking
+//! `common::video::Decoders`, and [`alsa`], which is ALSA's default device
+//! speaking `common::audio::Outputs`.
 //!
 //! It exists so that the picture can be had where the code is written. A
 //! protocol whose picture is video was host-testable everywhere but there,
@@ -19,4 +20,5 @@
 // it and nothing of FFmpeg behind it.
 #![cfg(not(target_os = "android"))]
 
+pub mod alsa;
 pub mod ffmpeg;

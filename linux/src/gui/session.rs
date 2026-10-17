@@ -319,7 +319,7 @@ impl Session {
             client_name: &client_name,
             platform: backends::Platform::Linux,
             decoders: Some(Arc::clone(&decoders) as _),
-            audio: None,
+            audio: Some(backends::audio()),
         };
         let backend = request.kind.start(&connect)?;
         let title = request.address.clone();

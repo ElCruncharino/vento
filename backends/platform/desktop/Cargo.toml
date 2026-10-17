@@ -1,7 +1,9 @@
-# What a backend needs of a desktop and no protocol owns. Today that is one
-# thing: a video decoder, which on a phone is the hardware's and here is
-# libavcodec's, so that a protocol whose picture is video — RustDesk's — can be
-# run, probed and tested on the machine it is developed on with the picture in.
+# What a backend needs of a desktop and no protocol owns: a video decoder,
+# which on a phone is the hardware's and here is libavcodec's, so that a
+# protocol whose picture is video — RustDesk's — can be run, probed and tested
+# on the machine it is developed on with the picture in; and a sound output,
+# which on a phone is AAudio and here is ALSA's default device (`src/alsa.rs`,
+# libasound declared by hand and linked as TigerVNC's own sink links it).
 #
 # The mirror of `remotedesktop-platform-android`, cfg for cfg: on Android the
 # crate is empty and has no dependencies, which is what keeps FFmpeg out of
