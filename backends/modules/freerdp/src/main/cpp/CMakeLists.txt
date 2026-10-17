@@ -3,14 +3,15 @@
 #
 # Two builds from one file. Under Gradle this is a root, configured by the NDK
 # toolchain, and makes `libremotedesktop_freerdp.so`: the session, with the
-# module's Rust crate linked in as the JNI layer over it and the OpenSSL port and FreeRDP's
-# own MediaCodec and OpenSL ES behind its H.264 and sound. Under
-# `backends/CMakeLists.txt` it is a subdirectory on a Linux host and makes
-# `vento_freerdp`, the session alone, against the host's OpenSSL, with FFmpeg
-# and PulseAudio behind the same two, and a probe in front of it. What is
-# shared is the middle — how FreeRDP itself is configured — and the two halves
-# around it are `if(ANDROID)` and `else()`, so that the Android build is the
-# same sequence of statements it was.
+# module's Rust crate linked in as the JNI layer over it, the OpenSSL port, and
+# OpenSL ES behind its sound. Under `backends/CMakeLists.txt` it is a
+# subdirectory on a Linux host and makes `vento_freerdp`, the session alone,
+# against the host's OpenSSL, with FFmpeg and PulseAudio behind its sound, and
+# a probe in front of it. Its H.264 is vento's decoders on both, the phone's
+# MediaCodec and the Linux client's FFmpeg, through the subsystem in
+# h264_vento.c. What is shared is the middle — how FreeRDP itself is
+# configured — and the two halves around it are `if(ANDROID)` and `else()`,
+# so that the Android build is the same sequence of statements it was.
 
 cmake_minimum_required(VERSION 3.30)
 project(remotedesktop_freerdp C)
@@ -90,10 +91,23 @@ endforeach()
 set(WITH_CLIENT_COMMON ON CACHE BOOL "" FORCE)
 set(WITH_CLIENT_CHANNELS ON CACHE BOOL "" FORCE)
 
+# The library's H.264 is decoded by the platform's decoders, which the session
+# is handed (vento/video.h), through a subsystem of this module's: the slot
+# patches/freerdp adds for one the application links in. None of the
+# library's own is built, so there is one H.264 decoder to reason about —
+# the one RustDesk's and TigerVNC's pictures go through, with the same
+# hardware decoding and fallback — and the library's code above the decoder
+# (AVC444's combining of two pictures, the conversion into the surface) is
+# upstream's, unchanged.
+set(WITH_H264_EXTERNAL ON CACHE BOOL "" FORCE)
+
 if(ANDROID)
-    # The phone's H.264 and sound are the NDK's, which FreeRDP has switches for,
-    # so the host's codec and sound libraries are off by name.
-    foreach(off WITH_OPENH264 WITH_FFMPEG WITH_SWSCALE WITH_ALSA WITH_PULSE WITH_DSP_FFMPEG)
+    # The phone's sound is the NDK's, which FreeRDP has switches for, so the
+    # host's codec and sound libraries are off by name; and its H.264 is
+    # MediaCodec's through vento's decoders, so FreeRDP's own MediaCodec
+    # subsystem is off too.
+    foreach(off WITH_OPENH264 WITH_FFMPEG WITH_SWSCALE WITH_ALSA WITH_PULSE WITH_DSP_FFMPEG
+            WITH_MEDIACODEC)
         set(${off} OFF CACHE BOOL "" FORCE)
     endforeach()
 
@@ -103,17 +117,17 @@ if(ANDROID)
     # libOpenSLES.so it links a decision rather than an accident.
     set(WITH_OPENSLES ON CACHE BOOL "" FORCE)
 else()
-    # The host's H.264 is FFmpeg's, through the same `WITH_FFMPEG` their Linux
-    # client builds with: libavcodec for the video and for the AAC the sound
-    # channel can carry (`WITH_DSP_FFMPEG`), libswscale for the scaling the
-    # graphics pipeline does. OpenH264 would do for the video alone, but is a
-    # library a distribution does not ship and FFmpeg is one every one does.
-    # The device behind Sound = "This computer" is PulseAudio's, which on a
-    # desktop of this decade is PipeWire answering to the same name.
-    foreach(on WITH_FFMPEG WITH_DSP_FFMPEG WITH_VIDEO_FFMPEG WITH_SWSCALE WITH_PULSE)
+    # FFmpeg, through the same `WITH_FFMPEG` their Linux client builds with,
+    # for the AAC the sound channel can carry (`WITH_DSP_FFMPEG`) and
+    # libswscale for the scaling the graphics pipeline does — but not for
+    # the video (`WITH_VIDEO_FFMPEG`), which is the Linux client's own FFmpeg
+    # through vento's decoders. The device behind Sound = "This computer" is
+    # PulseAudio's, which on a desktop of this decade is PipeWire answering
+    # to the same name.
+    foreach(on WITH_FFMPEG WITH_DSP_FFMPEG WITH_SWSCALE WITH_PULSE)
         set(${on} ON CACHE BOOL "" FORCE)
     endforeach()
-    foreach(off WITH_OPENH264 WITH_ALSA WITH_OSS)
+    foreach(off WITH_VIDEO_FFMPEG WITH_FFMPEG_HWACCEL WITH_OPENH264 WITH_ALSA WITH_OSS)
         set(${off} OFF CACHE BOOL "" FORCE)
     endforeach()
     # Under the host root the three vendored trees share one cache, and
@@ -151,12 +165,6 @@ else()
             unset(${lib}_LIBRARIES CACHE)
             unset(${lib}_INCLUDE_DIRS CACHE)
         endforeach()
-        # That FFmpeg has VAAPI, through a shim that loads libva only when a
-        # device is opened, so their hardware decoding costs nothing until it
-        # is asked for: the session asks (FreeRDP_SoftwareGdi off) when the
-        # person has hardware decoding on at connect, and patches/freerdp
-        # makes it fall back to software wherever the device cannot decode.
-        set(WITH_FFMPEG_HWACCEL ON CACHE BOOL "" FORCE)
     endif()
 endif()
 
@@ -166,14 +174,6 @@ endif()
 # is the release's own, so the version the library reports is the same either
 # way; only the revision becomes "n/a".
 set(USE_VERSION_FROM_GIT_TAG OFF CACHE BOOL "" FORCE)
-
-if(ANDROID)
-    # H.264 on the phone's own decoder, through the NDK's MediaCodec — which is a
-    # build switch here and was eighteen hand-written NDK declarations the last time
-    # this repository wanted the same thing. Nothing is vendored and nothing is
-    # added to the APK for it.
-    set(WITH_MEDIACODEC ON CACHE BOOL "" FORCE)
-endif()
 
 # Their asserts print what failed and then abort. Keep that in a build somebody
 # is debugging, where an abort with a message is the finding; a release build
@@ -203,6 +203,11 @@ remotedesktop_vendored_warnings("${THIRD_PARTY}/freerdp")
 set(FREERDP_INCLUDES
         "${THIRD_PARTY}/freerdp/include" "${CMAKE_CURRENT_BINARY_DIR}/freerdp/include"
         "${THIRD_PARTY}/freerdp/winpr/include" "${CMAKE_CURRENT_BINARY_DIR}/freerdp/winpr/include")
+# The H.264 subsystem is built against the library's own declaration of the
+# interface, which it keeps beside its subsystems rather than in its public
+# headers; the one file that needs it is the one given it.
+set_source_files_properties(h264_vento.c PROPERTIES INCLUDE_DIRECTORIES
+        "${THIRD_PARTY}/freerdp/libfreerdp/codec")
 
 if(ANDROID)
     # The session, which is the shim over FreeRDP's client and names no
@@ -211,7 +216,7 @@ if(ANDROID)
     # headers are borrowed from the port for the TLS version constants, and as
     # SYSTEM like the rest, because linking the port would put them on the path
     # as ours.
-    add_library(remotedesktop_freerdp SHARED freerdp_session.c)
+    add_library(remotedesktop_freerdp SHARED freerdp_session.c h264_vento.c)
     vento_android_library(remotedesktop_freerdp remotedesktop_freerdp)
     remotedesktop_warnings(remotedesktop_freerdp)
     target_include_directories(remotedesktop_freerdp SYSTEM PRIVATE ${FREERDP_INCLUDES}
@@ -232,7 +237,7 @@ else()
     # platform — the probe's `vento_desktop`, or the library's own copy of it
     # under VENTO_SHARED (vento_desktop.cmake). OpenSSL's headers are the ones
     # their configure found, for the same constants.
-    vento_backend_library(vento_freerdp freerdp_session.c)
+    vento_backend_library(vento_freerdp freerdp_session.c h264_vento.c)
     target_include_directories(vento_freerdp SYSTEM PRIVATE ${FREERDP_INCLUDES}
             ${OPENSSL_INCLUDE_DIR})
     target_link_libraries(vento_freerdp ${VENTO_BACKEND_LINK} freerdp-client freerdp winpr)

@@ -1,0 +1,84 @@
+From 35e360575636929e26d1d42b0d900c6197af1d6a Mon Sep 17 00:00:00 2001
+From: user <email>
+Date: Fri, 16 Oct 2026 19:51:34 -0400
+Subject: [PATCH 1/1] codec,h264: a decoder subsystem the application provides
+
+An application that links the library statically and has a video
+decoder of its own (hardware decoding with its own device handling and
+fallback, a platform decoder the library has no subsystem for) can only
+use it today by patching another subsystem. WITH_H264_EXTERNAL adds a
+slot for one: the application defines g_Subsystem_external, built
+against libfreerdp/codec/h264.h like the library's own, and it is tried
+before them. WITH_GFX_H264 follows it as it follows the others, so the
+graphics pipeline's H.264 is built with only this subsystem present.
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 1e83f94de..c1bad6635 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -452,7 +452,7 @@ if(MBEDTLS_FOUND)
+   add_compile_definitions("WITH_MBEDTLS")
+ endif()
+ 
+-if(WITH_OPENH264 OR WITH_MEDIA_FOUNDATION OR WITH_VIDEO_FFMPEG OR WITH_MEDIACODEC)
++if(WITH_OPENH264 OR WITH_MEDIA_FOUNDATION OR WITH_VIDEO_FFMPEG OR WITH_MEDIACODEC OR WITH_H264_EXTERNAL)
+   set(WITH_GFX_H264 ON)
+ else()
+   set(WITH_GFX_H264 OFF)
+diff --git a/cmake/ConfigOptions.cmake b/cmake/ConfigOptions.cmake
+index 044ed3142..09a141243 100644
+--- a/cmake/ConfigOptions.cmake
++++ b/cmake/ConfigOptions.cmake
+@@ -143,6 +143,7 @@ option(WITH_DSP_EXPERIMENTAL "Enable experimental sound encoder/decoder formats"
+ option(WITH_GFX_AV1 "[experimental,unstable ABI/API] Enable AV1 support for GFX channel encoding/decoding" OFF)
+ option(WITH_GFX_AZURE "[experimental,unstable ABI/API] Enable Azure extension support for GFX channel" OFF)
+ option(WITH_FFMPEG "Enable FFMPEG for audio/video encoding/decoding" ON)
++option(WITH_H264_EXTERNAL "Decode H264 with a subsystem the application links in (g_Subsystem_external)" OFF)
+ cmake_dependent_option(WITH_DSP_FFMPEG "Use FFMPEG for audio encoding/decoding" ON "WITH_FFMPEG" OFF)
+ cmake_dependent_option(WITH_VIDEO_FFMPEG "Use FFMPEG for video encoding/decoding" ON "WITH_FFMPEG" OFF)
+ cmake_dependent_option(
+diff --git a/include/config/config.h.in b/include/config/config.h.in
+index b1521df72..bf8fa7db8 100644
+--- a/include/config/config.h.in
++++ b/include/config/config.h.in
+@@ -58,6 +58,7 @@
+ #cmakedefine WITH_OPENCL
+ #cmakedefine WITH_MEDIA_FOUNDATION
+ #cmakedefine WITH_MEDIACODEC
++#cmakedefine WITH_H264_EXTERNAL
+ #cmakedefine WITH_GFX_AV1
+ 
+ #cmakedefine WITH_FFMPEG_HWACCEL
+diff --git a/libfreerdp/codec/h264.c b/libfreerdp/codec/h264.c
+index da7f7dca6..2204105ad 100644
+--- a/libfreerdp/codec/h264.c
++++ b/libfreerdp/codec/h264.c
+@@ -732,6 +732,12 @@ static BOOL CALLBACK h264_register_subsystems(WINPR_ATTR_UNUSED PINIT_ONCE once,
+ {
+ 	int i = 0;
+ 
++#ifdef WITH_H264_EXTERNAL
++	{
++		subSystems[i] = &g_Subsystem_external;
++		i++;
++	}
++#endif
+ #ifdef WITH_MEDIACODEC
+ 	{
+ 		subSystems[i] = &g_Subsystem_mediacodec;
+diff --git a/libfreerdp/codec/h264.h b/libfreerdp/codec/h264.h
+index af1c4fd89..f9cad530e 100644
+--- a/libfreerdp/codec/h264.h
++++ b/libfreerdp/codec/h264.h
+@@ -94,6 +94,11 @@ extern "C"
+ 	FREERDP_LOCAL BOOL avc420_ensure_buffer(H264_CONTEXT* h264, UINT32 stride, UINT32 width,
+ 	                                        UINT32 height);
+ 
++#ifdef WITH_H264_EXTERNAL
++	/* Defined by the application that links the library statically, and
++	 * tried before every subsystem of the library's own. */
++	extern const H264_CONTEXT_SUBSYSTEM g_Subsystem_external;
++#endif
+ #ifdef WITH_MEDIACODEC
+ 	extern const H264_CONTEXT_SUBSYSTEM g_Subsystem_mediacodec;
+ #endif
