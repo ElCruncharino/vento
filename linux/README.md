@@ -475,7 +475,12 @@ picks AAC when it is offered (Windows 10 offers AAC, PCM, ADPCM, A-law and
 GSM, and sends raw AAC LC frames at 44.1 kHz stereo, one 23 ms frame a
 wave). The log says which (`sound: the server sends AAC_MS 44100 Hz 2 ch
 16-bit, which the platform decodes`, `audio: decoding AAC ... with aac
-(libavcodec)`). It tells the server how far behind it
+(libavcodec)`). Nothing in RDP's sound asks the server to stop sending
+during a session (the client's formats are an answer, sent once), so the
+session's sound switch is a mute, there from the server's list of formats
+when it lists one this end plays — which Windows sends when something first
+plays, a tenth of a second or so before the first wave, and not at
+connect — until the session ends. It tells the server how far behind it
 plays in every wave's confirm, applies the server's volume as the stream's
 gain, and closes its stream two seconds after the last wave has been heard,
 since FreeRDP passes the server's close on to no device. The sound keeps
@@ -516,7 +521,8 @@ the part of the server's format list it plays — PCM, and AAC or Opus where
 the platform decodes them — so Windows picks AAC here as it does from
 FreeRDP. Device redirection goes with it, announcing no devices, since
 Windows sends no sound to a client without it, and Windows sends its format
-list only once something first plays. The stream closes two seconds after
+list only once something first plays, which is when the session's switch
+comes, a mute as FreeRDP's is. The stream closes two seconds after
 the last wave has been heard, and plays on while the window is hidden. To
 Windows 10 (`winbursts.py`) the tone reached the null sink 323 ms after
 Windows was handed it, as AAC, and 604 ms as PCM (AAC withheld in a scratch

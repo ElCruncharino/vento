@@ -50,6 +50,8 @@ const SNDC_WAVE: u8 = 0x02;
 pub struct Sound {
     channel: Rdpsnd,
     player: Arc<Mutex<Player>>,
+    /// The session's output, whose switch this offers.
+    outputs: Arc<dyn Outputs>,
     /// A pre-version-8 WaveInfo has been passed on, and the next payload is
     /// its wave, which has no header to read: it must not be mistaken for a
     /// PDU of its own here.
@@ -70,10 +72,11 @@ impl Sound {
     /// The channel, playing on `outputs`; the player is the session's to
     /// close when it goes quiet ([`Player::close_if_quiet`]).
     pub fn new(outputs: Arc<dyn Outputs>) -> (Sound, Arc<Mutex<Player>>) {
-        let player = Arc::new(Mutex::new(Player::new(outputs)));
+        let player = Arc::new(Mutex::new(Player::new(Arc::clone(&outputs))));
         let sound = Sound {
             channel: Rdpsnd::new(Box::new(Waves::new(Vec::new(), Arc::clone(&player)))),
             player: Arc::clone(&player),
+            outputs,
             wave_follows: false,
         };
         (sound, player)
@@ -105,6 +108,14 @@ impl SvcProcessor for Sound {
                     let player = self.player.lock().unwrap();
                     let offered = playable(&list.formats, &player);
                     drop(player);
+                    // A server that lists a format this end plays may send
+                    // sound from now on, and nothing in rdpsnd asks it to
+                    // stop during a session, so the session's switch is a
+                    // mute, there from this list rather than from the first
+                    // wave.
+                    if !offered.is_empty() {
+                        self.outputs.controls().offer_mute();
+                    }
                     self.channel = Rdpsnd::new(Box::new(Waves::new(offered, Arc::clone(&self.player))));
                 }
             }
@@ -340,5 +351,25 @@ mod tests {
         assert!(sound.wave_follows);
         let _ = sound.process(&[SNDC_FORMATS, 0, 0, 0, 0, 0, 0, 0]);
         assert!(!sound.wave_follows);
+    }
+
+    #[test]
+    fn a_list_with_something_playable_offers_a_mute() {
+        use ironrdp_rdpsnd::pdu::{ServerAudioFormatPdu, Version};
+        let list = |formats| {
+            ironrdp_core::encode_vec(&ServerAudioOutputPdu::AudioFormat(ServerAudioFormatPdu {
+                version: Version::V8,
+                formats,
+            }))
+            .unwrap()
+        };
+        let controls = Arc::new(Controls::new());
+        let (mut sound, _player) = Sound::new(Arc::new(Fake(Arc::clone(&controls))));
+        // Nothing this end plays: nothing will be sent, so no switch.
+        let _ = sound.process(&list(vec![format(WaveFormat::GSM610, 8_000, 1, 0, None)]));
+        assert_eq!(controls.sound().switch, None);
+        let _ = sound.process(&list(vec![format(WaveFormat::PCM, 44_100, 2, 16, None)]));
+        let offered = controls.sound();
+        assert_eq!((offered.switch, offered.playing), (Some(common::audio::Switch::Mute), false));
     }
 }
