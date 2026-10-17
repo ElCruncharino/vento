@@ -160,6 +160,9 @@ public final class NativeBackend implements Backend {
         /** The session's sound muted or heard, at once; see {@link Backend#setMuted}. */
         void setMuted(long handle, boolean muted);
 
+        /** The far end asked for its sound or to stop it; see {@link Backend#setSoundEnabled}. */
+        void setSoundEnabled(long handle, boolean enabled);
+
         /**
          * {@link Facts} in one crossing: width, height, display, flags (1 can
          * resize, 2 view only, 4 pointer relative), the monitor count, then
@@ -258,8 +261,10 @@ public final class NativeBackend implements Backend {
     private volatile int desktopWidth;
     private volatile int desktopHeight;
     private volatile boolean dead;
-    /** What {@link #onAudio} last said, and what {@link #setMuted} was told. */
+    /** What {@link #onSound} last said, and what {@link #setMuted} was told. */
     private volatile boolean soundPlaying;
+    private volatile int soundSwitch = SOUND_SWITCH_NONE;
+    private volatile boolean soundEnabled = true;
     private volatile boolean muted;
 
     /**
@@ -463,6 +468,24 @@ public final class NativeBackend implements Backend {
     }
 
     @Override
+    public int soundSwitch() {
+        return soundSwitch;
+    }
+
+    @Override
+    public boolean soundEnabled() {
+        return soundEnabled;
+    }
+
+    @Override
+    public void setSoundEnabled(boolean enabled) {
+        final long h = handle;
+        if (h != 0 && !dead) {
+            natives.setSoundEnabled(h, enabled);
+        }
+    }
+
+    @Override
     public boolean muted() {
         return muted;
     }
@@ -658,14 +681,23 @@ public final class NativeBackend implements Backend {
     }
 
     /**
-     * The session's sound started or stopped: the first stream written to, or
-     * the last one closed. Kept here as well, for a screen that attaches later.
+     * The session's sound: its switch ({@code SOUND_SWITCH_*}), whether the
+     * far end is asked for its sound, whether it is muted here (which {@link
+     * #setMuted} set), and whether a stream plays — the first stream written
+     * to, until the last one closed. Kept here as well, for a screen that
+     * attaches later.
      */
-    void onAudio(boolean playing) {
-        soundPlaying = playing;
+    void onSound(int soundSwitch, boolean enabled, boolean muted, boolean playing) {
+        final boolean started = playing != soundPlaying;
+        this.soundSwitch = soundSwitch;
+        this.soundEnabled = enabled;
+        this.soundPlaying = playing;
         main.post(() -> {
             if (listener != null) {
-                listener.soundPlaying(playing);
+                listener.soundSwitch(soundSwitch, enabled, playing);
+                if (started) {
+                    listener.soundPlaying(playing);
+                }
             }
         });
     }

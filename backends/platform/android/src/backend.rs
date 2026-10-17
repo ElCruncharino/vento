@@ -49,6 +49,7 @@
 
 use crate::{bitmap, string};
 pub use common::audio::Outputs;
+use common::audio::Switch;
 pub use common::video::Decoders;
 use jni::errors::{Error, LogErrorAndDefault};
 use jni::objects::{Global, JIntArray, JLongArray, JMethodID, JObject, JObjectArray, JString};
@@ -262,6 +263,10 @@ pub const METHODS: &[NativeMethod] = &[
         error_policy = LogErrorAndDefault,
     },
     native_method! { fn set_muted(handle: jlong, muted: jboolean), error_policy = LogErrorAndDefault },
+    native_method! {
+        fn set_sound_enabled(handle: jlong, enabled: jboolean),
+        error_policy = LogErrorAndDefault,
+    },
     native_method! { fn facts(handle: jlong) -> [jint], error_policy = LogErrorAndDefault },
     native_method! { fn info(handle: jlong) -> [JString], error_policy = LogErrorAndDefault },
     native_method! { fn traffic(handle: jlong) -> [jlong], error_policy = LogErrorAndDefault },
@@ -555,6 +560,26 @@ fn set_muted<'local>(_env: &mut Env<'local>, _this: JObject<'local>, handle: jlo
     Ok(())
 }
 
+/// The session's Enable switch: asks the far end to stop sending its sound,
+/// or to send it again, where the backend offered that
+/// (`common::audio::Switch::Enable`, said through `onSound`). A switch that
+/// asks nothing — a mute, or none — is left alone and says so.
+fn set_sound_enabled<'local>(
+    _env: &mut Env<'local>,
+    _this: JObject<'local>,
+    handle: jlong,
+    enabled: jboolean,
+) -> Result<(), Error> {
+    if let Some(audio) = unsafe { self::handle(handle) }.and_then(|h| h.audio.as_ref()) {
+        if audio.controls().set_enabled(enabled) {
+            log::info!("asking the far end {}", if enabled { "for its sound" } else { "to stop its sound" });
+        } else {
+            log::info!("sound switch: nothing to ask the far end");
+        }
+    }
+    Ok(())
+}
+
 fn request_desktop_size<'local>(
     _env: &mut Env<'local>,
     _this: JObject<'local>,
@@ -753,7 +778,7 @@ struct Outlet {
     cursor: JMethodID,
     pointer_mode: JMethodID,
     bell: JMethodID,
-    audio: JMethodID,
+    sound: JMethodID,
     clipboard: JMethodID,
     credentials_needed: JMethodID,
     trust_needed: JMethodID,
@@ -797,7 +822,7 @@ impl Outlet {
             cursor: id(env, jni_str!("onCursor"), jni_sig!("([IIIIIJ)V"))?,
             pointer_mode: id(env, jni_str!("onPointerMode"), jni_sig!("(Z)V"))?,
             bell: id(env, jni_str!("onBell"), jni_sig!("()V"))?,
-            audio: id(env, jni_str!("onAudio"), jni_sig!("(Z)V"))?,
+            sound: id(env, jni_str!("onSound"), jni_sig!("(IZZZ)V"))?,
             clipboard: id(env, jni_str!("onClipboard"), jni_sig!("(Ljava/lang/String;)V"))?,
             credentials_needed: id(env, jni_str!("onCredentialsNeeded"), jni_sig!("(ZLjava/lang/String;)V"))?,
             trust_needed: id(
@@ -911,8 +936,26 @@ impl Outlet {
                 }
                 Event::PointerMode { relative } => self.call(env, self.pointer_mode, &[jvalue { z: relative }]),
                 Event::Bell => self.call(env, self.bell, &[]),
-                // What the session screen shows its sound button by.
-                Event::Audio { playing } => self.call(env, self.audio, &[jvalue { z: playing }]),
+                // What the session screen shows its sound switch by: what it
+                // does (0 none, 1 mute, 2 enable, as `VENTO_AUDIO_SWITCH_*`),
+                // whether the far end is asked for its sound, whether it is
+                // muted here, and whether a stream plays.
+                Event::Sound(sound) => self.call(
+                    env,
+                    self.sound,
+                    &[
+                        jvalue {
+                            i: match sound.switch {
+                                None => 0,
+                                Some(Switch::Mute) => 1,
+                                Some(Switch::Enable) => 2,
+                            },
+                        },
+                        jvalue { z: sound.enabled },
+                        jvalue { z: sound.muted },
+                        jvalue { z: sound.playing },
+                    ],
+                ),
                 Event::Clipboard(text) => self.text(env, self.clipboard, &text),
                 Event::CredentialsNeeded { needs_user } => {
                     let user = env.new_string(if needs_user { self.asks.prompt_user.as_str() } else { "" })?;

@@ -362,6 +362,14 @@ like input they are sent, not confirmed: the facts printed at the end, which
 list each monitor as `id=N WxH+X+Y`, say what the far end made of them, and
 `scripts/testvnc/heads.sh` says the same from the server's side.
 
+The probe prints the session's sound as it changes: `sound switch: Enable
+audio on` (or `off`, or `Mute audio off`, or `none`) whenever the switch the
+window would show changes, and `audio playing` and `audio stopped` as a
+stream starts and the last one closes. `--sound-cycle N` turns an Enable
+switch off, and on again, every N seconds once the backend has offered one,
+printing each turn — the far end's side of it is what the socket carries,
+which `ss -tin` on the client shows.
+
 `--verbose` lets the backends' debug lines through (and not the GUI stack's,
 which would be tens of thousands a minute).
 

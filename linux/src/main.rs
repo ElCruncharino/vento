@@ -25,6 +25,7 @@ fn main() {
 }
 
 mod host {
+    use common::audio::Outputs as _;
     use std::cell::Cell;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -66,6 +67,16 @@ mod host {
         /// `--resize`: a desktop size to ask for, as the window's follower
         /// asks for one.
         resize: Option<(u32, u32)>,
+        /// `--sound-cycle`: how often the far end's sound is turned off and
+        /// on again, where the session's switch can ask it to.
+        sound_cycle: Option<Duration>,
+        /// The session's sound controls, for `--sound-cycle`, and when it
+        /// next turns the switch.
+        sound_controls: std::cell::RefCell<Option<Arc<common::audio::Controls>>>,
+        sound_cycle_at: Cell<Option<Instant>>,
+        /// The session's sound as last printed, so that each change is said
+        /// on its own line.
+        sound: Cell<vento::events::Sound>,
         /// `--layout`: screens to ask for, left to right.
         layout: Option<Vec<(u32, u32)>>,
         /// `--no-clipboard-in`'s opposite: whether what the far end copies is
@@ -140,6 +151,9 @@ headless, any of which selects the probe instead of the window:
   --key KEYSYM           press and release this X keysym: 0x61, 97 and 0141
                          are all 'a', as strtol reads them
   --clipboard TEXT       send this as the clipboard a second after connecting
+  --sound-cycle SECONDS  turn the far end's sound off, and on again, every
+                         SECONDS, where the session's switch asks the far
+                         end (QEMU's audio, SPICE, RustDesk)
   --resize WxH           ask for a desktop this size a second after connecting
   --layout WxH,WxH,...   ask for these screens side by side instead, the far
                          end's own screens by position and new ones past them";
@@ -210,6 +224,7 @@ headless, any of which selects the probe instead of the window:
         let mut key = None;
         let mut clipboard = None;
         let mut resize = None;
+        let mut sound_cycle = None;
         let mut layout = None;
         let mut out = None;
         let mut thumb_step = 8usize;
@@ -284,6 +299,12 @@ headless, any of which selects the probe instead of the window:
                 "--clipboard" => {
                     headless = true;
                     clipboard = Some(value(&mut it, "--clipboard")?);
+                }
+                "--sound-cycle" => {
+                    headless = true;
+                    let v = value(&mut it, "--sound-cycle")?;
+                    let seconds: u64 = v.parse().ok().filter(|&n| n > 0).ok_or_else(|| format!("--sound-cycle {v:?}"))?;
+                    sound_cycle = Some(Duration::from_secs(seconds));
                 }
                 "--resize" => {
                     headless = true;
@@ -379,6 +400,10 @@ headless, any of which selects the probe instead of the window:
             key,
             clipboard,
             resize,
+            sound_cycle,
+            sound_controls: std::cell::RefCell::new(None),
+            sound_cycle_at: Cell::new(None),
+            sound: Cell::new(Default::default()),
             layout,
             clipboard_in: settings.clipboard_in,
             hw_decode: settings.hw_decode,
@@ -475,7 +500,11 @@ headless, any of which selects the probe instead of the window:
                     client_name: &client_name,
                     platform: Platform::Linux,
                     decoders: Some(backends::decoders(self.hw_decode)),
-                    audio: Some(backends::audio()),
+                    audio: Some({
+                        let audio = backends::audio();
+                        *self.sound_controls.borrow_mut() = Some(Arc::clone(audio.controls()));
+                        audio
+                    }),
                 };
                 say("create");
                 match self.kind.start(&connect) {
@@ -569,7 +598,31 @@ headless, any of which selects the probe instead of the window:
                 if now >= deadline {
                     return done(mailbox);
                 }
+                self.cycle_sound(now, say);
                 mailbox.wait((deadline - now).min(Duration::from_millis(200)));
+            }
+        }
+
+        /// `--sound-cycle`: turns the switch once it is due, where the far
+        /// end can be asked; the first turn is a period after the switch is
+        /// offered.
+        fn cycle_sound(&self, now: Instant, say: &dyn Fn(&str)) {
+            let (Some(every), Some(controls)) = (self.sound_cycle, self.sound_controls.borrow().clone()) else {
+                return;
+            };
+            if controls.sound().switch != Some(common::audio::Switch::Enable) {
+                self.sound_cycle_at.set(None);
+                return;
+            }
+            match self.sound_cycle_at.get() {
+                None => self.sound_cycle_at.set(Some(now + every)),
+                Some(at) if now >= at => {
+                    let on = !controls.enabled();
+                    say(if on { "turning the far end's sound on" } else { "turning the far end's sound off" });
+                    controls.set_enabled(on);
+                    self.sound_cycle_at.set(Some(now + every));
+                }
+                Some(_) => {}
             }
         }
 
@@ -594,7 +647,22 @@ headless, any of which selects the probe instead of the window:
                     say(&format!("pointer_mode {}", if *relative { "relative" } else { "absolute" }))
                 }
                 Event::Bell => say("bell"),
-                Event::Audio { playing } => say(if *playing { "audio playing" } else { "audio stopped" }),
+                Event::Sound(sound) => {
+                    let before = self.sound.replace(*sound);
+                    if (sound.switch, sound.enabled, sound.muted) != (before.switch, before.enabled, before.muted) {
+                        say(&match sound.switch {
+                            None => "sound switch: none".to_string(),
+                            Some(switch) => format!(
+                                "sound switch: {} {}",
+                                switch.label(),
+                                if sound.on() { "on" } else { "off" }
+                            ),
+                        });
+                    }
+                    if sound.playing != before.playing {
+                        say(if sound.playing { "audio playing" } else { "audio stopped" });
+                    }
+                }
                 Event::Clipboard(text) if !self.clipboard_in => {
                     say(&format!("clipboard {} bytes, not taken (--no-clipboard-in)", text.len()))
                 }

@@ -40,6 +40,8 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
+pub use common::audio::{Sound, Switch};
+
 /// A rectangle of the desktop, in pixels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Rect {
@@ -220,11 +222,13 @@ pub enum Event {
         question: bool,
         confirm_label: String,
     },
-    /// Whether the session is playing the far end's sound: true once a
-    /// stream has had sound written to it, false once the last such stream
-    /// has closed. What a window shows its mute by, so that a session with
-    /// no sound has no button for it.
-    Audio { playing: bool },
+    /// The session's sound switch and the sound behind it, whenever any of
+    /// it changes: what it does and whether it is on — offered by the
+    /// backend as soon as the far end may send sound, an Enable switch
+    /// where it can be asked to stop and a Mute switch where not — and
+    /// whether a stream is playing. What a window shows its sound switch
+    /// by, so that a session whose far end sends no sound has none.
+    Sound(Sound),
     /// Terminal, and the last event a session sends. `detail` is empty for an
     /// ending nobody needs telling about — the one that was asked for.
     Closed { detail: String },
@@ -242,7 +246,7 @@ impl Event {
     fn is_state(&self) -> bool {
         matches!(
             self,
-            Event::Cursor(_) | Event::PointerMode { .. } | Event::Clipboard(_) | Event::Audio { .. }
+            Event::Cursor(_) | Event::PointerMode { .. } | Event::Clipboard(_) | Event::Sound(_)
         )
     }
 }
@@ -516,15 +520,16 @@ impl Mailbox {
         self.push(Event::Bell);
     }
 
-    /// Whether sound is playing, from the session's audio controls (see
+    /// The session's sound, from its audio controls (see
     /// [`Kind::start`](crate::kind::Kind::start)). Dropped once the session
-    /// has closed: a backend that closes its last stream while it tears
-    /// down must not say anything after the event that is the last.
-    pub fn on_audio(&self, playing: bool) {
+    /// has closed: a backend that closes its last stream, or withdraws its
+    /// switch, while it tears down must not say anything after the event
+    /// that is the last.
+    pub fn on_sound(&self, sound: Sound) {
         if self.state() == State::Closed {
             return;
         }
-        self.push(Event::Audio { playing });
+        self.push(Event::Sound(sound));
     }
 
     pub fn on_clipboard(&self, text: &str) {
@@ -799,16 +804,22 @@ mod tests {
     }
 
     #[test]
-    fn whether_sound_plays_is_the_latest_and_never_after_the_end() {
+    fn the_sound_is_the_latest_and_never_after_the_end() {
         let mailbox = Mailbox::new(None);
-        mailbox.on_audio(true);
+        let playing = |playing: bool| Sound {
+            switch: Some(Switch::Mute),
+            enabled: true,
+            muted: false,
+            playing,
+        };
+        mailbox.on_sound(playing(true));
         mailbox.on_bell();
-        mailbox.on_audio(false);
-        mailbox.on_audio(true);
+        mailbox.on_sound(playing(false));
+        mailbox.on_sound(playing(true));
         assert_eq!(mailbox.take(), Some(Event::Bell));
-        assert_eq!(mailbox.take(), Some(Event::Audio { playing: true }));
+        assert_eq!(mailbox.take(), Some(Event::Sound(playing(true))));
         mailbox.on_closed("");
-        mailbox.on_audio(false);
+        mailbox.on_sound(Sound::default());
         assert_eq!(mailbox.take(), Some(Event::Closed { detail: String::new() }));
         assert_eq!(mailbox.take(), None);
     }

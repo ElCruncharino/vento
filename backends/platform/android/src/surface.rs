@@ -142,6 +142,11 @@ pub const NATIVES: &[Native] = &[
         params: &["handle", "muted"],
     },
     Native {
+        name: "setSoundEnabled",
+        descriptor: "(JZ)V",
+        params: &["handle", "enabled"],
+    },
+    Native {
         name: "facts",
         descriptor: "(J)[I",
         params: &["handle"],

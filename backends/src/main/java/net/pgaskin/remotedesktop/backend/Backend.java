@@ -95,6 +95,17 @@ public interface Backend {
         default void soundPlaying(boolean playing) {
         }
 
+        /**
+         * Main thread. The session's sound switch changed: what it does
+         * ({@link #soundSwitch}), whether the far end is asked for its sound
+         * ({@link #soundEnabled}), and whether a stream plays. Said as soon
+         * as the far end may send sound, before any plays, and whenever any
+         * of it changes. A default, since only the backends with sound ever
+         * say it.
+         */
+        default void soundSwitch(int soundSwitch, boolean enabled, boolean playing) {
+        }
+
         /** Main thread. The remote's clipboard changed. */
         void clipboardFromRemote(String text);
 
@@ -160,6 +171,47 @@ public interface Backend {
      */
     default boolean soundPlaying() {
         return false;
+    }
+
+    /** No sound switch: nothing says the far end sends sound. */
+    int SOUND_SWITCH_NONE = 0;
+    /**
+     * A "Mute audio" switch: the far end cannot be asked to stop sending its
+     * sound during a session (RDP), so the switch silences it here ({@link
+     * #setMuted}).
+     */
+    int SOUND_SWITCH_MUTE = 1;
+    /**
+     * An "Enable audio" switch: the far end is asked to stop sending its
+     * sound, and to send it again ({@link #setSoundEnabled}) — QEMU's audio
+     * over TigerVNC, SPICE, RustDesk.
+     */
+    int SOUND_SWITCH_ENABLE = 2;
+
+    /**
+     * What the session's sound switch does, one of {@code SOUND_SWITCH_*}:
+     * {@link Listener#soundSwitch} as of this instant. There from when the far
+     * end may send sound, whether or not any is playing.
+     */
+    default int soundSwitch() {
+        return SOUND_SWITCH_NONE;
+    }
+
+    /**
+     * Whether the far end is asked for its sound: what an Enable switch is set
+     * to, true for the others.
+     */
+    default boolean soundEnabled() {
+        return true;
+    }
+
+    /**
+     * The Enable switch: ask the far end to stop sending its sound, or to send
+     * it again, on the running session. Per session and not remembered: the
+     * next starts as the connection's own option (Audio) says. Nothing for a
+     * switch of any other kind.
+     */
+    default void setSoundEnabled(boolean enabled) {
     }
 
     /** Whether this session's sound is muted ({@link #setMuted}). */

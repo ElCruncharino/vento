@@ -81,7 +81,7 @@ use crate::backends::{self, Connect, Dirs, Hardware, Pinned};
 use crate::events::{Cursor, Event, Mailbox, State};
 use crate::known_hosts::{self, KnownHosts, Store};
 use ::session::trust::{self, Decision};
-use common::audio::{Outputs, Playback};
+use common::audio::{Outputs, Playback, Sound};
 use crate::options::Options;
 use egui::{CursorIcon, TextureHandle, TextureOptions, Vec2, ViewportId, vec2};
 use pane::{MonitorKey, Pane, PaneId, Rebound};
@@ -195,9 +195,9 @@ pub struct Session {
     /// toolbar's mute is set on its controls, which every stream of the
     /// session plays under, at once and without the backend hearing of it.
     audio: Arc<backends::Alsa>,
-    /// Whether the far end's sound is playing, as the session last said
-    /// (`Event::Audio`): what the toolbars show their sound button for.
-    pub sound: bool,
+    /// The session's sound as it last said it (`Event::Sound`): whether
+    /// there is a switch and what it does, and whether anything plays.
+    pub sound: Sound,
     /// Whether a hardware picture the backend leaves on the GPU is drawn
     /// from there (`zerocopy.rs`): `Ok` while it can be, or why not — the
     /// device cannot, or an import failed, after which the session's
@@ -346,7 +346,7 @@ impl Session {
             backend,
             decoders,
             audio,
-            sound: false,
+            sound: Sound::default(),
             zero_copy,
             mailbox,
             desktop: None,
@@ -544,9 +544,11 @@ impl Session {
                 // first sound until the last stream closes, which a backend
                 // does a couple of seconds after the sound's end (see
                 // `Pane::toolbar_items`).
-                Event::Audio { playing } => {
-                    log::info!("sound {}", if playing { "playing" } else { "stopped" });
-                    self.sound = playing;
+                Event::Sound(sound) => {
+                    if sound.playing != self.sound.playing {
+                        log::info!("sound {}", if sound.playing { "playing" } else { "stopped" });
+                    }
+                    self.sound = sound;
                 }
                 Event::Clipboard(text) => {
                     // `SessionClipboard.fromRemote`: taken only under the

@@ -702,7 +702,7 @@ impl Pane {
         // muted, as View only is while on: the state that is not the usual
         // one reads from across the toolbar. The session's, so every
         // window's button is the same one.
-        if s.sound {
+        if s.sound.playing {
             let muted = s.muted();
             let (symbol, tip) = sound_button(muted);
             if ui.add(toggle(ui.visuals(), symbol, muted)).on_hover_text(tip).clicked() {

@@ -25,6 +25,14 @@
 //! what is queued, and [`Controls`] can be set from any thread: a window's
 //! toolbar, while the protocol thread writes.
 //!
+//! The same controls carry the session's sound switch ([`Sound`]): what
+//! the backend has said the far end can be asked — to stop sending its
+//! sound and to send it again ([`Switch::Enable`]), where the protocol has
+//! a message for that, or nothing, so that the switch only mutes it here
+//! ([`Switch::Mute`]) — said as soon as the protocol says the far end may
+//! send any, so that a window shows the switch from then on rather than
+//! from the first sound.
+//!
 //! A platform's half is small for that: [`Outputs::device`] starts whatever
 //! drains a queue — opening the device where opening takes the time rather
 //! than on the caller's thread — and [`Outputs::open`] builds the
@@ -121,26 +129,117 @@ impl Format {
 
 /// What a session's sound is played at, which whoever holds the session can
 /// change while it plays, from any thread: a gain over every stream, a mute,
-/// and whether anything is playing at all.
+/// and whether anything is playing at all — and what the far end can be
+/// asked about its sound, which the backend says ([`offer_mute`],
+/// [`offer_enable`]) and a window's switch sets ([`set_enabled`]).
 ///
 /// One a session, shared by its streams: a toolbar mutes the session, not
 /// one of the far end's streams, and a backend that opens a new stream for
 /// a new format (RDP's sound does, per format) must not come back unmuted.
+///
+/// [`offer_mute`]: Controls::offer_mute
+/// [`offer_enable`]: Controls::offer_enable
+/// [`set_enabled`]: Controls::set_enabled
 pub struct Controls {
     /// An `f32`'s bits, so that the device's thread reads it without a lock.
     gain: AtomicU32,
     muted: AtomicBool,
     playing: Mutex<Playing>,
+    offer: Mutex<Offer>,
+    /// The backend's way of asking the far end, apart from [`Offer`] so that
+    /// reading the state never waits on a backend being asked: held while
+    /// it is called, which is what lets [`withdraw`](Controls::withdraw)
+    /// promise that it is not called again once that returns.
+    enable: Mutex<Option<Enable>>,
+    /// Told the session's [`Sound`] whenever it changes. Held while it is
+    /// told, so that two changes on two threads are said in the order the
+    /// state was read and the last said is the state as it is.
+    listener: Mutex<Option<Listener>>,
 }
+
+/// How a backend asks its far end for its sound (`true`) or to stop it.
+type Enable = Box<dyn Fn(bool) + Send + Sync>;
+
+/// Who is told the session's sound as it changes.
+type Listener = Box<dyn Fn(Sound) + Send + Sync>;
 
 struct Playing {
     /// Streams that have been written to and not yet closed, the latest
     /// last: what [`Controls::playback`] reads. Weak, since a queue holds
     /// these controls.
     streams: Vec<Weak<Queue>>,
-    listener: Option<Box<dyn Fn(bool) + Send + Sync>>,
     /// What the far end's sound arrives as, where it is decoded here.
     codec: Option<Codec>,
+}
+
+/// What the backend has said the far end's sound can be asked.
+struct Offer {
+    switch: Option<Switch>,
+    /// Whether the far end is asked for its sound, for [`Switch::Enable`].
+    enabled: bool,
+}
+
+/// What the session's sound switch does, which is what the far end's
+/// protocol lets a client ask of it while the session runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Switch {
+    /// Silences the far end's sound here and nowhere else: its protocol has
+    /// no way to ask it to stop sending during a session (RDP's sound), so
+    /// the sound keeps arriving and the device plays it silently. Its words
+    /// are "Mute audio", on while muted.
+    Mute,
+    /// Asks the far end to stop sending its sound, and to send it again:
+    /// QEMU's audio extension, SPICE's playback channel, RustDesk's option.
+    /// Off, nothing arrives and nothing is played. Its words are "Enable
+    /// audio", on while the far end is asked for its sound.
+    Enable,
+}
+
+impl Switch {
+    /// The switch's words, the same on every screen that shows it.
+    pub fn label(self) -> &'static str {
+        match self {
+            Switch::Mute => "Mute audio",
+            Switch::Enable => "Enable audio",
+        }
+    }
+}
+
+/// The session's sound as a switch shows it, which [`Controls::sound`]
+/// answers and the session says as an event whenever it changes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Sound {
+    /// What the switch does, or `None` while nothing says the far end may
+    /// send sound: no switch, since it would do nothing. Once a backend has
+    /// offered one it stays, whether or not anything plays, until the far
+    /// end will send no more (its channel ended, its permission taken away).
+    pub switch: Option<Switch>,
+    /// Whether the far end is asked for its sound: what an Enable switch is
+    /// set to. True for a Mute switch, whose far end always sends.
+    pub enabled: bool,
+    /// Whether the session's sound is muted here (a Mute switch's state).
+    pub muted: bool,
+    /// Whether a stream is playing: from the first sound to the last
+    /// stream's closing, a couple of seconds after the far end falls quiet.
+    pub playing: bool,
+}
+
+impl Sound {
+    /// Whether the switch is on: an Enable switch while the far end is
+    /// asked for its sound, a Mute switch while muted.
+    pub fn on(&self) -> bool {
+        match self.switch {
+            Some(Switch::Enable) => self.enabled,
+            Some(Switch::Mute) => self.muted,
+            None => false,
+        }
+    }
+
+    /// Whether the far end's sound is heard here, or would be as soon as it
+    /// sent some: not while an Enable switch is off or a Mute switch on.
+    pub fn audible(&self) -> bool {
+        self.enabled && !self.muted
+    }
 }
 
 /// What a session is playing right now, as [`Controls::playback`] answers:
@@ -184,9 +283,14 @@ impl Controls {
             muted: AtomicBool::new(false),
             playing: Mutex::new(Playing {
                 streams: Vec::new(),
-                listener: None,
                 codec: None,
             }),
+            offer: Mutex::new(Offer {
+                switch: None,
+                enabled: true,
+            }),
+            enable: Mutex::new(None),
+            listener: Mutex::new(None),
         }
     }
 
@@ -206,7 +310,9 @@ impl Controls {
     /// under the mute, so that unmuting is the stream as it is now and not
     /// where it was when it was muted.
     pub fn set_muted(&self, muted: bool) {
-        self.muted.store(muted, Ordering::Relaxed);
+        if self.muted.swap(muted, Ordering::Relaxed) != muted {
+            self.changed();
+        }
     }
 
     pub fn muted(&self) -> bool {
@@ -214,10 +320,93 @@ impl Controls {
     }
 
     /// Whether any stream of the session has had sound written to it and is
-    /// still open: what a toolbar shows its mute by, so that a session that
-    /// never plays anything has no button for it.
+    /// still open.
     pub fn playing(&self) -> bool {
         !self.playing.lock().unwrap().streams.is_empty()
+    }
+
+    /// The backend's: the far end may send sound from now on, and nothing
+    /// can ask it to stop during the session, so the session's switch is a
+    /// mute ([`Switch::Mute`]). Said as early as the protocol says it — an
+    /// RDP server's list of formats, of which this end plays one — so that
+    /// the switch is there before the first sound rather than with it.
+    pub fn offer_mute(&self) {
+        *self.enable.lock().unwrap() = None;
+        self.set_offer(Some(Switch::Mute), true);
+    }
+
+    /// The backend's: the far end may send sound, and can be asked to stop
+    /// and to send it again ([`Switch::Enable`]); `enabled` is whether it is
+    /// asked to now. `enable` asks it, and is called whenever the session's
+    /// switch is turned ([`set_enabled`](Controls::set_enabled)), on that
+    /// thread — a window's — so it hands the question to the protocol's own
+    /// thread and returns, and never calls into these controls. Said again,
+    /// it replaces what was said before, as when a backend finds its far end
+    /// would not do what it was asked.
+    pub fn offer_enable(&self, enabled: bool, enable: Box<dyn Fn(bool) + Send + Sync>) {
+        *self.enable.lock().unwrap() = Some(enable);
+        self.set_offer(Some(Switch::Enable), enabled);
+    }
+
+    /// The backend's: the far end will send no more sound in this session —
+    /// its sound's channel has ended, its permission is gone, the session is
+    /// over — so there is no switch. Once this returns the `enable` handed
+    /// to [`offer_enable`](Controls::offer_enable) is not called again, and
+    /// is dropped: a backend withdraws before what it captured goes away.
+    pub fn withdraw(&self) {
+        let enable = self.enable.lock().unwrap().take();
+        drop(enable);
+        self.set_offer(None, true);
+    }
+
+    fn set_offer(&self, switch: Option<Switch>, enabled: bool) {
+        {
+            let mut offer = self.offer.lock().unwrap();
+            offer.switch = switch;
+            offer.enabled = enabled;
+        }
+        self.changed();
+    }
+
+    /// The person's switch: asks the far end to send its sound (`on`) or
+    /// to stop, where the backend offered that ([`Switch::Enable`]). The
+    /// backend is asked only for a change; whether it is (a switch that
+    /// does something) is the answer. What was queued plays out or is
+    /// dropped as the backend sees fit — every backend here closes its
+    /// stream at once when told to stop.
+    pub fn set_enabled(&self, on: bool) -> bool {
+        {
+            let mut offer = self.offer.lock().unwrap();
+            if offer.switch != Some(Switch::Enable) || offer.enabled == on {
+                return false;
+            }
+            offer.enabled = on;
+        }
+        if let Some(enable) = self.enable.lock().unwrap().as_ref() {
+            enable(on);
+        }
+        self.changed();
+        true
+    }
+
+    /// Whether the far end is asked for its sound: false only while an
+    /// Enable switch is off.
+    pub fn enabled(&self) -> bool {
+        self.offer.lock().unwrap().enabled
+    }
+
+    /// The session's sound as a switch shows it. A stream playing with no
+    /// switch offered — a backend that never said — is a mute switch, the
+    /// one any sound can have.
+    pub fn sound(&self) -> Sound {
+        let playing = self.playing();
+        let offer = self.offer.lock().unwrap();
+        Sound {
+            switch: offer.switch.or(playing.then_some(Switch::Mute)),
+            enabled: offer.enabled || offer.switch != Some(Switch::Enable),
+            muted: self.muted(),
+            playing,
+        }
     }
 
     /// What is playing, from the stream that started last of those still
@@ -246,31 +435,39 @@ impl Controls {
         self.playing.lock().unwrap().codec = codec;
     }
 
-    /// `listener` is told whenever [`playing`](Controls::playing) changes,
-    /// with the new answer — on the protocol thread that wrote or closed the
-    /// stream, so it must not block, and must not call back into these
-    /// controls' `playing`. The session hands over one that says it as an
-    /// event. Replaces any listener before it.
-    pub fn on_playing(&self, listener: Box<dyn Fn(bool) + Send + Sync>) {
-        self.playing.lock().unwrap().listener = Some(listener);
+    /// `listener` is told the session's [`Sound`] whenever any of it
+    /// changes — a stream's first write or last closing on the protocol
+    /// thread, an offer from the backend, the switch or the mute from a
+    /// window — on the thread that changed it, so it must not block, and
+    /// must not set a listener here. The session hands over one that says
+    /// it as an event. Replaces any listener before it.
+    pub fn on_sound(&self, listener: Box<dyn Fn(Sound) + Send + Sync>) {
+        *self.listener.lock().unwrap() = Some(listener);
+    }
+
+    fn changed(&self) {
+        let listener = self.listener.lock().unwrap();
+        if let Some(listener) = listener.as_ref() {
+            listener(self.sound());
+        }
     }
 
     /// `queue`'s stream has had its first write (`started`) or has closed
     /// after one.
     fn stream_playing(&self, queue: &Arc<Queue>, started: bool) {
-        let mut p = self.playing.lock().unwrap();
-        let before = !p.streams.is_empty();
-        let weak = Arc::downgrade(queue);
-        if started {
-            p.streams.push(weak);
-        } else {
-            p.streams.retain(|s| !s.ptr_eq(&weak));
-        }
-        let now = !p.streams.is_empty();
-        if before != now
-            && let Some(listener) = &p.listener
-        {
-            listener(now);
+        let changed = {
+            let mut p = self.playing.lock().unwrap();
+            let before = !p.streams.is_empty();
+            let weak = Arc::downgrade(queue);
+            if started {
+                p.streams.push(weak);
+            } else {
+                p.streams.retain(|s| !s.ptr_eq(&weak));
+            }
+            before == p.streams.is_empty()
+        };
+        if changed {
+            self.changed();
         }
     }
 
@@ -555,7 +752,7 @@ mod tests {
         let outputs = fake();
         let said = Arc::new(Mutex::new(Vec::new()));
         let s = Arc::clone(&said);
-        outputs.controls().on_playing(Box::new(move |p| s.lock().unwrap().push(p)));
+        outputs.controls().on_sound(Box::new(move |sound| s.lock().unwrap().push(sound.playing)));
         let format = Format::new(44_100, 1).unwrap();
 
         let mut a = outputs.open(format).unwrap();
@@ -574,6 +771,77 @@ mod tests {
         drop(outputs.open(format).unwrap());
         assert_eq!(*said.lock().unwrap(), [true, false]);
         assert_eq!(outputs.held.load(Ordering::Relaxed), 0, "every device let go");
+    }
+
+    #[test]
+    fn a_far_end_that_can_be_asked_has_an_enable_switch_that_asks_it() {
+        let controls = Controls::new();
+        let said = Arc::new(Mutex::new(Vec::new()));
+        let s = Arc::clone(&said);
+        controls.on_sound(Box::new(move |sound| s.lock().unwrap().push(sound)));
+        // Nothing offered: no switch, and nothing to ask.
+        assert_eq!(controls.sound().switch, None);
+        assert!(!controls.set_enabled(false));
+
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let a = Arc::clone(&asked);
+        controls.offer_enable(false, Box::new(move |on| a.lock().unwrap().push(on)));
+        let off = controls.sound();
+        assert_eq!((off.switch, off.enabled, off.on(), off.audible()), (Some(Switch::Enable), false, false, false));
+        assert_eq!(Switch::Enable.label(), "Enable audio");
+        // Only a change is asked for.
+        assert!(controls.set_enabled(true));
+        assert!(!controls.set_enabled(true));
+        assert!(controls.set_enabled(false));
+        assert_eq!(*asked.lock().unwrap(), [true, false]);
+        assert!(!controls.enabled());
+
+        // Withdrawn, the backend is asked nothing more, and its question is
+        // let go.
+        controls.withdraw();
+        assert!(!controls.set_enabled(true));
+        assert_eq!(*asked.lock().unwrap(), [true, false]);
+        assert_eq!(Arc::strong_count(&asked), 1);
+        let gone = controls.sound();
+        assert_eq!((gone.switch, gone.enabled), (None, true));
+        let switches: Vec<_> = said.lock().unwrap().iter().map(|s| (s.switch, s.enabled)).collect();
+        assert_eq!(
+            switches,
+            [
+                (Some(Switch::Enable), false),
+                (Some(Switch::Enable), true),
+                (Some(Switch::Enable), false),
+                (None, true),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_far_end_that_cannot_be_asked_has_a_mute_switch() {
+        let outputs = fake();
+        let controls = outputs.controls();
+        let said = Arc::new(Mutex::new(Vec::new()));
+        let s = Arc::clone(&said);
+        controls.on_sound(Box::new(move |sound| s.lock().unwrap().push(sound)));
+        // A stream playing with nothing offered still has a switch: a mute.
+        let mut stream = outputs.open(Format::new(48_000, 2).unwrap()).unwrap();
+        stream.write(&[0, 0]);
+        assert_eq!(controls.sound().switch, Some(Switch::Mute));
+        drop(stream);
+        assert_eq!(controls.sound().switch, None);
+        // Offered, it stays with nothing playing.
+        controls.offer_mute();
+        let sound = controls.sound();
+        assert_eq!((sound.switch, sound.enabled, sound.playing, sound.on()), (Some(Switch::Mute), true, false, false));
+        assert!(!controls.set_enabled(false), "a mute switch asks the far end nothing");
+        controls.set_muted(true);
+        controls.set_muted(true);
+        let sound = controls.sound();
+        assert!(sound.on() && !sound.audible());
+        assert_eq!(Switch::Mute.label(), "Mute audio");
+        let muted: Vec<_> = said.lock().unwrap().iter().map(|s| (s.playing, s.muted)).collect();
+        // The mute is said once, not for a repeat.
+        assert_eq!(muted, [(true, false), (false, false), (false, false), (false, true)]);
     }
 
     #[test]
