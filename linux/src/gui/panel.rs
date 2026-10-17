@@ -33,6 +33,7 @@ use super::settings::Settings;
 use crate::backend::{ConnectionFact, Facts, Field, Monitor, Traffic};
 use crate::backends::Platform;
 use crate::options::{self, Kind, Options, Spec};
+use common::audio::Switch;
 use egui::{
     Align, Align2, ComboBox, Grid, Layout, Response, RichText, ScrollArea, Sense, TextEdit, Ui, WidgetInfo,
     WidgetType, vec2,
@@ -77,6 +78,9 @@ pub struct Controls<'a> {
     pub settings: Settings,
     /// Whether the debug overlay is showing.
     pub debug: bool,
+    /// The session's sound switch, where the far end may send sound: what
+    /// it does, and whether it is on.
+    pub sound: Option<(Switch, bool)>,
 }
 
 /// Something changed on the panel, to be done to the session.
@@ -90,6 +94,9 @@ pub enum Action {
     Settings(Settings),
     /// The debug overlay on or off.
     Debug(bool),
+    /// The sound switch turned on or off: the far end's sound enabled, or
+    /// muted here.
+    Sound(bool),
 }
 
 /// The panel's own state between frames.
@@ -230,6 +237,19 @@ impl Panel {
                 ui.end_row();
             }
 
+            // The toolbar's sound button as a switch, worded by what it does:
+            // there whenever the far end may send sound, whether or not any
+            // is playing, as the toolbar's is.
+            if let Some((switch, on)) = controls.sound {
+                let label = ui.label(RichText::new(switch.label()).weak());
+                label.on_hover_text(sound_summary(switch));
+                let mut on = on;
+                if ui.checkbox(&mut on, "").changed() {
+                    actions.push(Action::Sound(on));
+                }
+                ui.end_row();
+            }
+
             let label = ui.label(RichText::new("Follow window size").weak());
             label.on_hover_text(
                 "Ask the far end for a desktop the size of this window, in pixels, whenever the window \
@@ -336,6 +356,21 @@ impl Panel {
 /// widget of its own: a square the height of a button, with the cross in
 /// the text colour of its state, so that it lights up under the pointer as
 /// the title bar's does.
+/// What the sound switch does, for its row's tooltip.
+fn sound_summary(switch: Switch) -> &'static str {
+    match switch {
+        Switch::Enable => {
+            "Ask the far end to send its sound, or to stop sending it: off, nothing arrives and nothing \
+             plays. For this session; the connection's Audio option is what it starts as."
+        }
+        Switch::Mute => {
+            "Silence the far end's sound here. It keeps arriving, since this protocol has no way to ask \
+             the far end to stop, and plays silently, so unmuting is the sound as it is now. For this \
+             session; the connection's Sound option is what keeps the far end quiet for good."
+        }
+    }
+}
+
 fn close_button(ui: &mut Ui) -> Response {
     let side = ui.spacing().interact_size.y;
     let (rect, response) = ui.allocate_exact_size(vec2(side, side), Sense::click());

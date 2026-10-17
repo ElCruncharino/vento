@@ -40,6 +40,7 @@ use super::super::view::{Layout, ScaleMode, View};
 use super::super::Host;
 use super::{Capture, LEFT, MIDDLE, NOTCH_POINTS, RIGHT, Session, WindowOp, on_off};
 use crate::backend::Monitor;
+use common::audio::{Playback, Sound, Switch};
 use egui::{
     Align2, Color32, CursorIcon, Frame, Id, LayerId, Margin, Order, PointerButton, Pos2, Rect, Response, RichText,
     Sense, Stroke, Vec2, ViewportId, pos2, vec2,
@@ -594,8 +595,8 @@ impl Pane {
             // not the buttons, which are pressed before they are dragged.
             ctx.set_cursor_icon(CursorIcon::Grab);
         }
-        // A button that came or went this frame (Sound, as the far end's
-        // sound starts and stops; Monitor and Pop out) changed the width it
+        // A button that came or went this frame (Sound, as the backend offers
+        // its switch; Monitor and Pop out) changed the width it
         // was placed by, and the hover was hit-tested against the old
         // buttons: one more frame puts it where its placement says, and the
         // highlight under a pointer that has not moved, which nothing else
@@ -613,12 +614,13 @@ impl Pane {
     /// name and its state in its tooltip. A button with a state shows it in
     /// its icon — one per scale mode, all monitors or one, view only on or
     /// off — and the tooltip says the rest (which monitor or display);
-    /// Info and view only are highlighted while they are on.
+    /// Info and view only are highlighted while they are on, Sound while
+    /// off or muted.
     ///
     /// The main window's: Scale, Monitor, Pop out, View only, Sound, Info,
     /// Fullscreen, Disconnect. A pop-out's: Scale, Monitor, View only,
-    /// Sound, Fullscreen, Return. Sound only while the far end's sound
-    /// plays.
+    /// Sound, Fullscreen, Return. Sound only where the far end may send
+    /// sound.
     fn toolbar_items(&mut self, s: &mut Session, ui: &mut egui::Ui, host: &mut Host) {
         let connected = s.connected();
         let mode = self.view.mode;
@@ -693,20 +695,20 @@ impl Pane {
             s.set_option("ViewOnly", if view_only { "false" } else { "true" });
         }
 
-        // Only while the far end's sound plays, so that a session without
-        // any (its connection's Audio or Sound off, a protocol with none)
-        // has no button that does nothing. It comes with the first sound and
-        // goes when the last stream closes, which the backends do a couple
-        // of seconds after the sound ends — what keeps it from coming and
-        // going between one short sound and the next. Highlighted while
-        // muted, as View only is while on: the state that is not the usual
-        // one reads from across the toolbar. The session's, so every
-        // window's button is the same one.
-        if s.sound.playing {
-            let muted = s.muted();
-            let (symbol, tip) = sound_button(muted);
-            if ui.add(toggle(ui.visuals(), symbol, muted)).on_hover_text(tip).clicked() {
-                s.set_muted(!muted);
+        // Whenever the far end may send sound — from when its protocol says
+        // so, which for most is before the first sound — so that a session
+        // without any (a protocol with none, RDP's Sound off) has no button
+        // that does nothing. What it does is the backend's to say: ask the
+        // far end to stop and to send again where the protocol can, mute
+        // it here where not. Highlighted while the sound is off or muted, as
+        // View only is while on: the state that is not the usual one reads
+        // from across the toolbar. The session's, so every window's button
+        // is the same one.
+        if let Some(switch) = s.sound.switch {
+            let (symbol, tip) = sound_button(switch, s.sound.on());
+            let quiet = !s.sound.audible();
+            if ui.add(toggle(ui.visuals(), symbol, quiet)).on_hover_text(tip).clicked() {
+                s.set_sound(!s.sound.on());
             }
         }
 
@@ -945,20 +947,13 @@ impl Pane {
                 None => lines.push(format!("dec {status}")),
             }
         }
-        // The sound, while there is any: what it is, what is queued in
-        // front of the device and the device's own buffer (the two together
-        // are how far behind what arrived it is heard), and what the queue
-        // has had to do about the far end's timing.
-        if let Some(p) = s.playback() {
-            lines.push(format!(
-                "snd {}  queue {} ms + device {} ms  underruns {}  dropped {}{}",
-                p.describe(),
-                p.queued.as_millis(),
-                p.device.as_millis(),
-                p.stats.underruns,
-                p.stats.dropped,
-                if s.muted() { "  MUTED" } else { "" }
-            ));
+        // The sound, wherever the session has a switch for it: what plays,
+        // what is queued in front of the device and the device's own buffer
+        // (the two together are how far behind what arrived it is heard),
+        // and what the queue has had to do about the far end's timing; and
+        // whether the far end is asked not to send it, or it is muted here.
+        if let Some(line) = sound_line(&s.sound, s.playback()) {
+            lines.push(line);
         }
         lines.extend([window, shortcuts]);
         lines
@@ -1023,17 +1018,57 @@ fn scale_icon(mode: ScaleMode) -> &'static str {
     }
 }
 
-/// The sound button's icon and tooltip: a speaker sounding while the far
-/// end's sound is heard, a speaker struck through while it is muted.
-fn sound_button(muted: bool) -> (&'static str, &'static str) {
-    if muted {
-        (
+/// The sound button's icon and tooltip, for what the switch does and
+/// whether it is `on`: a speaker sounding while the far end's sound is
+/// heard, a speaker struck through while the far end is asked not to send
+/// it (an Enable switch off), and a speaker with nothing coming out while it
+/// arrives and is muted here (a Mute switch on).
+fn sound_button(switch: Switch, on: bool) -> (&'static str, &'static str) {
+    match (switch, on) {
+        (Switch::Enable, true) => (
+            icons::VOLUME_UP,
+            "Sound: on — the far end sends its sound and it plays here. Click to ask it to stop.",
+        ),
+        (Switch::Enable, false) => (
             icons::VOLUME_OFF,
-            "Sound: muted — the far end's sound plays silently here. Click to hear it again.",
-        )
-    } else {
-        (icons::VOLUME_UP, "Sound: on — the far end's sound plays here. Click to mute it.")
+            "Sound: off — the far end is asked not to send its sound. Click to ask for it.",
+        ),
+        (Switch::Mute, false) => (
+            icons::VOLUME_UP,
+            "Sound: on — the far end's sound plays here. Click to mute it.",
+        ),
+        (Switch::Mute, true) => (
+            icons::VOLUME_MUTE,
+            "Sound: muted — the far end's sound still arrives and plays silently here. Click to hear it \
+             again.",
+        ),
     }
+}
+
+/// The overlay's sound line, where the session has a sound switch: what
+/// plays and how far behind, or that nothing does, and DISABLED while the far
+/// end is asked not to send its sound, MUTED while it is muted here.
+fn sound_line(sound: &Sound, playback: Option<Playback>) -> Option<String> {
+    sound.switch?;
+    let what = match playback {
+        Some(p) => format!(
+            "{}  queue {} ms + device {} ms  underruns {}  dropped {}",
+            p.describe(),
+            p.queued.as_millis(),
+            p.device.as_millis(),
+            p.stats.underruns,
+            p.stats.dropped,
+        ),
+        None => "nothing playing".to_string(),
+    };
+    let state = if !sound.enabled {
+        "  DISABLED"
+    } else if sound.muted {
+        "  MUTED"
+    } else {
+        ""
+    };
+    Some(format!("snd {what}{state}"))
 }
 
 /// Whether the pointer is on one of the toolbar's buttons rather than on
@@ -1105,11 +1140,49 @@ mod tests {
 
     #[test]
     fn the_sound_button_says_its_state_in_its_icon_and_its_tooltip() {
-        let (on, on_tip) = sound_button(false);
-        let (off, off_tip) = sound_button(true);
-        assert_eq!((on, off), (icons::VOLUME_UP, icons::VOLUME_OFF));
-        assert!(on_tip.starts_with("Sound: on"));
-        assert!(off_tip.starts_with("Sound: muted"));
+        let (enabled, enabled_tip) = sound_button(Switch::Enable, true);
+        let (disabled, disabled_tip) = sound_button(Switch::Enable, false);
+        let (heard, heard_tip) = sound_button(Switch::Mute, false);
+        let (muted, muted_tip) = sound_button(Switch::Mute, true);
+        assert_eq!(
+            (enabled, disabled, heard, muted),
+            (icons::VOLUME_UP, icons::VOLUME_OFF, icons::VOLUME_UP, icons::VOLUME_MUTE)
+        );
+        assert!(enabled_tip.starts_with("Sound: on") && enabled_tip.contains("ask it to stop"));
+        assert!(disabled_tip.starts_with("Sound: off"));
+        assert!(heard_tip.starts_with("Sound: on") && heard_tip.contains("mute"));
+        assert!(muted_tip.starts_with("Sound: muted"));
+    }
+
+    #[test]
+    fn the_overlay_says_the_sound_and_whether_it_is_off_or_muted() {
+        use common::audio::{Format, Stats};
+        let sound = |switch, enabled, muted| Sound {
+            switch,
+            enabled,
+            muted,
+            playing: false,
+        };
+        assert_eq!(sound_line(&sound(None, true, false), None), None);
+        assert_eq!(
+            sound_line(&sound(Some(Switch::Enable), false, false), None).unwrap(),
+            "snd nothing playing  DISABLED"
+        );
+        let playback = Playback {
+            format: Format::new(48_000, 2).unwrap(),
+            codec: None,
+            queued: std::time::Duration::from_millis(32),
+            device: std::time::Duration::from_millis(50),
+            stats: Stats::default(),
+        };
+        assert_eq!(
+            sound_line(&sound(Some(Switch::Mute), true, true), Some(playback)).unwrap(),
+            "snd PCM 48 kHz stereo  queue 32 ms + device 50 ms  underruns 0  dropped 0  MUTED"
+        );
+        assert_eq!(
+            sound_line(&sound(Some(Switch::Enable), true, false), Some(playback)).unwrap(),
+            "snd PCM 48 kHz stereo  queue 32 ms + device 50 ms  underruns 0  dropped 0"
+        );
     }
 
     #[test]

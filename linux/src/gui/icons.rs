@@ -83,6 +83,7 @@ symbols! {
     TV_DISPLAYS = "tv_displays" "\u{f3ec}";
     VIEW_REAL_SIZE = "view_real_size" "\u{f4c2}";
     VISIBILITY = "visibility" "\u{e8f4}";
+    VOLUME_MUTE = "volume_mute" "\u{e04e}";
     VOLUME_OFF = "volume_off" "\u{e04f}";
     VOLUME_UP = "volume_up" "\u{e050}";
     WIDTH = "width" "\u{f730}";

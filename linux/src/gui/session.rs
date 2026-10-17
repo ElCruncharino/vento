@@ -81,7 +81,7 @@ use crate::backends::{self, Connect, Dirs, Hardware, Pinned};
 use crate::events::{Cursor, Event, Mailbox, State};
 use crate::known_hosts::{self, KnownHosts, Store};
 use ::session::trust::{self, Decision};
-use common::audio::{Outputs, Playback, Sound};
+use common::audio::{Outputs, Playback, Sound, Switch};
 use crate::options::Options;
 use egui::{CursorIcon, TextureHandle, TextureOptions, Vec2, ViewportId, vec2};
 use pane::{MonitorKey, Pane, PaneId, Rebound};
@@ -192,8 +192,9 @@ pub struct Session {
     /// hardware decoding setting is switched on it.
     decoders: Arc<backends::FFmpeg>,
     /// Where the session's sound plays, also handed to the backend: the
-    /// toolbar's mute is set on its controls, which every stream of the
-    /// session plays under, at once and without the backend hearing of it.
+    /// sound switch is set on its controls — a mute, which every stream of
+    /// the session plays under, at once and without the backend hearing of
+    /// it, or an enable, which the backend asks the far end.
     audio: Arc<backends::Alsa>,
     /// The session's sound as it last said it (`Event::Sound`): whether
     /// there is a switch and what it does, and whether anything plays.
@@ -395,21 +396,30 @@ impl Session {
         })
     }
 
-    /// Whether the session's sound is muted, which is the session's in
-    /// every window it is shown in.
-    pub fn muted(&self) -> bool {
-        self.audio.controls().muted()
-    }
-
-    /// Mutes the session's sound or lets it be heard again, at once: the
-    /// device takes the samples through the controls, so what is queued
-    /// keeps draining under the mute and unmuting is the sound as it is
-    /// now. Not saved: the next session starts with its sound on, and the
-    /// connection's own option (Audio, Sound) is what keeps a far end's
-    /// sound off for good.
-    pub fn set_muted(&mut self, muted: bool) {
-        self.audio.controls().set_muted(muted);
-        log::info!("sound {}", if muted { "muted" } else { "unmuted" });
+    /// Turns the session's sound switch, which is the session's in every
+    /// window it is shown in: an Enable switch asks the far end to send its
+    /// sound (`on`) or to stop, and a Mute switch mutes it here (`on`) or
+    /// lets it be heard again — at once, since the device takes the samples
+    /// through the controls, so what is queued keeps draining under the mute
+    /// and unmuting is the sound as it is now. Not saved: the next session
+    /// starts as its connection's option (Audio, Sound) says.
+    pub fn set_sound(&mut self, on: bool) {
+        let controls = self.audio.controls();
+        match self.sound.switch {
+            Some(Switch::Enable) => {
+                if controls.set_enabled(on) {
+                    log::info!("sound {}", if on { "enabled: the far end is asked for it" } else { "disabled: the far end is asked to stop it" });
+                }
+            }
+            Some(Switch::Mute) => {
+                controls.set_muted(on);
+                log::info!("sound {}", if on { "muted" } else { "unmuted" });
+            }
+            None => return,
+        }
+        // Said back as an event too, but the button and the panel follow the
+        // click in this frame rather than the next.
+        self.sound = controls.sound();
         // The panel's row says it, asked again now rather than within the
         // second, and every window's button: the other windows draw again.
         self.last_poll = None;
@@ -1359,6 +1369,7 @@ impl Session {
         let state = self.state_line();
         let title = self.request.address.clone();
         let controls = Controls {
+            sound: self.sound.switch.map(|switch| (switch, self.sound.on())),
             specs: self.request.kind.options,
             values: &self.live,
             connected: self.connected(),
@@ -1378,6 +1389,7 @@ impl Session {
                 Action::Display(index) => self.backend.request_display(index),
                 Action::Follow(follow) => self.set_follow(follow),
                 Action::Settings(settings) => self.set_settings(settings),
+                Action::Sound(on) => self.set_sound(on),
                 Action::Debug(on) => {
                     if on != self.hud.on {
                         self.toggle_hud();

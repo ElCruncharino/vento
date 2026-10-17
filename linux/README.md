@@ -541,9 +541,16 @@ nothing, so the stream closes ten seconds after the last sound. On
 `scripts/testrustdesk`'s desktop with a sound (`AUDIO=1`, timed by
 `bursts.py`) the desktop's sink to the null sink took 113-118 ms, flat over two minutes. The
 probe prints `audio playing` and `audio stopped` as a session's
-sound starts and stops; the window shows a **Sound** button on its toolbar
-for as long as it plays, which mutes it (below), and says what is playing
-in the connection panel and the debug overlay.
+sound starts and stops, and the session's sound switch as it changes. The
+switch is the backend's to offer, as soon as its protocol says the far end
+may send sound, and is one of two kinds (`common::audio::Switch`): **Enable
+audio**, where the far end can be asked to stop sending its sound and to send
+it again during the session — TigerVNC's QEMU audio, SPICE and RustDesk,
+above — and off, nothing arrives; and **Mute audio**, where it cannot —
+FreeRDP and IronRDP — so the sound keeps arriving and plays silently here.
+libvnc, rfb and RealVNC have no sound and no switch. The window shows the
+switch as a **Sound** button on its toolbar and a row of the connection
+panel (below), and says what is playing in the panel and the debug overlay.
 
 **The toolbar** sits flush with the top edge, square-cornered, edged on its
 sides and bottom but not along the top, which is the window's edge, and stays
@@ -570,7 +577,7 @@ Outlined, unfilled) and no frame at rest, egui's frame while the pointer is
 on one or pressing it. A button with a state shows it in its icon, and its
 tooltip names the button, its state and, for Scale, what a click goes to
 ("Scale: fit width — click for fit height"). View only and Info while on,
-and Sound while muted, keep a frame at rest, a dim fill of the selection's
+and Sound while off or muted, keep a frame at rest, a dim fill of the selection's
 blue with the icon in the selection's colour. There are no words on it: which monitor or display
 is showing is in the tooltip too. On it:
 
@@ -593,24 +600,35 @@ is showing is in the tooltip too. On it:
   [pop-out windows](#pop-out-windows).
 - **View only** stops the mouse, the keyboard and the clipboard going to the
   far end, and tells the backend so: an eye while on, a mouse while off.
-- **Sound** (only while the far end's sound plays) mutes the session's sound
-  and lets it be heard again: `volume_up` while it is heard, `volume_off`
-  while muted. It comes with the session's first sound and goes when its last
-  stream closes, which every backend with sound does two seconds after the
-  sound has ended and been heard (RustDesk's ten, its peer sending eight
-  seconds of silence first), so it stays between one short sound and the next
-  and is not there for a session that has none — its connection's Audio or
-  Sound option off, or a protocol without sound. The mute is at once and
-  needs no reconnect: it is applied where the device takes the samples
-  (`common::audio::Controls`), so what is queued keeps draining under it and
-  unmuting is the sound as it is now; from the click to the null sink going
-  silent took 65-101 ms (TigerVNC, FreeRDP and SPICE alike, the device's
-  50 ms buffer, a frame and the capture), and back 70-100 ms. It is the
-  session's: a stream the far end opens later (FreeRDP opens one per
-  format, TigerVNC one per AudioBegin) starts muted, every window's button
-  is the same one, and it is not saved — the next session starts with its
-  sound on, and the connection's option is what keeps a far end quiet for
-  good. There is no shortcut for it, as there is none for the other buttons.
+- **Sound** (wherever the far end may send sound) is the session's sound
+  switch, and does what the backend says it can. Where the far end can be
+  asked (an Enable switch: TigerVNC's QEMU audio, SPICE, RustDesk) it asks
+  it to stop sending its sound and to send it again: `volume_up` while
+  asked for it, `volume_off` while not, when nothing arrives at all (the
+  extension's disable, the playback channel closed, their option message;
+  each backend's own paragraph above has what its socket did). Where it
+  cannot (a Mute switch: FreeRDP, IronRDP) it mutes the sound here and lets
+  it be heard again: `volume_up` while heard, `volume_mute` while muted.
+  It comes when the protocol first says the far end may send sound — at
+  connect for TigerVNC and SPICE, at the login for RustDesk, with the
+  server's list of formats for RDP, which Windows sends when something first
+  plays — and stays, whether or not anything is playing, until the session
+  ends or the far end will send no more (a SPICE playback channel that
+  ended turns it off; a RustDesk peer that withholds its sound takes it
+  away). There is none for a session whose far end sends no sound — RDP
+  with its Sound option off or at the remote machine, a session with no
+  sound output, a protocol without sound. The connection's Audio option is
+  where an Enable switch starts, so a session begun without its sound can
+  still ask for it. A mute is at once and needs no reconnect: it is applied
+  where the device takes the samples (`common::audio::Controls`), so what is
+  queued keeps draining under it and unmuting is the sound as it is now;
+  from the click to the null sink going silent took 65-101 ms (TigerVNC,
+  FreeRDP and SPICE alike, the device's 50 ms buffer, a frame and the
+  capture), and back 70-100 ms. Either is the session's: a stream the far
+  end opens later (FreeRDP opens one per format, TigerVNC one per
+  AudioBegin) starts muted, every window's button is the same one, and it
+  is not saved — the next session starts as its connection's option says.
+  There is no shortcut for it, as there is none for the other buttons.
 - **Info** opens the connection panel, below.
 - **Fullscreen** fills the screen (winit's borderless fullscreen on the
   current monitor); the toolbar still slides in at the top edge, and the same
@@ -776,7 +794,10 @@ pixels first, the size the desktop has, the far end's own screens and the
 usual sizes, and asking `request_desktop_size` for the one picked — what
 arrives is what the far end granted, and the dropdown shows that rather than
 what was asked; and **Display**, where the far end sends one of several
-screens at a time (RustDesk), asking `request_display`. And **Follow window
+screens at a time (RustDesk), asking `request_display`. Then the toolbar's
+**Sound** button as a switch, where there is one, worded by what it does:
+**Enable audio**, on while the far end is asked for its sound, or **Mute
+audio**, on while muted, with what it does in its tooltip. And **Follow window
 size**, below, the five **settings**, below, which a running session
 takes a change to at once, and **Debug overlay**, the overlay below, which is
 the session's and not a setting (Ctrl+Alt+D toggles it too).
@@ -946,10 +967,12 @@ software where hardware was asked for — made on the protocol thread twice a
 second and copied, not built per frame — and, with hardware decoding on, how
 the picture reaches the screen: `zero-copy` and what the window's pass
 costs it a picture, `zero-copy idle` before a picture has come that way, or
-`zero-copy off` and why; while sound plays, `snd`: what it is, what is
-queued in front of the device and the device's own buffer (`queue 65 ms +
-device 50 ms`, together how far behind what arrived it is heard), the
-stream's underruns and dropped frames, and MUTED while it is. Then the
+`zero-copy off` and why; wherever the session has a sound switch, `snd`:
+what plays, what is queued in front of the device and the device's own
+buffer (`queue 65 ms + device 50 ms`, together how far behind what arrived
+it is heard), the stream's underruns and dropped frames, or `nothing
+playing`; and DISABLED while the far end is asked not to send it, MUTED
+while it is muted here. Then the
 window's own: main or pop-out, the
 monitor it shows, the local output it is on, whether it has the focus, its
 frames a second, its texture updates this frame and its pixels per point;
