@@ -172,6 +172,10 @@ fn module() -> &'static Module {
 /// What a handle points at.
 struct Handle {
     backend: Arc<dyn Backend>,
+    /// The session's sound output, also the backend's: its controls are what
+    /// `setMuted` mutes and the panel's sound row is read from. `None` for a
+    /// library whose protocol has no sound.
+    audio: Option<Arc<dyn Outputs>>,
     /// Kept so that a handle outlives every event it could still deliver; the
     /// outlet holds only a weak reference back to it.
     _mailbox: Arc<Mailbox>,
@@ -257,6 +261,7 @@ pub const METHODS: &[NativeMethod] = &[
         fn request_display(handle: jlong, index: jint),
         error_policy = LogErrorAndDefault,
     },
+    native_method! { fn set_muted(handle: jlong, muted: jboolean), error_policy = LogErrorAndDefault },
     native_method! { fn facts(handle: jlong) -> [jint], error_policy = LogErrorAndDefault },
     native_method! { fn info(handle: jlong) -> [JString], error_policy = LogErrorAndDefault },
     native_method! { fn traffic(handle: jlong) -> [jlong], error_policy = LogErrorAndDefault },
@@ -345,6 +350,7 @@ fn create<'local>(
         realvnc_libs: PathBuf::new(),
     };
     let pair = |w: jint, h: jint| (w > 0 && h > 0).then_some((w as u32, h as u32));
+    let audio = (module.audio)();
     let connect = Connect {
         address: &address,
         user: &user,
@@ -358,13 +364,14 @@ fn create<'local>(
         client_name: &client_name,
         platform: Platform::Android,
         decoders: (module.decoders)(),
-        audio: (module.audio)(),
+        audio: audio.clone(),
     };
     match kind.start(&connect) {
         Ok(backend) => {
             outlet.started(&backend);
             Ok(Box::into_raw(Box::new(Handle {
                 backend,
+                audio,
                 _mailbox: mailbox,
                 outlet,
             })) as jlong)
@@ -536,6 +543,18 @@ fn set_option<'local>(
     Ok(())
 }
 
+/// Mutes the session's sound or lets it be heard again, at once: the
+/// output's controls, which every stream of the session plays under and the
+/// device applies as it takes the samples. The session screen's sound
+/// button; logged, since a muted stream is otherwise only silence.
+fn set_muted<'local>(_env: &mut Env<'local>, _this: JObject<'local>, handle: jlong, muted: jboolean) -> Result<(), Error> {
+    if let Some(audio) = unsafe { self::handle(handle) }.and_then(|h| h.audio.as_ref()) {
+        audio.controls().set_muted(muted);
+        log::info!("sound {}", if muted { "muted" } else { "unmuted" });
+    }
+    Ok(())
+}
+
 fn request_desktop_size<'local>(
     _env: &mut Env<'local>,
     _this: JObject<'local>,
@@ -589,10 +608,17 @@ fn info<'local>(
     _this: JObject<'local>,
     handle: jlong,
 ) -> Result<JObjectArray<'local, JString<'local>>, Error> {
-    let Some(backend) = (unsafe { backend(handle) }) else {
+    let Some(h) = (unsafe { self::handle(handle) }) else {
         return Ok(JObjectArray::<JString>::null());
     };
-    let rows = backend.info();
+    let mut rows = h.backend.info();
+    // The session's sound, which the client holds rather than the backend,
+    // in the words the Linux client's panel uses.
+    if let Some(audio) = &h.audio
+        && !rows.is_empty()
+    {
+        session::backend::with_sound(&mut rows, audio.controls());
+    }
     let array = JObjectArray::<JString>::new(env, rows.len() * 4, JString::null())?;
     for (i, row) in rows.iter().enumerate() {
         let cells = [field(row.field), row.label, &row.value, if row.diagnostic { "d" } else { "" }];
@@ -727,6 +753,7 @@ struct Outlet {
     cursor: JMethodID,
     pointer_mode: JMethodID,
     bell: JMethodID,
+    audio: JMethodID,
     clipboard: JMethodID,
     credentials_needed: JMethodID,
     trust_needed: JMethodID,
@@ -770,6 +797,7 @@ impl Outlet {
             cursor: id(env, jni_str!("onCursor"), jni_sig!("([IIIIIJ)V"))?,
             pointer_mode: id(env, jni_str!("onPointerMode"), jni_sig!("(Z)V"))?,
             bell: id(env, jni_str!("onBell"), jni_sig!("()V"))?,
+            audio: id(env, jni_str!("onAudio"), jni_sig!("(Z)V"))?,
             clipboard: id(env, jni_str!("onClipboard"), jni_sig!("(Ljava/lang/String;)V"))?,
             credentials_needed: id(env, jni_str!("onCredentialsNeeded"), jni_sig!("(ZLjava/lang/String;)V"))?,
             trust_needed: id(
@@ -883,9 +911,8 @@ impl Outlet {
                 }
                 Event::PointerMode { relative } => self.call(env, self.pointer_mode, &[jvalue { z: relative }]),
                 Event::Bell => self.call(env, self.bell, &[]),
-                // What the session screen will show a mute by; the Java
-                // side has no callback for it yet.
-                Event::Audio { .. } => Ok(()),
+                // What the session screen shows its sound button by.
+                Event::Audio { playing } => self.call(env, self.audio, &[jvalue { z: playing }]),
                 Event::Clipboard(text) => self.text(env, self.clipboard, &text),
                 Event::CredentialsNeeded { needs_user } => {
                     let user = env.new_string(if needs_user { self.asks.prompt_user.as_str() } else { "" })?;

@@ -35,6 +35,11 @@ import java.util.Map;
  * and the nearest other glyphs to them are the ⇧ and ⌫ three rows below: a
  * filled outline at Material's weight beside a 0.09-stroked ⇧ is two icon sets
  * on one screen, which is the mistake this file was written to avoid.
+ *
+ * <p>The one exception is a button the app adds, which this package knows
+ * nothing of: the sound button's speaker, Material Symbols' {@code volume_up}
+ * and {@code volume_off} as the desktop client's toolbar has them, lent to the
+ * chrome by the app ({@link Chrome#lendIcon}) rather than redrawn here.
  */
 final class KeyIcons {
 

@@ -1273,6 +1273,17 @@ drawn on the canvas and the nearest glyphs to them are the ⇧ and ⌫ of the ke
 row, and a filled outline at Material's weight beside a 0.09-stroked ⇧ is two
 icon sets on one screen.
 
+**The app's sound button** is a fifth button, after the four, and the one
+exception to both: it is there only while the far end's sound plays (the
+session says when it starts and when its last stream closes, a couple of
+seconds after the sound ends), and its two glyphs are Material Symbols'
+`volume_up` and `volume_off`, the desktop client's, lent to the chrome by the
+app (`Chrome.lendIcon`) since this package knows nothing of sound. It is lit
+while muted. Meanwhile the column is 244 dp, past the 200 dp of exclusion the
+system honours; the box is asked for whole, and AOSP counts the limit from the
+bottom, so a drag that starts on the top button may be taken for the back
+gesture while sound plays. Taps are unaffected.
+
 It has **no dismiss**: something would have to bring it back, and that something
 is a tap region — the thing it exists to be an alternative to. It is on or off,
 and that is the host's preference.

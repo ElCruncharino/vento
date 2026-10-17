@@ -9,6 +9,7 @@ import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.Rect;
 import android.graphics.RectF;
+import android.graphics.drawable.Drawable;
 
 import net.pgaskin.remotedesktop.control.input.Config;
 import net.pgaskin.remotedesktop.control.input.ExtensionKeyboard;
@@ -16,6 +17,8 @@ import net.pgaskin.remotedesktop.control.input.MouseOverlay;
 import net.pgaskin.remotedesktop.control.input.TapRegions;
 import net.pgaskin.remotedesktop.control.input.Toolbar;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.function.Function;
 
 /**
@@ -49,6 +52,9 @@ public final class Chrome {
     private final float[] corners = new float[8];
     private final Rect bounds = new Rect();
     private final Matrix matrix = new Matrix();
+
+    /** The host's own glyphs for toolbar icon names, by {@link #lendIcon}. */
+    private final Map<String, Drawable> lent = new HashMap<>();
 
     // The ripple: what was pressed, from where, and when. Both widgets claim
     // their own pointers, so no view ever sees the touch and has to be told.
@@ -369,6 +375,19 @@ public final class Chrome {
     // ---- the toolbar --------------------------------------------------------
 
     /**
+     * A glyph of the host's for a toolbar item whose {@code icon} is
+     * {@code name}, drawn in its square in the colour and fade the
+     * {@link KeyIcons} glyphs get (a vector drawable is tinted to it). For a
+     * button the host adds that this package has no glyph for: the app's sound
+     * button, in its own icon set, Material Symbols.
+     */
+    public void lendIcon(String name, Drawable glyph) {
+        if (glyph != null) {
+            lent.put(name, glyph.mutate());
+        }
+    }
+
+    /**
      * The column of buttons on the left edge, and the grip under it.
      *
      * <p>Two rules the info bar does not have. <b>The hit test does not fade</b>
@@ -424,13 +443,21 @@ public final class Chrome {
                 c.drawRect(b.left(), b.top(), b.right(), b.bottom(), panel);
             }
             animating |= drawRipple(c, b.item(), b.left(), b.top(), b.right(), b.bottom());
+            final int colour = alpha(toolbar.active(b.item()) ? 0xffe8f0ff : 0x66ffffff, fade);
+            final Drawable own = lent.get(b.item().icon());
+            if (own != null) {
+                own.setBounds(Math.round(b.centreX() - icon / 2), Math.round(b.centreY() - icon / 2),
+                        Math.round(b.centreX() + icon / 2), Math.round(b.centreY() + icon / 2));
+                own.setTint(colour);
+                own.draw(c);
+                continue;
+            }
             final KeyIcons.Icon glyph = KeyIcons.of(b.item().icon());
             if (glyph != null) {
                 // A button whose thing is on reads like an armed modifier in the
                 // info bar, and for the same reason: it is the one piece of
                 // state this widget has to show.
-                drawIcon(c, glyph, b.centreX() - icon / 2, b.centreY() - icon / 2, icon,
-                        alpha(toolbar.active(b.item()) ? 0xffe8f0ff : 0x66ffffff, fade));
+                drawIcon(c, glyph, b.centreX() - icon / 2, b.centreY() - icon / 2, icon, colour);
             }
         }
 
