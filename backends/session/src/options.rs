@@ -584,7 +584,10 @@ pub static TIGERVNC: &[Spec] = &[
     ),
     // Their viewer's own parameter. QEMU's audio extension, which only
     // servers that speak it offer — QEMU's own, and the ones built the same
-    // way — so against anything else this row changes nothing at all.
+    // way — so against anything else this row changes nothing at all. Where
+    // a server has it this is where the session's Enable switch starts: the
+    // extension has a disable and an enable, so the sound can be asked for
+    // later in a session that began without it.
     bool(
         "Audio",
         "Sound",

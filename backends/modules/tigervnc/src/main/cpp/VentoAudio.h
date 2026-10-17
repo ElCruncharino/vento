@@ -97,6 +97,22 @@ public:
         return stream_ != nullptr && table_.latency != nullptr ? table_.latency(stream_) : 0;
     }
 
+    /** The session's sound switch, as an Enable switch: the server may send
+        sound, and is asked for it (`on`) or not; `enable(ctx, on)` is called
+        on a window's thread when the person turns it, until `withdraw`. */
+    void offerEnable(bool on, void (*enable)(void *ctx, bool on), void *ctx) {
+        if (has_ && table_.offer != nullptr) {
+            table_.offer(table_.user, VENTO_AUDIO_SWITCH_ENABLE, on, enable, ctx);
+        }
+    }
+
+    /** No switch any more; once this returns `enable` is not called again. */
+    void withdraw() {
+        if (has_ && table_.withdraw != nullptr) {
+            table_.withdraw(table_.user);
+        }
+    }
+
     /** Drops what is queued and lets the device go, without waiting. */
     void close() {
         if (stream_ != nullptr) {

@@ -120,6 +120,7 @@
 
 #define TAG "TigerVnc"
 #define LOGW(...) vento_log(VENTO_LOG_WARN, TAG, __VA_ARGS__)
+#define LOGI(...) vento_log(VENTO_LOG_INFO, TAG, __VA_ARGS__)
 
 namespace {
 
@@ -276,6 +277,7 @@ enum CmdType {
     CMD_PICTURE,
     CMD_RESIZE,
     CMD_LAYOUT,
+    CMD_SOUND,
     CMD_DISCONNECT,
 };
 
@@ -350,6 +352,10 @@ public:
         open stream would only keep the device running on silence. */
     void endAudio();
 
+    /** The session's Enable switch, turned: the server is asked to send its
+        sound again, or to stop. */
+    void setSound(bool on);
+
 private:
     void newFramebuffer(int w, int h);
 
@@ -359,6 +365,12 @@ private:
 
     Session *s;
     core::MethodTimer<Conn> audioIdle_{this, &Conn::audioIdle};
+    /** Whether the server is asked for its sound: the Audio option, then the
+        switch. Until the server has said it has audio this is only what will
+        be asked. */
+    bool soundOn_;
+    /** Whether the server has said it has audio, and been asked. */
+    bool soundOffered_ = false;
     std::string refusal_;
     /** Theirs: they own it and `close()` deletes it, so it is asked for
         rather than kept. */
@@ -617,6 +629,14 @@ public:
     bool anonymousTls() const { return anonymousTls_; }
 
     bool audio() const { return audio_; }
+
+    /** The Enable switch's call, on a window's thread: handed to the protocol
+        thread, which is the one that writes. */
+    static void soundSwitched(void *ctx, bool on) {
+        Cmd cmd{CMD_SOUND};
+        cmd.a = on ? 1 : 0;
+        static_cast<Session *>(ctx)->post(std::move(cmd));
+    }
 
     void setPicture(int encoding, int compressLevel, int qualityLevel, int colorLevel,
                     bool h264) {
@@ -896,17 +916,18 @@ private:
 
 // ---- Conn, which is where the protocol reaches the session ---------------
 
-// Audio is decided here, once: it is a pseudo-encoding like the rest, but the
-// library asks the server for it only after the first update and has no way to
-// take the request back, so it is not one of the picture's live settings.
-//
-// And only where there is somewhere to play it, as H.264 is offered only where
-// there is something to decode it: a session handed no sound output (the C
-// probe) does not ask a server to send what would be dropped.
-Conn::Conn(Session *session) : s(session) {
+// Audio is offered to every server wherever there is somewhere to play it, as
+// H.264 is offered only where there is something to decode it: a session
+// handed no sound output (the C probe) does not ask a server to send what
+// would be dropped. The Audio option is only whether the sound is asked for to
+// begin with. The library asks for it after the first update that says the
+// server has it, and the switch turns it off and on from then on with QEMU's
+// enable and disable messages (`setSound`), so a session that began without
+// it can still have it.
+Conn::Conn(Session *session) : s(session), soundOn_(session->audio()) {
     supportsLocalCursor = true;
     supportsDesktopResize = true;
-    supportsAudio = s->audio() && s->audioOutput()->available();
+    supportsAudio = s->audioOutput()->available();
     if (s->audio() && !supportsAudio) {
         LOGW("audio was asked for, but this session has no sound output; not asking for it");
     }
@@ -1004,6 +1025,20 @@ void Conn::framebufferUpdateStart() {
 
 void Conn::framebufferUpdateEnd() {
     rfb::CConnection::framebufferUpdateEnd();
+
+    // The library has just asked a server that says it has audio for it (the
+    // update carried the acknowledgement of the pseudo-encoding), with an
+    // enable that cannot be left out. A session that starts without its sound
+    // takes it straight back, in the same flush, so the server never begins;
+    // either way the session's switch is an Enable switch from now on.
+    if (!soundOffered_ && supportsAudio && server.supportsQEMUAudio) {
+        soundOffered_ = true;
+        if (!soundOn_) {
+            writer()->writeQEMUAudioEnable(false);
+        }
+        LOGI("audio: the server has sound, %s", soundOn_ ? "asked for" : "not asked for yet");
+        s->audioOutput()->offerEnable(soundOn_, &Session::soundSwitched, s);
+    }
 
     // An H.264 decoder that lost its reference pictures — replaced after a
     // hardware failure, or remade in a new mode — has nothing to draw until
@@ -1219,7 +1254,9 @@ constexpr int AUDIO_GRACE_MS = 2000;
 
 void Conn::handleAudioBegin() {
     audioIdle_.stop();
-    s->audioOutput()->open();
+    if (soundOn_) {
+        s->audioOutput()->open();
+    }
 }
 
 void Conn::handleAudioEnd() {
@@ -1228,9 +1265,13 @@ void Conn::handleAudioEnd() {
     }
 }
 
+// Samples that were on their way when the switch was turned off are dropped
+// rather than opening a stream again.
 void Conn::handleAudioData(const uint8_t *data, size_t length) {
     audioIdle_.stop();
-    s->audioOutput()->write(data, length);
+    if (soundOn_) {
+        s->audioOutput()->write(data, length);
+    }
 }
 
 void Conn::audioIdle(core::Timer *) {
@@ -1240,6 +1281,27 @@ void Conn::audioIdle(core::Timer *) {
 void Conn::endAudio() {
     audioIdle_.stop();
     s->audioOutput()->close();
+}
+
+// QEMU's disable takes the client's capture off the guest's card, so nothing
+// more is sent until an enable puts it back — and no AudioEnd either, so the
+// stream is closed here rather than waiting for one. An enable while the
+// guest plays sends samples straight away, often with no AudioBegin before
+// them, which is why a write opens the stream. Before the server has said it
+// has audio, the switch only changes what it will be asked.
+void Conn::setSound(bool on) {
+    if (on == soundOn_) {
+        return;
+    }
+    soundOn_ = on;
+    if (!soundOffered_) {
+        return;
+    }
+    LOGI("audio: asking the server %s", on ? "for its sound" : "to stop sending its sound");
+    writer()->writeQEMUAudioEnable(on);
+    if (!on) {
+        endAudio();
+    }
 }
 
 // ---- the protocol thread -------------------------------------------------
@@ -1379,6 +1441,9 @@ void Session::runCmd(Conn *conn, Cmd &cmd) {
             conn->writer()->writeSetDesktopSize(cmd.a, cmd.b, layout);
             break;
         }
+        case CMD_SOUND:
+            conn->setSound(cmd.a != 0);
+            break;
         case CMD_DISCONNECT: {
             const std::lock_guard<std::mutex> guard(lock_);
             quit_ = true;
@@ -1676,6 +1741,9 @@ void Session::run() {
         }
         conn->endAudio();
     }
+    // No switch past the end, and none of its calls after this: the session
+    // they post to is about to go.
+    audioOutput_.withdraw();
 
     {
         // The reader may be inside readRegion; the framebuffer goes away with

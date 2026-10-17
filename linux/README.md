@@ -443,8 +443,15 @@ dry — a period of the device's, two of the far end's writes and 10 ms, which
 is 50 ms for QEMU's 10 ms chunks and 69 ms for RDP's 23 ms waves, and
 for Windows' PCM, which comes in 186 ms waves two at a time, 395 ms (and
 twice that before anything is dropped), since a quarter of a second of it
-was mostly dropped. TigerVNC's QEMU audio (the
-`Audio` option, decided at connect) plays there: the stream opens when the
+was mostly dropped. TigerVNC's QEMU audio plays there, offered to
+any server wherever the session has an output and asked for while the
+session's sound switch is on — the `Audio` option is where it starts, and
+the switch is there from the server's first update that says it has audio:
+off, QEMU's disable message takes the client off the guest's card, the
+stream closes at once and nothing more is sent (on `scripts/testqemu`'s
+audio guest the socket went from 195 kB/s of samples to under 100 B/s
+within the half second, and back on its enable), so a session that began
+without it can still have it. The stream opens when the
 server begins sending, closes two seconds after it stops and its tail has
 been heard, and closes while the session is paused, since nothing is read
 then. What the server sent meanwhile arrives at once on restore, and the

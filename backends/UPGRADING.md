@@ -200,7 +200,12 @@ under the host locale (`export LC_ALL=C`).
   `common::audio`'s queue), not their viewer's `AudioOutput`, which is not
   compiled. An upstream change to `H264DecoderContext`
   or `H264Decoder` (the reset flags, the 64-context limit) or to the QEMU
-  audio calls in `CConnection` reaches both platforms.
+  audio calls in `CConnection` reaches both platforms — in particular the
+  session's sound switch leans on `CConnection::framebufferUpdateEnd`
+  asking for audio (format, then enable) in the update that acknowledged
+  it, which the shim's own `framebufferUpdateEnd` follows with a disable
+  for a session started without sound, and on `writeQEMUAudioEnable`
+  staying public in `CMsgWriter`.
 - Every comment of ours that names an upstream version or behaviour ("in
   3.19.1", "the assembly is GAS", "returns Some") is a claim to re-verify
   against the target and correct or remove. Grep for the old version string
@@ -386,7 +391,8 @@ One commit per upstream, after review, by the lead:
   dropped, and the libav context's pixel format fix with that context). The certificate check is the shim's now: what cannot be excused is
   refused and the rest goes to `trust_needed`, their viewer's known-hosts store
   not used at all; the RSA-AES key question is ported from
-  `vncviewer/CConn.cxx`; audio is behind the `Audio` row and plays on
+  `vncviewer/CConn.cxx`; audio is offered wherever there is an output, the
+  `Audio` row is where the session's Enable switch starts, and it plays on
   vento's sound output through `vento/audio.h`'s table (`VentoAudio.h`).
   Builds `common/` only, with `config.h` written by our
   CMake and, on Android, an empty `pthread` target for the link.
