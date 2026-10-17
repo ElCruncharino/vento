@@ -23,7 +23,7 @@ use common::video::{Changes, Codec, Decoded, Decoder as _, fourcc};
 use platform_desktop::ffmpeg::{Decoder, Hardware};
 
 mod clips;
-use clips::{H, W, annex_b, difference, frames, h264_aud, h265_aud, ivf, pictures};
+use clips::{H, W, annex_b, difference, frames, h264_aud, h265_aud, ivf, pictures, planes_pictures};
 
 fn mode() -> String {
     std::env::var("VENTO_TEST_HW").unwrap_or_default()
@@ -90,6 +90,26 @@ fn compare(name: &str, hardware: bool, reason: &str) {
 #[test]
 fn h264() {
     compare("h264.h264", true, "");
+}
+
+/// FreeRDP's planes off the device: NV12 read back, one picture a frame,
+/// each within a level of software's.
+#[test]
+fn h264_planes() {
+    if !vaapi("h264_planes") {
+        return;
+    }
+    let (codec, frames) = frames("h264.h264");
+    let mut sw = Decoder::with_hardware(codec, W, H, Hardware::Off).expect("a software decoder");
+    let mut hw = Decoder::with_hardware(codec, W, H, Hardware::Vaapi).expect("a decoder");
+    let want = pictures(&mut sw, &frames);
+    let got = planes_pictures(&mut hw, &frames);
+    eprintln!("h264_planes: {}", hw.status().unwrap());
+    assert_eq!(hw.hardware(), Some(true));
+    for (i, (want, got)) in want.iter().zip(&got).enumerate() {
+        let d = difference(want, got);
+        assert!(d <= 1, "picture {i} is up to {d} levels from software's");
+    }
 }
 
 #[test]

@@ -9,7 +9,7 @@
 
 #![allow(dead_code)]
 
-use common::video::{Changes, Codec, Decoder};
+use common::video::{Changes, Codec, Decoder, Output};
 
 /// The fixtures' size.
 pub const W: usize = 128;
@@ -108,4 +108,31 @@ pub fn difference(a: &[u32], b: &[u32]) -> i32 {
         .map(i32::abs)
         .max()
         .unwrap_or(0)
+}
+
+/// Every frame of the clip decoded to its planes, each picture converted
+/// whole afterwards as [`pictures`] has the decoder convert it: what
+/// FreeRDP's subsystem is handed, made comparable.
+pub fn planes_pictures(decoder: &mut dyn Decoder, frames: &[Vec<u8>]) -> Vec<Vec<u32>> {
+    let mut output = Output::new();
+    let mut out = Vec::new();
+    for frame in frames {
+        let mut picture = vec![0u32; W * H];
+        let mut changed = Changes::new();
+        changed.reset(H);
+        for row in 0..H {
+            changed.mark(row, 0, W);
+        }
+        let mut handed = 0;
+        assert!(
+            decoder.decode_planes(frame, &mut |planes| {
+                handed += 1;
+                output.write(planes, &mut picture, W, H, &mut changed);
+            }),
+            "no planes came out"
+        );
+        assert_eq!(handed, 1, "one picture a frame");
+        out.push(picture);
+    }
+    out
 }

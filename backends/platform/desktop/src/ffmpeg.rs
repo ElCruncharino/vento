@@ -591,7 +591,25 @@ impl Decoder {
         changed: &mut Changes,
         hold: bool,
     ) -> Decoded {
-        if self.failed || data.is_empty() || out.len() < width * height {
+        if out.len() < width * height {
+            return Decoded::Nothing;
+        }
+        self.decode_with(data, hold, &mut |frame, output| {
+            output.write(frame, out, width, height, changed)
+        })
+    }
+
+    /// The decode itself, with what a picture in memory becomes left to
+    /// `picture`, which is handed the decoder's [`Output`] for the
+    /// conversion where it converts: [`Decoded::Converted`] once it has
+    /// been called.
+    fn decode_with(
+        &mut self,
+        data: &[u8],
+        hold: bool,
+        picture_to: &mut dyn FnMut(&Frame<'_>, &mut Output),
+    ) -> Decoded {
+        if self.failed || data.is_empty() {
             return Decoded::Nothing;
         }
         let mut picture = sys::Picture::new();
@@ -663,7 +681,7 @@ impl Decoder {
             bt709: picture.bt709 != 0,
             full_range: picture.full_range != 0,
         };
-        self.output.write(&frame, out, width, height, changed);
+        picture_to(&frame, &mut self.output);
         Decoded::Converted
     }
 }
@@ -692,6 +710,16 @@ impl common::video::Decoder for Decoder {
         changed: &mut Changes,
     ) -> Decoded {
         self.decode_as(data, out, width, height, changed, true)
+    }
+
+    /// The picture as the decoder made it, or as it was read off the GPU:
+    /// libavcodec is told low delay and threads over slices, never frames,
+    /// so a frame that makes a picture makes it in this call.
+    fn decode_planes(&mut self, data: &[u8], planes: &mut dyn FnMut(&Frame<'_>)) -> bool {
+        matches!(
+            self.decode_with(data, false, &mut |frame, _| planes(frame)),
+            Decoded::Converted
+        )
     }
 
     fn hardware(&self) -> Option<bool> {

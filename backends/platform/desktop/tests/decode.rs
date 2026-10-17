@@ -19,7 +19,7 @@ use common::video::{Changes, Codec, Decoder, Decoders};
 use platform_desktop::ffmpeg::FFmpeg;
 
 mod clips;
-use clips::{annex_b, fixture, h264_aud, h265_aud, ivf};
+use clips::{annex_b, fixture, frames, h264_aud, h265_aud, ivf, pictures, planes_pictures};
 
 const W: usize = 128;
 const H: usize = 128;
@@ -206,6 +206,21 @@ fn av1_untagged_is_bt601() {
 #[test]
 fn h264() {
     clip(Codec::H264, &annex_b(&fixture("h264.h264"), h264_aud));
+}
+
+/// Planes, for FreeRDP's subsystem: one picture a frame, and each the
+/// picture `decode` converts, exactly, once converted the same way.
+#[test]
+fn h264_planes_are_its_pictures() {
+    let (codec, frames) = frames("h264.h264");
+    let mut converted = FFmpeg::default().decoder(codec, W, H).expect("a decoder");
+    let mut planes = FFmpeg::default().decoder(codec, W, H).expect("a decoder");
+    let want = pictures(converted.as_mut(), &frames);
+    let got = planes_pictures(planes.as_mut(), &frames);
+    assert_eq!(want.len(), got.len());
+    for (i, (want, got)) in want.iter().zip(&got).enumerate() {
+        assert!(want == got, "picture {i} differs");
+    }
 }
 
 #[test]
