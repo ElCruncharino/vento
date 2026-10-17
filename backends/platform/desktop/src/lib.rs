@@ -3,8 +3,9 @@
 
 //! The parts of a backend that are about a desktop rather than about a
 //! protocol: [`ffmpeg`], which is libavcodec speaking
-//! `common::video::Decoders`, and [`alsa`], which is ALSA's default device
-//! speaking `common::audio::Outputs`.
+//! `common::video::Decoders`, [`alsa`], which is ALSA's default device
+//! speaking `common::audio::Outputs`, and [`ffmpeg_audio`], libavcodec
+//! again, for the sound that arrives as AAC or Opus.
 //!
 //! It exists so that the picture can be had where the code is written. A
 //! protocol whose picture is video was host-testable everywhere but there,
@@ -22,3 +23,4 @@
 
 pub mod alsa;
 pub mod ffmpeg;
+pub mod ffmpeg_audio;

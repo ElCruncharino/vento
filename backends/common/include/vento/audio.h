@@ -12,7 +12,13 @@
 // and the device's own buffer together, and never more than a quarter (past
 // that the oldest is dropped, so a burst or a stall costs a skip rather than a
 // lag that grows), silence while it fills back up after running dry, the
-// session's gain and mute, and a device opened off the caller's thread. So a backend only writes what the far end sends, as it
+// session's gain and mute, and a device opened off the caller's thread.
+//
+// And where the far end's sound arrives compressed, the platform's decoders
+// for it are in the same table (AAC and Opus: libavcodec on the Linux client,
+// MediaCodec on the phone, `common::audio::decode`), so that a backend offers
+// its far end what the platform decodes and hands the packets here rather
+// than to a decoder of its library's own. So a backend only writes what the far end sends, as it
 // arrives, and never waits.
 
 #ifndef VENTO_AUDIO_H
@@ -31,12 +37,22 @@ extern "C" {
    decoders hand back. */
 #define VENTO_AUDIO_S16 1
 
+/* Codecs, as `common::audio::decode::Codec` names them. AAC is raw access
+   units, one frame a packet and no ADTS header, which is how RDP's sound
+   sends it; Opus is one packet at a time, at 48 kHz. */
+#define VENTO_AUDIO_CODEC_AAC 1
+#define VENTO_AUDIO_CODEC_OPUS 2
+
 /* One stream of the far end's sound. Not safe to call into from two threads
    at once; from one thread after another is fine. */
 typedef struct vento_audio_stream vento_audio_stream;
 
+/* One decoder, for one stream's packets, on the same terms as a stream. */
+typedef struct vento_audio_decoder vento_audio_decoder;
+
 typedef struct vento_audio {
-    /* The output itself, handed to `open` and `release`. */
+    /* The output itself, handed to `open`, `decodable`, `decoder_open` and
+       `release`. */
     void *user;
     /* A stream of `format` samples at `rate` frames a second, `channels` of
        them a frame (1 to 8), writable at once whether or not the device
@@ -57,9 +73,29 @@ typedef struct vento_audio {
     /* Drops what is queued and lets the device go, without waiting for
        it. */
     void (*close)(vento_audio_stream *s);
+    /* Whether the platform decodes `codec`: what a backend offers its far
+       end, which then sends only what it was offered. Cheap to ask again. */
+    bool (*decodable)(void *user, int codec);
+    /* A decoder for `codec` packets of a stream at `rate` in `channels`, set
+       up by `config` — AAC's AudioSpecificConfig, Opus's identification
+       header — or, where `config_len` is 0, by those numbers alone: AAC LC,
+       and Opus with no pre-skip, which is what RDP's sound sends neither of.
+       NULL where the platform will not decode it; why is logged. */
+    vento_audio_decoder *(*decoder_open)(void *user, int codec, int rate, int channels,
+                                         const uint8_t *config, size_t config_len);
+    /* One packet. Returns the frames it made, with the samples — signed
+       16-bit, interleaved, as a stream takes them — in `*samples`, which are
+       the decoder's until its next call, at `*rate` in `*channels`, which
+       are the decoder's answer rather than the stream's (an AAC stream with
+       SBR decodes at twice its rate, Opus always at 48 kHz). 0 where the
+       packet made none yet; -1 where it could not be decoded, which drops
+       that packet and leaves the decoder ready for the next. */
+    int (*decode)(vento_audio_decoder *d, const uint8_t *data, size_t len,
+                  const int16_t **samples, int *rate, int *channels);
+    void (*decoder_close)(vento_audio_decoder *d);
     /* The table is the backend's from the moment it is handed over: this is
-       called once, after the last stream is closed, and also when the
-       backend fails to start at all. */
+       called once, after the last stream and decoder are closed, and also
+       when the backend fails to start at all. */
     void (*release)(void *user);
 } vento_audio;
 

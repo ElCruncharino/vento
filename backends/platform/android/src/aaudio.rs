@@ -30,7 +30,10 @@ use std::ffi::{CStr, c_char, c_void};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use common::audio::decode::Decoders;
 use common::audio::{Controls, Device, Format, Outputs, Queue};
+
+use crate::mediacodec_audio::MediaCodecAudio;
 
 #[repr(C)]
 struct AAudioStreamBuilder {
@@ -105,6 +108,11 @@ impl Default for AAudio {
 impl Outputs for AAudio {
     fn controls(&self) -> &Arc<Controls> {
         &self.controls
+    }
+
+    /// MediaCodec's, the phone's own.
+    fn decoders(&self) -> Option<&dyn Decoders> {
+        Some(&MediaCodecAudio)
     }
 
     fn device(&self, queue: Arc<Queue>) -> Result<Box<dyn Device>, String> {

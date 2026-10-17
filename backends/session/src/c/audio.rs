@@ -11,10 +11,17 @@
 //! the device opened off the protocol thread — and the session's mute,
 //! which a window sets on the [`Outputs`]' controls without the backend
 //! hearing of it.
+//!
+//! The platform's decoders ride along in the same table
+//! ([`Outputs::decoders`]): a backend whose far end sends AAC or Opus
+//! (FreeRDP's rdpsnd) offers what they decode and hands the packets here, so
+//! the decoding is the platform's on both platforms rather than whatever the
+//! library would have linked.
 
 use std::ffi::{c_int, c_void};
 use std::sync::Arc;
 
+use common::audio::decode::{Codec, Decoder};
 use common::audio::{Format, Outputs, Stream};
 
 use super::ffi;
@@ -30,7 +37,119 @@ pub fn table(outputs: Arc<dyn Outputs>) -> ffi::vento_audio {
         set_gain: Some(set_gain),
         latency: Some(latency),
         close: Some(close),
+        decodable: Some(decodable),
+        decoder_open: Some(decoder_open),
+        decode: Some(decode),
+        decoder_close: Some(decoder_close),
         release: Some(release),
+    }
+}
+
+/// The codec a C caller names, by `VENTO_AUDIO_CODEC_*`.
+fn codec(number: c_int) -> Option<Codec> {
+    match number as u32 {
+        ffi::VENTO_AUDIO_CODEC_AAC => Some(Codec::Aac),
+        ffi::VENTO_AUDIO_CODEC_OPUS => Some(Codec::Opus),
+        _ => None,
+    }
+}
+
+unsafe extern "C" fn decodable(user: *mut c_void, number: c_int) -> bool {
+    let outputs = unsafe { &*(user as *const Arc<dyn Outputs>) };
+    match (codec(number), outputs.decoders()) {
+        (Some(codec), Some(decoders)) => decoders.decodable(codec),
+        _ => false,
+    }
+}
+
+/// A decoder behind a handle, with the samples of its last packet: what
+/// `decode` lends the caller until its next call.
+struct Decoding {
+    decoder: Box<dyn Decoder>,
+    samples: Vec<i16>,
+}
+
+unsafe extern "C" fn decoder_open(
+    user: *mut c_void,
+    number: c_int,
+    rate: c_int,
+    channels: c_int,
+    config: *const u8,
+    config_len: usize,
+) -> *mut ffi::vento_audio_decoder {
+    let outputs = unsafe { &*(user as *const Arc<dyn Outputs>) };
+    let Some(codec) = codec(number) else {
+        return std::ptr::null_mut();
+    };
+    let (Ok(rate), Ok(channels)) = (u32::try_from(rate), usize::try_from(channels)) else {
+        return std::ptr::null_mut();
+    };
+    let Some(format) = Format::new(rate, channels) else {
+        log::warn!("audio: no {} decoder for {rate} Hz in {channels} channels", codec.name());
+        return std::ptr::null_mut();
+    };
+    let Some(decoders) = outputs.decoders() else {
+        return std::ptr::null_mut();
+    };
+    let config = if config.is_null() || config_len == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(config, config_len) }
+    };
+    match decoders.decoder(codec, format, config) {
+        Ok(decoder) => {
+            log::info!("audio: decoding {} at {rate} Hz in {channels} channels with {}", codec.name(), decoder.name());
+            Box::into_raw(Box::new(Decoding {
+                decoder,
+                samples: Vec::new(),
+            })) as *mut ffi::vento_audio_decoder
+        }
+        Err(why) => {
+            log::warn!("audio: no {} decoder: {why}", codec.name());
+            std::ptr::null_mut()
+        }
+    }
+}
+
+unsafe extern "C" fn decode(
+    d: *mut ffi::vento_audio_decoder,
+    data: *const u8,
+    len: usize,
+    samples: *mut *const i16,
+    rate: *mut c_int,
+    channels: *mut c_int,
+) -> c_int {
+    if d.is_null() || samples.is_null() || rate.is_null() || channels.is_null() {
+        return -1;
+    }
+    // The handle is the caller's alone for the call, as the header says.
+    let d = unsafe { &mut *(d as *mut Decoding) };
+    d.samples.clear();
+    unsafe { *samples = d.samples.as_ptr() };
+    if data.is_null() || len == 0 {
+        return 0;
+    }
+    let packet = unsafe { std::slice::from_raw_parts(data, len) };
+    match d.decoder.decode(packet, &mut d.samples) {
+        Ok(Some(format)) => {
+            unsafe {
+                *samples = d.samples.as_ptr();
+                *rate = format.rate as c_int;
+                *channels = format.channels as c_int;
+            }
+            (d.samples.len() / format.channels).min(c_int::MAX as usize) as c_int
+        }
+        Ok(None) => 0,
+        Err(why) => {
+            log::debug!("audio: a packet would not decode: {why}");
+            -1
+        }
+    }
+}
+
+unsafe extern "C" fn decoder_close(d: *mut ffi::vento_audio_decoder) {
+    if !d.is_null() {
+        drop(unsafe { Box::from_raw(d as *mut Decoding) });
     }
 }
 
@@ -95,6 +214,7 @@ unsafe extern "C" fn release(user: *mut c_void) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use common::audio::decode::Decoders;
     use common::audio::{Controls, Device, Queue};
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -122,6 +242,53 @@ mod tests {
         fn device(&self, queue: Arc<Queue>) -> Result<Box<dyn Device>, String> {
             self.queues.lock().unwrap().push(queue);
             Ok(Box::new(Quiet))
+        }
+
+        fn decoders(&self) -> Option<&dyn Decoders> {
+            Some(&Doubler)
+        }
+    }
+
+    /// Decodes AAC alone: each byte of a packet is a frame of two samples,
+    /// the byte and its double, at twice the stream's rate (as SBR is); a
+    /// packet of zeros is an error, and a packet of one byte is held back.
+    struct Doubler;
+
+    struct Doubling {
+        format: Format,
+        config: Vec<u8>,
+    }
+
+    impl Decoders for Doubler {
+        fn decodable(&self, codec: Codec) -> bool {
+            codec == Codec::Aac
+        }
+
+        fn decoder(&self, codec: Codec, format: Format, config: &[u8]) -> Result<Box<dyn Decoder>, String> {
+            if codec != Codec::Aac {
+                return Err("only AAC".into());
+            }
+            Ok(Box::new(Doubling {
+                format: Format::new(format.rate * 2, 2).unwrap(),
+                config: config.to_vec(),
+            }))
+        }
+    }
+
+    impl Decoder for Doubling {
+        fn decode(&mut self, packet: &[u8], out: &mut Vec<i16>) -> Result<Option<Format>, String> {
+            if packet.iter().all(|&b| b == 0) {
+                return Err("zeros".into());
+            }
+            if packet.len() == 1 {
+                return Ok(None);
+            }
+            out.extend(packet.iter().flat_map(|&b| [b as i16 + self.config.len() as i16, b as i16 * 2]));
+            Ok(Some(self.format))
+        }
+
+        fn name(&self) -> String {
+            "doubler".into()
         }
     }
 
@@ -175,5 +342,44 @@ mod tests {
             t.release.unwrap()(t.user);
         }
         assert!(dropped.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn a_packet_goes_through_the_tables_decoder() {
+        let fake = Arc::new(Fake {
+            controls: Arc::new(Controls::new()),
+            queues: Mutex::new(Vec::new()),
+            dropped: Arc::new(AtomicBool::new(false)),
+        });
+        let t = table(fake as Arc<dyn Outputs>);
+        let aac = ffi::VENTO_AUDIO_CODEC_AAC as c_int;
+        let opus = ffi::VENTO_AUDIO_CODEC_OPUS as c_int;
+        unsafe {
+            assert!(t.decodable.unwrap()(t.user, aac));
+            assert!(!t.decodable.unwrap()(t.user, opus));
+            assert!(!t.decodable.unwrap()(t.user, 99));
+            assert!(t.decoder_open.unwrap()(t.user, opus, 48_000, 2, std::ptr::null(), 0).is_null());
+            assert!(t.decoder_open.unwrap()(t.user, aac, 1, 2, std::ptr::null(), 0).is_null(), "no such rate");
+
+            let config = [0x12u8, 0x10, 0x56];
+            let d = t.decoder_open.unwrap()(t.user, aac, 22_050, 2, config.as_ptr(), config.len());
+            assert!(!d.is_null());
+            let (mut samples, mut rate, mut channels) = (std::ptr::null(), 0, 0);
+            let packet = [1u8, 2, 3];
+            let frames = t.decode.unwrap()(d, packet.as_ptr(), packet.len(), &mut samples, &mut rate, &mut channels);
+            assert_eq!((frames, rate, channels), (3, 44_100, 2));
+            assert_eq!(std::slice::from_raw_parts(samples, 6), [4, 2, 5, 4, 6, 6], "the config reached it");
+
+            // Held back, broken, and nothing at all: no frames, and the
+            // decoder still decodes after them.
+            assert_eq!(t.decode.unwrap()(d, [9u8].as_ptr(), 1, &mut samples, &mut rate, &mut channels), 0);
+            assert_eq!(t.decode.unwrap()(d, [0u8, 0].as_ptr(), 2, &mut samples, &mut rate, &mut channels), -1);
+            assert_eq!(t.decode.unwrap()(d, std::ptr::null(), 0, &mut samples, &mut rate, &mut channels), 0);
+            assert_eq!(t.decode.unwrap()(d, [7u8, 8].as_ptr(), 2, &mut samples, &mut rate, &mut channels), 2);
+            assert_eq!(std::slice::from_raw_parts(samples, 4), [10, 14, 11, 16]);
+
+            t.decoder_close.unwrap()(d);
+            t.release.unwrap()(t.user);
+        }
     }
 }

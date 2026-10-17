@@ -41,7 +41,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
+use common::audio::decode::Decoders;
 use common::audio::{Controls, Device, Format, Outputs, Queue};
+
+use crate::ffmpeg_audio::FFmpegAudio;
 
 #[repr(C)]
 struct SndPcm {
@@ -118,6 +121,11 @@ impl Default for Alsa {
 impl Outputs for Alsa {
     fn controls(&self) -> &Arc<Controls> {
         &self.controls
+    }
+
+    /// libavcodec's, the client's own FFmpeg.
+    fn decoders(&self) -> Option<&dyn Decoders> {
+        Some(&FFmpegAudio)
     }
 
     fn device(&self, queue: Arc<Queue>) -> Result<Box<dyn Device>, String> {

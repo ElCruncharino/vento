@@ -28,8 +28,12 @@
 //! A platform's half is small for that: [`Outputs::device`] starts whatever
 //! drains a queue — opening the device where opening takes the time rather
 //! than on the caller's thread — and [`Outputs::open`] builds the
-//! [`Stream`] a protocol writes to around it.
+//! [`Stream`] a protocol writes to around it. Where the far end's sound
+//! arrives compressed, the platform's decoders for it ([`decode`]) are the
+//! same object's, [`Outputs::decoders`]: one thing a session is handed for
+//! its sound, however it arrives.
 
+pub mod decode;
 mod queue;
 mod resample;
 
@@ -237,6 +241,13 @@ pub trait Outputs: Send + Sync {
     /// oldest like any other queue nobody is draining. An error is a platform
     /// that cannot even start (no thread), and is a stream with no sound.
     fn device(&self, queue: Arc<Queue>) -> Result<Box<dyn Device>, String>;
+
+    /// What decodes compressed sound for these outputs' streams: the
+    /// platform's AAC and Opus decoders, or `None` for a platform with none,
+    /// whose sessions take the far end's sound only as PCM.
+    fn decoders(&self) -> Option<&dyn decode::Decoders> {
+        None
+    }
 
     /// A stream in `format`, writable at once — whether or not the device
     /// behind it has opened yet, or ever does. `None` where the format is

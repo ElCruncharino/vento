@@ -91,6 +91,8 @@ const PARSERS: &[&str] = &["h264"];
 fn main() {
     println!("cargo:rerun-if-changed=c/vento_video.c");
     println!("cargo:rerun-if-changed=c/vento_video.h");
+    println!("cargo:rerun-if-changed=c/vento_ffaudio.c");
+    println!("cargo:rerun-if-changed=c/vento_ffaudio.h");
     println!("cargo:rerun-if-changed=c/va_shim.c");
     println!("cargo:rerun-if-changed=c/va_shim.h");
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android") {
@@ -171,6 +173,7 @@ fn main() {
 
     cc::Build::new()
         .file(manifest.join("c/vento_video.c"))
+        .file(manifest.join("c/vento_ffaudio.c"))
         .include(prefix.join("include"))
         .warnings(true)
         .compile("vento_video");
