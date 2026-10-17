@@ -18,6 +18,8 @@ silence is played until `pactl` has shown the stream on the null sink.
 ./record.sh out.wav [secs]  # record the sink's monitor
 ./analyse.py summary out.wav           # pitch, level, gaps per half second
 ./analyse.py rig OUT_DIR               # what rig.sh measures
+./bursts.py OUT_DIR --port 5956 [--seconds 60] [--marks FILE]
+                                       # a QEMU guest's tone bursts, end to end
 ```
 
 `rig.sh` needs NASM on `PATH` the first time it builds the desktop crate
@@ -75,3 +77,29 @@ What to expect, from the policy in `common::audio`: the queue keeps about
 later than before; after the stall the tone comes back 100 ms plus the
 device's buffer after it is written; a mute is heard after the device's
 buffer only (about 50 ms), not after what is queued.
+
+## A backend end to end: bursts.py
+
+For a backend whose far end can be made to play on cue — the QEMU audio
+guest (`scripts/testqemu`, `AUDIO=1`) — `bursts.py` measures the whole path.
+With the client already playing into the sink (steps 1-3 above; the guest
+plays silence until asked), it sends the guest's serial port a `t` every
+`--every` seconds (2), each a half-second burst of 440 Hz at half scale,
+records the monitor, and finds each burst in the recording. Per burst: the
+latency from the guest's card playing its first tone frame to the sink
+capturing it (the guest's own share, which it answers on the serial port,
+taken out; late by the capture path's least delay, as with the rig), how
+much was heard, pitch, level against the source (1.0 is as sent), 5 ms gaps
+and discontinuities; then the latency over the first and the last minute,
+which is what a lag that grows shows up in. `--marks FILE` prints lines of
+`<time.time()> <words>` (e.g. a script minimising the window) on the same
+clock, which is how a pause and a restore are lined up with the bursts.
+`--analyse` reads a previous run's directory again without recording.
+
+```sh
+id=$(./sink.sh load)
+PIPEWIRE_NODE=vento_test vento tigervnc 127.0.0.1::5962 --password vncpass \
+    -o Audio=true --probe 330 & pid=$!
+./sink.sh check $pid && ./bursts.py out --port 5956 --seconds 300
+kill $pid; ./sink.sh unload $id
+```

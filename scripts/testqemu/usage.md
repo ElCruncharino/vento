@@ -98,3 +98,44 @@ this side. Note that **QEMU does not synthesise Shift**: it maps a keysym to a
 scancode, so `*` sent with nothing held arrives as `8` — the probe holds Shift
 itself for the characters a US keyboard puts behind it, which is the same
 thing the RDP client has to do for a layout that needs Shift.
+
+## And sound: the audio guest
+
+QEMU's VNC server is also the one free implementation of **QEMU's audio
+extension**, which TigerVNC's client asks for when its `Audio` option is on.
+KolibriOS cannot be told from here to play anything, so the sound has a
+guest of its own, opt-in and on its own image:
+
+```sh
+AUDIO=1 NAME=myqemu PORT=5962 SPICE_PORT=5964 SPICE_TLS_PORT=5965 TONE_PORT=5956 ./run.sh
+printf t | nc -q1 127.0.0.1 5956     # one 440 Hz burst (the reply: guest µs, frames)
+printf s | nc -q1 127.0.0.1 5956     # the guest's stream stopped for 5 s (AudioEnd, AudioBegin)
+NAME=myqemu ./run.sh stop
+```
+
+`AUDIO=1` builds `protoqemu-audio` from `Dockerfile.audio` on top of the
+`protoqemu` image as it is — so a private instance serves the same SPICE
+certificate, and building it never touches the image the shared container
+runs — and boots Debian's kernel with a busybox initramfs instead of
+KolibriOS. Its one program, `audio/tone.c`, keeps the guest's HDA card
+playing silence and plays half a second of 440 Hz at half scale whenever a
+`t` arrives on the serial port, which is the container's port 4555
+(published as `TONE_PORT`, default 5955), and answers how long the guest
+itself took: microseconds from the byte to the first tone frame, and the
+frames already queued in the card ahead of it. The stream never stops
+between bursts, as with a guest playing music: one AudioBegin, then data.
+
+On the host side the sound goes nowhere: `-audiodev none` plays nothing but
+still runs QEMU's mixer, which is what the VNC server's capture taps, so the
+guest is heard only by a VNC client that asks — 48 kHz stereo S16 at every
+step, TigerVNC's format, so nothing is resampled, and the codec's mixer is
+off so that no guest volume changes the level. The screen is the guest's
+text console (720×400). `NAME=` and the ports are for running it beside the
+shared `protoqemu` rather than in its place; the image is `protoqemu`'s
+whatever the container is called (`IMAGE=` to change that).
+
+`scripts/testaudio/bursts.py` is the measurement: with a client playing the
+guest into the null sink, it sends a `t` every two seconds, records the
+sink's monitor, and reports per burst the latency from the guest's card to
+the capture, how much was heard, the pitch, the level against the source,
+discontinuities and gaps (`scripts/testaudio/usage.md`).

@@ -1,0 +1,56 @@
+# The relative-pointer rig's image with a second guest, for QEMU's VNC audio
+# extension: `AUDIO=1 ./run.sh` boots it instead of KolibriOS (usage.md).
+#
+# Built on top of the protoqemu image rather than into it, so that the image
+# the other rigs' clients have pinned (its SPICE certificate is made when it
+# is built) is reused as it is, and a rebuild of this one never changes it.
+#
+# The guest is Debian's own kernel with an initramfs of busybox, the sound
+# card's modules and `audio/tone.c`, which plays silence and a 440 Hz burst
+# whenever a byte arrives on the serial port.
+ARG BASE=protoqemu:latest
+
+FROM debian:trixie AS guest
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gcc libc6-dev libasound2-dev busybox-static cpio kmod xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+# The kernel package unpacked rather than installed: installing it would run
+# its hooks and build an initramfs of its own, which is not the one wanted.
+RUN apt-get update \
+    && pkg="$(apt-cache depends linux-image-amd64 | awk '/Depends: linux-image-[0-9]/ {print $2; exit}')" \
+    && cd /tmp && apt-get download "$pkg" && dpkg-deb -x /tmp/linux-image-*.deb /k \
+    && rm -f /tmp/*.deb && rm -rf /var/lib/apt/lists/*
+COPY audio/tone.c audio/init /src/
+# The codec's driver goes in before the controller's: the controller binds
+# its codecs as it probes, and with no modprobe in the initramfs a driver
+# that is not loaded yet is a codec that never gets one. Debian's /lib is
+# /usr/lib now, so the modules are wherever the package put
+# them; in the initramfs they are under /lib/modules either way.
+RUN set -e; base=/k; [ -d /k/usr/lib/modules ] && base=/k/usr; \
+    ver="$(ls $base/lib/modules)"; root=/initramfs; \
+    mkdir -p $root/bin $root/usr/bin $root/proc $root/sys $root/dev $root/usr/share; \
+    cp /bin/busybox $root/bin/busybox; \
+    gcc -O2 -Wall -o $root/usr/bin/tone /src/tone.c -lasound -lm; \
+    for lib in $(ldd $root/usr/bin/tone | awk '/=>/ {print $3} /ld-linux/ {print $1}'); do \
+        mkdir -p "$root$(dirname "$lib")"; cp -L "$lib" "$root$lib"; done; \
+    cp -r /usr/share/alsa $root/usr/share/alsa; \
+    find $base/lib/modules -name '*.ko.xz' -exec xz -d {} +; \
+    depmod -b $base "$ver"; \
+    modprobe -d $base -S "$ver" --show-depends snd-hda-codec-generic > /tmp/deps; \
+    modprobe -d $base -S "$ver" --show-depends snd-hda-intel >> /tmp/deps; \
+    : > $root/modules.sh; \
+    awk '$1 == "insmod" && !seen[$2]++ {print $2}' /tmp/deps | while read -r ko; do \
+        dest="${ko#$base}"; mkdir -p "$root$(dirname "$dest")"; cp "$ko" "$root$dest"; \
+        echo "insmod $dest" >> $root/modules.sh; done; \
+    cat $root/modules.sh; \
+    cp /src/init $root/init; chmod +x $root/init; \
+    mkdir -p /audio; cp /k/boot/vmlinuz-* /audio/vmlinuz; \
+    (cd $root && find . | cpio -o -H newc --quiet | gzip -9) > /audio/initrd.gz; \
+    ls -l /audio
+
+FROM ${BASE}
+COPY --from=guest /audio /audio
+COPY start.sh /usr/local/bin/start.sh
+RUN chmod +x /usr/local/bin/start.sh
+EXPOSE 4555
