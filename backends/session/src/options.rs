@@ -930,7 +930,8 @@ pub static SPICE: &[Spec] = &[
     ),
     // The playback channel, TigerVNC's key and words for QEMU's other way of
     // sending a guest's sound: on unless turned off, since a guest that
-    // plays nothing sends nothing.
+    // plays nothing sends nothing. Where the session's Enable switch starts:
+    // the channel is opened and closed with the switch.
     bool(
         "Audio",
         "Sound",

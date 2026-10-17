@@ -128,6 +128,7 @@ fn main() {
         // The picture is what this example is about; the client's own probe
         // (`vento --probe`) plays the sound.
         audio: None,
+        sound: false,
     };
 
     let session = {
