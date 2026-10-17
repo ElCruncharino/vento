@@ -8,9 +8,11 @@
 //! Declared here rather than taken from a crate, as `ffmpeg.rs` declares
 //! its C: a dozen functions of `libasound.so.2`, whose ABI has not changed
 //! in twenty years, linked by name. It is the one library the Linux client
-//! loads for sound: TigerVNC's QEMU audio plays through this (handed to its
-//! session as `vento/audio.h`'s table), and `libvento_tigervnc.so`, whose
-//! own ALSA sink this replaced, no longer links libasound at all.
+//! loads for sound: TigerVNC's QEMU audio and FreeRDP's rdpsnd play through
+//! this (handed to their sessions as `vento/audio.h`'s table), and neither
+//! `libvento_tigervnc.so`, whose own ALSA sink this replaced, nor
+//! `libvento_freerdp.so`, whose PulseAudio device it replaced, links a sound
+//! library at all.
 //!
 //! **A thread per stream does everything that can wait.** Opening the
 //! device is a round trip to the sound server, which can take a while and,

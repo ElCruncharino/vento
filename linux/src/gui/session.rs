@@ -504,9 +504,8 @@ impl Session {
                     ctx.request_repaint_after(BELL);
                 }
                 // What the toolbar will show a mute by. Nothing draws it
-                // yet, and nothing says it yet either: TigerVNC's and
-                // FreeRDP's sound go to sinks of their own until they are
-                // moved onto `vento/audio.h`.
+                // yet; TigerVNC's and FreeRDP's sound say it, through the
+                // output this session was handed.
                 Event::Audio { playing } => log::info!("sound {}", if playing { "playing" } else { "stopped" }),
                 Event::Clipboard(text) => {
                     // `SessionClipboard.fromRemote`: taken only under the

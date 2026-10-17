@@ -94,7 +94,7 @@ assembly; without it they are built in plain C, with a build note, and decode
 several times slower), a C/C++ compiler — **clang** for the RealVNC backend
 (libc-shim does not build under GCC; without clang that one backend is left
 out, with a build note) — and the development files for openssl, gnutls, nettle
-(hogweed, gmp), libjpeg-turbo, pixman, zlib, libpulse, alsa-lib, plus libclang.
+(hogweed, gmp), libjpeg-turbo, pixman, zlib, alsa-lib, plus libclang.
 The window needs a Vulkan (or GLES) driver wgpu can use and a Wayland or X11
 session.
 
@@ -439,9 +439,27 @@ burst sent at the restore was heard 208 ms after it played and every one
 after that at 121 ms. TigerVNC's own ALSA sink, which this replaced, took
 83-88 ms until the first pause and 1013 ms after it, for as long as the
 stream ran: its second's buffer filled with the backlog, and a device that
-drains no faster than the server sends never caught up. FreeRDP's sound still plays
-through FreeRDP's own PulseAudio device. The probe prints `audio playing`
-and `audio stopped` as a session's sound starts and stops.
+drains no faster than the server sends never caught up. FreeRDP's sound
+(Sound = "This computer") plays there too, through the module's rdpsnd
+device (`rdpsnd_vento.c`) in place of FreeRDP's PulseAudio one, so the client
+no longer links libpulse and the fifteen libraries behind it; a session
+handed no output does not ask the server for sound. The device plays PCM
+itself and is handed AAC already decoded by FreeRDP's FFmpeg, which Windows
+picks when it is offered (Windows 10 offers AAC, PCM, ADPCM, A-law and GSM,
+and sends AAC at 44.1 kHz stereo); it tells the server how far behind it
+plays in every wave's confirm, applies the server's volume as the stream's
+gain, and closes its stream two seconds after the last wave has been heard,
+since FreeRDP passes the server's close on to no device. The sound keeps
+playing while the window is hidden: hiding pauses only the picture, the
+server keeps sending sound as it plays it, and nothing arrives late on the
+restore. Against Windows 10 (`scripts/testaudio/winbursts.py`, a tone played
+in the RDP session) the tone reaches the null sink 334-451 ms after Windows
+was handed it, depending on the connection, and stays within 0.1 ms of that
+for five minutes and across 25 s minimised; about 200 ms of it is Windows'
+own and the network's before a wave arrives, and 140-170 ms is the queue's
+tenth of a second and the device. PulseAudio's device took 224-309 ms, the
+queue's tenth of a second less. The probe prints `audio playing` and
+`audio stopped` as a session's sound starts and stops.
 
 **The toolbar** sits flush with the top edge, square-cornered, edged on its
 sides and bottom but not along the top, which is the window's edge, and stays

@@ -59,6 +59,7 @@
 #include <freerdp/crypto/certificate.h>
 #include <freerdp/client/disp.h>
 #include <freerdp/channels/rdpgfx.h>
+#include <freerdp/channels/rdpsnd.h>
 #include <freerdp/gdi/gdi.h>
 #include <freerdp/gdi/gfx.h>
 #include <freerdp/graphics.h>
@@ -74,6 +75,7 @@
 #include <vento/text.h>
 
 #include "h264_vento.h"
+#include "rdpsnd_vento.h"
 
 #define TAG "FreeRdp"
 #define LOGI(...) vento_log(VENTO_LOG_INFO, TAG, __VA_ARGS__)
@@ -183,6 +185,9 @@ struct Session {
     /* The platform's decoders, which every H.264 surface command goes
        through, and what they say about the last picture. */
     VentoH264 h264;
+    /* The platform's sound output, which the rdpsnd devices the channels
+       make play on (rdpsnd_vento.h). */
+    VentoSound audio;
 
     /* The desktop's monitors, x, y, width, height each, under `lock`: as the
        server last stated them (`serverCount`, -1 before it has), and as this
@@ -371,6 +376,11 @@ static void fireClipboard(Session *s, const WCHAR *text, size_t units) {
 }
 
 /* ---- the framebuffer ---------------------------------------------------- */
+
+VentoSound *vento_sound_of(rdpContext *context) {
+    Session *s = context ? ((ShimContext *) context)->session : NULL;
+    return s ? &s->audio : NULL;
+}
 
 static Session *sessionOf(rdpContext *context) {
     return ((ShimContext *) context)->session;
@@ -1425,7 +1435,8 @@ static void doClipboard(Session *s, WCHAR *text, size_t len) {
 
 /* The reverse of RFB's pause: an RDP server sends what it likes, so this is a
    Suppress Output PDU telling it not to, and the redraw on the way back is the
-   server's own doing when output is allowed again. */
+   server's own doing when output is allowed again. It is the picture's alone:
+   the sound plays on (applySettings says why). */
 static void doFocus(Session *s, int focused) {
     if (!s->connected || !s->instance->context->gdi) {
         return;
@@ -1675,17 +1686,38 @@ static void applySettings(Session *s, rdpSettings *settings) {
     /* Sound: the two settings decide what the client info tells the server to
        do — play it here, play it over there, or play nothing — and the library
        loads the channel that carries it from the first of them, as a static
-       and a dynamic channel both, which is its own design. On Android the
-       channel tries OpenSL ES and then a device that accepts every format and
-       discards every sample.
+       and a dynamic channel both, which is its own design. Here is the
+       platform's output, through the module's device (rdpsnd_vento.h), which
+       both channels are told to use by name; and a session handed no output
+       does not ask for the server's sound at all, rather than have the server
+       send it to be thrown away.
 
-       That silent device is also what "off" and "over there" get: autodetect,
-       which is on below, makes the library register device redirection, and
-       device redirection without rdpsnd asked for adds rdpsnd against the
-       silent device anyway — a channel the client info has already told the
-       server not to play anything on. */
-    const int soundHere = s->sound && strcmp(s->sound, "local") == 0;
+       A device that discards every sample is what "off" and "over there" get:
+       autodetect, which is on below, makes the library register device
+       redirection, and device redirection without rdpsnd asked for adds
+       rdpsnd against the library's silent device anyway — a channel the
+       client info has already told the server not to play anything on.
+
+       Hiding the window does not stop it. The Suppress Output PDU that
+       pauses the picture says nothing about sound, and the server keeps
+       sending it as it plays, which is what a minimised window playing on
+       should do; since nothing is held back while hidden, nothing arrives
+       late on the restore either. */
+    const int soundAsked = s->sound && strcmp(s->sound, "local") == 0;
+    const int soundHere = soundAsked && s->audio.available;
     const int soundThere = s->sound && strcmp(s->sound, "remote") == 0;
+    if (soundAsked && !soundHere) {
+        LOGI("sound: this session has no output, so the server is not asked for its sound");
+    }
+    if (soundHere) {
+        char latency[32];
+        snprintf(latency, sizeof latency, "latency:%d", VENTO_RDPSND_LATENCY_MS);
+        const char *const args[] = {RDPSND_CHANNEL_NAME, "sys:" VENTO_RDPSND_SUBSYSTEM, latency};
+        if (!freerdp_client_add_static_channel(settings, ARRAYSIZE(args), args)
+                || !freerdp_client_add_dynamic_channel(settings, ARRAYSIZE(args), args)) {
+            LOGW("sound: could not name the sound device");
+        }
+    }
     freerdp_settings_set_bool(settings, FreeRDP_AudioPlayback, soundHere);
     freerdp_settings_set_bool(settings, FreeRDP_RemoteConsoleAudio, soundThere);
 
@@ -1899,6 +1931,7 @@ static void freeSession(Session *s) {
     pthread_cond_destroy(&s->cond);
     pthread_rwlock_destroy(&s->fbLock);
     vento_h264_release(&s->h264);
+    vento_sound_release(&s->audio);
     free(s);
 }
 
@@ -1914,11 +1947,15 @@ vento_session *vento_freerdp_create(const vento_freerdp_config *cfg, const vento
         if (cfg->video && cfg->video->release) {
             cfg->video->release(cfg->video->user);
         }
+        if (cfg->audio && cfg->audio->release) {
+            cfg->audio->release(cfg->audio->user);
+        }
         return NULL;
     }
-    /* The decoders are the session's from here, released by freeSession on
-       every way out. */
+    /* The decoders and the sound output are the session's from here,
+       released by freeSession on every way out. */
     vento_h264_init(&s->h264, cfg->video);
+    vento_sound_init(&s->audio, cfg->audio);
     s->base.ops = &OPS;
     s->cb = *cb;
     pthread_mutex_init(&s->lock, NULL);
@@ -1989,6 +2026,12 @@ vento_session *vento_freerdp_create(const vento_freerdp_config *cfg, const vento
     s->ctx = (ShimContext *) ctx;
     s->ctx->session = s;
     s->instance = ctx->instance;
+    /* Making the context put the library's own addin provider back, which
+       knows nothing of the module's rdpsnd device. */
+    if (s->audio.available && !vento_sound_register()) {
+        LOGW("could not register the sound device; the server is not asked for its sound");
+        vento_sound_release(&s->audio);
+    }
 
     if (pthread_create(&s->thread, NULL, protocolThread, s) != 0) {
         freerdp_client_context_free(ctx);

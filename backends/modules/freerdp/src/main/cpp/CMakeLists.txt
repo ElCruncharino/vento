@@ -3,13 +3,14 @@
 #
 # Two builds from one file. Under Gradle this is a root, configured by the NDK
 # toolchain, and makes `libremotedesktop_freerdp.so`: the session, with the
-# module's Rust crate linked in as the JNI layer over it, the OpenSSL port, and
-# OpenSL ES behind its sound. Under `backends/CMakeLists.txt` it is a
-# subdirectory on a Linux host and makes `vento_freerdp`, the session alone,
-# against the host's OpenSSL, with FFmpeg and PulseAudio behind its sound, and
-# a probe in front of it. Its H.264 is vento's decoders on both, the phone's
-# MediaCodec and the Linux client's FFmpeg, through the subsystem in
-# h264_vento.c. What is shared is the middle — how FreeRDP itself is
+# module's Rust crate linked in as the JNI layer over it, and the OpenSSL port.
+# Under `backends/CMakeLists.txt` it is a subdirectory on a Linux host and
+# makes `vento_freerdp`, the session alone, against the host's OpenSSL, with
+# FFmpeg for the sound's AAC, and a probe in front of it. Its H.264 is
+# vento's decoders on both, the phone's MediaCodec and the Linux client's
+# FFmpeg, through the subsystem in h264_vento.c; and its sound is vento's
+# output on both, AAudio on the phone and ALSA's default device on the Linux
+# client, through the rdpsnd device in rdpsnd_vento.c. What is shared is the middle — how FreeRDP itself is
 # configured — and the two halves around it are `if(ANDROID)` and `else()`,
 # so that the Android build is the same sequence of statements it was.
 
@@ -101,33 +102,38 @@ set(WITH_CLIENT_CHANNELS ON CACHE BOOL "" FORCE)
 # upstream's, unchanged.
 set(WITH_H264_EXTERNAL ON CACHE BOOL "" FORCE)
 
+# The sound is played on the platform's output, which the session is handed
+# (vento/audio.h), through a device of this module's that the channel finds
+# by name (rdpsnd_vento.h) — the same queue and policy TigerVNC's sound goes
+# through. So none of the library's own devices is built but the one that
+# discards every sample, which it builds whatever it is told and which is what
+# a session with its sound off or played over there gets; and none of the
+# sound libraries they would link (PulseAudio and the fifteen libraries behind
+# it, ALSA, OSS, sndio, OpenSL ES) is looked for. The microphone channel's
+# devices go with them, which is no loss: it is built and never loaded.
+foreach(off WITH_PULSE WITH_ALSA WITH_OSS WITH_SNDIO WITH_OPENSLES)
+    set(${off} OFF CACHE BOOL "" FORCE)
+endforeach()
+
 if(ANDROID)
-    # The phone's sound is the NDK's, which FreeRDP has switches for, so the
-    # host's codec and sound libraries are off by name; and its H.264 is
-    # MediaCodec's through vento's decoders, so FreeRDP's own MediaCodec
-    # subsystem is off too.
-    foreach(off WITH_OPENH264 WITH_FFMPEG WITH_SWSCALE WITH_ALSA WITH_PULSE WITH_DSP_FFMPEG
-            WITH_MEDIACODEC)
+    # No FFmpeg on the phone, so the host's codec libraries are off by name,
+    # and the sound channel plays PCM only; and its H.264 is MediaCodec's
+    # through vento's decoders, so FreeRDP's own MediaCodec subsystem is off
+    # too.
+    foreach(off WITH_OPENH264 WITH_FFMPEG WITH_SWSCALE WITH_DSP_FFMPEG WITH_MEDIACODEC)
         set(${off} OFF CACHE BOOL "" FORCE)
     endforeach()
-
-    # The device behind Sound = "This phone": rdpsnd tries OpenSL ES first on
-    # Android, and without it the only device left is one that discards every
-    # sample. It is upstream's default here already; saying so makes the
-    # libOpenSLES.so it links a decision rather than an accident.
-    set(WITH_OPENSLES ON CACHE BOOL "" FORCE)
 else()
     # FFmpeg, through the same `WITH_FFMPEG` their Linux client builds with,
-    # for the AAC the sound channel can carry (`WITH_DSP_FFMPEG`) and
-    # libswscale for the scaling the graphics pipeline does — but not for
-    # the video (`WITH_VIDEO_FFMPEG`), which is the Linux client's own FFmpeg
-    # through vento's decoders. The device behind Sound = "This computer" is
-    # PulseAudio's, which on a desktop of this decade is PipeWire answering
-    # to the same name.
-    foreach(on WITH_FFMPEG WITH_DSP_FFMPEG WITH_SWSCALE WITH_PULSE)
+    # for the AAC the sound channel can carry (`WITH_DSP_FFMPEG`: the channel
+    # decodes it to PCM before the device sees it) and libswscale for the
+    # scaling the graphics pipeline does — but not for the video
+    # (`WITH_VIDEO_FFMPEG`), which is the Linux client's own FFmpeg through
+    # vento's decoders.
+    foreach(on WITH_FFMPEG WITH_DSP_FFMPEG WITH_SWSCALE)
         set(${on} ON CACHE BOOL "" FORCE)
     endforeach()
-    foreach(off WITH_VIDEO_FFMPEG WITH_FFMPEG_HWACCEL WITH_OPENH264 WITH_ALSA WITH_OSS)
+    foreach(off WITH_VIDEO_FFMPEG WITH_FFMPEG_HWACCEL WITH_OPENH264)
         set(${off} OFF CACHE BOOL "" FORCE)
     endforeach()
     # Under the host root the three vendored trees share one cache, and
@@ -216,7 +222,7 @@ if(ANDROID)
     # headers are borrowed from the port for the TLS version constants, and as
     # SYSTEM like the rest, because linking the port would put them on the path
     # as ours.
-    add_library(remotedesktop_freerdp SHARED freerdp_session.c h264_vento.c)
+    add_library(remotedesktop_freerdp SHARED freerdp_session.c h264_vento.c rdpsnd_vento.c)
     vento_android_library(remotedesktop_freerdp remotedesktop_freerdp)
     remotedesktop_warnings(remotedesktop_freerdp)
     target_include_directories(remotedesktop_freerdp SYSTEM PRIVATE ${FREERDP_INCLUDES}
@@ -237,7 +243,7 @@ else()
     # platform — the probe's `vento_desktop`, or the library's own copy of it
     # under VENTO_SHARED (vento_desktop.cmake). OpenSSL's headers are the ones
     # their configure found, for the same constants.
-    vento_backend_library(vento_freerdp freerdp_session.c h264_vento.c)
+    vento_backend_library(vento_freerdp freerdp_session.c h264_vento.c rdpsnd_vento.c)
     target_include_directories(vento_freerdp SYSTEM PRIVATE ${FREERDP_INCLUDES}
             ${OPENSSL_INCLUDE_DIR})
     target_link_libraries(vento_freerdp ${VENTO_BACKEND_LINK} freerdp-client freerdp winpr)

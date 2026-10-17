@@ -12,6 +12,7 @@
 
 #include <stdbool.h>
 
+#include <vento/audio.h>
 #include <vento/backend.h>
 #include <vento/video.h>
 
@@ -31,7 +32,7 @@ typedef struct vento_freerdp_config {
     bool compression;
     const char *graphics;    /* "gfx", "gfx-novideo", "rfx" or "bitmap" */
     const char *experience;  /* "full", "balanced" or "plain" */
-    const char *sound;       /* "off", "local" or "remote" */
+    const char *sound;       /* "off", "local" or "remote"; see `audio` */
     int scale;               /* 100, 140 or 180; anything else is taken as 100 */
     int width, height;       /* the desktop asked for, per monitor */
     int monitors;
@@ -53,6 +54,12 @@ typedef struct vento_freerdp_config {
        hardware decoding. NULL for none, and the session then offers no
        H.264. */
     const vento_video_decoders *video;
+    /* What "local" sound plays on: the platform's output (vento/audio.h),
+       the session's from the call on, released when it ends or at once
+       where it does not start. It carries the session's gain and mute. NULL
+       for none, and the session then does not ask the server for its sound
+       whatever `sound` says. */
+    const vento_audio *audio;
 } vento_freerdp_config;
 
 /* "FreeRDP x.y.z" — the one call that proves the whole path. */
