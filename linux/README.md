@@ -497,7 +497,14 @@ list only once something first plays. The stream closes two seconds after
 the last wave has been heard, and plays on while the window is hidden. To
 Windows 10 (`winbursts.py`) the tone reached the null sink 323 ms after
 Windows was handed it, as AAC, and 604 ms as PCM (AAC withheld in a scratch
-build: Windows' long PCM waves). The probe prints `audio playing` and `audio stopped` as a session's
+build: Windows' long PCM waves). RustDesk's sound (the `Audio` option, on
+as in their own client, decided at login) is the peer's Opus, asked for only
+where the platform decodes Opus and played through its decoder; the peer
+sends silence for eight seconds after its desktop falls quiet and then
+nothing, so the stream closes ten seconds after the last sound. On
+`scripts/testrustdesk`'s desktop with a sound (`AUDIO=1`, timed by
+`bursts.py`) the desktop's sink to the null sink took 113-118 ms, flat over two minutes. The
+probe prints `audio playing` and `audio stopped` as a session's
 sound starts and stops; the window shows a **Sound** button on its toolbar
 for as long as it plays, which mutes it (below), and says what is playing
 in the connection panel and the debug overlay.
@@ -553,20 +560,21 @@ is showing is in the tooltip too. On it:
 - **Sound** (only while the far end's sound plays) mutes the session's sound
   and lets it be heard again: `volume_up` while it is heard, `volume_off`
   while muted. It comes with the session's first sound and goes when its last
-  stream closes, which TigerVNC and FreeRDP do two seconds after the sound
-  has ended and been heard, so it stays between one short sound and the next
+  stream closes, which every backend with sound does two seconds after the
+  sound has ended and been heard (RustDesk's ten, its peer sending eight
+  seconds of silence first), so it stays between one short sound and the next
   and is not there for a session that has none — its connection's Audio or
   Sound option off, or a protocol without sound. The mute is at once and
   needs no reconnect: it is applied where the device takes the samples
   (`common::audio::Controls`), so what is queued keeps draining under it and
   unmuting is the sound as it is now; from the click to the null sink going
-  silent took 75-101 ms (TigerVNC and FreeRDP alike, the device's 50 ms
-  buffer, a frame and the capture), and back 70-99 ms. It is the session's:
-  a stream the far end opens later (FreeRDP opens one per format, TigerVNC
-  one per AudioBegin) starts muted, every window's button is the same one,
-  and it is not saved — the next session starts with its sound on, and
-  the connection's option is what keeps a far end quiet for good. There is no
-  shortcut for it, as there is none for the other buttons.
+  silent took 65-101 ms (TigerVNC, FreeRDP and SPICE alike, the device's
+  50 ms buffer, a frame and the capture), and back 70-100 ms. It is the
+  session's: a stream the far end opens later (FreeRDP opens one per
+  format, TigerVNC one per AudioBegin) starts muted, every window's button
+  is the same one, and it is not saved — the next session starts with its
+  sound on, and the connection's option is what keeps a far end quiet for
+  good. There is no shortcut for it, as there is none for the other buttons.
 - **Info** opens the connection panel, below.
 - **Fullscreen** fills the screen (winit's borderless fullscreen on the
   current monitor); the toolbar still slides in at the top edge, and the same

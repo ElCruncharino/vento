@@ -24,9 +24,10 @@
 //! | Cursor | shape and hotspot, by id |
 //! | Input | absolute pointer, five buttons and a wheel; keys as their named set or as characters |
 //! | Clipboard | both ways, text |
+//! | Sound | the peer's, Opus, where the platform decodes it |
 //! | Live | image quality, frame rate, and the desktop's size out of the list the peer offers |
 //!
-//! What it does not: audio, file transfer, the terminal, tunnelling, 2FA,
+//! What it does not: the microphone, file transfer, the terminal, tunnelling, 2FA,
 //! elevation, privacy mode and virtual displays, which are the product rather
 //! than the desktop. Nor KCP, their newer UDP transport, which nothing has to
 //! offer for a session to be reached.
@@ -44,7 +45,8 @@
 pub mod backend;
 
 // The library the add-on carries: this backend, registered on the module's
-// generated natives class, with the phone's MediaCodec for the picture.
+// generated natives class, with the phone's MediaCodec for the picture and
+// AAudio for the sound (whose Opus MediaCodec decodes too, through it).
 // Android only — everything else is the protocol, and it builds and tests on
 // the host with none of this compiled.
 #[cfg(target_os = "android")]
@@ -52,6 +54,7 @@ platform_android::natives!(
     class = c"net/pgaskin/remotedesktop/backend/rustdesk/RustDeskNatives",
     kind = backend::KIND,
     decoders = || Some(std::sync::Arc::new(platform_android::mediacodec::MediaCodec)),
+    audio = || Some(std::sync::Arc::new(platform_android::aaudio::AAudio::new())),
 );
 
 mod client;
