@@ -84,6 +84,8 @@ mod host {
         clipboard_in: bool,
         /// `--hw-decode`: how video is decoded.
         hw_decode: backends::Hardware,
+        /// `--audio-output`: where the far end's sound plays.
+        audio_output: backends::AudioOutput,
         out: Option<PathBuf>,
         thumb_step: usize,
         verbose: bool,
@@ -132,6 +134,12 @@ usage: vento                                   the connection dialog
                          software. RustDesk, TigerVNC's H.264 and FreeRDP's
                          H.264 use it (the dialog's Settings have all five,
                          and the panel switches them live)
+  --audio-output=WHERE   play the far end's sound on pipewire (a stream of
+                         its own; nothing where no daemon answers), alsa
+                         (ALSA's default device) or auto, the default:
+                         PipeWire where its daemon answers, ALSA otherwise.
+                         VENTO_AUDIO_OUTPUT says the same where this is not
+                         given
   --x11, --wayland       open the window on that display server (default:
                          Wayland where WAYLAND_DISPLAY is set, X11 otherwise)
   --library-dir DIR      where RealVNC's two libraries are (XDG data dir)
@@ -256,6 +264,7 @@ headless, any of which selects the probe instead of the window:
                 "--software-cursor" => settings.software_cursor = true,
                 "--hw-decode" => settings.hw_decode = backends::Hardware::Auto,
                 _ if arg.starts_with("--hw-decode=") => settings.hw_decode = hw_decode(&arg)?,
+                _ if arg.starts_with("--audio-output=") => settings.audio_output = audio_output(&arg)?,
                 "--x11" | "--wayland" => {
                     let named = if arg == "--x11" { gui::Platform::X11 } else { gui::Platform::Wayland };
                     if platform.is_some_and(|p| p != named) {
@@ -407,6 +416,7 @@ headless, any of which selects the probe instead of the window:
             layout,
             clipboard_in: settings.clipboard_in,
             hw_decode: settings.hw_decode,
+            audio_output: settings.audio_output,
             out,
             thumb_step,
             verbose: false,
@@ -425,6 +435,13 @@ headless, any of which selects the probe instead of the window:
         let how = arg.split_once('=').map_or("", |(_, how)| how);
         backends::Hardware::from_name(how)
             .ok_or_else(|| format!("--hw-decode: {how:?} is not one of vaapi, auto or off"))
+    }
+
+    /// `--audio-output=WHERE`'s answer.
+    fn audio_output(arg: &str) -> Result<backends::AudioOutput, String> {
+        let name = arg.split_once('=').map_or("", |(_, name)| name);
+        backends::AudioOutput::from_name(name)
+            .ok_or_else(|| format!("--audio-output: {name:?} is not one of pipewire, alsa or auto"))
     }
 
     /// `WxH`, neither of them zero.
@@ -501,7 +518,7 @@ headless, any of which selects the probe instead of the window:
                     platform: Platform::Linux,
                     decoders: Some(backends::decoders(self.hw_decode)),
                     audio: Some({
-                        let audio = backends::audio();
+                        let audio = backends::audio(&self.address, self.audio_output);
                         *self.sound_controls.borrow_mut() = Some(Arc::clone(audio.controls()));
                         audio
                     }),
@@ -969,6 +986,26 @@ headless, any of which selects the probe instead of the window:
                 Hardware::Vaapi
             );
             for refused in ["--hw-decode=", "--hw-decode=VAAPI", "--hw-decode=nvdec", "--hw-decode=vulkan"] {
+                assert!(parse(vec![refused.to_string()]).is_err(), "{refused}");
+            }
+        }
+
+        #[test]
+        fn the_sound_plays_where_it_is_told_and_auto_otherwise() {
+            let output = |args: &[&str]| match parse(args.iter().map(|a| a.to_string()).collect()) {
+                Ok(Mode::Gui(launch)) => launch.settings.audio_output,
+                Ok(Mode::Probe(probe)) => probe.audio_output,
+                _ => panic!("{args:?} did not parse"),
+            };
+            use backends::AudioOutput;
+            assert_eq!(output(&[]), AudioOutput::Auto);
+            assert_eq!(output(&["--audio-output=alsa"]), AudioOutput::Alsa);
+            assert_eq!(output(&["--audio-output=pipewire"]), AudioOutput::PipeWire);
+            assert_eq!(
+                output(&["tigervnc", "127.0.0.1", "--probe", "1", "--audio-output=alsa", "--audio-output=auto"]),
+                AudioOutput::Auto
+            );
+            for refused in ["--audio-output=", "--audio-output=pulse", "--audio-output=PipeWire", "--audio-output"] {
                 assert!(parse(vec![refused.to_string()]).is_err(), "{refused}");
             }
         }

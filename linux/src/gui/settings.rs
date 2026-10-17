@@ -12,7 +12,7 @@
 //! it back when it ends, so what was switched mid-session is what the next
 //! one starts with.
 
-use crate::backends::Hardware;
+use crate::backends::{AudioOutput, Hardware};
 use egui::{RichText, Ui};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -37,6 +37,11 @@ pub struct Settings {
     /// libva is not loaded. Like the rest, not saved: a run that wants it
     /// asks for it (`--hw-decode`) or switches it on here.
     pub hw_decode: Hardware,
+    /// Where the far end's sound plays: PipeWire's own stream where a
+    /// daemon answers and ALSA's default device otherwise (`auto`), or one
+    /// of the two by name. Command line only (`--audio-output`), for tests
+    /// of either path; not drawn with the rest.
+    pub audio_output: AudioOutput,
 }
 
 impl Default for Settings {
@@ -47,6 +52,7 @@ impl Default for Settings {
             software_cursor: false,
             grab_keyboard: true,
             hw_decode: Hardware::Off,
+            audio_output: AudioOutput::Auto,
         }
     }
 }

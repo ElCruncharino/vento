@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use common::audio::{Format, Outputs, Stream};
-use platform_desktop::alsa::Alsa;
+use platform_desktop::audio::{Audio, Output};
 
 const RATE: u32 = 48_000;
 const CHANNELS: usize = 2;
@@ -79,20 +79,40 @@ pub fn main() {
     log::set_max_level(log::LevelFilter::Info);
     let mut out = None;
     let mut monitor = "vento_test.monitor".to_string();
+    let mut second = false;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--out" => out = args.next(),
             "--monitor" => monitor = args.next().expect("--monitor NAME"),
-            _ => panic!("audio_rig --out DIR [--monitor NAME]"),
+            "--second" => second = true,
+            _ => panic!("audio_rig --out DIR [--monitor NAME] [--second]"),
         }
     }
     let out = std::path::PathBuf::from(out.expect("--out DIR"));
     std::fs::create_dir_all(&out).unwrap();
 
-    let alsa = Arc::new(Alsa::new());
+    let audio = Arc::new(Audio::new("audio_rig", Output::Auto));
     let format = Format::new(RATE, CHANNELS).unwrap();
-    let mut stream = alsa.open(format).expect("a stream");
+    let mut stream = audio.open(format).expect("a stream");
+    // A second session's output beside the first, playing silence for as
+    // long as the rig runs: two sessions' streams, which on PipeWire are two
+    // nodes of the process's one connection.
+    let done = Arc::new(AtomicBool::new(false));
+    let second = second.then(|| {
+        let done = Arc::clone(&done);
+        std::thread::spawn(move || {
+            let audio = Audio::new("audio_rig, second session", Output::Auto);
+            let mut stream = audio.open(format).expect("a second stream");
+            let silence = vec![0i16; format.frames(CHUNK) * CHANNELS];
+            let mut next = Instant::now();
+            while !done.load(Ordering::SeqCst) {
+                stream.write(&silence);
+                next += CHUNK;
+                sleep_until(next);
+            }
+        })
+    });
 
     let go = Arc::new(AtomicBool::new(false));
     {
@@ -129,13 +149,17 @@ pub fn main() {
         events: Vec::new(),
         latency: Vec::new(),
     }));
-    let toolbar = toolbar(&alsa, t0, Arc::clone(&timeline));
+    let toolbar = toolbar(&audio, t0, Arc::clone(&timeline));
     play(&mut stream, t0, &timeline);
 
     // The recording's tail, then everything stopped and written down.
     std::thread::sleep(Duration::from_millis(500));
     let stats = stream.stats();
     drop(stream);
+    done.store(true, Ordering::SeqCst);
+    if let Some(second) = second {
+        second.join().unwrap();
+    }
     toolbar.join().unwrap();
     let chunks = recorder.stop();
     let timeline = timeline.lock().unwrap();
@@ -167,12 +191,12 @@ fn event(timeline: &Mutex<Timeline>, t0: Instant, what: &str, extra: &str) {
 
 /// The gain and the mute, set from a thread of their own while the writer
 /// writes: what a window's toolbar does to a playing session.
-fn toolbar(alsa: &Arc<Alsa>, t0: Instant, timeline: Arc<Mutex<Timeline>>) -> std::thread::JoinHandle<()> {
-    let alsa = Arc::clone(alsa);
+fn toolbar(audio: &Arc<Audio>, t0: Instant, timeline: Arc<Mutex<Timeline>>) -> std::thread::JoinHandle<()> {
+    let audio = Arc::clone(audio);
     std::thread::spawn(move || {
         for &(at, what) in TOOLBAR {
             sleep_until(t0 + Duration::from_secs_f64(at));
-            let controls = alsa.controls();
+            let controls = audio.controls();
             match what {
                 "mute" => controls.set_muted(true),
                 "unmute" => controls.set_muted(false),

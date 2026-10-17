@@ -1,15 +1,18 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The desktop's sound output: ALSA's `default` device, which on a desktop
-//! with a sound server is that server's (PipeWire's ALSA plugin, here), as
-//! this platform's `common::audio::Outputs`.
+//! The desktop's sound output where there is no PipeWire to play to (see
+//! `audio.rs`): ALSA's `default` device, which on a desktop with a sound
+//! server is that server's (PulseAudio's plugin, or PipeWire's where its
+//! daemon cannot be reached directly, as from a sandbox granted only the
+//! pulse socket).
 //!
 //! Declared here rather than taken from a crate, as `ffmpeg.rs` declares
 //! its C: a dozen functions of `libasound.so.2`, whose ABI has not changed
-//! in twenty years, linked by name. It is the one library the Linux client
-//! loads for sound: TigerVNC's QEMU audio and FreeRDP's rdpsnd play through
-//! this (handed to their sessions as `vento/audio.h`'s table), and neither
+//! in twenty years, linked by name. It is the one sound library the Linux
+//! client links (PipeWire's is loaded at run time, where there is one):
+//! TigerVNC's QEMU audio and FreeRDP's rdpsnd play through `common::audio`
+//! (handed to their sessions as `vento/audio.h`'s table), and neither
 //! `libvento_tigervnc.so`, whose own ALSA sink this replaced, nor
 //! `libvento_freerdp.so`, whose PulseAudio device it replaced, links a sound
 //! library at all.
@@ -41,10 +44,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
-use common::audio::decode::Decoders;
-use common::audio::{Controls, Device, Format, Outputs, Queue};
-
-use crate::ffmpeg_audio::FFmpegAudio;
+use common::audio::{Device, Format, Queue};
 
 #[repr(C)]
 struct SndPcm {
@@ -98,48 +98,23 @@ fn error(err: c_int) -> String {
     unsafe { CStr::from_ptr(snd_strerror(err)) }.to_string_lossy().into_owned()
 }
 
-/// ALSA's default device, as a session is handed it: one a session, for its
-/// controls.
-pub struct Alsa {
-    controls: Arc<Controls>,
-}
+/// What [`crate::audio::Audio`] calls this output, in the facts row and the
+/// overlay.
+pub const NAME: &str = "ALSA";
 
-impl Alsa {
-    pub fn new() -> Alsa {
-        Alsa {
-            controls: Arc::new(Controls::new()),
-        }
-    }
-}
-
-impl Default for Alsa {
-    fn default() -> Alsa {
-        Alsa::new()
-    }
-}
-
-impl Outputs for Alsa {
-    fn controls(&self) -> &Arc<Controls> {
-        &self.controls
-    }
-
-    /// libavcodec's, the client's own FFmpeg.
-    fn decoders(&self) -> Option<&dyn Decoders> {
-        Some(&FFmpegAudio)
-    }
-
-    fn device(&self, queue: Arc<Queue>) -> Result<Box<dyn Device>, String> {
-        let shared = Arc::new(Shared {
-            stop: AtomicBool::new(false),
-            latency_us: AtomicU64::new(0),
-        });
-        let theirs = Arc::clone(&shared);
-        std::thread::Builder::new()
-            .name("vento-audio".into())
-            .spawn(move || run(&queue, &theirs))
-            .map_err(|e| e.to_string())?;
-        Ok(Box::new(AlsaDevice { shared }))
-    }
+/// Starts draining `queue` into ALSA's default device, on a thread of the
+/// stream's own, and returns what keeps it draining.
+pub fn device(queue: Arc<Queue>) -> Result<Box<dyn Device>, String> {
+    let shared = Arc::new(Shared {
+        stop: AtomicBool::new(false),
+        latency_us: AtomicU64::new(0),
+    });
+    let theirs = Arc::clone(&shared);
+    std::thread::Builder::new()
+        .name("vento-audio".into())
+        .spawn(move || run(&queue, &theirs))
+        .map_err(|e| e.to_string())?;
+    Ok(Box::new(AlsaDevice { shared }))
 }
 
 /// What a stream and its thread share: the stream says stop, the thread
@@ -261,6 +236,7 @@ fn play(pcm: &Pcm, device: Format, queue: &Queue, shared: &Shared) -> Result<(),
     // Writes block until there is room, so the buffer is full from the first
     // few periods on, and is that much of the target the queue need not keep.
     queue.set_device(device.duration(buffer as usize), device.duration(period as usize));
+    queue.set_output(NAME);
     let format = queue.format();
     log::info!(
         "audio: playing {} Hz in {} channels on ALSA's default device at {} Hz in {} (buffer {buffer} frames, period {period})",

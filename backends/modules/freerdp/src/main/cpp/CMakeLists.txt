@@ -10,8 +10,8 @@
 # Its H.264 is vento's decoders on both, the phone's MediaCodec and the Linux
 # client's FFmpeg, through the subsystem in h264_vento.c; and its sound is
 # vento's output and vento's AAC and Opus decoders on both, AAudio and
-# MediaCodec on the phone, ALSA's default device and the client's FFmpeg on
-# the Linux client, through the rdpsnd device in rdpsnd_vento.c. What is
+# MediaCodec on the phone, a PipeWire stream (or ALSA's default device) and
+# the client's FFmpeg on the Linux client, through the rdpsnd device in rdpsnd_vento.c. What is
 # shared is the middle — how FreeRDP itself is
 # configured — and the two halves around it are `if(ANDROID)` and `else()`,
 # so that the Android build is the same sequence of statements it was.

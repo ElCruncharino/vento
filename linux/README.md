@@ -95,6 +95,8 @@ several times slower), a C/C++ compiler — **clang** for the RealVNC backend
 (libc-shim does not build under GCC; without clang that one backend is left
 out, with a build note) — and the development files for openssl, gnutls, nettle
 (hogweed, gmp), libjpeg-turbo, pixman, zlib, alsa-lib, plus libclang.
+Nothing of PipeWire: its library is loaded at run time where it is installed
+(**Sound**, below).
 The window needs a Vulkan (or GLES) driver wgpu can use and a Wayland or X11
 session.
 
@@ -266,7 +268,9 @@ configured LGPL 2.1 or later (no `--enable-gpl`, no `--enable-nonfree`;
 configure (`patches/ffmpeg/`); dav1d, inside it, is BSD-2-Clause
 (`third_party/dav1d/COPYING`). FFmpeg is compiled against libva's headers,
 which are MIT (`third_party/libva/COPYING`), and the libva shim is ours;
-libva is not linked. Nothing of this crate's graph reaches the
+libva is not linked. libpipewire-0.3 (MIT) is not linked either, nor
+compiled against: the sound output declares the functions and structures it
+uses by hand and loads the system's library at run time. Nothing of this crate's graph reaches the
 Android app or its licence page.
 
 ```sh
@@ -431,16 +435,43 @@ on Wayland with tigervnc in a headless tinywl (wlroots 0.20) made to suspend
 its windows on a signal: paused (the socket's receive queue filled to 10 KB,
 no commits) while suspended, live again when it was not.
 
-**Sound** plays on ALSA's `default` device (PipeWire's or PulseAudio's
-plugin on a desktop that has a sound server), opened per stream on a thread
-of its own (`backends/platform/desktop/src/alsa.rs`), behind one queue for
-every backend (`common::audio`): about 100 ms between a sample arriving and
-its being heard, the queue and the device's 50 ms buffer together, and never
-more than 250 ms, past which the oldest is dropped, so that a burst costs a
-skip rather than a delay that stays. The queue keeps what the device leaves
-of the 100 ms, but never less than the far end's own rhythm needs to not run
-dry — a period of the device's, two of the far end's writes and 10 ms, which
-is 50 ms for QEMU's 10 ms chunks and 69 ms for RDP's 23 ms waves, and
+**Sound** plays as a PipeWire stream of the session's own where a PipeWire
+daemon answers (`backends/platform/desktop/src/pipewire.rs`), and on ALSA's
+`default` device where none does (`alsa.rs`: PulseAudio's plugin on a
+PulseAudio desktop, PipeWire's from a sandbox that is granted only the pulse
+socket, a card on a desktop with no sound server). libpipewire-0.3 is
+**loaded at run time**, not linked: nothing of PipeWire is needed to build
+the client, the binary needs only libasound to start, and a machine without
+libpipewire plays through ALSA. Every session's streams are nodes of one
+connection to the daemon (the process's one client, `Vento`), each named for
+its session (`media.name`: the desktop's name, the address until the far end
+says one), `media.role` Movie; each is pulled by the graph a cycle at a time
+(512 frames asked for, `node.latency`), so nothing is buffered between the
+queue and the graph, and the device's share of the delay — the cycle and
+what the sink adds — is read off the stream's clock and is what the queue
+and RDP's wave confirms count. libpipewire honours `PIPEWIRE_REMOTE`,
+`PIPEWIRE_NODE` (the sink, as `target.object`), `PIPEWIRE_LATENCY` and
+`PIPEWIRE_PROPS` as it does for any client. A daemon that restarts is
+connected to again within a second or so and the streams made again on it;
+one that is not back after three tries a second apart leaves its streams to
+ALSA until it is, which they look for every five seconds. `--audio-output=`
+`pipewire`, `alsa` or `auto` (the default; also `VENTO_AUDIO_OUTPUT`) picks
+one for tests: `pipewire` plays nothing without a daemon rather than going
+to ALSA. Which one plays is in the panel's Sound row (`Opus 48 kHz stereo
+(PipeWire)`) and the overlay (`+ PipeWire 11 ms`). Against ALSA's `default`
+on a PipeWire desktop — PipeWire's ALSA plugin, with a 50 ms ring in front of
+the graph — the client's share of RDP's sound went from 105 ms to 77 ms and
+a mute is heard in 5 ms rather than 55-65.
+
+Either way it is behind one queue for every backend (`common::audio`): about
+100 ms between a sample arriving and its being heard, the queue and the
+device's buffer together (ALSA's is 50 ms; PipeWire's a cycle, 5-11 ms on a
+null sink), and never more than 250 ms, past which the oldest is dropped, so
+that a burst costs a skip rather than a delay that stays. The queue keeps
+what the device leaves of the 100 ms, but never less than the far end's own
+rhythm needs to not run dry — a period of the device's, two of the far end's
+writes and 10 ms, which is 50 ms for QEMU's 10 ms chunks and 69 ms for RDP's
+23 ms waves on ALSA, and
 for Windows' PCM, which comes in 186 ms waves two at a time, 395 ms (and
 twice that before anything is dropped), since a quarter of a second of it
 was mostly dropped. TigerVNC's QEMU audio plays there, offered to
@@ -457,8 +488,8 @@ been heard, and closes while the session is paused, since nothing is read
 then. What the server sent meanwhile arrives at once on restore, and the
 queue keeps only the newest of it. On `scripts/testqemu`'s audio guest
 (`AUDIO=1`, timed by `scripts/testaudio/bursts.py`) the guest's card to the
-null sink takes 125-136 ms, depending on the connection, and stayed within
-5 ms of that over five minutes; with the queue's 100 ms in front of the
+null sink takes 114-117 ms on PipeWire, 125-136 ms on ALSA, depending on the
+connection, and stayed within 5 ms of that over five minutes; with the queue's 100 ms in front of the
 device rather than around it, it took 121-150 ms. TigerVNC's own ALSA sink,
 which this replaced, took 83-88 ms until the first pause and 1013 ms after
 it, for as long as the stream ran: its second's buffer filled with the
@@ -488,7 +519,7 @@ playing while the window is hidden: hiding pauses only the picture, the
 server keeps sending sound as it plays it, and nothing arrives late on the
 restore. Against Windows 10 (`scripts/testaudio/winbursts.py`, a tone played
 in the RDP session) the tone reaches the null sink 320-359 ms after Windows
-was handed it, depending on the connection, and stays within 0.1 ms of that
+was handed it (on ALSA; the client's share is 28 ms less on PipeWire), depending on the connection, and stays within 0.1 ms of that
 for five minutes; about 200 ms of it is Windows' own and the network's
 before a wave arrives — which varies by up to 100 ms from one connection to
 the next — and about 100 ms is the client's, the queue (23-80 ms as the
@@ -806,7 +837,8 @@ Under them, the desktop's name, the facts the backend reports in its own words
 in the backend's order, the diagnostic ones among the rest, the bytes transferred, the desktop size and
 its monitors; and, while the far end's sound plays, **Sound** before the
 diagnostic ones — what arrives, `AAC 44.1 kHz stereo` or `PCM 48 kHz
-stereo`, and `, muted` while it is (the row is the client's, worded in
+stereo`, with the output it plays on (`(PipeWire)` or `(ALSA)`), and `,
+muted` while it is (the row is the client's, worded in
 `session::backend::ConnectionFact::sound` for the phone's panel too). Everything is refreshed once a second while the panel is open,
 without disturbing a control being used: an open dropdown stays open, and a
 field being typed in keeps its text until it is left, which is when its value
@@ -969,8 +1001,8 @@ the picture reaches the screen: `zero-copy` and what the window's pass
 costs it a picture, `zero-copy idle` before a picture has come that way, or
 `zero-copy off` and why; wherever the session has a sound switch, `snd`:
 what plays, what is queued in front of the device and the device's own
-buffer (`queue 65 ms + device 50 ms`, together how far behind what arrived
-it is heard), the stream's underruns and dropped frames, or `nothing
+buffer, named for the output (`queue 82 ms + PipeWire 10 ms`, `queue 65 ms +
+ALSA 50 ms`; together how far behind what arrived it is heard), the stream's underruns and dropped frames, or `nothing
 playing`; and DISABLED while the far end is asked not to send it, MUTED
 while it is muted here. Then the
 window's own: main or pop-out, the

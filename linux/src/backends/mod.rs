@@ -18,7 +18,7 @@ pub mod realvnc;
 pub use session::kind::{CONNECT_TIMEOUT_MS, Connect, Dirs, Kind, Platform};
 pub use session::trust::{Pinned, pinned_as};
 
-pub use platform_desktop::alsa::Alsa;
+pub use platform_desktop::audio::{Audio, Output as AudioOutput};
 pub use platform_desktop::ffmpeg::{FFmpeg, Hardware};
 use std::sync::Arc;
 
@@ -46,12 +46,14 @@ pub fn decoders(hardware: Hardware) -> Arc<FFmpeg> {
     Arc::new(FFmpeg::new(hardware))
 }
 
-/// Where the far end's sound goes here: ALSA's default device, where the
-/// phone hands over AAudio. One a session, as [`Connect::audio`], so that
-/// its controls (the gain and mute, which a window sets while the session
-/// plays) are that session's alone.
-pub fn audio() -> Arc<Alsa> {
-    Arc::new(Alsa::new())
+/// Where the far end's sound goes here: a PipeWire stream of the session's
+/// own, or ALSA's default device where there is no PipeWire (`output` picks,
+/// `--audio-output`), where the phone hands over AAudio. One a session, as
+/// [`Connect::audio`], so that its controls (the gain and mute, which a
+/// window sets while the session plays) are that session's alone, and its
+/// streams are listed under its name (`title`) in a mixer.
+pub fn audio(title: &str, output: AudioOutput) -> Arc<Audio> {
+    Arc::new(Audio::new(title, output))
 }
 
 /// Every backend this binary has, in the picker's order. RealVNC is here

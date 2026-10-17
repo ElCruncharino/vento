@@ -4,8 +4,8 @@
 // Where the far end's sound goes: QEMU's audio extension, whose protocol half
 // is TigerVNC's own (`CConnection` asks for it and hands over what arrives),
 // played on the platform's output, which the session is handed in its config
-// as `vento/audio.h`'s table — AAudio on the phone, ALSA's default device on
-// the Linux client, behind the one queue and policy every backend's sound
+// as `vento/audio.h`'s table — AAudio on the phone, a PipeWire stream (or
+// ALSA's default device) on the Linux client, behind the one queue and policy every backend's sound
 // shares (`common::audio`). Their viewer's own sinks, PulseAudio and waveOut
 // behind an `AudioOutput` in `vncviewer/`, are not compiled here, and neither
 // is a sink of this module's any more: how far ahead sound is kept, what is

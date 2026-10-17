@@ -9,8 +9,8 @@
 //! at the top of the band, which nobody hears over a remote desktop's
 //! notification sounds and speech, and it has no delay and no filter state
 //! to warm up. It is a fallback rather than the path: both platforms' sound
-//! servers (PipeWire behind ALSA's default device, AudioFlinger behind
-//! AAudio) take any rate and resample properly themselves, so this runs only
+//! servers (PipeWire, directly or behind ALSA's default device;
+//! AudioFlinger behind AAudio) take any rate and resample properly themselves, so this runs only
 //! on a device that refused the stream's rate outright.
 
 use std::collections::VecDeque;

@@ -12,8 +12,8 @@
 //! (`session::c::video`): the Linux client's FFmpeg, with the person's
 //! hardware choice, and the phone's MediaCodec. Its sound — QEMU's audio
 //! extension — is played on the platform's output the same way, handed to
-//! the C as `vento/audio.h`'s table (`session::c::audio`): ALSA's default
-//! device on the Linux client, AAudio on the phone.
+//! the C as `vento/audio.h`'s table (`session::c::audio`): a PipeWire stream
+//! (or ALSA's default device) on the Linux client, AAudio on the phone.
 
 use session::c::{Behaviour, CSession, ffi, start};
 use session::backend::{Backend, ConnectionFact, Field, Traffic};
@@ -31,7 +31,7 @@ pub static KIND: Kind = Kind {
 // natives class. Android only — the host links the C as a library of its own.
 // MediaCodec is what decodes its H.264 there, through the same table as the
 // Linux client's FFmpeg (see `create`), and AAudio is what plays its sound,
-// through the same table as the Linux client's ALSA.
+// through the same table as the Linux client's PipeWire or ALSA.
 #[cfg(target_os = "android")]
 platform_android::natives!(
     class = c"net/pgaskin/remotedesktop/backend/tigervnc/TigerVncNatives",

@@ -7,8 +7,8 @@
 //! A protocol asks for a stream and does not know whose it is, as with
 //! [`video::Decoders`](crate::video::Decoders): what it holds is an
 //! [`Outputs`], handed to it by whoever started the session — AAudio in
-//! `platform_android`, ALSA in `platform_desktop`, [`NoOutputs`] for a test
-//! with neither. Before this each backend that had sound had a sink of its
+//! `platform_android`, PipeWire or ALSA in `platform_desktop`, [`NoOutputs`]
+//! for a test with neither. Before this each backend that had sound had a sink of its
 //! own on each platform (TigerVNC's ALSA and AAudio ones, FreeRDP's
 //! PulseAudio and OpenSL ES ones), each with its own idea of how much to
 //! queue, and none that a window could mute.

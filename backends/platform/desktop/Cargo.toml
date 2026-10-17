@@ -2,7 +2,9 @@
 # which on a phone is the hardware's and here is libavcodec's, so that a
 # protocol whose picture is video — RustDesk's — can be run, probed and tested
 # on the machine it is developed on with the picture in; and a sound output,
-# which on a phone is AAudio and here is ALSA's default device (`src/alsa.rs`,
+# which on a phone is AAudio and here is a PipeWire stream of its own
+# (`src/pipewire.rs`, libpipewire-0.3 declared by hand and loaded at run time,
+# never linked) or, without PipeWire, ALSA's default device (`src/alsa.rs`,
 # libasound declared by hand and linked by name, as libasound.so.2), with
 # libavcodec's AAC and Opus decoders for the sound that arrives compressed.
 #

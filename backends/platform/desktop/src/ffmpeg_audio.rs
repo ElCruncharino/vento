@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! A desktop's sound decoders, libavcodec's AAC and Opus: [`FFmpegAudio`] is
-//! this platform's `common::audio::decode::Decoders`, which [`Alsa`] hands
+//! this platform's `common::audio::decode::Decoders`, which [`Audio`] hands
 //! out with its streams, and the counterpart of
 //! `platform_android::mediacodec_audio`.
 //!
@@ -13,7 +13,7 @@
 //! with (`build.rs`); FreeRDP's sound, which used to be decoded by the
 //! library's own FFmpeg path, is decoded here now.
 //!
-//! [`Alsa`]: crate::alsa::Alsa
+//! [`Audio`]: crate::audio::Audio
 
 use std::ffi::{CStr, c_char, c_int};
 

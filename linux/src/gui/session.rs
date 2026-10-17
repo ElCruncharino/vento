@@ -195,7 +195,7 @@ pub struct Session {
     /// sound switch is set on its controls — a mute, which every stream of
     /// the session plays under, at once and without the backend hearing of
     /// it, or an enable, which the backend asks the far end.
-    audio: Arc<backends::Alsa>,
+    audio: Arc<backends::Audio>,
     /// The session's sound as it last said it (`Event::Sound`): whether
     /// there is a switch and what it does, and whether anything plays.
     pub sound: Sound,
@@ -315,7 +315,9 @@ impl Session {
         // backend that asks to, so with hardware decoding off this changes
         // nothing.
         decoders.set_gpu_pictures(zero_copy.is_ok());
-        let audio = backends::audio();
+        // Its streams are listed under the address until the far end says
+        // its desktop's name (`poll`).
+        let audio = backends::audio(&request.address, settings.audio_output);
         let connect = Connect {
             address: &request.address,
             user: &request.user,
@@ -683,6 +685,10 @@ impl Session {
             info,
             traffic: self.backend.traffic(),
         };
+        // The name a mixer lists the session's sound under is the one its
+        // window's title starts with.
+        self.audio
+            .set_title(self.snapshot.desktop_name().unwrap_or(&self.request.address));
         ctx.request_repaint_after(POLL);
         // The other windows' titles and overlays come from the poll too.
         self.redraw_others = true;
