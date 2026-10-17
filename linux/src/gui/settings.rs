@@ -100,10 +100,10 @@ impl Settings {
         let label = if weak { RichText::new("Hardware decoding").weak() } else { RichText::new("Hardware decoding") };
         ui.label(label).on_hover_text(
             "Decode video on the GPU (VAAPI) where the device takes the stream, and in software where it \
-             does not. RustDesk and TigerVNC's H.264 switch at once (at the next picture the far end sends \
-             whole), and RustDesk's VAAPI pictures are drawn from the GPU without being read back where the \
-             window's Vulkan device can; FreeRDP's H.264 takes it at the next connection; the other \
-             backends decode as their libraries do and do not use this.",
+             does not. RustDesk, TigerVNC's H.264 and FreeRDP's H.264 switch at once (at the next picture \
+             the far end sends whole), and RustDesk's VAAPI pictures are drawn from the GPU without being \
+             read back where the window's Vulkan device can; the other backends decode as their libraries \
+             do and do not use this.",
         );
         let mut on = self.hw_decode != Hardware::Off;
         if ui.checkbox(&mut on, "").changed() {

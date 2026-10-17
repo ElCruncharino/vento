@@ -103,11 +103,12 @@ libraries: the client's FFmpeg is built from `third_party/ffmpeg` (n8.1.3) and
 `third_party/dav1d` (1.5.4) by `backends/platform/desktop/build.rs`, once per
 target directory and profile (about a minute and a half; a stamp beside it
 says what it was built from, and it is built again only when that changes),
-as static libraries that the Rust decoder (RustDesk's video and TigerVNC's
-H.264) and FreeRDP's H.264, sound and scaling link — FreeRDP through
+as static libraries that the Rust decoder (RustDesk's video, and TigerVNC's
+and FreeRDP's H.264) and FreeRDP's sound and scaling link — FreeRDP through
 `VENTO_FFMPEG_PREFIX`, which `build.rs` hands the CMake build. TigerVNC
 links none of it: its H.264 decoder context hands each rectangle to the Rust
-decoder through a table of function pointers in its config. It is
+decoder through a table of function pointers in its config, and FreeRDP's
+H.264 subsystem hands it each frame the same way. It is
 configured `--disable-everything`, `--disable-autodetect`, without programs,
 network or the format, filter and device libraries, with exactly these
 decoders: H.264, H.265, VP8, VP9, AV1 (dav1d's), AAC, Opus and two PCM ones
@@ -213,31 +214,30 @@ every frame, where only the rows that moved are converted now, straight
 into the framebuffer — and 10-12 ms on VAAPI, whose read back of the whole
 picture is the cost here as it is for RustDesk.
 
-**FreeRDP** decodes its H.264 itself, below its own AVC444 combine, so it is
-handed the mode at connect (`Connect::hardware`, as
-`vento_freerdp_config.hardware`) and takes a change **at the next
-connection**. It decodes on VAAPI through the static FFmpeg and the same
-libva shim (built with upstream's `WITH_FFMPEG_HWACCEL`): `vaapi` and `auto`
-alike ask for it.
-Upstream's path needed `patches/freerdp/0001` to be one to turn on: the
-request was the wrong way round (`FreeRDP_SoftwareGdi` itself, which this
-build keeps on, so it was always asked for), a stream the device cannot
-decode failed instead of going to software, the option that says whether
-the picture is hardware kept saying yes after a fall back, iHD's own copy
-of the picture into I420 made a 1920x1200 AVC444 frame cost 60 ms (it is
-copied as NV12 and converted by swscale now), and every surface opened a
-device of its own (19-34 ms each; one serves the process now). A device
-that fails mid-stream is a software decoder in its place, and since
-Windows sends a key frame neither for a Refresh Rect nor for output
-suppressed and allowed again, the session advertises the graphics
-pipeline's capabilities again, which Windows answers with new surfaces and
-a new stream, in software for the rest of the session: one update is
-lost. Against Windows 10 at 1920x1200 with a full-screen animation (debug
-build), an AVC444 command took 13.6-15.2 ms decoded, combined and
-converted on VAAPI against 8.5-10.9 ms in software, at about the same CPU.
-The phone's FreeRDP decodes on MediaCodec, which says nothing about
-hardware, so its row has no suffix. The other backends decode as their
-libraries do and do not use the setting.
+**FreeRDP** decodes its H.264 through the same decoders, on both
+platforms: `patches/freerdp/0001` adds a slot to the library's table of
+H.264 subsystems for one the application links in (`WITH_H264_EXTERNAL`),
+and the module's `h264_vento.c` is it. A frame goes to a vento decoder
+(`vento/video.h`'s `decode_planes`), which hands back its picture as I420
+planes, and FreeRDP's own code does the rest as it does with the decoders it
+ships: the rectangles, AVC444's combine of its two pictures (two frames of
+one stream through the surface's one decoder), the conversion into the
+surface. None of FreeRDP's own H.264 decoders is built (no
+`WITH_VIDEO_FFMPEG`, no `WITH_MEDIACODEC`); its FFmpeg is for the sound's
+AAC and for scaling. A decoder per surface, at most four of them on VAAPI,
+and a change of the setting applies at once: the session advertises the
+graphics pipeline's capabilities again, which Windows answers with new
+surfaces, whose decoders are made in the new mode (one picture may be
+skipped while it does). A device that fails mid-stream does the same, in
+software for the rest of the session or until the setting changes; one
+update is lost. Against Windows 10 at 1920x1200 with a full-screen
+animation (debug build, 18 s), the process used 2.3-2.7 s of user CPU in
+software and 1.8-2.3 s on VAAPI, against 2.7-2.8 and 2.4-2.5 through
+FreeRDP's own FFmpeg path before; the overlay's line is the decoder's
+(`H.264 vaapi map 7.2 ms`, `H.264 sw 3.9 ms`). The phone's FreeRDP decodes
+on MediaCodec through the same Rust decoder as RustDesk's and TigerVNC's,
+and says "(hardware)" or "(software)" as they do. The other backends decode
+as their libraries do and do not use the setting.
 
 The submodules must be initialised (`git submodule update --init --recursive`;
 RealVNC's four host-only submodules need `--recursive`) and patched

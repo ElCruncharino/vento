@@ -118,10 +118,9 @@ usage: vento                                   the connection dialog
                          then software; the default without =HOW) or off,
                          which is what it is without the flag; where the
                          device does not take a stream it is decoded in
-                         software. RustDesk and TigerVNC's H.264 use it (the
-                         dialog's Settings have all five, and the panel
-                         switches them live), and FreeRDP's H.264 at the next
-                         connection
+                         software. RustDesk, TigerVNC's H.264 and FreeRDP's
+                         H.264 use it (the dialog's Settings have all five,
+                         and the panel switches them live)
   --x11, --wayland       open the window on that display server (default:
                          Wayland where WAYLAND_DISPLAY is set, X11 otherwise)
   --library-dir DIR      where RealVNC's two libraries are (XDG data dir)

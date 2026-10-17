@@ -48,8 +48,8 @@ upstream has taken dropped.
 
 `third_party/ffmpeg` and `third_party/dav1d` are the Linux client's too, and
 not in this round either: the static FFmpeg `backends/platform/desktop/build.rs`
-builds for every desktop decoder (the Rust one, which TigerVNC's H.264 goes
-through too, and FreeRDP's H.264, sound and scaling), each pinned at a
+builds for every desktop decoder (the Rust one, which TigerVNC's and
+FreeRDP's H.264 go through too, and FreeRDP's sound and scaling), each pinned at a
 release tag. FFmpeg moves
 to a newer release's tag with `patches/ffmpeg/` rebased onto it; the decoders it
 is configured with are `DECODERS` and `PARSERS` in that build script, so a
@@ -385,16 +385,16 @@ One commit per upstream, after review, by the lead:
   AAudio sink on the phone and an ALSA one on the host, both over the shim's
   own `AudioOutput.h`. Builds `common/` only, with `config.h` written by our
   CMake and, on Android, an empty `pthread` target for the link.
-- **freerdp** 3.32.0; one patch (`0001`, codec/ffmpeg's hardware decoding:
-  the request is `!FreeRDP_SoftwareGdi` in `gdi/gfx.c` and the video
-  channel, software where the device cannot decode (get_format, a software
-  frame from a device context, a mid-stream failure), the HW_ACCEL option
-  telling what the last picture was, NV12 copied off the device and
-  converted with swscale, one device per process). `h264_ffmpeg.c` churns
-  (7 commits 3.28->3.32, the hwaccel rework among them): check the patch
-  still means the same against the new file, and that the session's
-  SurfaceCommand chain still finds `gdiGfxSurface.h264`. Built with
-  `WITH_FFMPEG_HWACCEL` on the host only. `LegacyTls` row for TLS 1.0 at
+- **freerdp** 3.32.0; one patch (`0001`, codec/h264: `WITH_H264_EXTERNAL`,
+  a slot for an application's subsystem, `g_Subsystem_external`, tried
+  first, and `WITH_GFX_H264` following it). The module's `h264_vento.c` is
+  built against `libfreerdp/codec/h264.h`, which is internal: check that
+  `H264_CONTEXT_SUBSYSTEM` and the context's `pYUVData`, `iStride`,
+  `YUVWidth`, `YUVHeight` and `pSystemData` still mean the same, that
+  contexts are still made, reset and fed inside the GDI's SurfaceCommand
+  (the session sets whose they are around it), and that AVC444 still feeds
+  both pictures through the surface's one context. No `WITH_VIDEO_FFMPEG`,
+  `WITH_FFMPEG_HWACCEL` or `WITH_MEDIACODEC`. `LegacyTls` row for TLS 1.0 at
   level 0; `remotedesktop_vendored_warnings` silences their tree.
 - **ironrdp** master 9b151c4c. No patches. A submodule rather than crates.io
   because the bitmap stride fix (80bb81b3) is still unreleased; revisit at
