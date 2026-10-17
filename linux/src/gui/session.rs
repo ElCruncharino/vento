@@ -81,6 +81,7 @@ use crate::backends::{self, Connect, Dirs, Hardware, Pinned};
 use crate::events::{Cursor, Event, Mailbox, State};
 use crate::known_hosts::{self, KnownHosts, Store};
 use ::session::trust::{self, Decision};
+use common::audio::{Outputs, Playback};
 use crate::options::Options;
 use egui::{CursorIcon, TextureHandle, TextureOptions, Vec2, ViewportId, vec2};
 use pane::{MonitorKey, Pane, PaneId, Rebound};
@@ -190,6 +191,13 @@ pub struct Session {
     /// What decodes the session's video, also handed to the backend: the
     /// hardware decoding setting is switched on it.
     decoders: Arc<backends::FFmpeg>,
+    /// Where the session's sound plays, also handed to the backend: the
+    /// toolbar's mute is set on its controls, which every stream of the
+    /// session plays under, at once and without the backend hearing of it.
+    audio: Arc<backends::Alsa>,
+    /// Whether the far end's sound is playing, as the session last said
+    /// (`Event::Audio`): what the toolbars show their sound button for.
+    pub sound: bool,
     /// Whether a hardware picture the backend leaves on the GPU is drawn
     /// from there (`zerocopy.rs`): `Ok` while it can be, or why not — the
     /// device cannot, or an import failed, after which the session's
@@ -306,6 +314,7 @@ impl Session {
         // backend that asks to, so with hardware decoding off this changes
         // nothing.
         decoders.set_gpu_pictures(zero_copy.is_ok());
+        let audio = backends::audio();
         let connect = Connect {
             address: &request.address,
             user: &request.user,
@@ -319,7 +328,7 @@ impl Session {
             client_name: &client_name,
             platform: backends::Platform::Linux,
             decoders: Some(Arc::clone(&decoders) as _),
-            audio: Some(backends::audio()),
+            audio: Some(Arc::clone(&audio) as _),
         };
         let backend = request.kind.start(&connect)?;
         let title = request.address.clone();
@@ -336,6 +345,8 @@ impl Session {
             settings,
             backend,
             decoders,
+            audio,
+            sound: false,
             zero_copy,
             mailbox,
             desktop: None,
@@ -382,6 +393,32 @@ impl Session {
             attention: false,
             notice: None,
         })
+    }
+
+    /// Whether the session's sound is muted, which is the session's in
+    /// every window it is shown in.
+    pub fn muted(&self) -> bool {
+        self.audio.controls().muted()
+    }
+
+    /// Mutes the session's sound or lets it be heard again, at once: the
+    /// device takes the samples through the controls, so what is queued
+    /// keeps draining under the mute and unmuting is the sound as it is
+    /// now. Not saved: the next session starts with its sound on, and the
+    /// connection's own option (Audio, Sound) is what keeps a far end's
+    /// sound off for good.
+    pub fn set_muted(&mut self, muted: bool) {
+        self.audio.controls().set_muted(muted);
+        log::info!("sound {}", if muted { "muted" } else { "unmuted" });
+        // The panel's row says it, asked again now rather than within the
+        // second, and every window's button: the other windows draw again.
+        self.last_poll = None;
+        self.redraw_others = true;
+    }
+
+    /// What is playing, for the overlay.
+    fn playback(&self) -> Option<Playback> {
+        self.audio.controls().playback()
     }
 
     pub fn connected(&self) -> bool {
@@ -503,10 +540,14 @@ impl Session {
                     self.bell_until = Some(Instant::now() + BELL);
                     ctx.request_repaint_after(BELL);
                 }
-                // What the toolbar will show a mute by. Nothing draws it
-                // yet; TigerVNC's and FreeRDP's sound say it, through the
-                // output this session was handed.
-                Event::Audio { playing } => log::info!("sound {}", if playing { "playing" } else { "stopped" }),
+                // What the toolbars show their sound button by: from the
+                // first sound until the last stream closes, which a backend
+                // does a couple of seconds after the sound's end (see
+                // `Pane::toolbar_items`).
+                Event::Audio { playing } => {
+                    log::info!("sound {}", if playing { "playing" } else { "stopped" });
+                    self.sound = playing;
+                }
                 Event::Clipboard(text) => {
                     // `SessionClipboard.fromRemote`: taken only under the
                     // setting, and what is taken is remembered so it is not
@@ -623,9 +664,11 @@ impl Session {
             return;
         }
         self.last_poll = Some(Instant::now());
+        let mut info = self.backend.info();
+        ::session::backend::with_sound(&mut info, self.audio.controls());
         self.snapshot = Snapshot {
             facts: self.backend.facts(),
-            info: self.backend.info(),
+            info,
             traffic: self.backend.traffic(),
         };
         ctx.request_repaint_after(POLL);

@@ -475,7 +475,9 @@ the next — and about 100 ms is the client's, the queue (23-80 ms as the
 waves come and go) and the device. With the queue's 100 ms in front of the
 device it took 331-451 ms, and PulseAudio's device, on another day, 224-309
 ms. The probe prints `audio playing` and `audio stopped` as a session's
-sound starts and stops.
+sound starts and stops; the window shows a **Sound** button on its toolbar
+for as long as it plays, which mutes it (below), and says what is playing
+in the connection panel and the debug overlay.
 
 **The toolbar** sits flush with the top edge, square-cornered, edged on its
 sides and bottom but not along the top, which is the window's edge, and stays
@@ -501,9 +503,9 @@ It has no shadow, and its buttons are flat: an icon (Material Symbols
 Outlined, unfilled) and no frame at rest, egui's frame while the pointer is
 on one or pressing it. A button with a state shows it in its icon, and its
 tooltip names the button, its state and, for Scale, what a click goes to
-("Scale: fit width — click for fit height"). View only and Info, while
-on, keep a frame at rest, a dim fill of the selection's blue with the icon in
-the selection's colour. There are no words on it: which monitor or display
+("Scale: fit width — click for fit height"). View only and Info while on,
+and Sound while muted, keep a frame at rest, a dim fill of the selection's
+blue with the icon in the selection's colour. There are no words on it: which monitor or display
 is showing is in the tooltip too. On it:
 
 - **Scale** cycles fit width → fit height → fill width → fill height → 1:1,
@@ -525,6 +527,23 @@ is showing is in the tooltip too. On it:
   [pop-out windows](#pop-out-windows).
 - **View only** stops the mouse, the keyboard and the clipboard going to the
   far end, and tells the backend so: an eye while on, a mouse while off.
+- **Sound** (only while the far end's sound plays) mutes the session's sound
+  and lets it be heard again: `volume_up` while it is heard, `volume_off`
+  while muted. It comes with the session's first sound and goes when its last
+  stream closes, which TigerVNC and FreeRDP do two seconds after the sound
+  has ended and been heard, so it stays between one short sound and the next
+  and is not there for a session that has none — its connection's Audio or
+  Sound option off, or a protocol without sound. The mute is at once and
+  needs no reconnect: it is applied where the device takes the samples
+  (`common::audio::Controls`), so what is queued keeps draining under it and
+  unmuting is the sound as it is now; from the click to the null sink going
+  silent took 75-101 ms (TigerVNC and FreeRDP alike, the device's 50 ms
+  buffer, a frame and the capture), and back 70-99 ms. It is the session's:
+  a stream the far end opens later (FreeRDP opens one per format, TigerVNC
+  one per AudioBegin) starts muted, every window's button is the same one,
+  and it is not saved — the next session starts with its sound on, and
+  the connection's option is what keeps a far end quiet for good. There is no
+  shortcut for it, as there is none for the other buttons.
 - **Info** opens the connection panel, below.
 - **Fullscreen** fills the screen (winit's borderless fullscreen on the
   current monitor); the toolbar still slides in at the top edge, and the same
@@ -564,7 +583,7 @@ while the client runs, which comes with no RandR event of its own.
 
 A pop-out's toolbar is a window's own: **Scale** and **Monitor** (any
 monitor, or the whole desktop) are its own, **Fullscreen** is its own
-window's, **View only** is the session's, and **Return** (`pip_exit`) closes
+window's, **View only** and **Sound** are the session's, and **Return** (`pip_exit`) closes
 it and gives its monitor back to the main window, which shows it if it was
 showing a single monitor. Closing it from the window manager is the same as
 Return. Each window's title names the monitor it shows. The panel, the
@@ -697,7 +716,10 @@ the session's and not a setting (Ctrl+Alt+D toggles it too).
 
 Under them, the desktop's name, the facts the backend reports in its own words
 in the backend's order, the diagnostic ones among the rest, the bytes transferred, the desktop size and
-its monitors. Everything is refreshed once a second while the panel is open,
+its monitors; and, while the far end's sound plays, **Sound** before the
+diagnostic ones — what arrives, `AAC 44.1 kHz stereo` or `PCM 48 kHz
+stereo`, and `, muted` while it is (the row is the client's, worded in
+`session::backend::ConnectionFact::sound` for the phone's panel too). Everything is refreshed once a second while the panel is open,
 without disturbing a control being used: an open dropdown stays open, and a
 field being typed in keeps its text until it is left, which is when its value
 is sent.
@@ -857,7 +879,10 @@ software where hardware was asked for — made on the protocol thread twice a
 second and copied, not built per frame — and, with hardware decoding on, how
 the picture reaches the screen: `zero-copy` and what the window's pass
 costs it a picture, `zero-copy idle` before a picture has come that way, or
-`zero-copy off` and why. Then the
+`zero-copy off` and why; while sound plays, `snd`: what it is, what is
+queued in front of the device and the device's own buffer (`queue 65 ms +
+device 50 ms`, together how far behind what arrived it is heard), the
+stream's underruns and dropped frames, and MUTED while it is. Then the
 window's own: main or pop-out, the
 monitor it shows, the local output it is on, whether it has the focus, its
 frames a second, its texture updates this frame and its pixels per point;
