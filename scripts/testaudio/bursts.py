@@ -130,7 +130,9 @@ def analyse_run(out, marks_path=None):
     n5 = rate // 200
     bursts = []
     for k, sent in enumerate(tl["sends"]):
-        guest = None
+        # A far end that plays on a schedule of its own (winbursts.py) has no
+        # share to take out: its sends are when the tone started there.
+        guest = None if tl.get("guest", True) else 0.0
         if k < len(tl["replies"]):
             us, delay = tl["replies"][k]
             guest = us / 1e6 + delay / rate

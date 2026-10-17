@@ -20,6 +20,8 @@ silence is played until `pactl` has shown the stream on the null sink.
 ./analyse.py rig OUT_DIR               # what rig.sh measures
 ./bursts.py OUT_DIR --port 5956 [--seconds 60] [--marks FILE]
                                        # a QEMU guest's tone bursts, end to end
+./winbursts.py OUT_DIR [--seconds 60] [--check PID] [--marks FILE]
+                                       # a Windows RDP session's, the same way
 ```
 
 `rig.sh` needs NASM on `PATH` the first time it builds the desktop crate
@@ -103,3 +105,45 @@ PIPEWIRE_NODE=vento_test vento tigervnc 127.0.0.1::5962 --password vncpass \
 ./sink.sh check $pid && ./bursts.py out --port 5956 --seconds 300
 kill $pid; ./sink.sh unload $id
 ```
+
+## An RDP session end to end: winbursts.py
+
+The same measurement against a real Windows machine (the one in
+`scripts/testwin`, 10.33.0.208), whose sound reaches an RDP client only from
+the RDP session itself. An ssh command runs in session 0, whose sound goes
+nowhere; so `winbursts.py` writes `scripts/testwin/tone.ps1` over there and
+runs it as a scheduled task with an Interactive principal, which Windows runs
+in the session the client is connected to, and removes the task and the file
+again before it returns (also when it fails). The tone is one WAV through
+`System.Media.SoundPlayer`: `--lead` seconds of silence (5), then half a
+second of 440 Hz at half scale every `--every` seconds.
+
+Latency is absolute, by the clocks: the task stamps the moment just before it
+hands the sound to the player with `GetSystemTimePreciseAsFileTime`, and the
+offset between the machine's clock and this one is measured over the LAN
+before and after (a loopback listener there reached through `ssh -L`; the
+shortest of 40 round trips, about 1.5 ms, bounds the error to under 1 ms).
+Windows' time service steps its clock now and then — by 1.8 s once, in the
+middle of a run — and the task's start and end stamps say whether the step
+fell inside the sound (`place` in the script explains). So each burst's
+latency is Windows' player and audio engine, the RDP sound channel, the
+client and the capture; Windows' share is the same in every burst of a run,
+and what varies over a run is the client's. `--check PID` stops the task
+during the silence unless PID's stream is on the null sink: an RDP client
+opens its stream only when the server starts sending, so the silence is what
+the check sees.
+
+```sh
+id=$(./sink.sh load)
+PIPEWIRE_NODE=vento_test vento freerdp 10.33.0.208 --user user --password password \
+    --trust --state-dir <scratch> -o Sound=local --probe 400 & pid=$!
+sleep 10   # connected and logged on
+WIN_SSH='ssh user@10.33.0.208' ./winbursts.py out --seconds 300 --check $pid
+kill $pid; ./sink.sh unload $id
+```
+
+`WIN_SSH` is any command that runs a command there and takes ssh's `-L`
+(a wrapper around `sshpass` with a scratch known-hosts file, say). What
+Windows 10 22H2 offers and picks is in the client's log (`sound: the server
+offers ...`, `sound: the server sends ...`): with AAC among what the client
+takes, it sends AAC at 44.1 kHz stereo.
