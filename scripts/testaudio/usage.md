@@ -87,7 +87,9 @@ is queued. (Measured: clicks 102 ms before the burst and after the stall,
 
 For a backend whose far end can be made to play on cue — the QEMU audio
 guest (`scripts/testqemu`, `AUDIO=1` for TigerVNC, `AUDIO=spice` for SPICE)
-— `bursts.py` measures the whole path.
+and the RustDesk desktop's sound (`scripts/testrustdesk`, `AUDIO=1`, whose
+tone answers on `TONE_PORT` 5957 the same way) — `bursts.py` measures the
+whole path.
 With the client already playing into the sink (steps 1-3 above; the guest
 plays silence until asked), it sends the guest's serial port a `t` every
 `--every` seconds (2), each a half-second burst of 440 Hz at half scale,

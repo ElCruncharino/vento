@@ -15,6 +15,11 @@
 // first tone frame was written, and how much was already queued ahead of it
 // in the card — so that the host can take it out of what it measures. An 's'
 // stops the card's stream for five seconds instead.
+//
+// A third argument makes the silence a square wave of that many LSBs instead
+// of zeros (90 dB down at 1): for a far end that sends nothing while its
+// desktop is silent (RustDesk's, scripts/testrustdesk), so that a client's
+// stream is open, and checked to be on the null sink, before the first burst.
 
 #include <alsa/asoundlib.h>
 
@@ -23,6 +28,7 @@
 #include <poll.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <termios.h>
 #include <time.h>
@@ -43,6 +49,7 @@ static long long now_us(void) {
 int main(int argc, char **argv) {
     const char *device = argc > 1 ? argv[1] : "hw:0,0";
     const char *serial = argc > 2 ? argv[2] : "/dev/ttyS0";
+    const short quiet = argc > 3 ? (short) atoi(argv[3]) : 0;
 
     int tty = open(serial, O_RDWR | O_NOCTTY | O_NONBLOCK);
     if (tty < 0) {
@@ -110,7 +117,7 @@ int main(int argc, char **argv) {
             continue;
         }
         for (int f = 0; f < PERIOD; f++) {
-            short v = 0;
+            short v = (f & 1) ? quiet : (short) -quiet;
             if (burst > 0) {
                 v = (short) lrint(AMPLITUDE * sin(2.0 * M_PI * 440.0 * (double) phase / RATE));
                 phase++;

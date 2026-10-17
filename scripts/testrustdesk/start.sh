@@ -60,7 +60,7 @@ fi
     printf "direct-access-port = '%s'\n" "$DIRECT_PORT"
     printf "verification-method = 'use-permanent-password'\n"
     printf "approve-mode = 'password'\n"
-    printf "enable-audio = 'N'\n"
+    printf "enable-audio = '%s'\n" "${AUDIO_ENABLE:-N}"
     [ -n "$RENDEZVOUS" ] && printf "custom-rendezvous-server = '%s'\n" "$RENDEZVOUS"
     [ -n "$KEY" ] && printf "key = '%s'\n" "$KEY"
 } > /root/.config/rustdesk/RustDesk2.toml
