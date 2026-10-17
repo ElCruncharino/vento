@@ -81,18 +81,24 @@ resume after the stall are heard; how much of the burst was heard, and the
 stream's own latency (queue plus device) over the run. `results.json` beside
 the recording has all of it.
 
-What to expect, from the policy in `common::audio`: the queue and the
-device's buffer together keep about 100 ms and never more than 250 ms, so
-the clicks are heard about 100 ms after they are written, the burst is heard
-for about the queue's share (the rest is dropped, `dropped` in the stats) and
-the clicks after it are no more than a period later than before; after the
-stall the tone comes back 100 ms after it is written; a mute is heard after
-the device's buffer only, not after what is queued. On ALSA (50 ms buffer;
-measured: clicks 102 ms before the burst and after the stall, 114.5 ms after
-the burst, 50 ms of the burst heard, the resume 100 ms, a mute 55-65 ms). On
-PipeWire the device holds a graph cycle (5-11 ms): clicks 80-87 ms before the
-burst, 101-117 ms after it, 86-88 ms after the stall, 90-100 ms of the burst
-heard, a mute in 5-10 ms. `--second` opens a second session's output beside
+What to expect, from the policy in `common::audio`: the queue keeps a
+device period, the rig's 10 ms writes and their lateness, and a 10 ms margin
+(`Queue`'s target), the device's buffer behind it, and never more than
+250 ms together, so the clicks are heard a few tens of milliseconds after
+they are written — less once the queue has played eight seconds and dropped
+what it found it did not need — the burst is heard for about the target (the
+rest is dropped, `dropped` in the stats) and the clicks after it a little
+later than before (the queue starts again at its target, and settles eight
+seconds later); after the one-second stall, which is no lateness but a
+pause, the tone comes back the target after it is written; a mute is heard
+after the device's buffer only, not after what is queued. On ALSA (50 ms
+buffer; measured: clicks 81 ms before the burst, 106 ms after it, 86 ms
+after the stall, 40 ms of the burst heard, the resume 105 ms, a mute 55 ms).
+On PipeWire the device holds a graph cycle (5-11 ms): clicks 17-20 ms before
+the burst, 55-57 ms after it, 32-46 ms after the stall, 30-40 ms of the burst
+heard, a mute in 5-10 ms. (With the fixed 100 ms total the queue kept until
+October 2026: ALSA 102, 114.5 and 102 ms; PipeWire 80-87, 101-117 and
+86-88 ms.) `--second` opens a second session's output beside
 the first (silent): two streams, `sink.sh check PID 2`, and on PipeWire two
 nodes of the one client.
 
@@ -113,13 +119,15 @@ machine or a network does. It prints when it wrote each burst, and the
 overlay's sound line every second; `pattern.py` matches each burst to the
 recording: the client's share of a session's latency (written to captured,
 with nothing of a far end's), 5 ms gaps and discontinuities per burst, and
-the queue's underruns and drops over the run, into
+the queue's target, margin and underruns over the run, into
 `OUT_DIR/pattern.json`. The order is the rig's (load the sink, check the
 stream, then `go`); `VENTO_AUDIO_OUTPUT=alsa` runs it on ALSA, and
 `AUDIO_PATTERN=path` runs another build of the example as it is (one kept
-from before a change, to compare). Measured on PipeWire, medians of 15
-bursts: `qemu` 84 ms, `opus` 75, `rdp` 68, `rdp-pairs` 65, `winpcm` 200,
-`bursty` 68 with 8 underruns (on ALSA 99, 106, 114, 95, 267, 140 with 11).
+from before a change, to compare). Measured on PipeWire (ALSA's 50 ms ring
+adds about 57 ms to each), medians of 15 bursts: `qemu` 18 ms, `opus` 20,
+`rdp` 26, `rdp-pairs` 39, `winpcm` 198, `bursty` 79 (with the fixed 100 ms
+total before: 84, 75, 68, 65, 200, 68 with 8 underruns); `qemu` stalled for
+40 ms every 5 s ran dry at the first stall and not at the eleven after.
 
 ## A backend end to end: bursts.py
 

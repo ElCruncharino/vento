@@ -32,9 +32,9 @@
 //! then on.
 //!
 //! The device's own buffer is kept short — 50 ms requested — since the
-//! queue in front of it is what absorbs the network's jitter; and the queue
-//! is told what the device ended up with, and keeps that much less of the
-//! target itself, so that the two together are the target. The device is fed
+//! queue in front of it is what absorbs the network's jitter; it is delay on
+//! top of what the queue keeps, which the queue is told with the period it
+//! takes at once (part of what the queue keeps). The device is fed
 //! silence while the queue has nothing to play, so it never runs dry and
 //! never has to be restarted mid-stream; a stream that is open is a device
 //! that is running.
@@ -234,7 +234,8 @@ fn play(pcm: &Pcm, device: Format, queue: &Queue, shared: &Shared) -> Result<(),
         period = (device.rate / 100) as c_ulong;
     }
     // Writes block until there is room, so the buffer is full from the first
-    // few periods on, and is that much of the target the queue need not keep.
+    // few periods on: delay behind the queue. A period at a time is taken
+    // from the queue, which it has to have left when it is.
     queue.set_device(device.duration(buffer as usize), device.duration(period as usize));
     queue.set_output(NAME);
     let format = queue.format();

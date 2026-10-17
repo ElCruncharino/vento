@@ -460,21 +460,37 @@ one for tests: `pipewire` plays nothing without a daemon rather than going
 to ALSA. Which one plays is in the panel's Sound row (`Opus 48 kHz stereo
 (PipeWire)`) and the overlay (`+ PipeWire 11 ms`). Against ALSA's `default`
 on a PipeWire desktop — PipeWire's ALSA plugin, with a 50 ms ring in front of
-the graph — the client's share of RDP's sound went from 105 ms to 77 ms and
-a mute is heard in 5 ms rather than 55-65.
+the graph — the client's share of RDP's sound is 23-28 ms rather than 84-89
+(77 rather than 105 when the queue kept a fixed total of 100 ms) and a mute
+is heard in 5 ms rather than 55-65.
 
-Either way it is behind one queue for every backend (`common::audio`): about
-100 ms between a sample arriving and its being heard, the queue and the
-device's buffer together (ALSA's is 50 ms; PipeWire's a cycle, 5-11 ms on a
-null sink), and never more than 250 ms, past which the oldest is dropped, so
-that a burst costs a skip rather than a delay that stays. The queue keeps
-what the device leaves of the 100 ms, but never less than the far end's own
-rhythm needs to not run dry — a period of the device's, two of the far end's
-writes and 10 ms, which is 50 ms for QEMU's 10 ms chunks and 69 ms for RDP's
-23 ms waves on ALSA, and
-for Windows' PCM, which comes in 186 ms waves two at a time, 395 ms (and
-twice that before anything is dropped), since a quarter of a second of it
-was mostly dropped. TigerVNC's QEMU audio plays there, offered to
+Either way it is behind one queue for every backend (`common::audio`),
+which keeps in front of the device only as much as keeps the device from
+finding it empty: a period of the device's, what the far end's own rhythm
+has needed over the last eight seconds — its largest write, or the most that
+lands at once, and how much later than its sound a write has come against
+the writes before it — and a margin of 10 ms; with the device's buffer
+behind that (ALSA's is 50 ms; PipeWire's a cycle, 5-11 ms on a null sink),
+and never more than 250 ms together, past which the oldest is dropped, so
+that a burst costs a skip rather than a delay that stays. On the rigs that
+is 32-50 ms for QEMU's, SPICE's and RustDesk's 10-20 ms of sound at a time,
+55-65 ms for RDP's 23 ms waves, and 395 ms for Windows' PCM, which comes in
+186 ms waves two at a time (and twice that before anything is dropped). Where
+the queue runs dry anyway and the far end's sound comes within half a second
+— later than anything it had shown — the session remembers how late, a
+step of 5 ms more, and the margin covers that from then on wherever the
+rhythm of late does not, forgetting a step after every half minute of sound
+that did not run dry (a gap, then none: under 64 busy loops a SPICE session
+ran dry twice in its first 40 s and not in the 50 s after, and
+`scripts/testaudio/pattern.sh`'s QEMU-like writes, held back 40 ms every 5 or
+20 s, ran dry at the first stall only); and a queue that has kept more than
+that for eight seconds drops the excess, faded over 2.5 ms, so that the
+sound is never further behind than it has to be. On an idle machine,
+minute-long sessions to Windows and SPICE ran dry with no margin in three of
+four and with 5 ms in one of four; with 10 ms, one of seventeen sessions of
+half a minute to five minutes across the six backends with sound ran dry,
+once. A fixed total of 100 ms, which this replaced, held QEMU's sound about
+70 ms longer and RDP's about 55 ms. TigerVNC's QEMU audio plays there, offered to
 any server wherever the session has an output and asked for while the
 session's sound switch is on — the `Audio` option is where it starts, and
 the switch is there from the server's first update that says it has audio:
@@ -488,9 +504,11 @@ been heard, and closes while the session is paused, since nothing is read
 then. What the server sent meanwhile arrives at once on restore, and the
 queue keeps only the newest of it. On `scripts/testqemu`'s audio guest
 (`AUDIO=1`, timed by `scripts/testaudio/bursts.py`) the guest's card to the
-null sink takes 114-117 ms on PipeWire, 125-136 ms on ALSA, depending on the
-connection, and stayed within 5 ms of that over five minutes; with the queue's 100 ms in front of the
-device rather than around it, it took 121-150 ms. TigerVNC's own ALSA sink,
+null sink takes 47-49 ms on PipeWire, 106-111 ms on ALSA, depending on the
+connection, and stayed within 2 ms of that over five minutes (with a
+fixed 100 ms between the queue and the device, 116-118 and 124 ms; with the
+queue's 100 ms in front of the device rather than around it, 121-150 ms).
+TigerVNC's own ALSA sink,
 which this replaced, took 83-88 ms until the first pause and 1013 ms after
 it, for as long as the stream ran: its second's buffer filled with the
 backlog, and a device that drains no faster than the server sends never
@@ -518,14 +536,16 @@ since FreeRDP passes the server's close on to no device. The sound keeps
 playing while the window is hidden: hiding pauses only the picture, the
 server keeps sending sound as it plays it, and nothing arrives late on the
 restore. Against Windows 10 (`scripts/testaudio/winbursts.py`, a tone played
-in the RDP session) the tone reaches the null sink 320-359 ms after Windows
-was handed it (on ALSA; the client's share is 28 ms less on PipeWire), depending on the connection, and stays within 0.1 ms of that
-for five minutes; about 200 ms of it is Windows' own and the network's
-before a wave arrives — which varies by up to 100 ms from one connection to
-the next — and about 100 ms is the client's, the queue (23-80 ms as the
-waves come and go) and the device. With the queue's 100 ms in front of the
-device it took 331-451 ms, and PulseAudio's device, on another day, 224-309
-ms. SPICE's sound is the playback channel, opened only where the server lists
+in the RDP session) the tone reaches the null sink 252-282 ms after Windows
+was handed it on PipeWire and 322-368 ms on ALSA, depending on the
+connection, and stays within 0.1 ms of that for five minutes; most of it
+is Windows' own and the network's before a wave arrives — which varies by up
+to 100 ms from one connection to the next — and 23-28 ms is the client's on
+PipeWire, 84-89 ms on ALSA (the queue, up to its 55-65 ms as the waves come
+and go, and the device). With a fixed 100 ms between the queue and the
+device the client's share was 76-89 ms on PipeWire and 101-111 ms on ALSA;
+with the queue's 100 ms in front of the device the tone took 331-451 ms, and
+through PulseAudio's device, on another day, 224-309 ms. SPICE's sound is the playback channel, opened only where the server lists
 one and the session has an output, and only while the session's sound switch
 is on (the `Audio` option, on unless turned off, is where it starts): the
 switch is there from the server's channel list, before the picture, and
@@ -543,8 +563,10 @@ channel that does not open, or ends, costs the sound and not the session
 (the switch goes off, and turning it on tries the channel again),
 and hiding the window holds back only the picture's acknowledgements, so the
 sound plays on. On the audio guest heard over SPICE (`scripts/testqemu`,
-`AUDIO=spice`) the guest's card to the null sink took 133-140 ms as Opus,
-flat over two minutes, and 132-134 ms as PCM. IronRDP's sound (Sound =
+`AUDIO=spice`) the guest's card to the null sink took 68 ms as Opus on
+PipeWire and 125 ms on ALSA (121 and 145 ms with a fixed 100 ms between the
+queue and the device; 133-140 ms as Opus and 132-134 ms as PCM, flat over two
+minutes, before PipeWire). IronRDP's sound (Sound =
 "This computer", FreeRDP's row less the remote machine, which IronRDP has no
 way to ask for) is IronRDP's own rdpsnd channel with a handler over the same
 output (`backends/modules/ironrdp/src/main/rust/src/sound.rs`): it offers
@@ -555,8 +577,9 @@ Windows sends no sound to a client without it, and Windows sends its format
 list only once something first plays, which is when the session's switch
 comes, a mute as FreeRDP's is. The stream closes two seconds after
 the last wave has been heard, and plays on while the window is hidden. To
-Windows 10 (`winbursts.py`) the tone reached the null sink 323 ms after
-Windows was handed it, as AAC, and 604 ms as PCM (AAC withheld in a scratch
+Windows 10 (`winbursts.py`) the tone reached the null sink 243 ms after
+Windows was handed it, as AAC on PipeWire, the client's share 31 ms (74 ms
+with a fixed 100 ms between the queue and the device), and 604 ms as PCM (AAC withheld in a scratch
 build: Windows' long PCM waves). RustDesk's sound is the peer's Opus, asked for only
 where the platform decodes Opus and played through its decoder, and only
 while the session's sound switch is on: the `Audio` option, on as in their
@@ -570,7 +593,9 @@ what arrives after it was turned off is dropped and the stream closed. The peer
 sends silence for eight seconds after its desktop falls quiet and then
 nothing, so the stream closes ten seconds after the last sound. On
 `scripts/testrustdesk`'s desktop with a sound (`AUDIO=1`, timed by
-`bursts.py`) the desktop's sink to the null sink took 113-118 ms, flat over two minutes. The
+`bursts.py`) the desktop's sink to the null sink took 40 ms on PipeWire and
+92 ms on ALSA (101 and 108 ms with a fixed 100 ms between the queue and the
+device; 113-118 ms, flat over two minutes, before PipeWire). The
 probe prints `audio playing` and `audio stopped` as a session's
 sound starts and stops, and the session's sound switch as it changes. The
 switch is the backend's to offer, as soon as its protocol says the far end
@@ -1000,10 +1025,12 @@ second and copied, not built per frame — and, with hardware decoding on, how
 the picture reaches the screen: `zero-copy` and what the window's pass
 costs it a picture, `zero-copy idle` before a picture has come that way, or
 `zero-copy off` and why; wherever the session has a sound switch, `snd`:
-what plays, what is queued in front of the device and the device's own
-buffer, named for the output (`queue 82 ms + PipeWire 10 ms`, `queue 65 ms +
-ALSA 50 ms`; together how far behind what arrived it is heard), the stream's underruns and dropped frames, or `nothing
-playing`; and DISABLED while the far end is asked not to send it, MUTED
+what plays, what is queued in front of the device, the queue's target and
+the margin in it, and the device's own buffer, named for the output (`queue
+26 ms, target 46 (margin 10) + PipeWire 10 ms`, `queue 30 ms, target 50
+(margin 10) + ALSA 50 ms`; the queue and the device together how far behind
+what arrived it is heard), the stream's underruns and dropped frames, or
+`nothing playing`; and DISABLED while the far end is asked not to send it, MUTED
 while it is muted here. Then the
 window's own: main or pop-out, the
 monitor it shows, the local output it is on, whether it has the focus, its

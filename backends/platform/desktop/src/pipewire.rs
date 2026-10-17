@@ -25,8 +25,8 @@
 //! sink downstream adds (nothing much for a null sink; the card's period
 //! and PipeWire's headroom for a real one). That share is read off the
 //! stream's clock every cycle (`pw_stream_get_time_n`) and told to the queue
-//! ([`Queue::set_device`]), which keeps the rest of the target, and to the
-//! stream's latency, which RDP confirms its waves with. The stream asks for
+//! ([`Queue::set_device`]) with the cycle, which is part of what the queue
+//! keeps, and to the stream's latency, which RDP confirms its waves with. The stream asks for
 //! a 512-frame cycle (`node.latency`, 10.7 ms at 48 kHz); the graph runs at
 //! the smallest any of its nodes asks for.
 //!
@@ -975,7 +975,7 @@ unsafe extern "C" fn on_process(data: *mut c_void) {
         // ticks), what the stream's converter holds, and this cycle. Told
         // before the queue is pulled from, since the first pull is where a
         // queue that filled while the stream connected is trimmed to its
-        // share of the target, and its share is the target less this.
+        // target, and the cycle is part of the target.
         let mut t = PwTime::default();
         let mut latency = format.duration(n);
         if (api.stream_get_time_n)(bound.stream, &mut t, size_of::<PwTime>()) == 0 && t.rate_denom > 0 {

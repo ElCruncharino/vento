@@ -15,15 +15,18 @@
 //!
 //! What every platform does alike is here, in [`Queue`]: a protocol thread
 //! writes into it and never waits, and the platform's device drains it on a
-//! thread of the device's own. Between them the queue and the device's own
-//! buffer keep about [`TARGET`] of sound ahead of what is heard, never more
-//! than [`LIMIT`] — past that the queue drops the oldest, so that a burst or
-//! a stall costs a skip rather than a lag that grows for the rest of the
-//! session — and the queue plays silence when it runs dry until it has its
-//! share of the target again. The gain and the mute are applied as the
-//! device takes the samples, so a mute is heard at once rather than after
-//! what is queued, and [`Controls`] can be set from any thread: a window's
-//! toolbar, while the protocol thread writes.
+//! thread of the device's own. The queue keeps as little in front of the
+//! device as keeps it from running dry — a period of the device's, what the
+//! far end's own rhythm of writes has needed of late, and a margin that
+//! grows when the far end's sound turns out later than that and shrinks back
+//! after a long while of it not — and the device's own buffer is behind
+//! that; never more than [`LIMIT`] together — past that the queue drops the
+//! oldest, so that a burst or a stall costs a skip rather than a lag that
+//! grows for the rest of the session — and the queue plays silence when it
+//! runs dry until it has its target again. The gain and the mute are applied
+//! as the device takes the samples, so a mute is heard at once rather than
+//! after what is queued, and [`Controls`] can be set from any thread: a
+//! window's toolbar, while the protocol thread writes.
 //!
 //! The same controls carry the session's sound switch ([`Sound`]): what
 //! the backend has said the far end can be asked — to stop sending its
@@ -50,41 +53,52 @@ pub mod decode;
 mod player;
 mod queue;
 mod resample;
+mod rhythm;
 
 pub use player::Player;
 pub use queue::{Queue, Stats};
 
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use decode::Codec;
 
-/// How far what is heard is behind what arrived: the queue and the device's
-/// own buffer together, which the queue fills back up to before it plays
-/// again after running dry. Enough to ride out a network that delivers in
-/// bursts of a few tens of milliseconds, little enough that what is heard is
-/// not noticeably behind what is seen.
-///
-/// The total rather than the queue's alone, since the device's buffer is
-/// delay just as the queue is: with a tenth of a second queued in front of
-/// ALSA's 50 ms, RDP's sound was heard 100 ms later than through the
-/// PulseAudio device it replaced. So the queue keeps the target less what the
-/// device holds ([`Queue::set_device`]), down to what keeps it from running
-/// dry between the far end's writes.
-pub const TARGET: Duration = Duration::from_millis(100);
-
-/// What the queue keeps beyond what the far end's own rhythm and the
-/// device's take from it ([`Queue`] works the rest out from the writes),
-/// for a write that is later than any before it.
+/// The least margin a queue keeps: what it keeps beyond the device's period
+/// and what the far end's rhythm has needed of late ([`Queue`] works those
+/// out), for a write later than any of late. Measured on an idle machine
+/// (`linux/README.md`'s Sound paragraph has the rest): minute-long sessions
+/// to Windows and SPICE ran dry with no margin in three of four and with
+/// 5 ms in one of four; with 10 ms, one of seventeen sessions across the six
+/// backends with sound did. Each millisecond of it is a millisecond the sound
+/// is behind the picture.
 pub const MARGIN: Duration = Duration::from_millis(10);
 
+/// The most lateness a session remembers ([`Controls::late`]). Lateness
+/// beyond a tenth of a second is a stall rather than a rhythm, and is a gap
+/// whatever is kept for it; keeping that much more for the rest of the
+/// session would be heard as sound behind the picture. (Under 64 busy loops,
+/// what ran a SPICE session dry was 37 and 60 ms late.)
+pub const MARGIN_MAX: Duration = Duration::from_millis(100);
+
+/// What a session remembers beyond the lateness that ran a queue dry, and
+/// what it forgets of it after every [`CLEAN`].
+pub const MARGIN_STEP: Duration = Duration::from_millis(5);
+
+/// How long the far end's sound has to have played without running a queue
+/// dry before the session forgets a [`MARGIN_STEP`] of the lateness it
+/// remembers: longer than a loaded machine went between one late write and
+/// the next (18 s, under 64 busy loops), so that a margin that was needed is
+/// not given back to be needed again, and short enough that one hiccup does
+/// not cost the rest of a session: 100 ms is forgotten in ten minutes.
+pub const CLEAN: Duration = Duration::from_secs(30);
+
 /// How much sound the queue and the device hold together before the queue
-/// drops the oldest, back down to its share of [`TARGET`] — or twice that
-/// share, for a far end whose own rhythm needs more than the target (see
-/// [`Queue`]'s, which follows the size of its writes). TigerVNC's viewer kept
-/// a second, and a stream that ran even slightly faster than the device
-/// lagged further behind the picture for as long as it ran.
+/// drops the oldest, back down to its target — or twice the target, for a
+/// far end whose own rhythm needs more than half of this (Windows' PCM).
+/// TigerVNC's viewer kept a second, and a stream that ran even slightly
+/// faster than the device lagged further behind the picture for as long as
+/// it ran.
 pub const LIMIT: Duration = Duration::from_millis(250);
 
 /// The most channels a stream may have: 7.1, which is more than any
@@ -136,6 +150,9 @@ impl Format {
 /// One a session, shared by its streams: a toolbar mutes the session, not
 /// one of the far end's streams, and a backend that opens a new stream for
 /// a new format (RDP's sound does, per format) must not come back unmuted.
+/// The lateness its queues remember ([`late`](Controls::late)) is the
+/// session's for the same reason: how late the far end's sound comes is the
+/// network's and the machine's, and RDP's next sound is a new stream.
 ///
 /// [`offer_mute`]: Controls::offer_mute
 /// [`offer_enable`]: Controls::offer_enable
@@ -144,6 +161,8 @@ pub struct Controls {
     /// An `f32`'s bits, so that the device's thread reads it without a lock.
     gain: AtomicU32,
     muted: AtomicBool,
+    /// The lateness remembered, in microseconds.
+    late: AtomicU64,
     playing: Mutex<Playing>,
     offer: Mutex<Offer>,
     /// The backend's way of asking the far end, apart from [`Offer`] so that
@@ -242,20 +261,23 @@ impl Sound {
     }
 
     /// A debug overlay's line for the sound, where the session has a switch:
-    /// what plays — what is queued in front of the device and the device's
-    /// own buffer (named for the output where the platform says which, as
-    /// "PipeWire 11 ms"), the two together how far behind what arrived it is
-    /// heard, and what the queue has had to do about the far end's timing — or that
-    /// nothing does; and DISABLED while the far end is asked not to send its
-    /// sound, MUTED while it is muted here. Both clients' overlays say it in
-    /// these words.
+    /// what plays — what is queued in front of the device, what the queue
+    /// aims to keep there and the margin in that, and the device's own
+    /// buffer (named for the output where the platform says which, as
+    /// "PipeWire 11 ms"), the queue and the device together how far behind
+    /// what arrived it is heard, and what the queue has had to do about the
+    /// far end's timing — or that nothing does; and DISABLED while the far
+    /// end is asked not to send its sound, MUTED while it is muted here. Both
+    /// clients' overlays say it in these words.
     pub fn line(&self, playback: Option<Playback>) -> Option<String> {
         self.switch?;
         let what = match playback {
             Some(p) => format!(
-                "{}  queue {} ms + {} {} ms  underruns {}  dropped {}",
+                "{}  queue {} ms, target {} (margin {}) + {} {} ms  underruns {}  dropped {}",
                 p.describe(),
                 p.queued.as_millis(),
+                p.target.as_millis(),
+                p.margin.as_millis(),
                 p.output.unwrap_or("device"),
                 p.device.as_millis(),
                 p.stats.underruns,
@@ -284,6 +306,12 @@ pub struct Playback {
     pub codec: Option<Codec>,
     /// What is queued in front of the device.
     pub queued: Duration,
+    /// What the queue keeps in front of the device, as it is now: see
+    /// [`Queue`].
+    pub target: Duration,
+    /// What the target keeps beyond what the device and the far end's
+    /// rhythm need: see [`Queue`].
+    pub margin: Duration,
     /// The device's own buffer, as the platform said it when it opened
     /// ([`Queue::set_device`]); zero until then.
     pub device: Duration,
@@ -317,6 +345,7 @@ impl Controls {
         Controls {
             gain: AtomicU32::new(1.0f32.to_bits()),
             muted: AtomicBool::new(false),
+            late: AtomicU64::new(0),
             playing: Mutex::new(Playing {
                 streams: Vec::new(),
                 codec: None,
@@ -353,6 +382,42 @@ impl Controls {
 
     pub fn muted(&self) -> bool {
         self.muted.load(Ordering::Relaxed)
+    }
+
+    /// How late the far end's sound has turned out to be, as the session
+    /// remembers it: nothing to start with; whenever a queue ran dry before
+    /// the far end's sound arrived, the lateness its writes showed then and
+    /// a [`MARGIN_STEP`] more (to [`MARGIN_MAX`] at most); a step less after
+    /// every [`CLEAN`] of sound that did not run dry. What a [`Queue`] has
+    /// seen of late covers lateness that comes every few seconds; this
+    /// covers what comes less often than that, which is what ran it dry. A
+    /// queue's margin is [`MARGIN`] and as much of this as its own rhythm
+    /// does not already cover.
+    pub fn late(&self) -> Duration {
+        Duration::from_micros(self.late.load(Ordering::Relaxed))
+    }
+
+    /// A queue ran dry, and the far end's writes, measured with the one that
+    /// came after, have been as late as `seen`: what the session remembers
+    /// is at least that and a step, and is returned.
+    fn ran_dry(&self, seen: Duration) -> Duration {
+        let step = MARGIN_STEP.as_micros() as u64;
+        let max = MARGIN_MAX.as_micros() as u64;
+        let seen = seen.as_micros() as u64;
+        let next = |l: u64| l.max(seen).saturating_add(step).min(max);
+        let before = self.late.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |l| Some(next(l))).unwrap();
+        Duration::from_micros(next(before))
+    }
+
+    /// A queue has played [`CLEAN`] of sound without running dry: the
+    /// session forgets a step of the lateness it remembers, and the new one
+    /// is returned if there was any to forget.
+    fn clean(&self) -> Option<Duration> {
+        let step = MARGIN_STEP.as_micros() as u64;
+        self.late
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |l| (l > 0).then(|| l.saturating_sub(step)))
+            .ok()
+            .map(|before| Duration::from_micros(before.saturating_sub(step)))
     }
 
     /// Whether any stream of the session has had sound written to it and is
@@ -458,6 +523,8 @@ impl Controls {
             format: queue.format(),
             codec,
             queued: queue.queued(),
+            target: queue.target_now(),
+            margin: queue.margin_now(),
             device: queue.device_buffer(),
             output: queue.output(),
             stats: queue.stats(),
@@ -753,8 +820,8 @@ mod tests {
         assert!(Format::new(48_000, 0).is_none());
         assert!(Format::new(48_000, MAX_CHANNELS + 1).is_none());
         let f = Format::new(48_000, 2).unwrap();
-        assert_eq!(f.frames(TARGET), 4800);
-        assert_eq!(f.duration(4800), TARGET);
+        assert_eq!(f.frames(Duration::from_millis(100)), 4800);
+        assert_eq!(f.duration(4800), Duration::from_millis(100));
         assert_eq!(f.frame_bytes(), 4);
         let outputs = fake();
         assert!(outputs.open(Format { rate: 1, channels: 2 }).is_none());
@@ -919,6 +986,8 @@ mod tests {
                 format: Format::new(rate, channels).unwrap(),
                 codec,
                 queued: Duration::ZERO,
+                target: Duration::ZERO,
+                margin: Duration::ZERO,
                 device: Duration::ZERO,
                 output: None,
                 stats: Stats::default(),
@@ -961,17 +1030,19 @@ mod tests {
             format: Format::new(48_000, 2).unwrap(),
             codec: None,
             queued: Duration::from_millis(32),
+            target: Duration::from_millis(45),
+            margin: MARGIN,
             device: Duration::from_millis(50),
             output: None,
             stats: Stats::default(),
         };
         assert_eq!(
             sound(Some(Switch::Mute), true, true).line(Some(playback)).unwrap(),
-            "snd PCM 48 kHz stereo  queue 32 ms + device 50 ms  underruns 0  dropped 0  MUTED"
+            "snd PCM 48 kHz stereo  queue 32 ms, target 45 (margin 10) + device 50 ms  underruns 0  dropped 0  MUTED"
         );
         assert_eq!(
             sound(Some(Switch::Enable), true, false).line(Some(playback)).unwrap(),
-            "snd PCM 48 kHz stereo  queue 32 ms + device 50 ms  underruns 0  dropped 0"
+            "snd PCM 48 kHz stereo  queue 32 ms, target 45 (margin 10) + device 50 ms  underruns 0  dropped 0"
         );
         // Where the platform says which output plays it, that is its name.
         let piped = Playback {
@@ -981,7 +1052,7 @@ mod tests {
         };
         assert_eq!(
             sound(Some(Switch::Mute), true, false).line(Some(piped)).unwrap(),
-            "snd PCM 48 kHz stereo  queue 32 ms + PipeWire 11 ms  underruns 0  dropped 0"
+            "snd PCM 48 kHz stereo  queue 32 ms, target 45 (margin 10) + PipeWire 11 ms  underruns 0  dropped 0"
         );
     }
 }

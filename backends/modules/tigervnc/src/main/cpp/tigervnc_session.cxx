@@ -1237,13 +1237,13 @@ void Conn::handleClipboardRequest() {
 // the guest starts its sound card's stream to the moment it stops it — so a
 // session can have any number of these. The stream is opened at the first and
 // written as samples arrive, which is all a backend does: the queue behind the
-// table keeps about 100 ms ahead of the device and drops the oldest past
-// 250 ms, so a burst (a pause's backlog, a socket read late behind a large
-// update) costs a skip and not a lag that stays.
+// table keeps as much ahead of the device as the server's rhythm needs and
+// drops the oldest past 250 ms, so a burst (a pause's backlog, a socket read
+// late behind a large update) costs a skip and not a lag that stays.
 //
 // At the end the stream is not closed at once, since closing drops what is
-// still queued, which is the last tenth of a second of whatever the guest
-// played. Nor is it kept open for good, since an open stream that nobody
+// still queued, which is the last few tens of milliseconds of whatever the
+// guest played. Nor is it kept open for good, since an open stream that nobody
 // writes to keeps the device running on silence — a sound server's node that
 // never suspends, an AAudio stream on a phone in somebody's pocket — and keeps
 // the session saying that it is playing. So it is closed once its tail has
