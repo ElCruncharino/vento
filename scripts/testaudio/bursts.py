@@ -2,13 +2,13 @@
 # SPDX-FileCopyrightText: 2026 Patrick Gaskin
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Latency end to end, from a guest's tone to the null sink: asks the QEMU
-audio guest (scripts/testqemu, AUDIO=1) for a 440 Hz burst on a fixed
+audio guest (scripts/testqemu, AUDIO=1 or AUDIO=spice) for a 440 Hz burst on a fixed
 schedule, records the sink's monitor, and finds each burst in the recording.
 
   bursts.py OUT_DIR [--seconds 60] [--every 2] [--host 127.0.0.1]
             [--port 5955] [--marks FILE]
 
-A VNC client must already be playing the guest's sound into the null sink
+A VNC or SPICE client must already be playing the guest's sound into the null sink
 (usage.md: sink.sh load, PIPEWIRE_NODE=vento_test, sink.sh check); the guest
 plays silence until it is sent a 't'. Each burst is half a second of 440 Hz
 at half scale. Per burst: the latency from the moment the guest's card

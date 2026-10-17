@@ -15,6 +15,7 @@ SPICE_PASSWORD="${SPICE_PASSWORD:-spicepass}"
 POINTER="${POINTER:-relative}"
 # The audio guest (usage.md): its own image, made on top of protoqemu's, and
 # one more port, the guest's serial line, which is how a burst is asked for.
+# AUDIO=spice is the same guest heard over SPICE's playback channel.
 AUDIO="${AUDIO:-}"
 TONE_PORT="${TONE_PORT:-5955}"
 # The image is protoqemu's whatever the container is called, so a private
@@ -49,7 +50,7 @@ fi
 
 audio=()
 if [ -n "$AUDIO" ]; then
-    audio=(-e AUDIO=1 -p "$TONE_PORT:4555")
+    audio=(-e AUDIO="$AUDIO" -p "$TONE_PORT:4555")
 fi
 
 docker run -d --name "$NAME" "${kvm[@]}" \
@@ -68,6 +69,8 @@ ip="$(ip -4 -o addr show scope global | awk '{print $4}' | cut -d/ -f1 | head -1
 echo "$NAME up: $ip:$PORT  (pointer $POINTER, password '$VNC_PASSWORD')"
 echo "     spice: $ip:$SPICE_PORT  (password '$SPICE_PASSWORD'), TLS on $ip:$SPICE_TLS_PORT"
 if [ -n "$AUDIO" ]; then
-    echo "     audio: QEMU audio on the VNC port; a 440 Hz burst per 't' sent to $ip:$TONE_PORT"
+    where="QEMU audio on the VNC port"
+    [ "$AUDIO" = spice ] && where="the SPICE playback channel (and QEMU audio on the VNC port)"
+    echo "     audio: $where; a 440 Hz burst per 't' sent to $ip:$TONE_PORT"
 fi
 echo "the guest takes a few seconds to reach its desktop"

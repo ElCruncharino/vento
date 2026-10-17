@@ -64,18 +64,26 @@ openssl x509 -in /certs/server-cert.pem -noout -fingerprint -sha256
 # asks. 48 kHz stereo S16 at both ends, which is what TigerVNC asks for, so
 # QEMU resamples nothing. The codec's mixer is off so that the guest's volume
 # controls (nobody sets them) cannot change the level.
+#
+# AUDIO=spice sends the card's output to the SPICE server instead
+# (`-audiodev spice`), whose playback channel is the other way QEMU has of
+# sending a guest's sound: heard by a SPICE client that opens that channel,
+# as Opus where the client offers it and PCM where not. The VNC capture taps
+# the mixer as it does over `none`.
 guest=(-drive file=/kolibri.img,format=raw,if=floppy,readonly=on -boot a)
 serial=(-serial none)
 vncaudio=""
 if [ -n "${AUDIO:-}" ]; then
     [ -e /audio/vmlinuz ] || { echo "AUDIO is set but this image has no audio guest (build Dockerfile.audio)" >&2; exit 1; }
+    audiodrv=none
+    [ "$AUDIO" = spice ] && audiodrv=spice
     guest=(-kernel /audio/vmlinuz -initrd /audio/initrd.gz -append "console=tty0 quiet"
-        -audiodev "none,id=snd0,out.frequency=48000,out.channels=2,out.format=s16"
+        -audiodev "$audiodrv,id=snd0,out.frequency=48000,out.channels=2,out.format=s16"
         -device intel-hda -device "hda-output,audiodev=snd0,mixer=off"
         -chardev "socket,id=tone,host=0.0.0.0,port=4555,server=on,wait=off,nodelay=on")
     serial=(-serial chardev:tone)
     vncaudio=",audiodev=snd0"
-    echo "audio guest: tone bursts on the serial port, tcp 4555"
+    echo "audio guest ($audiodrv): tone bursts on the serial port, tcp 4555"
 fi
 
 # Read only, so the container keeps no state and every run is the same desktop.
