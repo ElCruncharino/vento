@@ -40,7 +40,7 @@ use super::super::view::{Layout, ScaleMode, View};
 use super::super::Host;
 use super::{Capture, LEFT, MIDDLE, NOTCH_POINTS, RIGHT, Session, WindowOp, on_off};
 use crate::backend::Monitor;
-use common::audio::{Playback, Sound, Switch};
+use common::audio::Switch;
 use egui::{
     Align2, Color32, CursorIcon, Frame, Id, LayerId, Margin, Order, PointerButton, Pos2, Rect, Response, RichText,
     Sense, Stroke, Vec2, ViewportId, pos2, vec2,
@@ -952,7 +952,7 @@ impl Pane {
         // (the two together are how far behind what arrived it is heard),
         // and what the queue has had to do about the far end's timing; and
         // whether the far end is asked not to send it, or it is muted here.
-        if let Some(line) = sound_line(&s.sound, s.playback()) {
+        if let Some(line) = s.sound.line(s.playback()) {
             lines.push(line);
         }
         lines.extend([window, shortcuts]);
@@ -1045,32 +1045,6 @@ fn sound_button(switch: Switch, on: bool) -> (&'static str, &'static str) {
     }
 }
 
-/// The overlay's sound line, where the session has a sound switch: what
-/// plays and how far behind, or that nothing does, and DISABLED while the far
-/// end is asked not to send its sound, MUTED while it is muted here.
-fn sound_line(sound: &Sound, playback: Option<Playback>) -> Option<String> {
-    sound.switch?;
-    let what = match playback {
-        Some(p) => format!(
-            "{}  queue {} ms + device {} ms  underruns {}  dropped {}",
-            p.describe(),
-            p.queued.as_millis(),
-            p.device.as_millis(),
-            p.stats.underruns,
-            p.stats.dropped,
-        ),
-        None => "nothing playing".to_string(),
-    };
-    let state = if !sound.enabled {
-        "  DISABLED"
-    } else if sound.muted {
-        "  MUTED"
-    } else {
-        ""
-    };
-    Some(format!("snd {what}{state}"))
-}
-
 /// Whether the pointer is on one of the toolbar's buttons rather than on
 /// the toolbar `area` itself. Both count as hovered, as egui hovers the top
 /// button and the area that senses drags behind it alike, so it is told
@@ -1152,37 +1126,6 @@ mod tests {
         assert!(disabled_tip.starts_with("Sound: off"));
         assert!(heard_tip.starts_with("Sound: on") && heard_tip.contains("mute"));
         assert!(muted_tip.starts_with("Sound: muted"));
-    }
-
-    #[test]
-    fn the_overlay_says_the_sound_and_whether_it_is_off_or_muted() {
-        use common::audio::{Format, Stats};
-        let sound = |switch, enabled, muted| Sound {
-            switch,
-            enabled,
-            muted,
-            playing: false,
-        };
-        assert_eq!(sound_line(&sound(None, true, false), None), None);
-        assert_eq!(
-            sound_line(&sound(Some(Switch::Enable), false, false), None).unwrap(),
-            "snd nothing playing  DISABLED"
-        );
-        let playback = Playback {
-            format: Format::new(48_000, 2).unwrap(),
-            codec: None,
-            queued: std::time::Duration::from_millis(32),
-            device: std::time::Duration::from_millis(50),
-            stats: Stats::default(),
-        };
-        assert_eq!(
-            sound_line(&sound(Some(Switch::Mute), true, true), Some(playback)).unwrap(),
-            "snd PCM 48 kHz stereo  queue 32 ms + device 50 ms  underruns 0  dropped 0  MUTED"
-        );
-        assert_eq!(
-            sound_line(&sound(Some(Switch::Enable), true, false), Some(playback)).unwrap(),
-            "snd PCM 48 kHz stereo  queue 32 ms + device 50 ms  underruns 0  dropped 0"
-        );
     }
 
     #[test]

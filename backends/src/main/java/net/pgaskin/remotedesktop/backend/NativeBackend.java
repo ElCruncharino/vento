@@ -163,6 +163,9 @@ public final class NativeBackend implements Backend {
         /** The far end asked for its sound or to stop it; see {@link Backend#setSoundEnabled}. */
         void setSoundEnabled(long handle, boolean enabled);
 
+        /** The debug overlay's sound line, or null; see {@link Backend#soundLine}. */
+        String soundLine(long handle);
+
         /**
          * {@link Facts} in one crossing: width, height, display, flags (1 can
          * resize, 2 view only, 4 pointer relative), the monitor count, then
@@ -483,6 +486,12 @@ public final class NativeBackend implements Backend {
         if (h != 0 && !dead) {
             natives.setSoundEnabled(h, enabled);
         }
+    }
+
+    @Override
+    public String soundLine() {
+        final long h = handle;
+        return h != 0 && !dead ? natives.soundLine(h) : null;
     }
 
     @Override

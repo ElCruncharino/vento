@@ -214,6 +214,17 @@ public interface Backend {
     default void setSoundEnabled(boolean enabled) {
     }
 
+    /**
+     * A debug overlay's line for the session's sound, in the Linux client's
+     * words: {@code snd}, what plays — codec, rate, channels, the queue and the
+     * device's buffer, underruns and dropped frames — or {@code nothing
+     * playing}, then {@code DISABLED} or {@code MUTED}. Null where there is no
+     * sound switch. Cheap enough to ask on every refresh of an overlay.
+     */
+    default String soundLine() {
+        return null;
+    }
+
     /** Whether this session's sound is muted ({@link #setMuted}). */
     default boolean muted() {
         return false;
