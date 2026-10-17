@@ -39,7 +39,8 @@
 //!
 //! **Assembly** is NASM's on x86: without it dav1d and libavcodec fall back to
 //! their C, which works and decodes a fraction as fast, so its absence is a
-//! warning rather than an error.
+//! warning rather than an error. Installing it later builds them again with it
+//! at the next build, without a `cargo clean`.
 //!
 //! Empty on Android, as the crate is: the phone's decoder is MediaCodec.
 
@@ -133,6 +134,20 @@ fn main() {
             "cargo:warning=FFmpeg: no nasm on the path, so dav1d and libavcodec are built without \
              their x86 assembly and decode several times slower"
         );
+        // Installing NASM changes no variable: it puts a file into a
+        // directory already on the path, which `rerun-if-env-changed=PATH`
+        // does not see, and the build would keep its slow FFmpeg until a
+        // `cargo clean`. So while it is missing, each directory on the path
+        // is watched as well. Its arrival changes one of them, this script
+        // runs again, finds NASM and so the stamp's `asm false` stale, and
+        // builds FFmpeg again with the assembly. Anything else installed
+        // there in the meantime runs it too, which costs only the wrapper's
+        // recompile; with NASM present nothing is watched.
+        if let Some(path) = env::var_os("PATH") {
+            for dir in env::split_paths(&path).filter(|dir| dir.is_dir()) {
+                println!("cargo:rerun-if-changed={}", dir.display());
+            }
+        }
     }
 
     let root = PathBuf::from(env::var("OUT_DIR").unwrap()).join("ffmpeg");
