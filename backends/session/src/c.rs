@@ -30,6 +30,7 @@ use std::os::raw::{c_char, c_int, c_void};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+pub mod audio;
 pub mod ffi;
 pub mod video;
 

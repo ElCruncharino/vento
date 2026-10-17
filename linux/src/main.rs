@@ -475,6 +475,7 @@ headless, any of which selects the probe instead of the window:
                     client_name: &client_name,
                     platform: Platform::Linux,
                     decoders: Some(backends::decoders(self.hw_decode)),
+                    audio: None,
                 };
                 say("create");
                 match self.kind.start(&connect) {
@@ -593,6 +594,7 @@ headless, any of which selects the probe instead of the window:
                     say(&format!("pointer_mode {}", if *relative { "relative" } else { "absolute" }))
                 }
                 Event::Bell => say("bell"),
+                Event::Audio { playing } => say(if *playing { "audio playing" } else { "audio stopped" }),
                 Event::Clipboard(text) if !self.clipboard_in => {
                     say(&format!("clipboard {} bytes, not taken (--no-clipboard-in)", text.len()))
                 }
