@@ -660,6 +660,19 @@ public final class SessionActivity extends Activity
     private ConnectionPanel panel;
 
     /**
+     * The sound switch is on the panel, and the session says when it is
+     * offered, withdrawn or turned — by the far end too, as when a channel
+     * fails to open — so the open panel follows at once rather than at its
+     * next poll, a second later.
+     */
+    @Override
+    public void soundChanged() {
+        if (panel != null && panel.isShowing()) {
+            panel.refreshSound();
+        }
+    }
+
+    /**
      * Which backend this session is on: the connection's, the one named on the
      * command line, or the first this build has. The extra is what makes "the
      * same server through two different backends" one command apart.

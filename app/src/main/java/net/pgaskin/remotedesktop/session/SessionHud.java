@@ -18,6 +18,7 @@ import net.pgaskin.remotedesktop.control.input.PhysicalKeyboard;
 import net.pgaskin.remotedesktop.control.input.PhysicalMouse;
 import net.pgaskin.remotedesktop.control.ui.Hud;
 
+import java.util.Arrays;
 import java.util.Locale;
 
 /**
@@ -76,7 +77,7 @@ final class SessionHud {
         final long now = System.nanoTime();
         final long rects = mirror == null ? 0 : mirror.damageRects();
         frames++;
-        final String[] lines = {
+        String[] lines = {
                 "state " + state
                         + "  desktop " + backend.desktopWidth() + "x" + backend.desktopHeight()
                         + "  fps " + frameRate.sample(frames, now)
@@ -125,6 +126,17 @@ final class SessionHud {
                         + " btn " + Button.maskName(mouse.heldMask())
                         + "   keys " + keys.heldCount() + " held",
         };
+        // The sound, wherever the session has a switch for it, in the desktop
+        // client's words: what plays, what is queued in front of the device
+        // and the device's own buffer (together, how far behind what arrived
+        // it is heard), what the queue has had to do about the far end's
+        // timing, and whether the far end is asked not to send it or it is
+        // muted here. Read, not set: the switch is the panel's.
+        final String sound = backend.soundLine();
+        if (sound != null) {
+            lines = Arrays.copyOf(lines, lines.length + 1);
+            lines[lines.length - 1] = sound;
+        }
         // heightPx(), not insetBottomPx(): the desktop is meant to run under the
         // info bar and the HUD is not, so the two want different answers.
         hud.draw(c, lines, viewW, viewH,

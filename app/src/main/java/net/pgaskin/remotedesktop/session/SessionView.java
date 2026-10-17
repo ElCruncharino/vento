@@ -25,11 +25,8 @@ import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 import android.view.inputmethod.InputMethodManager;
 
-import androidx.appcompat.content.res.AppCompatResources;
-
 import net.pgaskin.remotedesktop.AppSettings;
 import net.pgaskin.remotedesktop.InputSettings;
-import net.pgaskin.remotedesktop.R;
 import net.pgaskin.remotedesktop.backend.Backend;
 import net.pgaskin.remotedesktop.backend.Monitor;
 import net.pgaskin.remotedesktop.control.CursorController;
@@ -130,6 +127,15 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
          * black screen, and possibly a password dialog over it.
          */
         void firstFrame();
+
+        /**
+         * The session's sound switch changed: offered, withdrawn, turned, or
+         * its sound started or stopped. The switch itself is on the
+         * connection panel, which is the activity's and may be open while it
+         * happens; this view has nothing to show for it but the overlay's
+         * line, which is redrawn every frame anyway.
+         */
+        void soundChanged();
     }
 
     /**
@@ -158,16 +164,6 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
     private final MouseOverlay overlay;
     private final ExtensionKeyboard keyboard;
     private final Toolbar toolbar;
-
-    /**
-     * The toolbar's sound button, after the four: the app's word, as the four
-     * are {@code TapRegions}' — {@code control} says nothing about sound. There
-     * only while the far end's sound plays, and its two icons are the app's
-     * own Material Symbols, lent to the chrome.
-     */
-    private static final String SOUND = "sound";
-    private static final String VOLUME_UP = "volume_up";
-    private static final String VOLUME_OFF = "volume_off";
     private final PhysicalMouse mouse;
     private final PhysicalKeyboard keys;
     private final Chrome chrome;
@@ -300,8 +296,6 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
         keys.setListener(this);
         chrome = new Chrome(cfg);
         chrome.attach(keyboard);
-        chrome.lendIcon(VOLUME_UP, AppCompatResources.getDrawable(ctx, R.drawable.ic_volume_up));
-        chrome.lendIcon(VOLUME_OFF, AppCompatResources.getDrawable(ctx, R.drawable.ic_volume_off));
         // Listening only now: a change notification asks the chrome for a
         // ripple, and the chrome does not exist above this line.
         toolbar.setListener(this);
@@ -494,11 +488,9 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
         performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
     }
 
-    /** The far end's sound started or stopped: the toolbar's sound button with it. */
     @Override
-    public void soundPlaying(boolean playing) {
-        syncToolbarState();
-        invalidate();
+    public void soundSwitch(int soundSwitch, boolean enabled, boolean playing) {
+        host.soundChanged();
     }
 
     @Override
@@ -1132,12 +1124,6 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
                 }
                 softInput.toggleKeyboard();
             }
-            // The toolbar's alone: no region is called this.
-            case SOUND -> {
-                backend.setMuted(!backend.muted());
-                syncToolbarState();
-                invalidate();
-            }
             default -> {
                 return false;
             }
@@ -1172,12 +1158,6 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
      * mechanism there is for it, and handed back again every time it moves —
      * which is why this hangs off the change notification rather than the
      * layout.
-     *
-     * <p>The system honours 200 dp of it an edge, which four buttons and the
-     * grip are. With the sound button too, while the far end's sound plays,
-     * the column is 244 dp and the box is asked for whole all the same; AOSP
-     * counts the limit from the bottom up, so it is the top button whose drag
-     * may be taken for the back gesture meanwhile. A tap on it is still a tap.
      */
     private void applyGestureExclusion() {
         exclusions.clear();
@@ -1208,26 +1188,13 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
      * the keyboard and the mouse overlay are not inactive there, they are
      * absent. And the two that remain report what they are showing, the way the
      * info bar reports an armed modifier.
-     *
-     * <p>Sound comes last, only while the far end's sound plays — from its
-     * first sound until its last stream closes, a couple of seconds after the
-     * sound ends, so it stays between one short sound and the next and a
-     * session with none never has it — as a speaker sounding or struck
-     * through, lit while muted as the keyboard is while up. The mute is the
-     * session's, kept by the backend, so a screen that attaches later shows it.
      */
     private void syncToolbarState() {
-        final List<Toolbar.Item> items = new ArrayList<>(backend.viewOnly()
+        toolbar.setItems(backend.viewOnly()
                 ? List.of(Toolbar.standard().get(0), Toolbar.standard().get(1))
                 : Toolbar.standard());
-        final boolean muted = backend.muted();
-        if (backend.soundPlaying()) {
-            items.add(new Toolbar.Item(SOUND, muted ? VOLUME_OFF : VOLUME_UP));
-        }
-        toolbar.setItems(items);
         toolbar.setActive(TapRegions.MOUSE, overlay.visible());
         toolbar.setActive(TapRegions.KEYBOARD, keyboard.visible());
-        toolbar.setActive(SOUND, muted);
     }
 
     /**

@@ -117,9 +117,10 @@
             android:orientation="vertical" />
 
         <!--
-            Muting the far end's sound, a switch while it plays and gone
-            otherwise, as the toolbar's sound button is: a fact about the live
-            session rather than an option, built by ConnectionPanel.
+            The session's sound switch, Enable audio or Mute audio, there from
+            when the far end may send sound and gone where it never will: a
+            fact about the live session rather than an option, built by
+            ConnectionPanel.
         -->
         <LinearLayout
             android:id="@+id/sound"

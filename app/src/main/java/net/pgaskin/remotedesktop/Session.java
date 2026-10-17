@@ -623,9 +623,9 @@ public final class Session implements Backend.Listener, Prompt.Handler {
     }
 
     @Override
-    public void soundPlaying(boolean playing) {
-        assertMain("soundPlaying");
-        view.soundPlaying(playing);
+    public void soundSwitch(int soundSwitch, boolean enabled, boolean playing) {
+        assertMain("soundSwitch");
+        view.soundSwitch(soundSwitch, enabled, playing);
     }
 
     @Override
