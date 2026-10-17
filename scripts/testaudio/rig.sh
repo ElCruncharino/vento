@@ -3,7 +3,8 @@
 # script into a null sink, records the sink's monitor, and analyse.py reads
 # the recording back. See usage.md.
 #
-#   rig.sh [OUT_DIR]      default build/scratch/audio/rig
+#   rig.sh [OUT_DIR] [--second]   OUT_DIR defaults to build/scratch/audio/rig;
+#                         --second plays a second session's (silent) stream too
 #
 # Nothing is audible: the rig writes silence until this script has seen its
 # stream on the null sink, and only then says `go`.
@@ -11,6 +12,9 @@ set -e
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
 out="$(realpath -m "${1:-$repo/build/scratch/audio/rig}")"
+shift || true
+streams=1
+[ "$1" = --second ] && streams=2
 mkdir -p "$out"
 rm -f "$out/ctl" "$out/rec.raw" "$out/timeline.json"
 
@@ -30,14 +34,14 @@ cleanup() {
 trap cleanup EXIT
 
 mkfifo "$out/ctl"
-PIPEWIRE_NODE=vento_test "$rig" --out "$out" < "$out/ctl" > "$out/rig.log" 2>&1 &
+PIPEWIRE_NODE=vento_test "$rig" --out "$out" "$@" < "$out/ctl" > "$out/rig.log" 2>&1 &
 pid=$!
 exec 3>"$out/ctl"
 for _ in $(seq 100); do grep -q READY "$out/rig.log" && break; sleep 0.1; done
 grep -q READY "$out/rig.log" || { cat "$out/rig.log"; echo "the rig did not start" >&2; exit 1; }
 
 # The route, before anything but silence is written.
-"$here/sink.sh" check "$pid"
+"$here/sink.sh" check "$pid" "$streams"
 echo go >&3
 wait "$pid"
 pid=""

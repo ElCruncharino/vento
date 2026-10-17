@@ -4,9 +4,12 @@
 #
 #   sink.sh load          load the sink (once), print its module id
 #   sink.sh unload ID     unload what `load` printed
-#   sink.sh check PID     wait (10 s) for PID's stream and succeed only if it
-#                         is on the sink; prints the stream's line. Two
-#                         programs of one name at once would be confused.
+#   sink.sh check PID [N] wait (10 s) for PID's stream (N of them: two
+#                         sessions are two) and succeed only if every one is
+#                         on the sink; prints a line a stream, with the output
+#                         it came through (PipeWire, a stream of vento's own,
+#                         or ALSA, PipeWire's ALSA plugin). Two programs of
+#                         one name at once would be confused on ALSA.
 #   sink.sh off           unload every module named vento_test (cleanup)
 #
 # Never touches the default sink: `load` compares it before and after, and
@@ -53,32 +56,43 @@ for m in json.load(sys.stdin):
         ;;
     check)
         pid="${2:?pid}"
+        want="${3:-1}"
         index="$(sink_index)"
         [ -n "$index" ] || { echo "sink $SINK is not loaded" >&2; exit 1; }
-        # A stream through ALSA's PipeWire plugin carries no process id,
-        # only the program's name: "alsa_playback.<comm>".
+        # vento's own PipeWire streams carry its process id (node.name
+        # "vento"); a stream through ALSA's PipeWire plugin carries no
+        # process id, only the program's name: "alsa_playback.<comm>".
         comm="$(cat "/proc/$pid/comm")"
         for _ in $(seq 50); do
-            line="$(pactl -f json list sink-inputs | python3 -I -c '
+            lines="$(pactl -f json list sink-inputs | python3 -I -c '
 import json, sys
-pid, index, comm = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+pid, index, comm, want = sys.argv[1], int(sys.argv[2]), sys.argv[3], int(sys.argv[4])
+mine = []
 for s in json.load(sys.stdin):
     p = s.get("properties", {})
-    if p.get("application.process.id") == pid or p.get("node.name") == "alsa_playback." + comm:
-        where = "on" if s["sink"] == index else "NOT on"
-        print(where, "sink-input", s["index"], "sink", s["sink"], p.get("application.name"), p.get("media.name"))
-        break' "$pid" "$index" "$comm")"
-            case "$line" in
-                on*) echo "$line"; exit 0 ;;
-                NOT*) echo "$line" >&2; exit 1 ;;
+    node = p.get("node.name", "")
+    if node == "alsa_playback." + comm:
+        output = "ALSA"
+    elif p.get("application.process.id") == pid:
+        output = "PipeWire" if node == "vento" else node
+    else:
+        continue
+    where = "on" if s["sink"] == index else "NOT on"
+    mine.append(" ".join(str(x) for x in (where, "sink-input", s["index"], "sink", s["sink"], output,
+                                          p.get("application.name"), p.get("media.name"))))
+if any(m.startswith("NOT") for m in mine) or len(mine) >= want:
+    print("\n".join(mine))' "$pid" "$index" "$comm" "$want")"
+            case "$lines" in
+                *NOT*) echo "$lines" >&2; exit 1 ;;
+                on*) echo "$lines"; exit 0 ;;
             esac
             sleep 0.2
         done
-        echo "no stream from pid $pid" >&2
+        echo "no stream (or fewer than $want) from pid $pid" >&2
         exit 1
         ;;
     *)
-        sed -n '2,13p' "$0"
+        sed -n '2,16p' "$0"
         exit 2
         ;;
 esac
