@@ -12,6 +12,7 @@ silence is played until `pactl` has shown the stream on the null sink.
 
 ```sh
 ./rig.sh [OUT_DIR] [--second]  # the output's own rig, end to end (below)
+./pattern.sh OUT_DIR PATTERN SECONDS   # a protocol's rhythm of writes (below)
 ./sink.sh load              # load the null sink, print its module id
 ./sink.sh check PID [N]     # are PID's streams (N of them) on it? (exit 0 only if so)
 ./sink.sh unload ID         # unload what load printed
@@ -94,6 +95,31 @@ burst, 101-117 ms after it, 86-88 ms after the stall, 90-100 ms of the burst
 heard, a mute in 5-10 ms. `--second` opens a second session's output beside
 the first (silent): two streams, `sink.sh check PID 2`, and on PipeWire two
 nodes of the one client.
+
+## A far end's rhythm: pattern.sh
+
+```sh
+./pattern.sh OUT_DIR PATTERN SECONDS [--stall-every S --stall MS] [--seed N]
+```
+
+`backends/platform/desktop/examples/audio_pattern.rs` writes into the
+desktop's output the way a protocol's sound arrives — `qemu` (10 ms every
+10 ms), `opus` (20 ms every 20 ms), `rdp` (Windows' 23 ms AAC waves, up to
+18 ms late), `rdp-pairs` (two at a time, 10 ms either side), `winpcm`
+(Windows' 186 ms PCM waves two at a time), `bursty` (20 ms frames let go in
+bunches 20-100 ms apart) — with a half-second 440 Hz burst every two seconds,
+and `--stall-every`/`--stall` hold the writer back now and then, as a loaded
+machine or a network does. It prints when it wrote each burst, and the
+overlay's sound line every second; `pattern.py` matches each burst to the
+recording: the client's share of a session's latency (written to captured,
+with nothing of a far end's), 5 ms gaps and discontinuities per burst, and
+the queue's underruns and drops over the run, into
+`OUT_DIR/pattern.json`. The order is the rig's (load the sink, check the
+stream, then `go`); `VENTO_AUDIO_OUTPUT=alsa` runs it on ALSA, and
+`AUDIO_PATTERN=path` runs another build of the example as it is (one kept
+from before a change, to compare). Measured on PipeWire, medians of 15
+bursts: `qemu` 84 ms, `opus` 75, `rdp` 68, `rdp-pairs` 65, `winpcm` 200,
+`bursty` 68 with 8 underruns (on ALSA 99, 106, 114, 95, 267, 140 with 11).
 
 ## A backend end to end: bursts.py
 
