@@ -157,6 +157,12 @@ impl Queue {
         self.format.frames(LIMIT.saturating_sub(buffer)).max(self.target(inner) * 2)
     }
 
+    /// The device's buffer, as [`set_device`](Queue::set_device) was told
+    /// it; zero before the device has opened.
+    pub fn device_buffer(&self) -> Duration {
+        Duration::from_micros(self.buffer.load(Ordering::Relaxed))
+    }
+
     /// How long what is queued lasts.
     pub fn queued(&self) -> Duration {
         let samples = self.inner.lock().unwrap().samples.len();

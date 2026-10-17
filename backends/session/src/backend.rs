@@ -24,6 +24,7 @@
 //! [`thumbnail`]: Backend::thumbnail
 
 pub use common::Credentials;
+use common::audio::Controls;
 
 /// One of the far end's screens, as a rectangle in its coordinates.
 ///
@@ -216,6 +217,28 @@ impl ConnectionFact {
             None => format!("{} in", size(traffic.received)),
         };
         ConnectionFact::of(Field::Data, "Transferred", &value)
+    }
+
+    /// The session's sound, "AAC 44.1 kHz stereo", with ", muted" while it
+    /// is: a row of the client's rather than the backend's, since the
+    /// client holds the sound's controls (the backend has only the streams
+    /// it writes), and worded here so that both clients word it alike.
+    /// `None` while nothing plays, which is when the toolbars have no sound
+    /// button either.
+    pub fn sound(controls: &Controls) -> Option<ConnectionFact> {
+        let playback = controls.playback()?;
+        let muted = if controls.muted() { ", muted" } else { "" };
+        Some(ConnectionFact::of(Field::Other, "Sound", &format!("{}{muted}", playback.describe())))
+    }
+}
+
+/// `info`, a backend's rows, with the session's [sound
+/// row](ConnectionFact::sound) where it has one: after the backend's own
+/// rows and before its diagnostics, which the panels show in this order.
+pub fn with_sound(info: &mut Vec<ConnectionFact>, controls: &Controls) {
+    if let Some(row) = ConnectionFact::sound(controls) {
+        let at = info.iter().position(|f| f.diagnostic).unwrap_or(info.len());
+        info.insert(at, row);
     }
 }
 
@@ -490,6 +513,46 @@ mod tests {
             sent: None,
         });
         assert_eq!(one.value, "1.50 kB in");
+    }
+
+    #[test]
+    fn the_sound_row_goes_before_the_diagnostics_while_sound_plays() {
+        use common::audio::{Device, Format, NoOutputs, Outputs, Queue};
+        use std::sync::Arc;
+
+        struct Quiet;
+        impl Device for Quiet {}
+        struct Out(Arc<Controls>);
+        impl Outputs for Out {
+            fn controls(&self) -> &Arc<Controls> {
+                &self.0
+            }
+            fn device(&self, _queue: Arc<Queue>) -> Result<Box<dyn Device>, String> {
+                Ok(Box::new(Quiet))
+            }
+        }
+
+        let rows = || {
+            vec![
+                ConnectionFact::of(Field::Protocol, "Protocol", "RDP"),
+                ConnectionFact::diagnostic(Field::Other, "Pixels", "32 bpp"),
+            ]
+        };
+        let out = Out(Arc::new(Controls::new()));
+        let mut info = rows();
+        with_sound(&mut info, out.controls());
+        assert_eq!(info, rows(), "nothing playing, no row");
+        assert!(ConnectionFact::sound(NoOutputs::new().controls()).is_none());
+
+        let mut stream = out.open(Format::new(48_000, 2).unwrap()).unwrap();
+        stream.write(&[0, 0]);
+        with_sound(&mut info, out.controls());
+        assert_eq!(info[1].label, "Sound");
+        assert_eq!(info[1].value, "PCM 48 kHz stereo");
+        assert!(!info[1].diagnostic);
+        assert_eq!(info[2].label, "Pixels");
+        out.controls().set_muted(true);
+        assert_eq!(ConnectionFact::sound(out.controls()).unwrap().value, "PCM 48 kHz stereo, muted");
     }
 
     #[test]
