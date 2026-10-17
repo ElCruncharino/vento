@@ -44,7 +44,8 @@ use crate::protos::message::{
     CaptureDisplays, Clipboard, ClipboardFormat, ControlKey, DisplayResolution, Hash, KeyEvent,
     ImageQuality, KeyboardMode, LoginRequest, Message, Misc, MouseEvent, OptionMessage, PeerInfo,
     PublicKey, Resolution, SupportedDecoding, SwitchDisplay, TestDelay, VideoFrame, login_response,
-    message, misc, option_message::BoolOption, supported_decoding::PreferCodec, video_frame,
+    message, misc, option_message::BoolOption, permission_info::Permission, supported_decoding::PreferCodec,
+    video_frame,
 };
 use crate::rendezvous;
 use crate::wire::{self, Traffic};
@@ -102,10 +103,13 @@ pub struct Config {
     /// the login and never changed: what it asks for happens after the last
     /// message either end sends.
     pub lock_after: bool,
-    /// Where the peer's sound goes, or `None` for a session that asks for
-    /// none. Asked for only where the platform decodes Opus, which is all
+    /// Where the peer's sound goes, or `None` for a session that never asks
+    /// for it. Asked for only where the platform decodes Opus, which is all
     /// their peer sends.
     pub audio: Option<Arc<dyn Outputs>>,
+    /// Whether the peer is asked for its sound at login: where the session's
+    /// Enable switch starts, which asks again with their option message.
+    pub sound: bool,
 }
 
 /// How long a stream stays open after its sound was heard: the gap between
@@ -413,8 +417,10 @@ pub struct Client {
     /// The last round trip their timing message measured, in milliseconds.
     round_trip: AtomicU64,
     /// Whether the options ask the peer for its sound: set from the
-    /// [`Config`] when the session runs, read whenever the options go out.
-    sound: AtomicBool,
+    /// [`Config`] when the session runs and by the session's switch, read
+    /// whenever the options go out. Shared with the switch's call, which
+    /// comes on a window's thread.
+    sound: Arc<AtomicBool>,
 }
 
 impl Client {
@@ -450,7 +456,7 @@ impl Client {
             codec: AtomicI32::new(PreferredCodec::Auto.ordinal()),
             codec_sent: AtomicI32::new(-1),
             round_trip: AtomicU64::new(0),
-            sound: AtomicBool::new(false),
+            sound: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -577,7 +583,9 @@ impl Client {
         self.quality.store(config.quality.ordinal(), Ordering::Relaxed);
         self.fps.store(config.fps, Ordering::Relaxed);
         self.codec.store(config.codec.ordinal(), Ordering::Relaxed);
-        self.sound.store(sound_of(config).is_some(), Ordering::Relaxed);
+        self.sound.store(config.sound && sound_of(config).is_some(), Ordering::Relaxed);
+        // No switch past the session, however it ends.
+        let _withdraw = Withdraw(sound_of(config));
 
         // How the socket is obtained is the whole of the difference between the
         // two modes: everything past this point is one session either way.
@@ -875,6 +883,10 @@ impl Client {
         // check for quiet after every message is often enough.
         let mut sound = sound_of(config).map(Player::new);
         let mut sound_format: Option<Format> = None;
+        // Whether the peer lets this session have its sound: their peer says
+        // so (a PermissionInfo) only where it does not, as the connection
+        // starts and whenever the person over there changes it.
+        let mut sound_permitted = true;
 
         loop {
             let message = match reader.message::<Message>() {
@@ -883,6 +895,11 @@ impl Client {
                 Err(e) => return Err(Error::Io(e)),
             };
             if let Some(player) = &mut sound {
+                // Turned off, at once: what the peer sent before it heard is
+                // not worth the second it would take to play out.
+                if !self.sound.load(Ordering::Relaxed) {
+                    player.close();
+                }
                 player.close_if_quiet(QUIET);
             }
             let Some(union) = message.union else { continue };
@@ -891,6 +908,12 @@ impl Client {
                     Some(login_response::Union::PeerInfo(peer)) => {
                         self.arrived(&peer, handler, &mut back)?;
                         connected = true;
+                        // Logged in, the peer may send its sound: an
+                        // Enable switch, since the option message that
+                        // asked for it at login asks again at any time.
+                        if sound_permitted && let Some(audio) = sound_of(config) {
+                            self.offer_sound(&audio);
+                        }
                     }
                     // Both password errors are answered on the same connection:
                     // their client re-prompts and sends another `LoginRequest`
@@ -968,6 +991,19 @@ impl Client {
                 }
                 message::Union::Misc(misc) => match misc.union {
                     Some(misc::Union::CloseReason(why)) => return Err(Error::Refused(why)),
+                    Some(misc::Union::PermissionInfo(permission))
+                        if permission.permission.enum_value() == Ok(Permission::Audio) =>
+                    {
+                        log::info!("the peer {} its sound", if permission.enabled { "allows" } else { "withholds" });
+                        sound_permitted = permission.enabled;
+                        if let Some(audio) = sound_of(config).filter(|_| connected) {
+                            if permission.enabled {
+                                self.offer_sound(&audio);
+                            } else {
+                                audio.controls().withdraw();
+                            }
+                        }
+                    }
                     Some(misc::Union::SwitchDisplay(display)) => {
                         self.switched(&display, handler, &mut back);
                     }
@@ -984,7 +1020,9 @@ impl Client {
                     }
                     _ => {}
                 },
-                message::Union::AudioFrame(frame) => {
+                // Frames that were on their way when the switch was turned
+                // off are dropped rather than opening a stream again.
+                message::Union::AudioFrame(frame) if self.sound.load(Ordering::Relaxed) => {
                     if let (Some(player), Some(format)) = (&mut sound, sound_format) {
                         player.packet(SoundCodec::Opus, format, &[], &frame.data);
                     }
@@ -1437,6 +1475,31 @@ impl Client {
         log::info!("codec preference {:?}", prefer);
         decoding.prefer = prefer.wire().into();
         decoding
+    }
+
+    /// The session's sound switch as an Enable switch, on as the options
+    /// ask: turned, it asks the peer with an option message carrying only
+    /// `disable_audio` — every other option left unset, which their peer
+    /// leaves as it is — and their peer subscribes the session to its sound
+    /// or takes it off. Sent from the switch's thread through the writer.
+    fn offer_sound(&self, audio: &Arc<dyn Outputs>) {
+        let sound = Arc::clone(&self.sound);
+        let out = self.out.lock().unwrap().clone();
+        audio.controls().offer_enable(
+            self.sound.load(Ordering::Relaxed),
+            Box::new(move |on| {
+                sound.store(on, Ordering::Relaxed);
+                let mut option = OptionMessage::new();
+                option.disable_audio = if on { BoolOption::No } else { BoolOption::Yes }.into();
+                let mut misc = Misc::new();
+                misc.set_option(option);
+                let mut message = Message::new();
+                message.set_misc(misc);
+                if let (Some(out), Ok(bytes)) = (&out, message.write_to_bytes()) {
+                    let _ = out.send(bytes);
+                }
+            }),
+        );
     }
 
     /// A live option change, which is one message and takes effect on the
@@ -1899,6 +1962,18 @@ fn arm(union: &message::Union) -> &'static str {
     }
 }
 
+/// Withdraws the session's sound switch when the session ends, whichever
+/// way it ends.
+struct Withdraw(Option<Arc<dyn Outputs>>);
+
+impl Drop for Withdraw {
+    fn drop(&mut self) {
+        if let Some(audio) = &self.0 {
+            audio.controls().withdraw();
+        }
+    }
+}
+
 /// The session's sound output, where the config has one and its platform
 /// decodes Opus: the only codec their peer encodes its sound in, so an
 /// output without the decoder is no sound at all.
@@ -2051,6 +2126,7 @@ mod tests {
             codec: PreferredCodec::Auto,
             lock_after: false,
             audio,
+            sound: true,
         };
         let controls = Arc::new(common::audio::Controls::new());
         assert!(sound_of(&config(None)).is_none());
@@ -2061,6 +2137,38 @@ mod tests {
         assert_eq!(client.options(true).disable_audio.enum_value(), Ok(BoolOption::Yes));
         client.sound.store(true, Ordering::Relaxed);
         assert_eq!(client.options(false).disable_audio.enum_value(), Ok(BoolOption::No));
+    }
+
+    #[test]
+    fn the_switch_asks_the_peer_with_the_audio_option_alone() {
+        let controls = Arc::new(common::audio::Controls::new());
+        let audio: Arc<dyn Outputs> = Arc::new(Sounding(Arc::clone(&controls), true));
+        let client = Client::new(Arc::new(video::NoDecoders));
+        let (out, sent) = channel::<Vec<u8>>();
+        *client.out.lock().unwrap() = Some(out);
+        client.sound.store(true, Ordering::Relaxed);
+        client.offer_sound(&audio);
+        let sound = controls.sound();
+        assert_eq!((sound.switch, sound.enabled), (Some(common::audio::Switch::Enable), true));
+
+        let asked = |sent: &std::sync::mpsc::Receiver<Vec<u8>>| {
+            let message = Message::parse_from_bytes(&sent.try_recv().unwrap()).unwrap();
+            let Some(message::Union::Misc(misc)) = message.union else { panic!("not a misc") };
+            let Some(misc::Union::Option(option)) = misc.union else { panic!("not an option") };
+            // Nothing else in it, so the peer changes nothing else.
+            assert_eq!(option.image_quality.enum_value(), Ok(ImageQuality::NotSet));
+            assert_eq!(option.custom_fps, 0);
+            assert!(option.supported_decoding.is_none());
+            option.disable_audio.enum_value().unwrap()
+        };
+        assert!(controls.set_enabled(false));
+        assert_eq!(asked(&sent), BoolOption::Yes);
+        assert!(!client.sound.load(Ordering::Relaxed));
+        // The next options, a quality change's, say the same.
+        assert_eq!(client.options(false).disable_audio.enum_value(), Ok(BoolOption::Yes));
+        assert!(controls.set_enabled(true));
+        assert_eq!(asked(&sent), BoolOption::No);
+        assert!(sent.try_recv().is_err());
     }
 
     #[test]

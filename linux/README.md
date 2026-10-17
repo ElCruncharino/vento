@@ -520,9 +520,16 @@ list only once something first plays. The stream closes two seconds after
 the last wave has been heard, and plays on while the window is hidden. To
 Windows 10 (`winbursts.py`) the tone reached the null sink 323 ms after
 Windows was handed it, as AAC, and 604 ms as PCM (AAC withheld in a scratch
-build: Windows' long PCM waves). RustDesk's sound (the `Audio` option, on
-as in their own client, decided at login) is the peer's Opus, asked for only
-where the platform decodes Opus and played through its decoder; the peer
+build: Windows' long PCM waves). RustDesk's sound is the peer's Opus, asked for only
+where the platform decodes Opus and played through its decoder, and only
+while the session's sound switch is on: the `Audio` option, on as in their
+own client, is what the login asks, and the switch, there from the login
+unless the peer withholds its sound (their permission, which it can also
+give or take back during the session), asks again with their option message
+alone, which subscribes the session to the peer's sound or takes it off
+(bursts every two seconds: heard at 108-111 ms while on, none of the ten in
+the twenty seconds off, the socket going from 14 kB/s to under 1 kB/s);
+what arrives after it was turned off is dropped and the stream closed. The peer
 sends silence for eight seconds after its desktop falls quiet and then
 nothing, so the stream closes ten seconds after the last sound. On
 `scripts/testrustdesk`'s desktop with a sound (`AUDIO=1`, timed by

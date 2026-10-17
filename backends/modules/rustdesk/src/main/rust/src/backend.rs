@@ -85,7 +85,8 @@ fn create(c: &Connect) -> Result<Arc<dyn Backend>, String> {
         fps: fps(o),
         codec: codec_of(o.get("Codec")),
         lock_after: o.bool("LockAfterSession"),
-        audio: c.audio.clone().filter(|_| o.bool("Audio")),
+        audio: c.audio.clone(),
+        sound: o.bool("Audio"),
     };
     log::info!(
         "connecting to {} {} ({:?}, {} fps, sound {})",
@@ -93,7 +94,11 @@ fn create(c: &Connect) -> Result<Arc<dyn Backend>, String> {
         if by_id { "by id" } else { "directly" },
         config.quality,
         config.fps,
-        if config.audio.is_some() { "on" } else { "off" }
+        match (&config.audio, config.sound) {
+            (None, _) => "nowhere to play",
+            (Some(_), true) => "on",
+            (Some(_), false) => "off, until switched on",
+        }
     );
     let decoders = c.decoders.clone().ok_or("no video decoder to hand the picture to")?;
     let client = Client::new(decoders);
