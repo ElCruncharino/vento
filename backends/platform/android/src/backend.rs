@@ -48,6 +48,7 @@
 //! never crosses at all.
 
 use crate::{bitmap, string};
+pub use common::audio::Outputs;
 pub use common::video::Decoders;
 use jni::errors::{Error, LogErrorAndDefault};
 use jni::objects::{Global, JIntArray, JLongArray, JMethodID, JObject, JObjectArray, JString};
@@ -74,6 +75,10 @@ pub struct Module {
     /// the phone's MediaCodec for RustDesk, nothing for the others — so that
     /// a library with no use for the NDK's media library does not link it.
     pub decoders: fn() -> Option<Arc<dyn Decoders>>,
+    /// Where the far end's sound goes, for the backends that have sound:
+    /// AAudio for TigerVNC and FreeRDP, nothing for the others. Called once
+    /// a session, since an output's controls are its session's.
+    pub audio: fn() -> Option<Arc<dyn Outputs>>,
 }
 
 /// One per library: each `.so` has its own copy of this crate, statics and
@@ -92,14 +97,15 @@ static MODULE: OnceLock<Module> = OnceLock::new();
 /// ```
 ///
 /// `decoders = <fn() -> Option<Arc<dyn Decoders>>>` hands the session a video
-/// decoder, for the backend that needs one. `on_load = <unsafe fn(*mut RawVm)>`
+/// decoder, for the backend that needs one, and `audio = <fn() ->
+/// Option<Arc<dyn Outputs>>>` a sound output likewise. `on_load = <unsafe fn(*mut RawVm)>`
 /// is run first, with the runtime's `JavaVM`, for a library linked into the
 /// same `.so` that wanted a `JNI_OnLoad` of its own: there can be only one,
 /// and FreeRDP's WinPR keeps the `JavaVM` it reads the time zone through
 /// from its.
 #[macro_export]
 macro_rules! natives {
-    (class = $class:expr, kind = $kind:expr $(, decoders = $decoders:expr)? $(, on_load = $on_load:expr)? $(,)?) => {
+    (class = $class:expr, kind = $kind:expr $(, decoders = $decoders:expr)? $(, audio = $audio:expr)? $(, on_load = $on_load:expr)? $(,)?) => {
         /// Registers this library's natives on its module's class. Called by
         /// the runtime on the thread that loaded the library, which is what
         /// lets `FindClass` see the module's class loader.
@@ -113,9 +119,12 @@ macro_rules! natives {
             #[allow(unused_mut, unused_assignments)]
             let mut decoders: fn() -> Option<::std::sync::Arc<dyn $crate::backend::Decoders>> = || None;
             $(decoders = $decoders;)?
+            #[allow(unused_mut, unused_assignments)]
+            let mut audio: fn() -> Option<::std::sync::Arc<dyn $crate::backend::Outputs>> = || None;
+            $(audio = $audio;)?
             // SAFETY: `vm` is the runtime's own, which is all either asks.
             $(unsafe { ($on_load)(vm) };)?
-            unsafe { $crate::backend::on_load(vm, $class, $crate::backend::Module { kind: &$kind, decoders }) }
+            unsafe { $crate::backend::on_load(vm, $class, $crate::backend::Module { kind: &$kind, decoders, audio }) }
         }
     };
 }
@@ -349,7 +358,7 @@ fn create<'local>(
         client_name: &client_name,
         platform: Platform::Android,
         decoders: (module.decoders)(),
-        audio: None,
+        audio: (module.audio)(),
     };
     match kind.start(&connect) {
         Ok(backend) => {

@@ -5,8 +5,9 @@
 //! about a protocol: [`backend`], which is any `session::Backend` as the
 //! natives `NativeBackend.java` calls, [`bitmap`], which writes pixels
 //! straight into a Java `Bitmap`, [`log`], which points the `log` crate at
-//! logcat, and [`mediacodec`], which is the phone's video decoder speaking
-//! `common::video::Decoders` — and [`surface`], the JNI table itself, which
+//! logcat, [`mediacodec`], which is the phone's video decoder speaking
+//! `common::video::Decoders`, and [`aaudio`], which is its sound output
+//! speaking `common::audio::Outputs` — and [`surface`], the JNI table itself, which
 //! is plain data and builds everywhere, because the code generator that
 //! writes each module's natives class runs on the host.
 //!
@@ -20,6 +21,8 @@
 //! every event, and **whichever thread is drawing**, which calls `readRegion`
 //! straight through so that pixel fetches never queue behind connection work.
 
+#[cfg(target_os = "android")]
+pub mod aaudio;
 #[cfg(target_os = "android")]
 pub mod backend;
 #[cfg(target_os = "android")]

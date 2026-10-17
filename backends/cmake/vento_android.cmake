@@ -34,5 +34,5 @@ function(vento_android_library target crate)
             "LINKER:--version-script=${_VENTO_BACKENDS}/platform/android/c/exports.map")
     set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS
             "${_VENTO_BACKENDS}/platform/android/c/exports.map")
-    target_link_libraries(${target} PRIVATE ${target}_rust jnigraphics mediandk log dl m)
+    target_link_libraries(${target} PRIVATE ${target}_rust jnigraphics mediandk aaudio log dl m)
 endfunction()

@@ -27,12 +27,15 @@ pub static KIND: Kind = Kind {
 // The phone's library: this backend, registered on the module's generated
 // natives class. Android only — the host links the C as a library of its own.
 // MediaCodec is what decodes its H.264 there, through the same table as the
-// Linux client's FFmpeg (see `create`).
+// Linux client's FFmpeg (see `create`). The session is handed AAudio as its
+// sound output, which the QEMU audio is still to be moved onto (it plays
+// through the shim's own AAudio sink until then).
 #[cfg(target_os = "android")]
 platform_android::natives!(
     class = c"net/pgaskin/remotedesktop/backend/tigervnc/TigerVncNatives",
     kind = KIND,
     decoders = || Some(std::sync::Arc::new(platform_android::mediacodec::MediaCodec)),
+    audio = || Some(std::sync::Arc::new(platform_android::aaudio::AAudio::new())),
 );
 
 static BEHAVIOUR: Behaviour = Behaviour {
