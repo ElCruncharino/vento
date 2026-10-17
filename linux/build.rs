@@ -56,7 +56,6 @@ fn main() {
         "common/include",
         "platform/desktop/c",
         "platform/desktop/realvnc",
-        "platform/desktop/tigervnc",
         "modules/libvnc/src/main/cpp",
         "modules/tigervnc/src/main/cpp",
         "modules/freerdp/src/main/cpp",

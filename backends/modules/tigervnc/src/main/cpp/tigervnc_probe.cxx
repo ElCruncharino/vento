@@ -38,7 +38,7 @@ vento_session *create(void *config, const vento_callbacks *callbacks) {
             "  --quality N          0-9 for JPEG, -1 lossless, -2 by line speed (-1)\n"
             "  --color N            0 full, 1 for 64 colours, 2 for 8, -2 by speed (0)\n"
             "  --h264               offer H.264 as well (declined here: no decoders)\n"
-            "  --audio              ask for the server's sound\n"
+            "  --audio              ask for the server's sound (declined here: no output)\n"
             "  --timeout MS         connect timeout, or 0 for none (0)\n"
             "%s",
             vento_probe_usage);

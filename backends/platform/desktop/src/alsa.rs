@@ -7,18 +7,24 @@
 //!
 //! Declared here rather than taken from a crate, as `ffmpeg.rs` declares
 //! its C: a dozen functions of `libasound.so.2`, whose ABI has not changed
-//! in twenty years, linked the way TigerVNC's own sink in
-//! `libvento_tigervnc.so` already links it — so the Linux client needs no
-//! library it did not already load.
+//! in twenty years, linked by name. It is the one library the Linux client
+//! loads for sound: TigerVNC's QEMU audio plays through this (handed to its
+//! session as `vento/audio.h`'s table), and `libvento_tigervnc.so`, whose
+//! own ALSA sink this replaced, no longer links libasound at all.
 //!
 //! **A thread per stream does everything that can wait.** Opening the
 //! device is a round trip to the sound server, which can take a while and,
 //! with a server that has hung, forever; writing to it blocks until the
 //! device has room. Both happen on the stream's own thread, which takes
 //! from the stream's queue a period at a time, so the protocol thread only
-//! ever queues. That is the off-thread open TigerVNC's `AlsaAudioOutput`
-//! did, carried over, with the policy it kept per sink (a second's buffer,
-//! a pre-roll) replaced by the queue's.
+//! ever queues. That is the off-thread open TigerVNC's old
+//! `AlsaAudioOutput` did, carried over, with the policy it kept per sink (a
+//! second's buffer, a pre-roll) replaced by the queue's: its non-blocking
+//! writes into that second's buffer filled it with whatever arrived at once
+//! (a pause's backlog, a late read), and a stream that the device drained
+//! no faster than the server sent kept that delay for good — a session
+//! paused for a moment on the rig played everything a second late from
+//! then on.
 //!
 //! The device's own buffer is kept short — 50 ms requested — since the
 //! queue in front of it is what absorbs the network's jitter, and anything

@@ -3,13 +3,13 @@
 #
 # Two builds from one file. Under Gradle this is a root, configured by the NDK
 # toolchain, and makes `libremotedesktop_tigervnc.so`: the session, with the
-# module's Rust crate linked in as the JNI layer over it, and the phone's two
-# media sinks, with the
-# vendored libjpeg-turbo and pixman and the nettle and GnuTLS ports linked in,
-# since a phone has none of them. Under `backends/CMakeLists.txt` it is a
-# subdirectory on a Linux host and makes `vento_tigervnc`, the session with
-# the desktop's ALSA sink, against the libraries the host has, with a probe in
-# front of it. What is shared is the middle — how
+# module's Rust crate linked in as the JNI layer over it (and with it the
+# phone's MediaCodec and AAudio, which decode its H.264 and play its sound),
+# with the vendored libjpeg-turbo and pixman and the nettle and GnuTLS ports
+# linked in, since a phone has none of them. Under `backends/CMakeLists.txt`
+# it is a subdirectory on a Linux host and makes `vento_tigervnc`, the
+# session, against the libraries the host has, with a probe in front of it.
+# What is shared is the middle — how
 # TigerVNC's `common/` itself is configured — and the two halves around it
 # are `if(ANDROID)` and `else()`, so that the Android build is the same
 # sequence of statements it was.
@@ -139,10 +139,6 @@ else()
     find_package(ZLIB REQUIRED)
     find_package(JPEG REQUIRED)
     find_package(Pixman REQUIRED)
-
-    # For the audio sink, which is ALSA's and not their viewer's PulseAudio
-    # one; AlsaAudioOutput.h says why.
-    find_package(ALSA REQUIRED)
 endif()
 
 # H.264, which their build has two implementations of — FFmpeg's libavcodec and
@@ -169,8 +165,9 @@ endforeach()
 # makes `_()` the identity — and the host build says the same so that the two
 # differ in nothing a comparison would see; and audio is their viewer's own
 # PulseAudio or waveOut sink, which is not compiled here — the protocol half
-# of it is in `common/` whatever this says, and the sink is the platform's
-# behind `AudioOutput.h`.
+# of it is in `common/` whatever this says, and the sound is played on the
+# platform's output, handed to the session as `vento/audio.h`'s table
+# (`VentoAudio.h`).
 configure_file("${THIRD_PARTY}/tigervnc/config.h.in" "${CMAKE_CURRENT_BINARY_DIR}/config.h")
 add_definitions(-DHAVE_CONFIG_H)
 
@@ -213,29 +210,27 @@ if(ANDROID)
     # The session, which is the shim over TigerVNC's client and names no
     # platform; the Rust crate beside it in `src/main/rust`, which is the
     # backend over the session and the JNI layer every backend shares — and
-    # MediaCodec's decoder, which the session's H.264 is decoded by; and the
-    # audio output the phone's own sink stands behind, from
-    # `backends/platform/android`.
-    add_library(remotedesktop_tigervnc SHARED tigervnc_session.cxx
-            "${VENTO_BACKENDS}/platform/android/tigervnc/AndroidAudioOutput.cxx")
+    # MediaCodec's decoder and AAudio's output, which the session's H.264 is
+    # decoded by and its sound played on, through the tables the crate hands
+    # it (vento_android_library links both).
+    add_library(remotedesktop_tigervnc SHARED tigervnc_session.cxx)
     vento_android_library(remotedesktop_tigervnc remotedesktop_tigervnc)
     remotedesktop_warnings(remotedesktop_tigervnc)
     # gnutls by name as well as through theirs: the certificate check is the
     # shim's now, and it calls the known-hosts functions itself.
-    target_link_libraries(remotedesktop_tigervnc PRIVATE rfbclient rfb network rdr core gnutls
-            aaudio)
+    target_link_libraries(remotedesktop_tigervnc PRIVATE rfbclient rfb network rdr core gnutls)
 else()
-    # The session and the desktop's audio sink, for whatever desktop process
-    # links them: the neutral include directory is the interface, and
-    # `vento_log` is left to the platform — the probe's `vento_desktop`, or
-    # the library's own copy of it under VENTO_SHARED (vento_desktop.cmake).
-    # The H.264 context is inside `rfbclient`, and decodes with whatever the
-    # process hands the session: the Linux client's FFmpeg. The probe, which
-    # is C and hands it nothing, never offers H.264.
-    vento_backend_library(vento_tigervnc tigervnc_session.cxx
-            "${VENTO_BACKENDS}/platform/desktop/tigervnc/AlsaAudioOutput.cxx")
+    # The session, for whatever desktop process links it: the neutral include
+    # directory is the interface, and `vento_log` is left to the platform —
+    # the probe's `vento_desktop`, or the library's own copy of it under
+    # VENTO_SHARED (vento_desktop.cmake). The H.264 context is inside
+    # `rfbclient`, and decodes with whatever the process hands the session —
+    # the Linux client's FFmpeg — and the sound plays on whatever output it
+    # hands over: the Linux client's ALSA. The probe, which is C and hands it
+    # neither, never offers H.264 and never asks for sound.
+    vento_backend_library(vento_tigervnc tigervnc_session.cxx)
     target_link_libraries(vento_tigervnc ${VENTO_BACKEND_LINK} rfbclient rfb network rdr core
-            ${GNUTLS_LIBRARIES} ALSA::ALSA)
+            ${GNUTLS_LIBRARIES})
 
     vento_backend_probe(vento_tigervnc tigervnc_probe.cxx)
 endif()

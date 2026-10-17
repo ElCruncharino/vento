@@ -3,7 +3,7 @@
 # protocol whose picture is video — RustDesk's — can be run, probed and tested
 # on the machine it is developed on with the picture in; and a sound output,
 # which on a phone is AAudio and here is ALSA's default device (`src/alsa.rs`,
-# libasound declared by hand and linked as TigerVNC's own sink links it).
+# libasound declared by hand and linked by name, as libasound.so.2).
 #
 # The mirror of `remotedesktop-platform-android`, cfg for cfg: on Android the
 # crate is empty and has no dependencies, which is what keeps FFmpeg out of

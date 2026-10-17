@@ -37,8 +37,8 @@
 #
 # Needs, as development packages: openssl, gnutls, nettle (with hogweed and
 # gmp), libjpeg-turbo, pixman, zlib, FFmpeg's libavcodec, libavutil,
-# libswscale and libswresample (unless VENTO_FFMPEG_PREFIX is given),
-# libpulse and alsa-lib, plus pkg-config, and a C and C++ compiler
+# libswscale and libswresample (unless VENTO_FFMPEG_PREFIX is given) and
+# libpulse (FreeRDP's sound), plus pkg-config, and a C and C++ compiler
 # CMake can find — clang for RealVNC (`CC=clang CXX=clang++ cmake ...`), whose
 # four host-only submodules are initialised with `--recursive`.
 

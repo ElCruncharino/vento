@@ -421,6 +421,28 @@ on Wayland with tigervnc in a headless tinywl (wlroots 0.20) made to suspend
 its windows on a signal: paused (the socket's receive queue filled to 10 KB,
 no commits) while suspended, live again when it was not.
 
+**Sound** plays on ALSA's `default` device (PipeWire's or PulseAudio's
+plugin on a desktop that has a sound server), opened per stream on a thread
+of its own (`backends/platform/desktop/src/alsa.rs`), behind one queue for
+every backend (`common::audio`): about 100 ms kept ahead of the device and
+never more than 250 ms, past which the oldest is dropped, so that a burst
+costs a skip rather than a delay that stays. TigerVNC's QEMU audio (the
+`Audio` option, decided at connect) plays there: the stream opens when the
+server begins sending, closes two seconds after it stops and its tail has
+been heard, and closes while the session is paused, since nothing is read
+then. What the server sent meanwhile arrives at once on restore, and the
+queue keeps only the newest of it. On `scripts/testqemu`'s audio guest
+(`AUDIO=1`, timed by `scripts/testaudio/bursts.py`) the guest's card to the
+null sink took 121-150 ms, wherever the queue settled when it first filled,
+and stayed within 3 ms of that over five minutes; after 25 s minimised the
+burst sent at the restore was heard 208 ms after it played and every one
+after that at 121 ms. TigerVNC's own ALSA sink, which this replaced, took
+83-88 ms until the first pause and 1013 ms after it, for as long as the
+stream ran: its second's buffer filled with the backlog, and a device that
+drains no faster than the server sends never caught up. FreeRDP's sound still plays
+through FreeRDP's own PulseAudio device. The probe prints `audio playing`
+and `audio stopped` as a session's sound starts and stops.
+
 **The toolbar** sits flush with the top edge, square-cornered, edged on its
 sides and bottom but not along the top, which is the window's edge, and stays
 out of the way: it slides off the top of the window when the pointer is elsewhere —

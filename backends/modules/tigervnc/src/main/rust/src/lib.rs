@@ -10,7 +10,10 @@
 //! — which is why no state directory is given it. Its H.264 is decoded by
 //! the platform's decoders, handed to the C as `vento/video.h`'s table
 //! (`session::c::video`): the Linux client's FFmpeg, with the person's
-//! hardware choice, and the phone's MediaCodec.
+//! hardware choice, and the phone's MediaCodec. Its sound — QEMU's audio
+//! extension — is played on the platform's output the same way, handed to
+//! the C as `vento/audio.h`'s table (`session::c::audio`): ALSA's default
+//! device on the Linux client, AAudio on the phone.
 
 use session::c::{Behaviour, CSession, ffi, start};
 use session::backend::{Backend, ConnectionFact, Field, Traffic};
@@ -27,9 +30,8 @@ pub static KIND: Kind = Kind {
 // The phone's library: this backend, registered on the module's generated
 // natives class. Android only — the host links the C as a library of its own.
 // MediaCodec is what decodes its H.264 there, through the same table as the
-// Linux client's FFmpeg (see `create`). The session is handed AAudio as its
-// sound output, which the QEMU audio is still to be moved onto (it plays
-// through the shim's own AAudio sink until then).
+// Linux client's FFmpeg (see `create`), and AAudio is what plays its sound,
+// through the same table as the Linux client's ALSA.
 #[cfg(target_os = "android")]
 platform_android::natives!(
     class = c"net/pgaskin/remotedesktop/backend/tigervnc/TigerVncNatives",
@@ -105,6 +107,7 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
         h264: o.bool("H264"),
         video: std::ptr::null(),
         audio: o.bool("Audio"),
+        audio_output: std::ptr::null(),
         connect_timeout_ms: CONNECT_TIMEOUT_MS,
     };
     log::info!("connecting to {}", c.address);
@@ -120,6 +123,12 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
             let video = c.decoders.clone().map(session::c::video::table);
             if let Some(video) = &video {
                 config.video = video;
+            }
+            // The sound output, the same way: the session's from here, and
+            // without one the server is never asked for its sound.
+            let audio = c.audio.clone().map(session::c::audio::table);
+            if let Some(audio) = &audio {
+                config.audio_output = audio;
             }
             unsafe { ffi::vento_tigervnc_create(&config, callbacks) }
         },
