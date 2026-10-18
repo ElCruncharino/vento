@@ -9,7 +9,8 @@
 //
 // What is behind a stream is the same for every backend and both platforms:
 // a queue that keeps as little in front of the device as the far end's own
-// rhythm of writes needs not to run dry, and a margin that grows when the far
+// rhythm of writes needs not to run dry, and a margin that starts higher and
+// comes down over a stream's first clean seconds and grows when the far
 // end's sound turns out later than that (`common::audio::Queue`), with the
 // device's own buffer behind it; never more than a quarter of a second (past
 // that the oldest is dropped, so a burst or a stall costs a skip rather than a

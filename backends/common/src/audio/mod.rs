@@ -18,7 +18,8 @@
 //! thread of the device's own. The queue keeps as little in front of the
 //! device as keeps it from running dry — a period of the device's, what the
 //! far end's own rhythm of writes has needed of late, and a margin that
-//! grows when the far end's sound turns out later than that and shrinks back
+//! starts higher and comes down over a stream's first clean seconds, grows
+//! when the far end's sound turns out later than that and shrinks back
 //! after a long while of it not — and the device's own buffer is behind
 //! that; never more than [`LIMIT`] together — past that the queue drops the
 //! oldest, so that a burst or a stall costs a skip rather than a lag that
@@ -73,6 +74,22 @@ use decode::Codec;
 /// backends with sound did. Each millisecond of it is a millisecond the sound
 /// is behind the picture.
 pub const MARGIN: Duration = Duration::from_millis(10);
+
+/// The margin a stream starts with, coming down a [`MARGIN_STEP`] at a time
+/// to [`MARGIN`] after every [`CLEAN_START`] of sound that did not run dry: for
+/// the first seconds, when the stream's rhythm has shown little of how the
+/// far end sends and the session nothing of how late, and for a loaded
+/// machine, which a margin learnt only after a gap is late for. Each
+/// stream's own, since what it allows for is the rhythm the stream has yet
+/// to see; the session's lateness ([`Controls::late`]) is a floor under it,
+/// not added to it. Measured: see `linux/README.md`'s Sound paragraph.
+pub const MARGIN_START: Duration = Duration::from_millis(30);
+
+/// How long a stream's sound has to have played without running dry for
+/// its margin to come down a [`MARGIN_STEP`] from [`MARGIN_START`]: from
+/// 30 ms to 10 in 40 s, each step dropped (faded) where the queue has kept
+/// it.
+pub const CLEAN_START: Duration = Duration::from_secs(10);
 
 /// The most lateness a session remembers ([`Controls::late`]). Lateness
 /// beyond a tenth of a second is a stall rather than a rhythm, and is a gap
@@ -392,7 +409,9 @@ impl Controls {
     /// seen of late covers lateness that comes every few seconds; this
     /// covers what comes less often than that, which is what ran it dry. A
     /// queue's margin is [`MARGIN`] and as much of this as its own rhythm
-    /// does not already cover.
+    /// does not already cover, or what is left of the stream's start
+    /// ([`MARGIN_START`]) where that is more: the two allow for the same
+    /// lateness, so the larger is kept and not both.
     pub fn late(&self) -> Duration {
         Duration::from_micros(self.late.load(Ordering::Relaxed))
     }

@@ -289,8 +289,18 @@ fn try_open(shared: &Arc<Shared>, rate: i32, channels: i32) -> Result<Open, i32>
     shared.latency_us.store(buffered.as_micros() as u64, Ordering::Relaxed);
     // AAudio keeps its buffer topped up from the callback, delay behind the
     // queue; and each callback asks for a burst, which the queue has to have
-    // left over.
-    shared.queue.set_device(buffered, device.duration(burst.max(0) as usize));
+    // left over. Not the most it asks for at once, though: on the Pixel 8
+    // (Android 17) this was measured on, a Legacy stream (what a stream that does not ask for
+    // low latency is) is read by the mixer two bursts at a time — 1920
+    // frames every 40 ms, asked for in two or three callbacks within 1.5 ms,
+    // from the first pulls after the buffer is filled on — so a queue that
+    // started with a burst to spare had a millisecond or less left after
+    // the first of them, and ran dry 0.3 s in on a write 3 ms late. The
+    // second burst is allowed for until the queue has measured what it
+    // keeps, which has them in it from then on.
+    let each = device.duration(burst.max(0) as usize);
+    shared.queue.set_device(buffered, each);
+    shared.queue.set_first_pulls(each);
     let result = unsafe { AAudioStream_requestStart(stream) };
     if result != AAUDIO_OK {
         open.close();

@@ -469,12 +469,13 @@ which keeps in front of the device only as much as keeps the device from
 finding it empty: a period of the device's, what the far end's own rhythm
 has needed over the last eight seconds — its largest write, or the most that
 lands at once, and how much later than its sound a write has come against
-the writes before it — and a margin of 10 ms; with the device's buffer
-behind that (ALSA's is 50 ms; PipeWire's a cycle, 5-11 ms on a null sink),
-and never more than 250 ms together, past which the oldest is dropped, so
-that a burst costs a skip rather than a delay that stays. On the rigs that
-is 32-50 ms for QEMU's, SPICE's and RustDesk's 10-20 ms of sound at a time,
-55-65 ms for RDP's 23 ms waves, and 395 ms for Windows' PCM, which comes in
+the writes before it — and a margin: 30 ms as a stream starts, 5 ms less
+after every 10 s of its sound that did not run dry, and 10 ms from 40 s on;
+with the device's buffer behind that (ALSA's is 50 ms; PipeWire's a cycle,
+5-11 ms on a null sink), and never more than 250 ms together, past which the
+oldest is dropped, so that a burst costs a skip rather than a delay that
+stays. On the rigs that is, from 40 s on, 32-50 ms for QEMU's, SPICE's and
+RustDesk's 10-20 ms of sound at a time, 55-65 ms for RDP's 23 ms waves, and 395 ms for Windows' PCM, which comes in
 186 ms waves two at a time (and twice that before anything is dropped). Where
 the queue runs dry anyway and the far end's sound comes within half a second
 — later than anything it had shown — the session remembers how late, a
@@ -489,7 +490,22 @@ sound is never further behind than it has to be. On an idle machine,
 minute-long sessions to Windows and SPICE ran dry with no margin in three of
 four and with 5 ms in one of four; with 10 ms, one of seventeen sessions of
 half a minute to five minutes across the six backends with sound ran dry,
-once. A fixed total of 100 ms, which this replaced, held QEMU's sound about
+once. The start's 30 ms is for the seconds before the far end's rhythm has
+shown much, and for a loaded machine, which a margin learnt from a gap is
+late for: with 64 busy loops started as a SPICE session began to play, a
+10 ms margin from the start ran dry in each of three sessions, 11 to 45 s
+in (26-32 ms late; 7 gaps in the first 30 s of two of them), and the start's
+margin in none of three for 76 s (one at 77 s, 36 ms late), the first 30 s
+84-95 ms end to end rather than 67-87 and the last 66-75 rather than 79-139
+(a margin learnt from a gap stays for minutes). Idle, it costs 20-25 ms in
+the first 30 s — QEMU's sound 74 ms end to end on PipeWire rather than
+48-51, RDP's client share 41 rather than 28 — and nothing after (48 and
+26 ms). Loaded from before the connection, four of seven sessions ran dry
+once as the stream began, 111-411 ms late, with either margin: no margin is
+for that. Every stream starts at it, not at what the session's earlier
+streams came down to, since its rhythm starts from nothing; the lateness
+the session remembers is a floor under it rather than added to it. A
+fixed total of 100 ms, which this replaced, held QEMU's sound about
 70 ms longer and RDP's about 55 ms. TigerVNC's QEMU audio plays there, offered to
 any server wherever the session has an output and asked for while the
 session's sound switch is on — the `Audio` option is where it starts, and
