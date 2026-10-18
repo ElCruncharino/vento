@@ -6,9 +6,10 @@
 # the vtable in `vento/backend.h`, and the one JNI layer in
 # `backends/platform/android`, whose `JNI_OnLoad` registers the natives on the
 # module's generated natives class — and `vento_log` onto logcat, the one C
-# file of that platform, in `c/` beside this directory. The crate is a static library Gradle has cargo-ndk
-# make before CMake builds (`rustStaticLibrary` in `backends/build.gradle`),
-# one per ABI under VENTO_RUST_LIBRARY_DIR.
+# file of that platform, in `cpp/` beside this directory. The crate is a
+# static library Gradle has cargo-ndk make before CMake builds
+# (`rustStaticLibrary` in `backends/build.gradle`), one per ABI under
+# VENTO_RUST_LIBRARY_DIR.
 #
 #   vento_android_library(<target> <crate library name>)
 #
@@ -29,15 +30,15 @@ function(vento_android_library target crate)
     add_library(${target}_rust STATIC IMPORTED)
     set_target_properties(${target}_rust PROPERTIES
             IMPORTED_LOCATION "${VENTO_RUST_LIBRARY_DIR}/${ANDROID_ABI}/lib${crate}.a")
-    target_sources(${target} PRIVATE "${_VENTO_ANDROID}/c/vento_log.c")
+    target_sources(${target} PRIVATE "${_VENTO_ANDROID}/cpp/vento_log.c")
     # The neutral headers, and the module's own `include/`, where its
     # `vento/<name>.h` is: called from the module's CMakeLists, this is that
     # module's directory.
     target_include_directories(${target} PRIVATE "${_VENTO_BACKENDS}/common/include"
             "${CMAKE_CURRENT_SOURCE_DIR}/include")
     target_link_options(${target} PRIVATE "LINKER:--undefined=JNI_OnLoad"
-            "LINKER:--version-script=${_VENTO_ANDROID}/c/exports.map")
+            "LINKER:--version-script=${_VENTO_ANDROID}/cpp/exports.map")
     set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS
-            "${_VENTO_ANDROID}/c/exports.map")
+            "${_VENTO_ANDROID}/cpp/exports.map")
     target_link_libraries(${target} PRIVATE ${target}_rust jnigraphics mediandk aaudio log dl m)
 endfunction()

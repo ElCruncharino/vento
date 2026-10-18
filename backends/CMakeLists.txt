@@ -12,10 +12,10 @@
 # of the viewer's APK (README.md says how) — the build needs nothing of
 # theirs, the probe needs the two files.
 # Gradle never reads this file — each module's CMakeLists is its own root
-# there, under the NDK toolchain — so what it is for is development: a
-# session file that builds and connects here has been proven through the
-# neutral C API alone, and a desktop client of these backends would start
-# from the same three targets.
+# there, under the NDK toolchain — so it is the Linux client's build of the
+# C backends (`linux/build.rs` runs it, with VENTO_SHARED on) and
+# development's: a session file that builds and connects here has been
+# proven through the neutral C API alone.
 #
 #   cmake -S backends -B build/scratch/host -G Ninja -DVENTO_PROBES=ON
 #   cmake --build build/scratch/host

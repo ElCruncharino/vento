@@ -1,7 +1,8 @@
-# What a backend needs of a desktop and no protocol owns: a video decoder,
-# which on a phone is the hardware's and here is libavcodec's, so that a
-# protocol whose picture is video — RustDesk's — can be run, probed and tested
-# on the machine it is developed on with the picture in; and a sound output,
+# What a backend needs of Linux and no protocol owns, for the Linux client
+# (`linux/`) and for the probes and tests: a video decoder, which on a phone
+# is the hardware's and here is libavcodec's, so that a protocol whose picture
+# is video — RustDesk's — can be shown, probed and tested on the machine it is
+# developed on with the picture in; and a sound output,
 # which on a phone is AAudio and here is a PipeWire stream of its own
 # (`src/pipewire.rs`, libpipewire-0.3 declared by hand and loaded at run time,
 # never linked) or, without PipeWire, ALSA's default device (`src/alsa.rs`,
