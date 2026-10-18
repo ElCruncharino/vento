@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The C backends' shared declarations, as `build.rs` generated them from
-//! `vento/backend.h`, `vento/video.h` and `vento/audio.h`.
+//! `vento/backend.h`, `vento/video.h` and `vento/audio.h`, and the constants
+//! of `vento/text.h`.
 //!
 //! Nothing here is written by hand: the vtable's member order is the ABI,
 //! and a retyped copy would be a second place it is kept, drifting the first

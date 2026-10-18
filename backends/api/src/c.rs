@@ -34,6 +34,10 @@ pub mod audio;
 pub mod ffi;
 pub mod video;
 
+// The clipboard bound `vento/text.h` gives the C session files, which is the
+// one every Rust backend holds to: the two cannot drift apart unbuilt.
+const _: () = assert!(ffi::VENTO_MAX_CLIPBOARD as usize == runtime::MAX_CLIPBOARD);
+
 /// A C string the session's bytes become, UTF-8 as the header promises.
 ///
 /// # Safety

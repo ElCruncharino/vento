@@ -35,6 +35,11 @@
 use crate::zlib::ZlibStream;
 use flate2::{Compress, Compression, FlushCompress};
 
+/// CRLF, and a lone CR, to LF (TigerVNC's `convertLF`, the form text has
+/// here and in a plain `ServerCutText`), and every line end to CRLF for a
+/// provide (its `convertCRLF`): runtime's, which both RDP backends keep too.
+pub use runtime::text::{to_crlf, to_lf};
+
 /// The pseudo-encoding that says this client speaks the extension.
 pub const ENC_EXTENDED_CLIPBOARD: i32 = 0xC0A1_E5CE_u32 as i32;
 
@@ -198,17 +203,6 @@ pub fn provide(wire: &[u8]) -> Vec<u8> {
         out.reserve(out.capacity().max(64));
     }
     message(PROVIDE | UTF8, &out)
-}
-
-/// CRLF, and a lone CR, to LF: TigerVNC's `convertLF`, the form text has
-/// here and in a plain `ServerCutText`.
-pub fn to_lf(text: &str) -> String {
-    text.replace("\r\n", "\n").replace('\r', "\n")
-}
-
-/// Every line end to CRLF: TigerVNC's `convertCRLF`, for a provide.
-fn to_crlf(text: &str) -> String {
-    to_lf(text).replace('\n', "\r\n")
 }
 
 #[cfg(test)]

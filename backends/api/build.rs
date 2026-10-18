@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! With the `c` feature: `vento/backend.h`, `vento/video.h` and
-//! `vento/audio.h`, this crate's `include/`, as Rust, for `src/c/ffi.rs`.
+//! With the `c` feature: `vento/backend.h`, `vento/video.h`,
+//! `vento/audio.h` and `vento/text.h` (its constants: its functions are
+//! inline and the Rust side has its own), this crate's `include/`, as Rust,
+//! for `src/c/ffi.rs`.
 //!
 //! Generated rather than written: the vtable's member order is the ABI, and a
 //! `#[repr(C)]` copy by hand would be a second place it is kept, drifting the
@@ -33,7 +35,8 @@ fn generate_bindings() {
             "vento.h",
             "#include <vento/backend.h>\n\
              #include <vento/video.h>\n\
-             #include <vento/audio.h>\n",
+             #include <vento/audio.h>\n\
+             #include <vento/text.h>\n",
         )
         .clang_arg(format!("-I{}", include.display()))
         .allowlist_item("vento_.*")

@@ -28,7 +28,7 @@ name = "api"
 
 [features]
 # The adapter over `vento/backend.h`, for the C backends' crates, and the
-# declarations of the three shared headers, generated rather than retyped.
+# declarations of the shared headers, generated rather than retyped.
 c = ["dep:bindgen"]
 
 [dependencies]
@@ -37,10 +37,10 @@ remotedesktop-runtime.workspace = true
 remotedesktop-media.workspace = true
 
 [build-dependencies]
-# The declarations in `vento/backend.h`, `video.h` and `audio.h`, read rather
-# than retyped: the vtable's member order is the ABI, and a hand-written copy
-# would be a second place it is written down. Each C backend's own header is
-# its crate's to read, over these.
+# The declarations in `vento/backend.h`, `video.h` and `audio.h` (and the
+# constants of `text.h`), read rather than retyped: the vtable's member order
+# is the ABI, and a hand-written copy would be a second place it is written
+# down. Each C backend's own header is its crate's to read, over these.
 bindgen = { workspace = true, optional = true }
 
 [dev-dependencies]

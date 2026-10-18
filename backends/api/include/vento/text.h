@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// The one text rule the session files share: what to make of bytes a server
-// chose. Header-only, since the neutral layer has no library of its own in C.
+// The text rules the session files share: what to make of bytes a server
+// chose, and a clipboard's line ends and size. Header-only, since the neutral
+// layer has no library of its own in C.
 
 #ifndef VENTO_TEXT_H
 #define VENTO_TEXT_H
@@ -73,6 +74,68 @@ static inline char *vento_utf8_from_bytes(const char *bytes) {
         } else {
             out[w++] = (char) (0xC0 | (c >> 6));
             out[w++] = (char) (0x80 | (c & 0x3F));
+        }
+    }
+    out[w] = '\0';
+    return out;
+}
+
+/* The most of a clipboard a session takes from the far end or offers it, in
+   bytes of its text as UTF-8 with LF line ends: `runtime::MAX_CLIPBOARD`,
+   which the Rust side holds this equal to (`api::c`). Past it a clipboard
+   is skipped whole rather than cut short. */
+#define VENTO_MAX_CLIPBOARD (1 << 20)
+
+/* CRLF, and a lone CR, to LF, in place: what text is on this side of the
+   seam, from a protocol whose far end writes Windows' line ends. Never
+   longer than it was. `runtime::text::to_lf`, held to the same cases. */
+static inline void vento_text_to_lf(char *utf8) {
+    if (!utf8) {
+        return;
+    }
+    size_t w = 0;
+    for (size_t r = 0; utf8[r]; r++) {
+        if (utf8[r] == '\r') {
+            utf8[w++] = '\n';
+            if (utf8[r + 1] == '\n') {
+                r++;
+            }
+        } else {
+            utf8[w++] = utf8[r];
+        }
+    }
+    utf8[w] = '\0';
+}
+
+/* Every line end, whichever it was, to CRLF, for a protocol whose far end
+   expects Windows' line ends on its clipboard. Bytes of UTF-8 are never CR
+   or LF but as themselves, so this works byte by byte. Returns a copy the
+   caller frees, or NULL out of memory. `runtime::text::to_crlf`. */
+static inline char *vento_text_to_crlf(const char *utf8) {
+    if (!utf8) {
+        utf8 = "";
+    }
+    size_t ends = 0, n = 0;
+    for (; utf8[n]; n++) {
+        if (utf8[n] == '\n' || (utf8[n] == '\r' && utf8[n + 1] != '\n')) {
+            ends++;
+        }
+    }
+    /* At most one byte more for every line end, and the terminator. */
+    char *out = (char *) malloc(n + ends + 1);
+    if (!out) {
+        return NULL;
+    }
+    size_t w = 0;
+    for (size_t r = 0; r < n; r++) {
+        if (utf8[r] == '\r' || utf8[r] == '\n') {
+            if (utf8[r] == '\r' && utf8[r + 1] == '\n') {
+                r++;
+            }
+            out[w++] = '\r';
+            out[w++] = '\n';
+        } else {
+            out[w++] = utf8[r];
         }
     }
     out[w] = '\0';
