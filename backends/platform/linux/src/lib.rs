@@ -29,3 +29,9 @@ pub mod audio;
 pub mod ffmpeg;
 pub mod ffmpeg_audio;
 pub mod pipewire;
+
+// What the build script tells FFmpeg and Meson when cross-compiling, here
+// for its tests alone.
+#[cfg(test)]
+#[path = "../cross.rs"]
+mod cross;

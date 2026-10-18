@@ -37,6 +37,13 @@
 //! asked for. So the binary runs where libva is not installed, and does not
 //! load it while hardware decoding is off.
 //!
+//! **Cross-compiling.** Where the target is not the build machine, FFmpeg's
+//! configure is told so and dav1d gets a Meson cross file in `OUT_DIR`,
+//! both from the compiler and archiver cc-rs chose for the target
+//! (`CC_<target>`, `AR_<target>`, ...): see `cross.rs`, whose functions the
+//! crate's tests run. Both are part of the stamp. A native build's configure
+//! line is the one it always was.
+//!
 //! **Assembly** is NASM's on x86: without it dav1d and libavcodec fall back to
 //! their C, which works and decodes a fraction as fast, so its absence is a
 //! warning rather than an error. Installing it later builds them again with it
@@ -48,6 +55,8 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+mod cross;
 
 /// The decoders, and who decodes with each. Each is checked by name in
 /// libavcodec's configure, so a misspelling is an error rather than a decoder
@@ -122,8 +131,35 @@ fn main() {
         }
     }
 
-    let compiler = cc::Build::new().get_compiler();
+    let build = cc::Build::new();
+    let compiler = build.get_compiler();
     let cc = compiler.path().to_path_buf();
+    let var = |name: &str| env::var(name).unwrap_or_default();
+    let (host, target) = (var("HOST"), var("TARGET"));
+    let (arch, os, endian) = (
+        var("CARGO_CFG_TARGET_ARCH"),
+        var("CARGO_CFG_TARGET_OS"),
+        var("CARGO_CFG_TARGET_ENDIAN"),
+    );
+    let target = cross::Target {
+        host: &host,
+        target: &target,
+        arch: &arch,
+        os: &os,
+        endian: &endian,
+    };
+    let tools = cross::Tools {
+        cc: cc.clone(),
+        target_flags: cross::target_flags(
+            &compiler
+                .args()
+                .iter()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+        ),
+        ar: build.get_archiver().get_program().into(),
+    };
+    let cross_file = cross::meson_cross_file(&target, &tools);
     let x86 = matches!(
         env::var("CARGO_CFG_TARGET_ARCH").as_deref(),
         Ok("x86" | "x86_64")
@@ -152,8 +188,9 @@ fn main() {
 
     let root = PathBuf::from(env::var("OUT_DIR").unwrap()).join("ffmpeg");
     let prefix = root.join("prefix");
-    let configure = configure_args(&prefix, &cc, asm);
-    let stamp = format!(
+    let mut configure = configure_args(&prefix, &cc, asm);
+    configure.extend(cross::ffmpeg_args(&target, &tools));
+    let mut stamp = format!(
         "dav1d {}\nffmpeg {}\nlibva {}\ncc {} {}\nasm {asm}\n{}\n",
         revision(&dav1d),
         revision(&ffmpeg),
@@ -162,6 +199,9 @@ fn main() {
         version(&cc),
         configure.join(" ")
     );
+    if let Some(file) = &cross_file {
+        stamp.push_str(&format!("meson cross file:\n{file}"));
+    }
     let stamp_path = root.join("stamp");
     if fs::read_to_string(&stamp_path).ok().as_deref() != Some(stamp.as_str()) {
         println!("cargo:warning=FFmpeg: building dav1d and FFmpeg from third_party/ (once)");
@@ -169,7 +209,7 @@ fn main() {
             fs::remove_dir_all(&root).expect("deleting the stale FFmpeg build");
         }
         fs::create_dir_all(&root).unwrap();
-        build_dav1d(&dav1d, &root, &prefix, &cc, asm);
+        build_dav1d(&dav1d, &root, &prefix, &cc, asm, cross_file.as_deref());
         install_libva_headers(&libva, &prefix);
         write_pkg_config(&prefix);
         build_va_shim(&manifest, &root, &prefix);
@@ -249,7 +289,8 @@ fn configure_args(prefix: &Path, cc: &Path, asm: bool) -> Vec<String> {
     args
 }
 
-fn build_dav1d(source: &Path, root: &Path, prefix: &Path, cc: &Path, asm: bool) {
+/// dav1d, with `cc` (natively) or the cross file's compiler (`cross`).
+fn build_dav1d(source: &Path, root: &Path, prefix: &Path, cc: &Path, asm: bool, cross: Option<&str>) {
     let build = root.join("dav1d-build");
     let mut setup = Command::new("meson");
     setup
@@ -268,8 +309,19 @@ fn build_dav1d(source: &Path, root: &Path, prefix: &Path, cc: &Path, asm: bool) 
             // Nothing is fetched: dav1d needs no subproject without its tools.
             "--wrap-mode=nodownload",
         ])
-        .arg(format!("-Denable_asm={asm}"))
-        .env("CC", cc);
+        .arg(format!("-Denable_asm={asm}"));
+    match cross {
+        // The target's compiler is the cross file's. `CC` would be taken
+        // for the build machine's, whose sanity check runs what it built.
+        Some(file) => {
+            let path = root.join("dav1d-cross.ini");
+            fs::write(&path, file).unwrap();
+            setup.arg("--cross-file").arg(path);
+        }
+        None => {
+            setup.env("CC", cc);
+        }
+    }
     run(setup, &root.join("dav1d-setup.log"));
     let mut install = Command::new("ninja");
     install.arg("-C").arg(&build).arg("install").arg(jobs());

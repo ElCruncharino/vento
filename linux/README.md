@@ -111,7 +111,12 @@ says what it was built from, and it is built again only when that changes),
 as static libraries that the Rust decoders (RustDesk's video, and TigerVNC's
 and FreeRDP's H.264; FreeRDP's AAC and Opus sound) and FreeRDP's scaling
 link — FreeRDP through `VENTO_FFMPEG_PREFIX`, which `build.rs` hands the
-CMake build, and only libswscale and libavutil of it. TigerVNC links none of
+CMake build, and only libswscale and libavutil of it. For a target other
+than the build machine, FFmpeg's configure is told so
+(`--enable-cross-compile`, the arch and OS, and cc-rs's compiler and archiver
+for the target: `CC_<target>`, `AR_<target>`) and dav1d gets a Meson cross
+file, both in the stamp; only their making is tested (`cross.rs`), as no
+cross toolchain has been at hand to build with. TigerVNC links none of
 it: its H.264 decoder context hands each rectangle to the Rust decoder
 through a table of function pointers in its config, and FreeRDP's H.264
 subsystem and its rdpsnd device hand it each frame and each wave the same
