@@ -168,9 +168,11 @@ under the host locale (`export LC_ALL=C`).
 
 - A C backend's shim is one file under `src/main/cpp`, `<name>_session.c`
   (`.cxx` for TigerVNC), which drives the library against the neutral C API
-  in `backends/common/include/vento/` and names no platform. Above it is the
-  crate in `src/main/rust`, which fills the backend's `vento_<name>_config`
-  from the options and words its rows; it is what the Linux client holds,
+  in `backends/common/include/vento/` and names no platform; what it offers
+  is declared in the backend's own header beside it,
+  `include/vento/<name>.h`. Above it is the crate in `src/main/rust`, which
+  reads that header into Rust (its `build.rs`, with bindgen), fills the
+  backend's `vento_<name>_config` from the options and words its rows; it is what the Linux client holds,
   and on the phone it is linked into the module's library as a static
   library (`rustStaticLibrary` in `backends/build.gradle`,
   `backends/cmake/vento_android.cmake`) with the one JNI layer in
@@ -237,8 +239,8 @@ from. When an upstream change adds something a person would switch (a new
 encoding or codec, a security type, a behaviour toggle), add a row in the
 shape, wording and scope of its neighbours, read it in the adapter (`o.get`,
 `o.bool`, `o.int`) into the config — for a C backend a new field in
-`vento_<name>_config`, which `session/build.rs` reads into Rust with
-bindgen — and default it to upstream's answer, and add its key to the
+`vento_<name>_config`, which the backend crate's `build.rs` reads into
+Rust with bindgen — and default it to upstream's answer, and add its key to the
 test `the_keys_are_the_ones_records_hold` in the same file, which is there
 because a stored key renamed is a setting forgotten. The value reaches a session
 in the options it is created with, every key and value as strings, so
@@ -259,11 +261,13 @@ line or one file somewhere that already has seven:
 
 - **The protocol.** A Rust crate in `src/main/rust` (`crate-type = ["lib",
   "cdylib"]`), or a C shim in `src/main/cpp` over `vento/backend.h` with its
-  config in `backends/common/include/vento/<name>.h` (added to
-  `session/build.rs`'s bindgen header), a host probe `<name>_probe.c`
-  (built with `-DVENTO_PROBES=ON`), and a small crate in `src/main/rust`
-  beside it (`remotedesktop-session` with the `c` feature;
-  `session::c::start` and a `Behaviour` do the rest).
+  config in its own header, `src/main/cpp/include/vento/<name>.h` (on the
+  include path of the module's targets through `vento_backend_library` and
+  `vento_android_library`), a host probe `<name>_probe.c` (built with
+  `-DVENTO_PROBES=ON`), and a small crate in `src/main/rust` beside it
+  (`remotedesktop-session` with the `c` feature; `session::c::start` and a
+  `Behaviour` do the rest) whose `build.rs` reads the header with bindgen,
+  its own items only, over `session::c::ffi` — libvnc's, copied.
 - **The catalog.** `modules/<name>/catalog.rs`: the backend's `About` (its
   pinning and whether its user name carries a domain are data there, which
   the shared rules read) and its `OPTIONS` table, with their tests; one

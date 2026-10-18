@@ -28,7 +28,7 @@ name = "session"
 
 [features]
 # The adapter over `vento/backend.h`, for the C backends' crates, and the
-# declarations of the five headers, generated rather than retyped.
+# declarations of the three shared headers, generated rather than retyped.
 c = ["dep:bindgen"]
 
 [dependencies]
@@ -36,10 +36,11 @@ log.workspace = true
 remotedesktop-common.workspace = true
 
 [build-dependencies]
-# The declarations in `vento/backend.h` and the four headers beside it, read
-# rather than retyped: the vtable's member order is the ABI, and a
-# hand-written copy would be a second place it is written down.
-bindgen = { version = "0.73", optional = true }
+# The declarations in `vento/backend.h`, `video.h` and `audio.h`, read rather
+# than retyped: the vtable's member order is the ABI, and a hand-written copy
+# would be a second place it is written down. Each C backend's own header is
+# its crate's to read, over these.
+bindgen = { workspace = true, optional = true }
 
 [dev-dependencies]
 # For the shared test vectors in `backends/vectors/` (tests/vectors.rs), which

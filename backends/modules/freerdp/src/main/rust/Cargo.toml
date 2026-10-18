@@ -26,3 +26,8 @@ remotedesktop-session = { workspace = true, features = ["c"] }
 # library (`CargoBuildTask` with `crateType = 'staticlib'`).
 [target.'cfg(target_os = "android")'.dependencies]
 remotedesktop-platform-android.workspace = true
+
+[build-dependencies]
+# `vento/freerdp.h`, read rather than retyped (build.rs), as the session crate
+# reads the shared headers.
+bindgen.workspace = true

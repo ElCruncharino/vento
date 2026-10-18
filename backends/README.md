@@ -23,10 +23,14 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
 - `build.gradle` — the Android module.
 - `src/main/rust/` — the backend's crate: the protocol itself for the four in
   Rust (and its `probe` example, behind the `probe` feature), or the small
-  adapter over the C library for libvnc, tigervnc and freerdp. RealVNC has no
-  crate; its Linux adapter is `linux/src/backends/realvnc.rs`.
+  adapter over the C library for libvnc, tigervnc and freerdp, whose
+  `build.rs` reads the backend's header into Rust with bindgen. RealVNC has
+  no crate; its Linux adapter is `linux/src/backends/realvnc.rs`, and
+  `linux/build.rs` reads its header.
 - `src/main/cpp/` — the C/C++ session over the upstream library, its CMake
-  for both builds, and the host probe's `main` (`-DVENTO_PROBES=ON`).
+  for both builds, the host probe's `main` (`-DVENTO_PROBES=ON`), and
+  `include/vento/<name>.h`, the backend's own C API: its config, its
+  constructor and its live calls.
 - `src/main/java/`, `src/main/resources/` — the backend's provider and
   whatever else of it the phone needs in Java.
 
@@ -34,11 +38,15 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
 
 - `common/` (`remotedesktop-common`) — what a protocol is written against:
   the session thread, handler and events, video and audio, and the neutral C
-  API in `common/include/vento/`.
+  API in `common/include/vento/` (`backend.h`, `video.h`, `audio.h`, `log.h`,
+  `text.h`; each C backend's own header is in its module).
 - `session/` (`remotedesktop-session`) — what a client holds a session by:
   the `Backend` trait, events, the catalog registry and the shape of an
   option, `Kind`/`Connect`, and the rules both clients keep alike
-  (credentials, trust), held to `vectors/`.
+  (credentials, trust), held to `vectors/`. With the `c` feature, the one
+  adapter over the C vtable and the shared headers' declarations
+  (`session::c::ffi`), which each C backend's own declarations are written
+  over.
 - `tls/` — rustls pinning, for the Rust backends that speak TLS.
 - `codegen/` (`vento-codegen`) — the phone's Java catalogs and natives
   classes, generated from `session` at build time on the host.

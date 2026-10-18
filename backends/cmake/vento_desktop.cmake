@@ -54,8 +54,9 @@ if(NOT TARGET vento_desktop)
 endif()
 
 # A backend's host library: `vento_<name>` from the session file and whatever
-# platform sources go with it, with the neutral include directory as its
-# interface. Static by default; under VENTO_SHARED a shared library with the
+# platform sources go with it, with the neutral include directory and the
+# module's own `include/` — where its `vento/<name>.h` is, since nothing else
+# includes that header — as its interface. Static by default; under VENTO_SHARED a shared library with the
 # logger's object inside it, every symbol out of the static archives it is
 # built on hidden (`--exclude-libs`), so that what it exports is the C API in
 # `vento/<name>.h` and `vento_log` — four of these in one process must not
@@ -119,7 +120,8 @@ function(vento_backend_library name)
         add_library(${name} STATIC ${ARGN})
     endif()
     remotedesktop_warnings(${name})
-    target_include_directories(${name} PUBLIC "${_VENTO_BACKENDS}/common/include")
+    target_include_directories(${name} PUBLIC "${_VENTO_BACKENDS}/common/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/include")
 endfunction()
 
 # The probe in front of it: the body from `vento_probe` and, for a static

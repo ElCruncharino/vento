@@ -18,9 +18,17 @@ use crate::backend::{Backend, ConnectionFact, Field, Traffic};
 use crate::backends::{Connect, Kind};
 use crate::known_hosts;
 use crate::options::Options;
-use session::c::{Behaviour, CSession, Security, ffi, start};
+use session::c::{Behaviour, CSession, Security, start};
 use std::ffi::CString;
 use std::os::raw::c_void;
+
+/// `vento/realvnc.h`, as `build.rs` generated it, over the shared
+/// declarations it is written against.
+mod ffi {
+    #![allow(non_camel_case_types, dead_code)]
+    pub use session::c::ffi::*;
+    include!(concat!(env!("OUT_DIR"), "/realvnc.rs"));
+}
 
 pub static KIND: Kind = Kind {
     about: &session::catalog::REALVNC,

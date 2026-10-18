@@ -93,6 +93,10 @@ bytemuck = "1"
 # Runs `backends/CMakeLists.txt` with VENTO_SHARED on, which is the whole of
 # how the C backends get here; `build.rs` says where the libraries land.
 cmake = "0.1"
+# `vento/realvnc.h`, for the RealVNC adapter here, read rather than retyped as
+# the session crate reads the shared headers and each C backend's crate its
+# own. Already in the graph through `remotedesktop-session`'s `c` feature.
+bindgen = "0.73"
 
 [dev-dependencies]
 # For the test that every toolbar symbol is in the bundled font (icons.rs).

@@ -11,12 +11,20 @@
 //! Sound = local) played on the platform's output, handed to the C as
 //! `vento/video.h`'s and `vento/audio.h`'s tables as TigerVNC's are.
 
-use session::c::{Behaviour, CSession, ffi, start};
+use session::c::{Behaviour, CSession, start};
 use session::backend::{Backend, ConnectionFact, Field, Traffic};
 use session::rdp::{desktop_size, monitor_count};
 use session::kind::{CONNECT_TIMEOUT_MS, Connect, Kind, Platform};
 use session::options::Options;
 use std::ffi::CString;
+
+/// `vento/freerdp.h`, as `build.rs` generated it, over the shared declarations
+/// it is written against.
+mod ffi {
+    #![allow(non_camel_case_types, dead_code)]
+    pub use session::c::ffi::*;
+    include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
+}
 
 pub static KIND: Kind = Kind {
     about: &session::catalog::FREERDP,

@@ -4,8 +4,10 @@
 //! The C backends, for the Rust binary: `backends/CMakeLists.txt` run with
 //! `VENTO_SHARED` on. (The declarations of `vento/backend.h` are read into
 //! Rust by `remotedesktop-session`'s own build script, under its `c`
-//! feature; the backends' crates link nothing, so the libraries are linked
-//! here, into the binary.)
+//! feature, and each backend's own header by its crate's; the backends'
+//! crates link nothing, so the libraries are linked here, into the binary.)
+//! RealVNC's adapter is this crate's, so its header, `vento/realvnc.h` in
+//! its module, is read here too (`realvnc_bindings`).
 //!
 //! The host build already existed — it is what the C probes are built on,
 //! with `-DVENTO_PROBES=ON` — and this runs the same file through the `cmake`
@@ -79,6 +81,7 @@ fn main() {
             .expect("remotedesktop-platform-desktop says where its FFmpeg is"),
     );
 
+    realvnc_bindings(&backends, &out);
     let lib = build_c_backends(&backends, &out, &ffmpeg);
     println!("cargo:rustc-link-search=native={}", lib.display());
     // The rpath, so that the binary and the tests run from where cargo puts
@@ -97,6 +100,30 @@ fn main() {
     } else {
         println!("cargo:warning=RealVNC backend: left out (needs clang on the path)");
     }
+}
+
+/// `vento/realvnc.h` as Rust, for `src/backends/realvnc.rs`: its own items
+/// only, the `vento_realvnc_` ones, over the shared declarations
+/// `session::c::ffi` has, as each C backend's crate reads its header.
+/// Generated whether or not the library is built — bindgen's libclang is
+/// needed by the session crate either way, clang on the path or not — and
+/// used only under the `realvnc` cfg.
+fn realvnc_bindings(backends: &Path, out: &Path) {
+    let own = backends.join("modules/realvnc/src/main/cpp/include");
+    let shared = backends.join("common/include");
+    bindgen::Builder::default()
+        .header_contents("realvnc.h", "#include <vento/realvnc.h>\n")
+        .clang_arg(format!("-I{}", own.display()))
+        .clang_arg(format!("-I{}", shared.display()))
+        .allowlist_item("vento_realvnc_.*")
+        .allowlist_item("VENTO_REALVNC_.*")
+        .allowlist_recursively(false)
+        .derive_default(true)
+        .layout_tests(false)
+        .generate()
+        .expect("bindgen over vento/realvnc.h")
+        .write_to_file(out.join("realvnc.rs"))
+        .expect("writing realvnc.rs");
 }
 
 /// Runs the host CMake build with the shared switch on and returns the
