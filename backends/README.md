@@ -63,9 +63,9 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
 ## What they share
 
 - `runtime/` (`remotedesktop-runtime`) — what a protocol is written
-  against: the `Client` it implements, the handler its thread calls and the
-  events a platform answers with, the session thread and the bridge between
-  them, the address parser, the dial a hang-up interrupts, and the rustls
+  against: the `Client` it implements, the `Handler` its thread calls and the
+  `Callbacks` a platform answers with, the `Runner` that is the session's
+  thread and the `Bridge` between them, the address parser, the dial a hang-up interrupts, and the rustls
   pinning and shared stream of the Rust backends that speak TLS (`tls`).
 - `media/` (`remotedesktop-media`) — what a protocol hands its picture and
   sound to: video (the decoders a platform supplies, and what is done with

@@ -7,7 +7,7 @@
 
 use crate::client::Screen;
 use crate::{Client, Config, Security};
-use runtime::{Bridge, Session};
+use runtime::{Bridge, Runner};
 use api::backend::{Backend, ConnectionFact, Credentials, Facts, Field, Monitor, Picture, Traffic};
 use api::credentials::fill_user;
 use api::events::{Feed, Mailbox};
@@ -23,7 +23,7 @@ pub static KIND: Kind = Kind {
 };
 
 struct Rfb {
-    session: Session<Client>,
+    session: Runner<Client>,
     mailbox: Arc<Mailbox>,
     options: Mutex<Options>,
     user: String,
@@ -74,7 +74,7 @@ fn create(c: &Connect) -> Result<Arc<dyn Backend>, String> {
         config.compress_level,
         config.security
     );
-    let session = Session::start(
+    let session = Runner::start(
         Arc::new(Client::new()),
         config,
         Bridge::new(Feed(Arc::clone(&c.mailbox))),

@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! One session: a client, the thread it runs on, and the state whoever
-//! started it holds a handle to.
+//! What runs one session: a client, the thread it runs on, and the state
+//! whoever started it holds a handle to.
 //!
 //! Two threads reach a session: the protocol thread, which owns the connection
 //! and delivers every callback, and whoever else holds the handle — on Android
@@ -16,21 +16,21 @@
 //! other but for the thread's name and the shape of the credentials; what
 //! differed was the protocol's and is now behind [`Client`].
 
+use crate::callbacks::Callbacks;
 use crate::client::Client;
-use crate::events::Events;
 use crate::handler::{Credentials, Handler};
 use crate::slot::Slot;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
-/// A [`Handler`] over an [`Events`]: everything is forwarded as is, and the
+/// A [`Handler`] over a [`Callbacks`]: everything is forwarded as is, and the
 /// questions become an event and a wait.
 ///
-/// Cheap to clone — three `Arc`s — because the session keeps one end to
+/// Cheap to clone — three `Arc`s — because the runner keeps one end to
 /// answer through and the protocol thread takes the other.
 pub struct Bridge {
-    events: Arc<dyn Events>,
+    events: Arc<dyn Callbacks>,
     credentials: Arc<Slot<Credentials>>,
     trust: Arc<Slot<bool>>,
 }
@@ -46,7 +46,7 @@ impl Clone for Bridge {
 }
 
 impl Bridge {
-    pub fn new(events: impl Events + 'static) -> Bridge {
+    pub fn new(events: impl Callbacks + 'static) -> Bridge {
         Bridge {
             events: Arc::new(events),
             credentials: Arc::new(Slot::new()),
@@ -54,13 +54,13 @@ impl Bridge {
         }
     }
 
-    /// The answer to [`Events::credentials_needed`]. `None` cancels, which
+    /// The answer to [`Callbacks::credentials_needed`]. `None` cancels, which
     /// ends the session.
     pub fn answer_credentials(&self, credentials: Option<Credentials>) {
         self.credentials.answer(credentials);
     }
 
-    /// The answer to [`Events::trust_needed`] and to [`Events::unverified`],
+    /// The answer to [`Callbacks::trust_needed`] and to [`Callbacks::unverified`],
     /// which share a slot because they are one question at the protocol
     /// thread's end — go on, or do not — and only one of them can be
     /// outstanding.
@@ -127,10 +127,11 @@ impl Handler for Bridge {
     }
 }
 
-/// One running session of a [`Client`].
-pub struct Session<C: Client> {
+/// One session of a [`Client`], running: the thread it is on, and the handle
+/// whoever started it holds.
+pub struct Runner<C: Client> {
     /// The protocol's own surface — pointer, keys, region reads — reached
-    /// directly, because what it offers differs per protocol and a session is
+    /// directly, because what it offers differs per protocol and a runner is
     /// only the thread and the questions.
     pub client: Arc<C>,
     bridge: Bridge,
@@ -138,12 +139,12 @@ pub struct Session<C: Client> {
     closed: AtomicBool,
 }
 
-impl<C: Client> Session<C> {
+impl<C: Client> Runner<C> {
     /// Creates the session and starts connecting. Returns immediately; the
     /// protocol runs on a thread of its own, which is where every event comes
-    /// from — including [`Events::closed`], which is the last thing the thread
-    /// does.
-    pub fn start(client: Arc<C>, config: C::Config, bridge: Bridge) -> Session<C> {
+    /// from — including [`Callbacks::closed`], which is the last thing the
+    /// thread does.
+    pub fn start(client: Arc<C>, config: C::Config, bridge: Bridge) -> Runner<C> {
         let thread = {
             let client = Arc::clone(&client);
             let mut handler = bridge.clone();
@@ -162,7 +163,7 @@ impl<C: Client> Session<C> {
                 .unwrap_or_else(|e| panic!("spawning the {} session thread: {e}", C::NAME))
         };
 
-        Session {
+        Runner {
             client,
             bridge,
             thread: Mutex::new(Some(thread)),
@@ -223,7 +224,7 @@ mod tests {
         }
     }
 
-    impl Events for Recorder {
+    impl Callbacks for Recorder {
         fn connected(&self, width: usize, height: usize) {
             self.say(format!("connected {width}x{height}"));
         }
@@ -298,13 +299,13 @@ mod tests {
         }
     }
 
-    fn start() -> (Session<Asker>, std::sync::mpsc::Receiver<String>) {
+    fn start() -> (Runner<Asker>, std::sync::mpsc::Receiver<String>) {
         let (tx, rx) = channel();
         let client = Arc::new(Asker {
             closing: AtomicBool::new(false),
         });
         let bridge = Bridge::new(Recorder(Mutex::new(tx)));
-        (Session::start(client, "ab:cd", bridge), rx)
+        (Runner::start(client, "ab:cd", bridge), rx)
     }
 
     fn next(rx: &std::sync::mpsc::Receiver<String>) -> String {

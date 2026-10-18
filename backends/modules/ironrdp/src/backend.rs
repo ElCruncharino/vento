@@ -6,7 +6,7 @@
 //! what the phone reaches through `platform_android`'s JNI layer.
 
 use crate::{Client, Config, Nla, Platform};
-use runtime::{Bridge, Session};
+use runtime::{Bridge, Runner};
 use api::backend::{
     Backend, ConnectionFact, Credentials, Facts, Field, Monitor, Picture, Traffic,
 };
@@ -25,7 +25,7 @@ pub static KIND: Kind = Kind {
 };
 
 struct IronRdp {
-    session: Session<Client>,
+    session: Runner<Client>,
     mailbox: Arc<Mailbox>,
     options: Mutex<Options>,
     user: String,
@@ -85,7 +85,7 @@ fn create(c: &Connect) -> Result<Arc<dyn Backend>, String> {
         config.platform,
         if config.audio.is_some() { "here" } else { "off" }
     );
-    let session = Session::start(
+    let session = Runner::start(
         Arc::new(Client::new()),
         config,
         Bridge::new(Feed(Arc::clone(&c.mailbox))),

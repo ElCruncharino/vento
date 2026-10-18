@@ -1778,7 +1778,7 @@ impl Client {
     }
 }
 
-/// The shape `runtime::Session` runs: the inherent `run` and `close` are the
+/// The shape `runtime::Runner` runs: the inherent `run` and `close` are the
 /// implementation, and this is them written down for a session that does not
 /// know which protocol it has.
 impl runtime::Client for Client {

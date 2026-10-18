@@ -4,21 +4,21 @@
 //! The outward half of a session: what a platform is told, and nothing it is
 //! asked.
 
-/// What a [`Session`](crate::Session) tells the platform, fire-and-forget.
+/// What a [`Runner`](crate::Runner) tells the platform, fire-and-forget.
 ///
 /// This is [`Handler`](crate::Handler) with the blocking taken out: every
 /// question becomes an event that says a question is pending, and the answer
-/// arrives later through the session — which is how a dialog on another thread
-/// has to work, and how a C caller would want it too. The shape is the Java
-/// `*Native.Callbacks` interface's, method for method, because that interface
-/// is the one platform this has had to fit so far and there was no reason to
-/// invent a second.
+/// arrives later through the runner — which is how a dialog on another thread
+/// has to work, and how a C caller would want it too. The C API's
+/// `vento_callbacks` is the same list, method for method, with three more; on
+/// Android the calls reach the Java seam's `NativeBackend` as its `on…`
+/// methods, by way of the `api` crate's mailbox rather than one for one.
 ///
 /// Every method is called from the protocol thread, through a shared
 /// reference, and must not block on anything the protocol thread is waiting
 /// for. `Send + Sync` because the session's thread calls these and whoever
 /// created the session holds the other end.
-pub trait Events: Send + Sync {
+pub trait Callbacks: Send + Sync {
     fn connected(&self, width: usize, height: usize);
     fn desktop_size(&self, width: usize, height: usize);
     fn damaged(&self, x: usize, y: usize, width: usize, height: usize);
@@ -32,14 +32,14 @@ pub trait Events: Send + Sync {
     fn bell(&self);
     fn clipboard(&self, text: &str);
     /// Credentials are wanted; answered through
-    /// [`Session::answer_credentials`](crate::Session::answer_credentials).
+    /// [`Runner::answer_credentials`](crate::Runner::answer_credentials).
     fn credentials_needed(&self, needs_user: bool);
     /// A trust decision is wanted; answered through
-    /// [`Session::answer_trust`](crate::Session::answer_trust).
+    /// [`Runner::answer_trust`](crate::Runner::answer_trust).
     fn trust_needed(&self, fingerprint: &str);
     /// The far end could not be verified and the session wants to know
     /// whether to go on. Answered through the same
-    /// [`Session::answer_trust`](crate::Session::answer_trust), since a yes
+    /// [`Runner::answer_trust`](crate::Runner::answer_trust), since a yes
     /// and a no mean the same things to the protocol thread.
     fn unverified(&self, why: &str);
     /// The session is over and its thread is about to end. `detail` is empty

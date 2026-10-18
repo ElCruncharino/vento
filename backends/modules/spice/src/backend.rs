@@ -6,7 +6,7 @@
 //! what the phone reaches through `platform_android`'s JNI layer.
 
 use crate::{Client, Config, compression_of};
-use runtime::{Bridge, Session};
+use runtime::{Bridge, Runner};
 use api::backend::{
     Backend, ConnectionFact, Credentials, Facts, Field, Monitor, Picture, Traffic,
 };
@@ -23,7 +23,7 @@ pub static KIND: Kind = Kind {
 };
 
 struct Spice {
-    session: Session<Client>,
+    session: Runner<Client>,
     mailbox: Arc<Mailbox>,
     options: Mutex<Options>,
 }
@@ -54,7 +54,7 @@ fn create(c: &Connect) -> Result<Arc<dyn Backend>, String> {
             (Some(_), false) => "off, until switched on",
         }
     );
-    let session = Session::start(
+    let session = Runner::start(
         Arc::new(Client::new()),
         config,
         Bridge::new(Feed(Arc::clone(&c.mailbox))),

@@ -22,7 +22,7 @@ clients, and what differs between them is each client's own code.
 
 - **`backends/api`** — the `Backend` trait and the value types around it
   (`Facts`, `ConnectionFact`, `Monitor`, `Traffic`, `Picture`); the `Event`
-  enum (`runtime::Events` plus the C API's `question`, `security_needed`,
+  enum (`runtime::Callbacks` plus the C API's `question`, `security_needed`,
   `message`) and the `Mailbox` a session pushes them onto, with a wake hook
   the window hands its repaint request to; the option descriptions and the
   catalog of the eight backends, so `-o key=value` and the dialog's rows are

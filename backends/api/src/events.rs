@@ -4,8 +4,8 @@
 //! What a session tells whoever is watching it, and the channel it says it
 //! through.
 //!
-//! An [`Event`] is `runtime::Events` as a value — one variant per method, plus
-//! the three the C API has over it (`question`, `security_needed`,
+//! An [`Event`] is `runtime::Callbacks` as a value — one variant per method,
+//! plus the three the C API has over it (`question`, `security_needed`,
 //! `message`) — and a [`Mailbox`] is where a session puts them: a queue
 //! behind a mutex, a condition variable for a thread that wants to block on
 //! it, and an optional wake hook for one that cannot, which is an egui window
@@ -592,10 +592,10 @@ impl Mailbox {
     }
 }
 
-/// A mailbox as the `Events` a `runtime::Session` is started with.
+/// A mailbox as the `Callbacks` a `runtime::Runner` is started with.
 pub struct Feed(pub Arc<Mailbox>);
 
-impl runtime::Events for Feed {
+impl runtime::Callbacks for Feed {
     fn connected(&self, width: usize, height: usize) {
         self.0.on_connected(width, height);
     }

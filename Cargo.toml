@@ -25,8 +25,8 @@
 # metadata --filter-platform` filters packages, not features. Its own lock
 # file keeps all of that out of this graph; it reaches these crates by path.
 # What a platform supplies, it supplies by implementing a trait of
-# `runtime`'s or `media`'s (`Events`, `video::Decoders`, `audio::Outputs`) and
-# handing it to the session, so no
+# `runtime`'s or `media`'s (`Callbacks`, `video::Decoders`,
+# `audio::Outputs`) and handing it to the session, so no
 # protocol crate says which platform it is on. A protocol crate depends on a
 # platform crate only under a target cfg — `android` for the library the app
 # loads, `desktop` for its probe — so neither build sees the other's.
@@ -81,7 +81,8 @@ remotedesktop-api = { path = "backends/api", version = "0.0.1" }
 remotedesktop-platform-android = { path = "backends/platform/android", version = "0.0.1" }
 remotedesktop-platform-linux = { path = "backends/platform/linux", version = "0.0.1" }
 log = "0.4"
-# One version across the crates: a `Callbacks` built in one is used in another.
+# Only `remotedesktop-platform-android` has it, and no other crate may (its
+# manifest says why).
 jni = "0.22"
 android_logger = "0.15"
 # One version for every crate that reads the C headers: `remotedesktop-api`
