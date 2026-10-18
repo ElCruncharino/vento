@@ -3,10 +3,10 @@
 
 // What the files of this directory share: the one way to log, the two Java
 // stand-ins every translation unit has to agree on, and the way back from a
-// `jobject` to the C++ object behind it. Internal to the platform; the seam
-// the session sees is `HostedCore.h` in the module.
+// `jobject` to the C++ object behind it. Internal to the hosting layer; the
+// seam the session sees is `HostedCore.h`, one directory up.
 //
-// The platform is this: RealVNC's `libvncviewer.so` is a bionic library that
+// The hosting layer is this: RealVNC's `libvncviewer.so` is a bionic library that
 // talks to Android through JNI, `liblog`, `libandroid`'s looper and
 // `libjnigraphics`, and nothing else. mcpelauncher-linker loads it into a
 // glibc process with libc-shim standing in for bionic's libc, and libjnivm

@@ -3,7 +3,7 @@
 
 // The seam between the RealVNC session and whatever is hosting the viewer
 // core: `realvnc_session.cxx` is written against this and nothing below it,
-// and `backends/platform/desktop/realvnc` is the one implementation so far,
+// and `host/` beside it is the one implementation so far,
 // which runs the Android library in a glibc process. It is the core's JNI
 // surface (`realvnc/src/main/java/com/realvnc/vncviewer/jni`) said in C++,
 // method for method where the session needs one, with the Java objects the

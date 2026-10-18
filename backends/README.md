@@ -30,7 +30,9 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
 - `src/main/cpp/` — the C/C++ session over the upstream library, its CMake
   for both builds, the host probe's `main` (`-DVENTO_PROBES=ON`), and
   `include/vento/<name>.h`, the backend's own C API: its config, its
-  constructor and its live calls.
+  constructor and its live calls. RealVNC's also holds `host/`, the hosting
+  layer that runs their Android viewer core in a Linux process (built only
+  on the host, only with clang).
 - `src/main/java/`, `src/main/resources/` — the backend's provider and
   whatever else of it the phone needs in Java.
 
@@ -52,8 +54,8 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
   classes, generated from `session` at build time on the host.
 - `platform/android/` — the one JNI layer, MediaCodec and AAudio.
 - `platform/desktop/` — FFmpeg (built statically from `third_party/`), the
-  ALSA/PipeWire outputs, the desktop C platform (`c/`, with the C probes'
-  shared body) and the RealVNC hosting layer (`realvnc/`).
+  ALSA/PipeWire outputs and the desktop C platform (`c/`, with the C probes'
+  shared body).
 - `src/main/java/` — the `:backends` module's Java: the seam every backend's
   provider is written against.
 - `vectors/` — test cases both the Rust and the Java tests read.

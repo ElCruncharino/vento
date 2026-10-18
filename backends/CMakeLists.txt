@@ -7,10 +7,10 @@
 # a probe in front of each that connects, prints every callback and writes the
 # framebuffer out.
 # Three of them are open clients; the fourth, RealVNC, is their proprietary
-# Android core run in this process by the hosting layer under
-# `platform/desktop/realvnc`, from two libraries the user takes out of the
-# viewer's APK (README.md says how) — the build needs nothing of theirs, the
-# probe needs the two files.
+# Android core run in this process by the hosting layer in its module
+# (`modules/realvnc/src/main/cpp/host`), from two libraries the user takes out
+# of the viewer's APK (README.md says how) — the build needs nothing of
+# theirs, the probe needs the two files.
 # Gradle never reads this file — each module's CMakeLists is its own root
 # there, under the NDK toolchain — so what it is for is development: a
 # session file that builds and connects here has been proven through the

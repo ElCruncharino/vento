@@ -58,7 +58,6 @@ fn main() {
         "cmake",
         "common/include",
         "platform/desktop/c",
-        "platform/desktop/realvnc",
         "modules/libvnc/src/main/cpp",
         "modules/tigervnc/src/main/cpp",
         "modules/freerdp/src/main/cpp",

@@ -73,9 +73,9 @@ typedef struct vento_realvnc_config {
     /* Where the core keeps what it persists — its RSA key, its identities,
        its logs and its caches — under a directory of its own, as it has the
        app's files directory on the phone. The same once-per-process rule.
-       Where the Android core keeps these in `EncryptedFile`s, the desktop
-       platform under this backend keeps them as plain files: see
-       `backends/platform/desktop/realvnc`. */
+       Where the Android core keeps these in `EncryptedFile`s, the hosting
+       layer under this backend keeps them as plain files: see `host/` in
+       this module's C++ (`Files.cxx`). */
     const char *state_dir;
 
     /* 0 or less for the Android backend's twenty seconds. Needed, as

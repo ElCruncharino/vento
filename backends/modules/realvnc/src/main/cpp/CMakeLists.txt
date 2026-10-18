@@ -8,8 +8,8 @@
 # and what it reads through is a pointer their own Java handed us rather than
 # a symbol of theirs. Under `backends/CMakeLists.txt` it is a subdirectory on
 # a Linux host and makes `vento_realvnc`: the session in `realvnc_session.cxx`
-# over the hosting layer in `backends/platform/desktop/realvnc`, which runs the
-# core's Android build in a glibc process, with a probe in front of it.
+# over the hosting layer in `host/`, which runs the core's Android build in a
+# glibc process, with a probe in front of it.
 #
 # The host half needs clang: libc-shim does not compile under GCC (its
 # `vector::insert` overloads trip -Wchanges-meaning, as of GCC 16), and the
@@ -122,13 +122,11 @@ else()
     # left to the platform — the probe's `vento_desktop`, or the library's own
     # copy of it under VENTO_SHARED (vento_desktop.cmake). The hosting layer's
     # headers are its own and not on the interface.
-    set(DESKTOP "${VENTO_BACKENDS}/platform/desktop/realvnc")
     vento_backend_library(vento_realvnc realvnc_session.cxx
-            "${DESKTOP}/DesktopCore.cxx" "${DESKTOP}/Loader.cxx" "${DESKTOP}/Looper.cxx"
-            "${DESKTOP}/Classes.cxx" "${DESKTOP}/Files.cxx")
+            host/DesktopCore.cxx host/Loader.cxx host/Looper.cxx host/Classes.cxx host/Files.cxx)
     target_compile_features(vento_realvnc PRIVATE cxx_std_17)
-    target_include_directories(vento_realvnc PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${DESKTOP}"
-            "${CMAKE_CURRENT_BINARY_DIR}/gen")
+    target_include_directories(vento_realvnc PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/host" "${CMAKE_CURRENT_BINARY_DIR}/gen")
     target_include_directories(vento_realvnc SYSTEM PRIVATE
             "${THIRD_PARTY}/libjnivm/include" "${THIRD_PARTY}/libc-shim/include"
             "${THIRD_PARTY}/mcpelauncher-linker/public_include")

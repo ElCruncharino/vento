@@ -455,7 +455,7 @@ One commit per upstream, after review, by the lead:
   deliberately not (bundled root store).
 - **logger**, **libc-shim**, **mcpelauncher-linker** (branch `ng`, with its
   nested `bionic` and `core`) and **libjnivm** (October 2026): the host-only
-  stack under `backends/platform/desktop/realvnc`, pinned at the commits
+  stack under `backends/modules/realvnc/src/main/cpp/host`, pinned at the commits
   that stack was proven with and in no APK. No patches. Moving any of them
   is proven by the RealVNC probe alone; the libc-shim gaps the hosting
   layer closes from glibc (`Loader.cxx`) are the things to re-check.
