@@ -93,21 +93,22 @@ android {
     }
 }
 
-// The protocols this build has, and what each one's crate is called where it
-// has one: a module carries its own native library and declares itself as a
-// `BackendProvider` service, so this table is the whole of what the app can
-// connect with, along with any add-on installed beside it. Nothing in the app
-// names a protocol.
+// The protocols this build has, and what each one's crate is called: a module
+// carries its own native library and declares itself as a `BackendProvider`
+// service, so this table is the whole of what the app can connect with, along
+// with any add-on installed beside it. Nothing in the app names a protocol.
 //
 // One table rather than a dependency list, because the licence page needs the
 // second column: the Cargo workspace holds a crate per protocol including the
-// ones that ship in an add-on, and the page is about this APK.
+// ones that ship in an add-on, and the page is about this APK. A C backend has
+// one too — its adapter, a static library its CMake links into the backend's
+// own `.so` — and the C library itself is named under `otherComponents`.
 final backendModules = [
         ':backends:rfb'     : 'remotedesktop-rfb',
-        ':backends:libvnc'  : null, // CMake, and named under `otherComponents`
-        ':backends:tigervnc': null,
+        ':backends:libvnc'  : 'remotedesktop-libvnc',
+        ':backends:tigervnc': 'remotedesktop-tigervnc',
         ':backends:ironrdp' : 'remotedesktop-ironrdp',
-        ':backends:freerdp' : null,
+        ':backends:freerdp' : 'remotedesktop-freerdp',
         ':backends:spice'   : 'remotedesktop-spice',
 ]
 
@@ -130,7 +131,7 @@ dependencies {
 // this APK's, not the repository's, since a backend that ships in an add-on has
 // a page of its own over there.
 def rustAbiFilters = provider { shippedAbis as Set }
-def rustCrates = provider { backendModules.values().findAll { it != null } as Set }
+def rustCrates = provider { backendModules.values() as Set }
 
 androidComponents {
     onVariants(selector().all()) { variant ->
@@ -157,10 +158,11 @@ androidComponents {
                         text: rootProject.file('LICENSE').getText('UTF-8'),
                 ]]
             })
-            // The Cargo lock accounts for every Rust protocol module and for
-            // nothing under a CMake one nor anything in `dependencies` above,
-            // so what those are built from is named here or the page would not
-            // know it is in the build.
+            // The Cargo lock accounts for every Rust protocol module and a C
+            // one's adapter, and for nothing of the C library under a CMake
+            // module nor anything in `dependencies` above, so what those are
+            // built from is named here or the page would not know it is in the
+            // build.
             otherComponents.set(provider {
                 // Read through a helper rather than getText directly: on a
                 // clean clone the submodules are empty and the two crypto trees

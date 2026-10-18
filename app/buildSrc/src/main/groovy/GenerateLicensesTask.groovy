@@ -29,11 +29,14 @@ import java.util.regex.Pattern
  * means for handing it on.
  *
  * <p>The first-party modules come from the caller; the Rust
- * crates are resolved from {@code cargo metadata}, because a hand-written list
- * is wrong the first time a dependency moves. Per <em>target</em>, since which
- * crates are in the graph is platform-dependent, and a crate reached by more
- * than one ABI is listed once. The workspace's own members are excluded: they
- * are this project.
+ * crates are resolved from Cargo, because a hand-written list is wrong the
+ * first time a dependency moves. Per <em>target</em>, since which crates are in
+ * the graph is platform-dependent, and a crate reached by more than one ABI is
+ * listed once. The workspace's own members are excluded: they are this
+ * project.
+ *
+ * <p>What is listed is what the artefact's libraries are compiled from, and
+ * nothing that only builds them: see {@link #resolveCrates}.
  */
 abstract class GenerateLicensesTask extends DefaultTask {
 
@@ -66,10 +69,11 @@ abstract class GenerateLicensesTask extends DefaultTask {
     /**
      * Third-party components that are not crates: {@code [name, spdx, text]}
      * each. The Cargo lock accounts for everything under a Rust protocol module
-     * and nothing at all under a CMake one or in the app's own dependency
-     * block, so a library vendored as a submodule and a library resolved from
-     * Maven both have to be named here or the page would not know the build
-     * contains them.
+     * and for a C one's adapter crate, and for nothing of the C library a CMake
+     * module builds nor anything in the app's own dependency block, so a
+     * library vendored as a submodule and a library resolved from Maven both
+     * have to be named here or the page would not know the build contains
+     * them.
      */
     @Input
     abstract ListProperty<Map<String, String>> getOtherComponents()
@@ -141,17 +145,39 @@ abstract class GenerateLicensesTask extends DefaultTask {
     }
 
     /**
-     * The normal (not dev, not build) dependencies of the crate, excluding the
-     * workspace's own members.
+     * The crates compiled into the libraries built from the wanted members for
+     * {@code target}, excluding the workspace's own members.
+     *
+     * <p>That is {@code cargo tree -e normal}, once per member, rather than a
+     * walk of {@code cargo metadata}'s resolve graph, whose features are
+     * unified across every member and every kind of dependency at once: a
+     * crate's dev-dependency on rustls with its default features (ryll's
+     * protocol crate's) switched on rustls's {@code aws_lc_rs} there, and
+     * aws-lc-rs and aws-lc-sys were listed although no library has them.
+     * {@code cargo tree} resolves features the way {@code cargo build} does for
+     * the same package and target — no dev-dependency in it, nothing of another
+     * platform — and it is run for each member alone because that is how each
+     * library is built ({@code CargoBuildTask}, one {@code --package} each), so
+     * one member's features do not leak into another's page either.
+     *
+     * <p>Two kinds of crate run while building and are not in what is built,
+     * and are left out. Build-dependencies (bindgen, protobuf-codegen, cc and
+     * what those use): what a build script emits is generated from inputs this
+     * page already covers — the C headers of the libraries named beside the
+     * crates, RustDesk's message definitions — and the runtime that generated
+     * code calls into, such as {@code protobuf}, is a normal dependency and
+     * listed. And what a proc-macro crate itself depends on (syn, quote,
+     * proc-macro2), which runs inside the compiler. The proc-macro crates
+     * themselves stay: the code a derive writes out is theirs, and it is in
+     * the library.
      */
     List<Map> resolveCrates(String target) {
         final metadata = new JsonSlurper().parseText(cargoMetadata(target)) as Map
 
         final packages = [:]
         (metadata.packages as List).each { packages.put(it.id, it) }
-
-        final nodes = [:]
-        ((metadata.resolve as Map).nodes as List).each { nodes.put(it.id, it) }
+        final byNameVersion = [:].withDefault { [] }
+        packages.values().each { byNameVersion.get([it.name.toString(), it.version.toString()]).add(it.id) }
 
         // A virtual manifest has no root package, which is what a workspace of
         // several cdylibs is; a manifest that does have one is still allowed,
@@ -176,35 +202,93 @@ abstract class GenerateLicensesTask extends DefaultTask {
                     "cargo metadata resolved no packages for ${workspaceDir.get().asFile}")
         }
 
-        final seen = new HashSet<String>()
-        final pending = roots as LinkedList
-        while (!pending.isEmpty()) {
-            final id = pending.poll()
-            if (!seen.add(id.toString())) {
-                continue
-            }
-            final node = nodes.get(id)
-            if (node == null) {
-                throw new GradleException("cargo metadata is missing a resolve node for ${id}")
-            }
-            (node.deps as List).each { dep ->
-                final kinds = dep.dep_kinds as List
-                if (kinds == null || kinds.isEmpty() || kinds.any { it.kind == null }) {
-                    pending.add(dep.pkg)
+        final seen = new TreeSet<String>()
+        roots.collect { packages.get(it).name.toString() }.toSorted().each { member ->
+            compiledInto(cargoTree(target, member)).each { nameVersion ->
+                final ids = byNameVersion.get(nameVersion)
+                if (ids.size() != 1) {
+                    // The tree names a package by name and version, which is
+                    // unique unless one crate comes from two sources.
+                    throw new GradleException("cargo tree's ${nameVersion.join(' ')} is " +
+                            "${ids.size()} packages of cargo metadata's for ${target}")
                 }
+                seen.add(ids[0].toString())
             }
         }
 
         return seen.findAll { !members.contains(it) }.collect { describeCrate(packages.get(it) as Map) }
     }
 
+    /** One line of {@code cargo tree --prefix depth --format {p}}. */
+    private static final Pattern TREE_LINE =
+            ~/^(\d+)(\S+) v(\S+)(?: \([^)]*\))*$/
+
+    /**
+     * The {@code [name, version]} of each package in a {@code cargo tree}
+     * that is compiled for the target: everything but what is below a
+     * proc-macro crate, which is compiled for the host to run in the compiler.
+     *
+     * <p>A package the tree has already shown is shown again as {@code (*)}
+     * without its dependencies. That loses nothing here, since the tree tells
+     * a crate built for the target from the same crate built for the host
+     * apart, and shows each one's dependencies at its first appearance.
+     */
+    static Set<List<String>> compiledInto(String tree) {
+        final compiled = new LinkedHashSet<List<String>>()
+        // The depth of the proc-macro crate the current line is below, if any.
+        int hostBelow = -1
+        tree.readLines().each { line ->
+            if (line.isEmpty()) {
+                return
+            }
+            final m = TREE_LINE.matcher(line)
+            if (!m.matches()) {
+                throw new GradleException("could not parse a line of cargo tree: ${line}")
+            }
+            final depth = m.group(1) as int
+            if (hostBelow >= 0 && depth <= hostBelow) {
+                hostBelow = -1
+            }
+            if (hostBelow >= 0) {
+                return
+            }
+            compiled.add([m.group(2), m.group(3)])
+            if (line.contains(' (proc-macro)')) {
+                hostBelow = depth
+            }
+        }
+        if (compiled.isEmpty()) {
+            throw new GradleException('cargo tree printed no packages')
+        }
+        return compiled
+    }
+
     String cargoMetadata(String target) {
-        final out = new ByteArrayOutputStream()
-        final cmd = [
-                'cargo', 'metadata',
+        return cargo([
+                'metadata',
                 '--locked',
                 '--format-version', '1',
                 '--filter-platform', target,
+        ])
+    }
+
+    String cargoTree(String target, String member) {
+        return cargo([
+                'tree',
+                '--locked',
+                '--edges', 'normal',
+                '--target', target,
+                '--package', member,
+                '--prefix', 'depth',
+                '--format', '{p}',
+                '--color', 'never',
+                '--charset', 'ascii',
+        ])
+    }
+
+    String cargo(List<String> args) {
+        final out = new ByteArrayOutputStream()
+        final cmd = ['cargo'] + args + [
                 '--manifest-path', new File(workspaceDir.get().asFile, 'Cargo.toml').absolutePath,
         ]
         try {
