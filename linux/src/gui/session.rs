@@ -318,6 +318,7 @@ impl Session {
         // Its streams are listed under the address until the far end says
         // its desktop's name (`poll`).
         let audio = backends::audio(&request.address, settings.audio_output);
+        let identity = known_hosts::realvnc_identity(&dirs.config, &request.address);
         let connect = Connect {
             address: &request.address,
             user: &request.user,
@@ -328,6 +329,7 @@ impl Session {
             dirs,
             screen: Some(screen),
             last_size: None,
+            identity: identity.as_deref(),
             client_name: &client_name,
             platform: backends::Platform::Linux,
             decoders: Some(Arc::clone(&decoders) as _),

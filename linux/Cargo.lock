@@ -3893,6 +3893,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "remotedesktop-realvnc"
+version = "0.0.1"
+dependencies = [
+ "bindgen",
+ "libloading 0.8.9",
+ "log",
+ "remotedesktop-api",
+]
+
+[[package]]
 name = "remotedesktop-rfb"
 version = "0.0.1"
 dependencies = [
@@ -5099,7 +5109,6 @@ name = "vento"
 version = "0.0.1"
 dependencies = [
  "ash",
- "bindgen",
  "bytemuck",
  "cmake",
  "egui",
@@ -5115,6 +5124,7 @@ dependencies = [
  "remotedesktop-libvnc",
  "remotedesktop-media",
  "remotedesktop-platform-linux",
+ "remotedesktop-realvnc",
  "remotedesktop-rfb",
  "remotedesktop-rustdesk",
  "remotedesktop-spice",

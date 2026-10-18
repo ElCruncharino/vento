@@ -4,16 +4,11 @@
 //! The eight backends, each as a [`Kind`]: what the picker and `--list` show,
 //! the options it takes, and how to start a session on it.
 //!
-//! None of them is this client's own any more. The four Rust protocols each
-//! carry their adapter in their own crate (`backend.rs` beside the
-//! protocol), the three open C libraries in a small crate beside their C
-//! sources, over the one adapter for `vento/backend.h` in
-//! `remotedesktop-api`; what is left here is RealVNC's, whose library is
-//! the viewer's own and is hosted for this client alone. The order is the
+//! None of them is this client's own. The four Rust protocols each carry
+//! their adapter in their own crate (`backend.rs` beside the protocol), the
+//! four C libraries in a small crate beside their C sources, over the one
+//! adapter for `vento/backend.h` in `remotedesktop-api`. The order is the
 //! catalog's, which is the picker's on the phone too.
-
-#[cfg(realvnc)]
-pub mod realvnc;
 
 pub use api::kind::{CONNECT_TIMEOUT_MS, Connect, Dirs, Kind, Platform};
 pub use api::trust::{Pinned, pinned_as};
@@ -56,21 +51,21 @@ pub fn audio(title: &str, output: AudioOutput) -> Arc<Audio> {
     Arc::new(Audio::new(title, output))
 }
 
-/// Every backend this binary has, in the picker's order. RealVNC is here
-/// only when `build.rs` found clang to build its hosting layer with.
+/// Every backend this binary has, in the picker's order. RealVNC's is
+/// always among them; where `build.rs` had no clang to build its library
+/// with, its version says it is not available and a session on it fails to
+/// start with the same sentence.
 pub fn all() -> Vec<&'static Kind> {
-    let mut kinds = vec![
+    vec![
         &remotedesktop_rfb::backend::KIND,
         &remotedesktop_libvnc::KIND,
         &remotedesktop_tigervnc::KIND,
         &remotedesktop_freerdp::KIND,
         &remotedesktop_ironrdp::backend::KIND,
-    ];
-    #[cfg(realvnc)]
-    kinds.push(&realvnc::KIND);
-    kinds.push(&remotedesktop_spice::backend::KIND);
-    kinds.push(&remotedesktop_rustdesk::backend::KIND);
-    kinds
+        &remotedesktop_realvnc::KIND,
+        &remotedesktop_spice::backend::KIND,
+        &remotedesktop_rustdesk::backend::KIND,
+    ]
 }
 
 pub fn find(id: &str) -> Option<&'static Kind> {
@@ -82,9 +77,11 @@ mod tests {
     use super::*;
 
     /// The catalog's order, which `all` has to keep by hand: the kinds are
-    /// in four crates and the list is written out here.
+    /// in eight crates and the list is written out here. Every one of them,
+    /// RealVNC's too, whatever the build found.
     #[test]
     fn the_kinds_are_in_the_catalogs_order() {
+        assert_eq!(all().len(), api::catalog::ALL.len());
         let orders: Vec<i32> = all().iter().map(|k| k.order).collect();
         assert!(orders.windows(2).all(|w| w[0] < w[1]), "{orders:?}");
         for kind in all() {

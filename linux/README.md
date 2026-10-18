@@ -39,12 +39,13 @@ clients, and what differs between them is each client's own code.
   its `backend`, `events` and `options` under those names.
 - **The adapters** — `src/backend.rs` in each Rust protocol crate
   (`backends/modules/{rfb,ironrdp,rustdesk,spice}`), and a small crate
-  beside each open C library (`backends/modules/{libvnc,tigervnc,freerdp}`,
+  beside each C library (`backends/modules/{libvnc,tigervnc,freerdp,realvnc}`,
   the C in its `cpp/`) over the `api` crate's C adapter, linked on the
-  phone into the library CMake makes of the C. RealVNC's is the one still
-  here, **`src/backends/realvnc.rs`**, since its library is the viewer's own
-  and hosted for this client alone (the phone's RealVNC backend is its own
-  Java over the viewer's JNI).
+  phone into the library CMake makes of the C — but for RealVNC's, which is
+  this client's alone, since its library hosts the viewer's own core (the
+  phone's RealVNC backend is its own Java over the viewer's JNI), and which
+  opens that library at run time rather than linking it (see
+  [RealVNC](#realvnc)). None is this crate's.
 - **`src/backends/`** — the list of the eight as this binary has them, in the
   catalog's order, and what a session here is told about this machine.
 - **`src/gui/`** — the window: `mod.rs` (the winit loop; one GPU device, queue
@@ -93,8 +94,9 @@ Host packages (the same the C host build needs, plus a libclang for bindgen):
 cmake, ninja, make, meson, pkg-config, nasm (on x86, for the video decoders'
 assembly; without it they are built in plain C, with a build note, and decode
 several times slower), a C/C++ compiler — **clang** for the RealVNC backend
-(libc-shim does not build under GCC; without clang that one backend is left
-out, with a build note) — and the development files for openssl, gnutls, nettle
+(libc-shim does not build under GCC; without clang that one backend's library
+is not built, with a build note, and the backend says it is not available) —
+and the development files for openssl, gnutls, nettle
 (hogweed, gmp), libjpeg-turbo, pixman, zlib, alsa-lib, plus libclang.
 Nothing of PipeWire: its library is loaded at run time where it is installed
 (**Sound**, below).
@@ -332,9 +334,11 @@ cargo run -- rdp 127.0.0.1:3389 --user proto --password protopass \
 
 `build.rs` runs `backends/CMakeLists.txt` with `-DVENTO_SHARED=ON`, which makes
 each backend a `libvento_<name>.so` under the build tree carrying its vendored
-static dependencies and the stderr logger; the binary links those four by name
-with an rpath into the build directory, so `cargo run` works from the target
-directory without anything on `LD_LIBRARY_PATH`. The C probes are not built
+static dependencies and the stderr logger; the binary links the three open
+backends' by name, and RealVNC's crate opens `libvento_realvnc.so` by name when
+a session first needs it, both through an rpath into the build directory, so
+`cargo run` works from the target directory without anything on
+`LD_LIBRARY_PATH`. The C probes are not built
 here: they are a plain `cmake -S backends -B … -DVENTO_PROBES=ON` of their own
 (the root README), static, as before; the option is off by default, so this
 build compiles none of them.
@@ -1358,11 +1362,17 @@ on its compositor), and absolute pointing and the native cursor there.
 ## RealVNC
 
 RealVNC's viewer core is proprietary and nothing of it is in this repository.
-The backend is built only when `clang` is on `PATH`; when it is not, the other
-seven are built and RealVNC is left out with a note. The next `cargo build`
-after `PATH` changes (clang installed, say) looks again, and when the answer
-differs the C tree is configured afresh with the other compilers, so nothing
-has to be cleaned by hand. To use it, take
+Its adapter is the `remotedesktop-realvnc` crate in `backends/modules/realvnc`,
+and its library, `libvento_realvnc.so` (the session and the hosting layer that
+runs the viewer's Android core in this process), is built only when `clang` is
+on `PATH`. The crate does not link it: it opens it by name, through the rpath,
+the first time a session or `--list` asks, so the binary does not depend on
+it. Without clang the build says so in a note, the backend is still listed,
+`--list` shows it as `not available: …` with the reason, and a session on it
+fails to start with that sentence. The next `cargo build` after `PATH` changes
+(clang installed, say) looks again, and when the answer differs the C tree is
+configured afresh with the other compilers, so nothing has to be cleaned by
+hand. To use it, take
 `libvncviewer.so` and `libc++_shared.so` for your host's ABI out of the viewer
 APK of the build `realvnc/.../Library.java` pins (the session verifies them by
 SHA-256 and refuses any other), and point `--library-dir` at them:

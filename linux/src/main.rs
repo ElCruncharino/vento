@@ -35,7 +35,7 @@ mod host {
     use vento::events::{Event, Mailbox, State};
     use vento::gui;
     use api::trust::{self, Decision};
-    use vento::known_hosts::KnownHosts;
+    use vento::known_hosts::{self, KnownHosts};
     use vento::options::{self, Options, Type};
     use vento::ppm;
 
@@ -502,6 +502,7 @@ headless, any of which selects the probe instead of the window:
             let mailbox = Mailbox::new(None);
             let backend = {
                 let client_name = backends::client_name();
+                let identity = known_hosts::realvnc_identity(&self.dirs.config, &self.address);
                 let connect = Connect {
                     address: &self.address,
                     user: &self.user,
@@ -514,6 +515,7 @@ headless, any of which selects the probe instead of the window:
                     // The desktop keeps no note of a desktop's last size, so
                     // `DesktopSize=remote` is the fallback here.
                     last_size: None,
+                    identity: identity.as_deref(),
                     client_name: &client_name,
                     platform: Platform::Linux,
                     decoders: Some(backends::decoders(self.hw_decode)),

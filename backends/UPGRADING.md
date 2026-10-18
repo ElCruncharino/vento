@@ -176,7 +176,12 @@ under the host locale (`export LC_ALL=C`).
   and on the phone it is linked into the module's library as a static
   library (`rustStaticLibrary` in `backends/build.gradle`,
   `backends/platform/android/cmake/vento_android.cmake`) with the one JNI layer in
-  `backends/platform/android`. An upstream change reaches the session file;
+  `backends/platform/android`. RealVNC's crate is the Linux client's alone
+  (the phone's RealVNC backend is its Java over the viewer's JNI) and opens
+  `libvento_realvnc.so` at run time through the loader its `build.rs` has
+  bindgen generate, since the library is built only under clang; a function
+  added to `vento/realvnc.h` is one more the loader requires. An upstream
+  change reaches the session file;
   the crate changes only when the config does, and so does `<name>_probe.c`,
   the host probe's `main` beside them. The module's
   CMakeLists is one file for both builds, `if(ANDROID)` and `else()` around
@@ -341,8 +346,8 @@ Rust modules:
     ./gradlew :backends:<module>:assembleRelease
 
 Every backend through the seam, on the host: the Linux client (`linux/`,
-its own workspace; see its README) builds all eight (RealVNC under clang
-only), and its headless probe connects one, writes the picture out and
+its own workspace; see its README) builds all eight (RealVNC's library
+under clang only; without it the backend is listed as not available), and its headless probe connects one, writes the picture out and
 exits — the run that goes through the same adapters the phone does, RealVNC's
 aside:
 

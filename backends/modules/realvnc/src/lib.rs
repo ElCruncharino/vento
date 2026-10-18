@@ -1,38 +1,86 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! RealVNC's viewer core as a [`Backend`](crate::backend::Backend):
-//! `vento_realvnc_config` and `RealVncBackend`'s option handling and rows.
+//! RealVNC's viewer core as a [`Backend`](api::backend::Backend):
+//! `vento_realvnc_config` and `RealVncBackend`'s option handling and rows —
+//! what the Linux client holds. The phone's RealVNC backend is the module's
+//! Java over the viewer's own JNI, so on any other target than Linux this
+//! crate is empty.
 //!
-//! Present only when `build.rs` found clang to build the hosting layer with,
-//! which is what the `realvnc` cfg says. Nothing of RealVNC's is in the tree:
-//! the two libraries come from the viewer's APK under `library_dir`, hashes
-//! verified by the session, and what the core persists goes under
-//! `state_dir` — both from [`Dirs`](crate::backends::Dirs), with XDG
-//! defaults, and overridable from the command line. The identity the core
-//! asks to have remembered is the window's to keep, in
-//! [`realvnc_identities`](crate::known_hosts::realvnc_identities), and is
-//! handed back here.
+//! The library, `libvento_realvnc.so`, is opened when it is first needed
+//! rather than linked: the client's build makes it only where clang is on
+//! the path, and decides that after this crate is built, so the backend is
+//! always listed and says why it cannot start where the library is not
+//! there ([`library`]). It is found by name, as the other C backends'
+//! libraries are linked by name — through the binary's rpath, which points
+//! at the client's build tree, or `LD_LIBRARY_PATH` — and once open it stays
+//! open, since the core it hosts never lets go of a session.
+//!
+//! Nothing of RealVNC's is in the tree: the two libraries the session loads
+//! come from the viewer's APK under `library_dir`, hashes verified by the
+//! session, and what the core persists goes under `state_dir` — both from
+//! [`Dirs`](api::kind::Dirs), with XDG defaults, and overridable from the
+//! client's command line. The identity the core asks to have remembered is
+//! the client's to keep, handed out through
+//! [`Backend::saved_identity`](api::backend::Backend::saved_identity) and
+//! back in as [`Connect::identity`].
 
-use crate::backend::{Backend, ConnectionFact, Field, Traffic};
-use crate::backends::{Connect, Kind};
-use crate::known_hosts;
-use crate::options::Options;
+#![cfg(target_os = "linux")]
+
+use api::backend::{Backend, ConnectionFact, Field, Traffic};
 use api::c::{Behaviour, CSession, Security, start};
+use api::kind::{Connect, Kind};
+use api::options::Options;
 use std::ffi::CString;
 use std::os::raw::c_void;
+use std::sync::OnceLock;
 
 /// `vento/realvnc.h`, as `build.rs` generated it, over the shared
-/// declarations it is written against.
+/// declarations it is written against: its types, and its functions as the
+/// fields of a [`Library`](ffi::Library) that looked each of them up.
 mod ffi {
     #![allow(non_camel_case_types, dead_code)]
     pub use api::c::ffi::*;
-    include!(concat!(env!("OUT_DIR"), "/realvnc.rs"));
+    include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
+}
+
+/// The library's name, as the client's CMake build writes it.
+const LIBRARY: &str = "libvento_realvnc.so";
+
+/// The library, opened the first time anything asks: the error, kept as
+/// well, is what every later ask is told. With `RTLD_GLOBAL`, as a library
+/// the binary was linked against would be, so that the hosting layer's
+/// lookups in the process's global scope see what they saw when it was.
+fn library() -> Result<&'static ffi::Library, &'static str> {
+    static LOADED: OnceLock<Result<ffi::Library, String>> = OnceLock::new();
+    LOADED.get_or_init(|| open(LIBRARY)).as_ref().map_err(String::as_str)
+}
+
+fn open(name: &str) -> Result<ffi::Library, String> {
+    use libloading::os::unix::{Library, RTLD_GLOBAL, RTLD_NOW};
+    // Opening it runs its constructors, which are the hosting layer's and
+    // the C++ runtime's, and looking up the header's functions reads them:
+    // the library is one the client's own build made.
+    unsafe {
+        let library = Library::open(Some(name), RTLD_NOW | RTLD_GLOBAL)
+            .map_err(|e| format!("{e} (the Linux client's build makes it only with clang on the path)"))?;
+        ffi::Library::from_library(library)
+            .map_err(|e| format!("{name} is not the library vento/realvnc.h describes: {e}"))
+    }
+}
+
+/// The library a session was started over. A [`CSession`] of this backend
+/// exists only once [`create`] has opened it, and it is never closed.
+fn loaded() -> &'static ffi::Library {
+    library().expect("a RealVNC session is started only over the opened library")
 }
 
 pub static KIND: Kind = Kind {
     about: &api::catalog::REALVNC,
-    version: || unsafe { api::c::string(ffi::vento_realvnc_version()) },
+    version: || match library() {
+        Ok(library) => unsafe { api::c::string(library.vento_realvnc_version()) },
+        Err(why) => format!("not available: {why}"),
+    },
     create,
 };
 
@@ -46,11 +94,12 @@ static BEHAVIOUR: Behaviour = Behaviour {
 };
 
 fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
+    let library = library().map_err(|why| format!("RealVNC is not available: {why}"))?;
     let o = c.options;
     // The provider's defaults, which are not all zero; then the rows over
     // them, as `RealVncBackend.connect` hands the whole options map over.
     let mut config = ffi::vento_realvnc_config::default();
-    unsafe { ffi::vento_realvnc_config_init(&mut config) };
+    unsafe { library.vento_realvnc_config_init(&mut config) };
 
     let state = c.dirs.state.join("realvnc");
     std::fs::create_dir_all(&state).map_err(|e| format!("the state directory: {e}"))?;
@@ -71,11 +120,8 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
         CString::new(state.to_string_lossy().into_owned()).map_err(|_| "the state path has a NUL")?;
     // What this server was last accepted as, as `RealVncBackend` hands it
     // back: with it the core's security prompt is silent for a server it
-    // recognises. Read only; the window is what keeps a new one.
-    let identity = known_hosts::realvnc_identities(&c.dirs.config)
-        .read_or_empty()
-        .get(c.address)
-        .and_then(|i| CString::new(i).ok());
+    // recognises. The client keeps it, and a new one is its to keep too.
+    let identity = c.identity.and_then(|i| CString::new(i).ok());
 
     config.address = address.as_ptr();
     config.user_name = user.as_ref().map_or(std::ptr::null(), |u| u.as_ptr());
@@ -103,7 +149,7 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
     start(
         c,
         &BEHAVIOUR,
-        |callbacks| unsafe { ffi::vento_realvnc_create(&config, callbacks) },
+        |callbacks| unsafe { library.vento_realvnc_create(&config, callbacks) },
         Some(&SECURITY),
     )
 }
@@ -112,13 +158,13 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
 /// it was answered with one.
 static SECURITY: Security = Security {
     answer: |s, accept, remember| unsafe {
-        ffi::vento_realvnc_answer_security(s.session, accept, remember)
+        loaded().vento_realvnc_answer_security(s.session, accept, remember)
     },
     saved_identity,
 };
 
 fn saved_identity(s: &CSession) -> Option<String> {
-    let raw = unsafe { ffi::vento_realvnc_identity_saved(s.session) };
+    let raw = unsafe { loaded().vento_realvnc_identity_saved(s.session) };
     if raw.is_null() {
         return None;
     }
@@ -136,7 +182,7 @@ fn set_option(session: &CSession, o: &Options, key: &str) {
     }
     let (k, v) = (CString::new(key), CString::new(o.get(key)));
     if let (Ok(k), Ok(v)) = (k, v) {
-        unsafe { ffi::vento_realvnc_set_option(session.session, k.as_ptr(), v.as_ptr()) }
+        unsafe { loaded().vento_realvnc_set_option(session.session, k.as_ptr(), v.as_ptr()) }
     }
 }
 
@@ -158,4 +204,19 @@ fn info(s: &[String], traffic: Option<Traffic>) -> Vec<ConnectionFact> {
     facts.push(ConnectionFact::diagnostic(Field::ServerPixels, "Server pixels", &s[6]));
     facts.push(ConnectionFact::diagnostic(Field::ViewerPixels, "Viewer pixels", &s[7]));
     facts
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A library that is not there is a sentence about it, not a panic: what
+    /// `--list` prints and a session's start reports where the client was
+    /// built without clang.
+    #[test]
+    fn a_missing_library_says_so() {
+        let why = open("libvento_realvnc_not_here.so").err().expect("no such library");
+        assert!(why.contains("libvento_realvnc_not_here.so"), "{why}");
+        assert!(why.contains("clang"), "{why}");
+    }
 }

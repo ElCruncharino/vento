@@ -1,8 +1,8 @@
 # Every crate is under `backends/`, inside the Gradle module that packages it,
 # but the workspace root is here because that is where cargo and rust-analyzer
 # look for one. The members are named one by one: a backend's crate is its
-# module's directory, `backends/modules/<name>/`, except RealVNC's, which has
-# none, so adding a protocol is a line in each list below.
+# module's directory, `backends/modules/<name>/`, so adding a protocol is a
+# line in each list below.
 #
 # The layering is the point. `backends/runtime` is the neutral layer a
 # protocol is written against — the handler, the events, the thread a session
@@ -12,8 +12,9 @@
 # `Backend` trait, the events, the options and the rules every client keeps
 # alike — and each backend's adapter to it lives in that backend's own
 # crate under `backends/modules/`: the protocol crate for the four in Rust, a
-# small crate beside the C library for the others. None of them knows a
-# phone. `backends/platform/*` is where one platform's glue lives — Android's
+# small crate beside the C library for the others (RealVNC's the Linux
+# client's alone, and empty on the phone). None of them knows a phone.
+# `backends/platform/*` is where one platform's glue lives — Android's
 # JNI and MediaCodec in `android`, libavcodec in `linux`. The one client
 # that is not a phone's is `linux/`: a desktop binary that holds a session on
 # any of the eight backends through those adapters, with the C libraries its
@@ -45,6 +46,7 @@ members = [
     "backends/modules/libvnc",
     "backends/modules/tigervnc",
     "backends/modules/freerdp",
+    "backends/modules/realvnc",
 ]
 # Every member but the Linux platform crate, which is the one whose build
 # script builds dav1d and FFmpeg (minutes, once per target directory): a bare
@@ -65,6 +67,7 @@ default-members = [
     "backends/modules/libvnc",
     "backends/modules/tigervnc",
     "backends/modules/freerdp",
+    "backends/modules/realvnc",
 ]
 exclude = ["third_party", "linux"]
 

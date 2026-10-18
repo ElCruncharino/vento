@@ -2633,6 +2633,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "remotedesktop-realvnc"
+version = "0.0.1"
+dependencies = [
+ "bindgen",
+ "libloading 0.8.9",
+ "log",
+ "remotedesktop-api",
+]
+
+[[package]]
 name = "remotedesktop-rfb"
 version = "0.0.1"
 dependencies = [

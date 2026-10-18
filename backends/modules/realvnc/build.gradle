@@ -11,7 +11,8 @@ plugins {
 // reads a counter their exported functions do not offer. The same directory's
 // `cpp/` also holds the host's half of this backend (`realvnc_session.cxx`,
 // built by `backends/CMakeLists.txt` and never by this file), which runs the
-// same core in a Linux process.
+// same core in a Linux process, and its root the Linux client's adapter over
+// that (`Cargo.toml`, `src/`), a crate no Gradle build names.
 //
 // Nothing of RealVNC's is in this or in anything built from it. It is the one
 // backend that ships in an add-on rather than in the app, because everything

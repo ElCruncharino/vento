@@ -287,6 +287,13 @@ pub fn realvnc_identities(config: &Path) -> Store {
     Store::new(config.join("realvnc_identities"))
 }
 
+/// The identity kept for `address`, for a session's
+/// [`Connect::identity`](api::kind::Connect::identity): read only, since a
+/// new one is kept when a session ends, and only by the window.
+pub fn realvnc_identity(config: &Path, address: &str) -> Option<String> {
+    realvnc_identities(config).read_or_empty().get(address).map(str::to_owned)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

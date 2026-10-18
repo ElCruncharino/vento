@@ -5,26 +5,27 @@
 //! `VENTO_SHARED` on. (The declarations of `vento/backend.h` are read into
 //! Rust by `remotedesktop-api`'s own build script, under its `c`
 //! feature, and each backend's own header by its crate's; the backends'
-//! crates link nothing, so the libraries are linked here, into the binary.)
-//! RealVNC's adapter is this crate's, so its header, `vento/realvnc.h` in
-//! its module, is read here too (`realvnc_bindings`).
+//! crates link nothing, so the libraries are made here, and three of them
+//! linked into the binary.)
 //!
 //! The host build already existed — it is what the C probes are built on,
 //! with `-DVENTO_PROBES=ON` — and this runs the same file through the `cmake`
 //! crate rather than describing it again, with the one switch that makes each
 //! `vento_<name>` a shared library carrying its vendored static dependencies
 //! and the stderr `vento_log`. The probes are left at their default, off:
-//! nothing here runs them. The four `.so` files land under `lib/` in the build tree, the
-//! binary links them by name and nothing else of theirs, and an rpath to that
-//! directory is baked in so that `cargo run` finds them from the target
-//! directory without being told.
+//! nothing here runs them. The `.so` files land under `lib/` in the build tree,
+//! the binary links the three open backends' by name and nothing else of
+//! theirs, and an rpath to that directory is baked in so that `cargo run`
+//! finds them from the target directory without being told.
 //!
 //! RealVNC's hosting layer builds only under clang, so where `clang` is on the
 //! path both compilers are set to it for the whole tree — the three open
 //! backends build under either — and where it is not, the CMake root skips
-//! that module with a message rather than an error. Whether the library then
-//! exists is what the `realvnc` cfg says, so the Rust side can leave the
-//! backend out of its list rather than fail to link.
+//! that module with a message rather than an error. Its library is not linked
+//! either way: `remotedesktop-realvnc` opens it by name when a session asks
+//! for it, through the same rpath, and says the backend is not available where
+//! it is not there — a library this script may or may not make could not be
+//! a feature of a crate built before it runs.
 //!
 //! That choice is made again whenever `PATH`, `CC` or `CXX` changes, and a
 //! tree configured for other compilers is thrown away and configured afresh:
@@ -38,10 +39,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn main() {
-    // Known to rustc whether or not it is set, so that `cfg(realvnc)` in the
-    // sources is never an unexpected-cfg warning.
-    println!("cargo:rustc-check-cfg=cfg(realvnc)");
-
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let backends = manifest
         .join("../backends")
@@ -82,12 +79,12 @@ fn main() {
             .expect("remotedesktop-platform-linux says where its FFmpeg is"),
     );
 
-    realvnc_bindings(&backends, &out);
     let lib = build_c_backends(&backends, &out, &ffmpeg);
     println!("cargo:rustc-link-search=native={}", lib.display());
     // The rpath, so that the binary and the tests run from where cargo puts
-    // them. Absolute, which is right for a development tree; a packaged
-    // binary would carry the libraries beside it and `$ORIGIN` instead.
+    // them, and RealVNC's library is opened from there too. Absolute, which
+    // is right for a development tree; a packaged binary would carry the
+    // libraries beside it and `$ORIGIN` instead.
     println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib.display());
     for name in ["libvnc", "tigervnc", "freerdp"] {
         let path = lib.join(format!("libvento_{name}.so"));
@@ -95,36 +92,10 @@ fn main() {
         println!("cargo:rustc-link-lib=dylib=vento_{name}");
     }
     if lib.join("libvento_realvnc.so").is_file() {
-        println!("cargo:rustc-link-lib=dylib=vento_realvnc");
-        println!("cargo:rustc-cfg=realvnc");
         println!("cargo:warning=RealVNC backend: in (built with clang)");
     } else {
-        println!("cargo:warning=RealVNC backend: left out (needs clang on the path)");
+        println!("cargo:warning=RealVNC backend: not available (its library needs clang on the path)");
     }
-}
-
-/// `vento/realvnc.h` as Rust, for `src/backends/realvnc.rs`: its own items
-/// only, the `vento_realvnc_` ones, over the shared declarations
-/// `api::c::ffi` has, as each C backend's crate reads its header.
-/// Generated whether or not the library is built — bindgen's libclang is
-/// needed by the `api` crate either way, clang on the path or not — and
-/// used only under the `realvnc` cfg.
-fn realvnc_bindings(backends: &Path, out: &Path) {
-    let own = backends.join("modules/realvnc/cpp/include");
-    let shared = backends.join("api/include");
-    bindgen::Builder::default()
-        .header_contents("realvnc.h", "#include <vento/realvnc.h>\n")
-        .clang_arg(format!("-I{}", own.display()))
-        .clang_arg(format!("-I{}", shared.display()))
-        .allowlist_item("vento_realvnc_.*")
-        .allowlist_item("VENTO_REALVNC_.*")
-        .allowlist_recursively(false)
-        .derive_default(true)
-        .layout_tests(false)
-        .generate()
-        .expect("bindgen over vento/realvnc.h")
-        .write_to_file(out.join("realvnc.rs"))
-        .expect("writing realvnc.rs");
 }
 
 /// Runs the host CMake build with the shared switch on and returns the

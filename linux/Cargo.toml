@@ -3,12 +3,10 @@
 #
 # Every backend comes in as a crate holding its adapter to the one `Backend`
 # trait of `remotedesktop-api`, which the phone shares: the four Rust
-# protocols' own crates, and the three C libraries' small crates over the
+# protocols' own crates, and the four C libraries' small crates over the
 # vtable in `vento/backend.h`, whose shared libraries `build.rs` has CMake
-# make out of `backends/`. RealVNC's adapter is the one still here, its
-# library being the viewer's own, hosted for this client alone. What this
-# crate adds on top is the window (`src/gui/`), the known-hosts file, and a
-# headless probe.
+# make out of `backends/`. What this crate adds on top is the window
+# (`src/gui/`), the known-hosts file, and a headless probe.
 #
 # A workspace of its own rather than a member of the repository's, and the
 # root `Cargo.toml` says why at length: Cargo unifies features across a
@@ -35,16 +33,19 @@ path = "src/main.rs"
 [dependencies]
 log = "0.4"
 remotedesktop-media = { path = "../backends/media" }
-# The seam every backend is held by, and the one adapter over the C vtable
-# (the `c` feature), which RealVNC's adapter here fills in.
-remotedesktop-api = { path = "../backends/api", features = ["c"] }
+# The seam every backend is held by. Its `c` feature, the one adapter over
+# the C vtable, is the C backends' crates' to ask for, and nothing here names
+# it.
+remotedesktop-api = { path = "../backends/api" }
 # libavcodec, for RustDesk's picture: the one protocol here whose frames are
 # video. Its build script builds FFmpeg and dav1d from `third_party/`
 # statically, and says where (`links`), so that `build.rs` hands the same
 # libraries to TigerVNC and FreeRDP: no FFmpeg of the system's is linked.
 remotedesktop-platform-linux = { path = "../backends/platform/linux" }
 # The backends, each with its adapter in its own crate: the four protocols,
-# and the three C libraries' crates, whose libraries `build.rs` links.
+# and the four C libraries' crates, whose libraries `build.rs` has CMake
+# make — linked for the three open ones, and opened at run time by RealVNC's
+# crate, since its library is made only under clang.
 remotedesktop-rfb = { path = "../backends/modules/rfb" }
 remotedesktop-ironrdp = { path = "../backends/modules/ironrdp" }
 remotedesktop-rustdesk = { path = "../backends/modules/rustdesk" }
@@ -52,6 +53,7 @@ remotedesktop-spice = { path = "../backends/modules/spice" }
 remotedesktop-libvnc = { path = "../backends/modules/libvnc" }
 remotedesktop-tigervnc = { path = "../backends/modules/tigervnc" }
 remotedesktop-freerdp = { path = "../backends/modules/freerdp" }
+remotedesktop-realvnc = { path = "../backends/modules/realvnc" }
 # The window. winit owns the event loop and the Wayland connection, egui
 # draws into it through egui-winit and egui-wgpu, and the three wayland
 # crates are for the one protocol winit does not speak — the keyboard
@@ -93,10 +95,6 @@ bytemuck = "1"
 # Runs `backends/CMakeLists.txt` with VENTO_SHARED on, which is the whole of
 # how the C backends get here; `build.rs` says where the libraries land.
 cmake = "0.1"
-# `vento/realvnc.h`, for the RealVNC adapter here, read rather than retyped as
-# the `api` crate reads the shared headers and each C backend's crate its
-# own. Already in the graph through `remotedesktop-api`'s `c` feature.
-bindgen = "0.73"
 
 [dev-dependencies]
 # For the test that every toolbar symbol is in the bundled font (icons.rs).
