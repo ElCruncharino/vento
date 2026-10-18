@@ -16,8 +16,10 @@
 //! `csd-1` and `csd-2`, which is how MediaCodec's Opus decoder is told them.
 //!
 //! **No call waits long.** A packet goes in as soon as there is an input
-//! buffer for it (a few milliseconds at most; a decoder that has none is a
-//! dropped packet rather than a stalled channel), and what comes out is
+//! buffer for it (a few milliseconds at most; a decoder that has none has
+//! what it finished taken from it, which frees one, and is asked again, and
+//! one that still has none is a dropped packet rather than a stalled
+//! channel), and what comes out is
 //! whatever the decoder has finished by then, waiting a moment for the first
 //! of it: a decoder that hands a frame back a packet late has it collected
 //! on the next call, a packet's worth later, rather than the caller waiting
@@ -185,29 +187,12 @@ impl Audio {
     }
 }
 
-impl Decoder for Audio {
-    fn decode(&mut self, packet: &[u8], out: &mut Vec<i16>) -> Result<Option<Format>, String> {
-        let index = unsafe { AMediaCodec_dequeueInputBuffer(self.codec, INPUT_TIMEOUT_US) };
-        if index < 0 {
-            return Err("the decoder has no input buffer free".into());
-        }
-        let mut capacity = 0usize;
-        let buffer = unsafe { AMediaCodec_getInputBuffer(self.codec, index as usize, &mut capacity) };
-        let take = packet.len().min(if buffer.is_null() { 0 } else { capacity });
-        if take > 0 {
-            unsafe { std::ptr::copy_nonoverlapping(packet.as_ptr(), buffer, take) };
-        }
-        let queued = unsafe { AMediaCodec_queueInputBuffer(self.codec, index as usize, 0, take, self.pts_us, 0) };
-        if queued != AMEDIA_OK {
-            return Err(format!("the decoder took no packet ({queued})"));
-        }
-        if take < packet.len() {
-            return Err(format!("a {}-byte packet in a {capacity}-byte buffer", packet.len()));
-        }
-
-        let before = out.len();
-        let mut timeout = OUTPUT_TIMEOUT_US;
-        let mut format = None;
+impl Audio {
+    /// What the decoder has finished, appended to `out` in one format (the
+    /// first buffer's, which `format` keeps): waiting up to `wait` for the
+    /// first buffer and not at all for the rest.
+    fn drain(&mut self, out: &mut Vec<i16>, format: &mut Option<Format>, wait: i64) {
+        let mut timeout = wait;
         loop {
             let mut info = BufferInfo::default();
             let index = unsafe { AMediaCodec_dequeueOutputBuffer(self.codec, &mut info, timeout) };
@@ -238,20 +223,65 @@ impl Decoder for Audio {
                 } else {
                     out.extend(bytes.chunks_exact(2).map(|b| i16::from_ne_bytes([b[0], b[1]])));
                 }
-                format = Some(self.output);
+                *format = Some(self.output);
             }
             unsafe { AMediaCodec_releaseOutputBuffer(self.codec, index as usize, false) };
         }
-        // The packet's length in time is not known until it is decoded, so the
-        // clock moves by what came out, and by a microsecond when nothing did,
-        // to keep it moving forward.
+    }
+
+    /// The samples appended since `before`, in whole frames, and the clock
+    /// moved on by them: the packet's length in time is not known until it
+    /// is decoded, so the clock moves by what came out, and by a
+    /// microsecond when nothing did, to keep it moving forward.
+    fn finish(&mut self, out: &mut Vec<i16>, before: usize, format: Option<Format>) -> Option<Format> {
         let frames = (out.len() - before) / self.output.channels;
         self.pts_us += (frames as u64 * 1_000_000 / self.output.rate as u64).max(1);
         // A partial frame never comes out of a decoder, but an odd buffer is
         // not trusted to keep the samples in step with the channels.
-        let whole = before + frames * self.output.channels;
-        out.truncate(whole);
-        Ok(format.filter(|_| frames > 0))
+        out.truncate(before + frames * self.output.channels);
+        format.filter(|_| frames > 0)
+    }
+}
+
+impl Decoder for Audio {
+    fn decode(&mut self, packet: &[u8], out: &mut Vec<i16>) -> Result<Option<Format>, String> {
+        let before = out.len();
+        let mut format = None;
+        let mut index = unsafe { AMediaCodec_dequeueInputBuffer(self.codec, INPUT_TIMEOUT_US) };
+        if index < 0 {
+            // Every input buffer can be held by a decoder with nowhere to put
+            // what it decoded: its output buffers all waiting to be taken, and
+            // only a call that got an input buffer took them — so one packet
+            // too many while the outputs were full was a decoder that took
+            // nothing ever after. What it has finished is taken now, without
+            // waiting, which frees it to take input, and then once more.
+            self.drain(out, &mut format, 0);
+            index = unsafe { AMediaCodec_dequeueInputBuffer(self.codec, INPUT_TIMEOUT_US) };
+            if index < 0 {
+                // The packet is dropped, and what was taken is still sound.
+                let taken = self.finish(out, before, format);
+                return match taken {
+                    Some(_) => Ok(taken),
+                    None => Err("the decoder has no input buffer free".into()),
+                };
+            }
+        }
+        let mut capacity = 0usize;
+        let buffer = unsafe { AMediaCodec_getInputBuffer(self.codec, index as usize, &mut capacity) };
+        let take = packet.len().min(if buffer.is_null() { 0 } else { capacity });
+        if take > 0 {
+            unsafe { std::ptr::copy_nonoverlapping(packet.as_ptr(), buffer, take) };
+        }
+        let queued = unsafe { AMediaCodec_queueInputBuffer(self.codec, index as usize, 0, take, self.pts_us, 0) };
+        if queued != AMEDIA_OK {
+            return Err(format!("the decoder took no packet ({queued})"));
+        }
+        if take < packet.len() {
+            return Err(format!("a {}-byte packet in a {capacity}-byte buffer", packet.len()));
+        }
+        let wait = if format.is_some() { 0 } else { OUTPUT_TIMEOUT_US };
+        self.drain(out, &mut format, wait);
+        Ok(self.finish(out, before, format))
     }
 
     fn name(&self) -> String {
