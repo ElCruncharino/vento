@@ -29,22 +29,23 @@ remotedesktop-tls.workspace = true
 # where the protocol pads the bitmap's own width up to a multiple of four, so
 # every update not a multiple of four wide shears one row further left than the
 # last. On xrdp that is most of them. Fixed upstream and unreleased — revisit at
-# the next release.
-ironrdp-cliprdr = { path = "../../../../../../third_party/ironrdp/crates/ironrdp-cliprdr" }
-ironrdp-blocking = { path = "../../../../../../third_party/ironrdp/crates/ironrdp-blocking" }
-ironrdp-connector = { path = "../../../../../../third_party/ironrdp/crates/ironrdp-connector" }
-ironrdp-displaycontrol = { path = "../../../../../../third_party/ironrdp/crates/ironrdp-displaycontrol" }
-ironrdp-dvc = { path = "../../../../../../third_party/ironrdp/crates/ironrdp-dvc" }
-ironrdp-core = { path = "../../../../../../third_party/ironrdp/crates/ironrdp-core" }
-ironrdp-graphics = { path = "../../../../../../third_party/ironrdp/crates/ironrdp-graphics" }
-ironrdp-input = { path = "../../../../../../third_party/ironrdp/crates/ironrdp-input" }
-ironrdp-pdu = { path = "../../../../../../third_party/ironrdp/crates/ironrdp-pdu" }
+# the next release. The paths are the root `Cargo.toml`'s
+# `[workspace.dependencies]`.
+ironrdp-cliprdr.workspace = true
+ironrdp-blocking.workspace = true
+ironrdp-connector.workspace = true
+ironrdp-displaycontrol.workspace = true
+ironrdp-dvc.workspace = true
+ironrdp-core.workspace = true
+ironrdp-graphics.workspace = true
+ironrdp-input.workspace = true
+ironrdp-pdu.workspace = true
 # The server's sound, played on the session's output (`src/sound.rs`), and
 # device redirection with no devices, without which Windows never starts it.
-ironrdp-rdpsnd = { path = "../../../../../../third_party/ironrdp/crates/ironrdp-rdpsnd" }
-ironrdp-rdpdr = { path = "../../../../../../third_party/ironrdp/crates/ironrdp-rdpdr" }
-ironrdp-session = { path = "../../../../../../third_party/ironrdp/crates/ironrdp-session" }
-ironrdp-svc = { path = "../../../../../../third_party/ironrdp/crates/ironrdp-svc" }
+ironrdp-rdpsnd.workspace = true
+ironrdp-rdpdr.workspace = true
+ironrdp-session.workspace = true
+ironrdp-svc.workspace = true
 
 rustls = { version = "0.23", default-features = false, features = [
     "ring",

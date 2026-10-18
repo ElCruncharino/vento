@@ -5,10 +5,11 @@ plugins {
     id 'com.android.library'
 }
 
-// Both halves of the RustDesk backend: `src/main/rust`, our own client, as the
-// library the AAR carries, and `src/main/java`'s provider, which holds a
-// session on it as a `NativeBackend` through the natives class generated
-// below. What ships it is `plugins/rustdesk` rather than the app.
+// Both halves of the RustDesk backend: the crate at this directory's root
+// (`Cargo.toml`, `src/`), our own client, as the library the AAR carries, and
+// `java/`'s provider, which holds a session on it as a `NativeBackend` through
+// the natives class generated below. What ships it is `plugins/rustdesk` rather
+// than the app.
 android {
     namespace = 'net.pgaskin.remotedesktop.backend.rustdesk'
     compileSdk 36
@@ -21,6 +22,15 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_21
         targetCompatibility JavaVersion.VERSION_21
+    }
+
+    // Not AGP's `src/main/`: `src/` here is the crate's. The Java is in
+    // `java/`, the files themselves with no package directories over them
+    // (javac goes by the `package` line), and the provider's registration is
+    // in `resources/`.
+    sourceSets.main {
+        java.srcDirs = ['java']
+        resources.srcDirs = ['resources']
     }
 
     publishing {

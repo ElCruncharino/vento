@@ -37,7 +37,7 @@ clients, and what differs between them is each client's own code.
   cursor, pointer mode and clipboard, not a backlog. This crate re-exports
   its `backend`, `events` and `options` under those names.
 - **The adapters** — `src/backend.rs` in each Rust protocol crate
-  (`backends/modules/{rfb,ironrdp,rustdesk,spice}/src/main/rust`), and a small
+  (`backends/modules/{rfb,ironrdp,rustdesk,spice}`), and a small
   crate beside each open C library (`backends/modules/{libvnc,tigervnc,
   freerdp}/src/main/rust`) over the session crate's C adapter, linked on the
   phone into the library CMake makes of the C. RealVNC's is the one still
@@ -593,7 +593,7 @@ queue and the device; 133-140 ms as Opus and 132-134 ms as PCM, flat over two
 minutes, before PipeWire). IronRDP's sound (Sound =
 "This computer", FreeRDP's row less the remote machine, which IronRDP has no
 way to ask for) is IronRDP's own rdpsnd channel with a handler over the same
-output (`backends/modules/ironrdp/src/main/rust/src/sound.rs`): it offers
+output (`backends/modules/ironrdp/src/sound.rs`): it offers
 the part of the server's format list it plays — PCM, and AAC or Opus where
 the platform decodes them — so Windows picks AAC here as it does from
 FreeRDP. Device redirection goes with it, announcing no devices, since

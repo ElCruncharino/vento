@@ -19,7 +19,7 @@ use std::path::PathBuf;
 
 fn main() {
     let protos = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../../../../third_party/hbb_common/protos");
+        .join("../../../third_party/hbb_common/protos");
     let protos = protos.canonicalize().unwrap_or_else(|e| {
         panic!(
             "{}: {e} — run `git submodule update --init third_party/hbb_common`",

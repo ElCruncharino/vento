@@ -259,15 +259,16 @@ Not part of an upgrade round, but the same layers, so here once. A backend
 is a module under `backends/modules/<name>/`, and each layer of it is one
 line or one file somewhere that already has seven:
 
-- **The protocol.** A Rust crate in `src/main/rust` (`crate-type = ["lib",
-  "cdylib"]`), or a C shim in `src/main/cpp` over `vento/backend.h` with its
-  config in its own header, `src/main/cpp/include/vento/<name>.h` (on the
-  include path of the module's targets through `vento_backend_library` and
-  `vento_android_library`), a host probe `<name>_probe.c` (built with
-  `-DVENTO_PROBES=ON`), and a small crate in `src/main/rust` beside it
-  (`remotedesktop-session` with the `c` feature; `session::c::start` and a
-  `Behaviour` do the rest) whose `build.rs` reads the header with bindgen,
-  its own items only, over `session::c::ffi` — libvnc's, copied.
+- **The protocol.** A Rust crate at the module's root (`Cargo.toml`, `src/`,
+  `examples/`; `crate-type = ["lib", "cdylib"]`), or a C shim in
+  `src/main/cpp` over `vento/backend.h` with its config in its own header,
+  `src/main/cpp/include/vento/<name>.h` (on the include path of the module's
+  targets through `vento_backend_library` and `vento_android_library`), a host
+  probe `<name>_probe.c` (built with `-DVENTO_PROBES=ON`), and a small crate
+  in `src/main/rust` beside it (`remotedesktop-session` with the `c` feature;
+  `session::c::start` and a `Behaviour` do the rest) whose `build.rs` reads
+  the header with bindgen, its own items only, over `session::c::ffi` —
+  libvnc's, copied.
 - **The catalog.** `modules/<name>/catalog.rs`: the backend's `About` (its
   pinning and whether its user name carries a domain are data there, which
   the shared rules read) and its `OPTIONS` table, with their tests; one
@@ -279,6 +280,8 @@ line or one file somewhere that already has seven:
   `Arc<dyn Backend>`. Credentials prompts, the trust decision
   (`session::trust::decide` over each client's `Store`), the bell and the
   events are the session crate's and are not written again.
+- **The workspace.** The crate's directory in the root `Cargo.toml`'s
+  `members` and `default-members`, which name each one.
 - **The Linux client.** The crate in `linux/Cargo.toml` and its `KIND` in
   `linux/src/backends/mod.rs`'s `all()`; a C module also goes into
   `backends/CMakeLists.txt`, which `linux/build.rs` builds, and into the
@@ -297,7 +300,9 @@ line or one file somewhere that already has seven:
   `generateCatalog` and `generateNatives` from `:backends`; its
   `<Name>Provider` answers from `<Name>Catalog` and creates a
   `NativeBackend` on `new <Name>Natives()`, and is declared in
-  `src/main/resources/META-INF/services/`, as a `BackendProvider`.
+  `resources/META-INF/services/`, as a `BackendProvider`; the module's
+  `sourceSets` point AGP at `java/` (the files, no package directories)
+  and `resources/` (rfb's, copied).
   What the protocol needs of the phone that the layer does not do goes in
   a `NativeBackend.Hooks` (`RdpHooks` remembers RDP's desktop sizes and words
   the prompt's hint, `VncHooks` words an anonymous TLS question); most

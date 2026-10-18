@@ -45,10 +45,10 @@ remotedesktop-session = { path = "../backends/session", features = ["c"] }
 remotedesktop-platform-desktop = { path = "../backends/platform/desktop" }
 # The backends, each with its adapter in its own crate: the four protocols,
 # and the three C libraries' crates, whose libraries `build.rs` links.
-remotedesktop-rfb = { path = "../backends/modules/rfb/src/main/rust" }
-remotedesktop-ironrdp = { path = "../backends/modules/ironrdp/src/main/rust" }
-remotedesktop-rustdesk = { path = "../backends/modules/rustdesk/src/main/rust" }
-remotedesktop-spice = { path = "../backends/modules/spice/src/main/rust" }
+remotedesktop-rfb = { path = "../backends/modules/rfb" }
+remotedesktop-ironrdp = { path = "../backends/modules/ironrdp" }
+remotedesktop-rustdesk = { path = "../backends/modules/rustdesk" }
+remotedesktop-spice = { path = "../backends/modules/spice" }
 remotedesktop-libvnc = { path = "../backends/modules/libvnc/src/main/rust" }
 remotedesktop-tigervnc = { path = "../backends/modules/tigervnc/src/main/rust" }
 remotedesktop-freerdp = { path = "../backends/modules/freerdp/src/main/rust" }

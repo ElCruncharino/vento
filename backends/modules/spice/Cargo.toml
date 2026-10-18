@@ -29,9 +29,11 @@ remotedesktop-tls.workspace = true
 # change upstream before either would build for a phone: `patches/ryll/`, and
 # note 83 §2 for what they are. `client` is deliberately not among them — it is
 # their TLS opinion with a bundled root store in it, which is 922 KB and is
-# replaced here by `remotedesktop-tls`'s pinning.
-shakenfist-spice-protocol = { path = "../../../../../../third_party/ryll/shakenfist-spice-protocol", default-features = false }
-shakenfist-spice-compression = { path = "../../../../../../third_party/ryll/shakenfist-spice-compression", default-features = false, features = [
+# replaced here by `remotedesktop-tls`'s pinning. The paths, and
+# `default-features = false`, are the root `Cargo.toml`'s
+# `[workspace.dependencies]`.
+shakenfist-spice-protocol.workspace = true
+shakenfist-spice-compression = { workspace = true, features = [
     "quic",
     "glz",
     "lz",

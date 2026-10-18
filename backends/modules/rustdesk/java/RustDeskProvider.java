@@ -20,7 +20,7 @@ import java.util.Map;
  * at build time, holds the words and the option keys.
  *
  * <p>A session is a {@link NativeBackend} on {@link RustDeskNatives}, generated
- * too: the client in {@code src/main/rust} as a {@code session::Backend},
+ * too: the client in the module's crate as a {@code session::Backend},
  * decoding with the phone's MediaCodec. Nothing is left on this side: how
  * its pin is filed — under the id and the network it means something on — and
  * that a first sight of it is pinned without asking are {@code session::trust}'s,
