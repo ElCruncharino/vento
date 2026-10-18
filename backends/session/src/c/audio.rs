@@ -387,7 +387,19 @@ mod tests {
             let format = queue.format();
             t.set_gain.unwrap()(s, 0.5);
             let mut out = vec![0i16; 8];
-            queue.pull(&mut out, format);
+            // The 100 ms landed at once, and the queue's target is all of
+            // that and its margin (common::audio): it plays what it has once
+            // it has waited a target's worth, from the first frame written.
+            let mut silent = 0;
+            loop {
+                queue.pull(&mut out, format);
+                if out != [0; 8] {
+                    break;
+                }
+                silent += 1;
+                assert!(silent < 10_000, "never played");
+            }
+            assert!(silent > 0, "played before the target was queued or waited for");
             assert_eq!(out, [0, 0, 1, 1, 2, 2, 3, 3]);
             queue.pull(&mut out, format);
             // Samples 8 to 15 at half: 4, 4, 5, 5, ...
