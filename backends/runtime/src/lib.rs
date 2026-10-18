@@ -49,3 +49,19 @@ pub use slot::Slot;
 /// framebuffer is four bytes a pixel, 128 MiB at this bound, and is allocated
 /// the moment the size arrives.
 pub const MAX_DESKTOP_PIXELS: usize = 32 << 20;
+
+/// The widest and tallest cursor a backend takes from the far end, which is
+/// libvncclient's bound (TigerVNC's viewer holds to 256). A cursor's size is
+/// two fields of the server's with no desktop to be checked against, and its
+/// pixels are allocated by them, so past this the shape is refused before
+/// anything is: at the bound it is 4 MiB, where two 16-bit fields would allow
+/// 17 GB. SPICE holds its own to a tighter 256, the largest a guest draws.
+pub const MAX_CURSOR_SIDE: usize = 1024;
+
+/// The most of the far end's clipboard a backend takes, in bytes of text as
+/// it arrives (after any compression the protocol puts over it). A clipboard
+/// past it is skipped rather than cut short, since a part of a text pasted
+/// here reads as the whole of it, and rather than refused, since a large copy
+/// at the far end is somebody's ordinary afternoon and not a reason to end
+/// the session.
+pub const MAX_CLIPBOARD: usize = 1 << 20;
