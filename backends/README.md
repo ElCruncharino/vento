@@ -63,7 +63,11 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
 - `platform/android/` — the phone's platform: the one JNI layer, MediaCodec
   and AAudio (the crate), and, in `java/`, the `:backends` module's Java —
   the seam every backend's provider is written against, the files with no
-  package directories over them — with its tests in `javatest/`.
+  package directories over them — with its tests in `javatest/`; `c/`, the
+  logcat logger and the export map a C backend's library is linked with;
+  `cmake/vento_android.cmake`, a C backend's Android half
+  (`vento_android_library`); and `ports/`, the generated Android builds of
+  openssl, nettle and gnutls (`gen.sh` in each regenerates its `gen/`).
 - `platform/desktop/` — FFmpeg (built statically from `third_party/`), the
   ALSA/PipeWire outputs and the desktop C platform (`c/`, with the C probes'
   shared body).
@@ -77,10 +81,11 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
   `codegenSources`).
 - `buildSrc/` — the Gradle tasks those helpers use (cargo, codegen, tarballs,
   patch check), pulled in by the root `buildSrc`.
-- `CMakeLists.txt`, `cmake/` — the host CMake build of the C backends, which
+- `CMakeLists.txt` — the host CMake build of the C backends, which
   `linux/build.rs` runs (`VENTO_SHARED=ON`) and which builds the C probes
-  with `-DVENTO_PROBES=ON`; `cmake/vento_android.cmake` is the phone's half.
-- `ports/` — the generated Android builds of openssl, nettle and gnutls.
+  with `-DVENTO_PROBES=ON`. `cmake/` holds what both builds include,
+  `warnings.cmake` and `reproducible.cmake`, and the host's half of a C
+  backend, `vento_desktop.cmake`; the phone's is in `platform/android/cmake/`.
 - `UPGRADING.md` — how the upstreams behind the backends are moved, and what
   adding a backend touches.
 

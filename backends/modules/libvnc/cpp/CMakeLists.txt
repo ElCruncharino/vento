@@ -28,7 +28,7 @@ if(ANDROID)
 endif()
 include("${VENTO_BACKENDS}/cmake/warnings.cmake")
 if(ANDROID)
-    include("${VENTO_BACKENDS}/cmake/vento_android.cmake")
+    include("${VENTO_BACKENDS}/platform/android/cmake/vento_android.cmake")
 else()
     include("${VENTO_BACKENDS}/cmake/vento_desktop.cmake")
 endif()
@@ -82,7 +82,7 @@ if(ANDROID)
     # GnuTLS, which is one of the two libraries libvncclient reaches TLS through
     # and the one TigerVNC's client requires — so the port is built once and used
     # by both. `find_package(GnuTLS)` above finds the shim beside FindJPEG's.
-    add_subdirectory("${VENTO_BACKENDS}/ports/gnutls" gnutls)
+    add_subdirectory("${VENTO_BACKENDS}/platform/android/ports/gnutls" gnutls)
 endif()
 
 # LibVNCServer, of which we build the client half only. These are cache

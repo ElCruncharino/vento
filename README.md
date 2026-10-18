@@ -101,9 +101,9 @@ When updating the third_party dependencies, you'll need to update the unpatched 
 ./patch.sh
 
 # regenerate code (needs autotools, perl, make, host toolchain, ndk)
-./backends/ports/nettle/gen.sh
-./backends/ports/gnutls/gen.sh
-./backends/ports/openssl/gen.sh
+./backends/platform/android/ports/nettle/gen.sh
+./backends/platform/android/ports/gnutls/gen.sh
+./backends/platform/android/ports/openssl/gen.sh
 ```
 
 The builds are designed to be reproducible (this is why I commit generated code). There are some blobs (mostly images plus some testdata) in the deps, but none of these are required for the build:

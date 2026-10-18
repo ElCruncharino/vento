@@ -24,7 +24,7 @@ cd "$(dirname "$0")"
 port=$PWD
 # The path built rather than cd'd into, so that the check below is what reports
 # a missing tree — a cd under set -e aborts before it can be reached.
-src=$(cd ../../.. && pwd)/third_party/nettle
+src=$(cd ../../../../.. && pwd)/third_party/nettle
 . ../ndk.sh
 
 [ -f "$src/configure" ] || { echo "error: no nettle sources; ./gradlew :backends:fetchNettleSources" >&2; exit 1; }

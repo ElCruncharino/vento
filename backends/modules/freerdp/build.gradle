@@ -15,9 +15,9 @@ plugins {
 //
 // As with the two borrowed VNC clients, the native half is not in this
 // directory: it is `third_party/freerdp`, a submodule at the repository root
-// pinned by its gitlink — and, under it, `backends/ports/openssl`, since RDP's
-// crypto is OpenSSL and nothing else, which is 64% of what this backend adds to
-// a build.
+// pinned by its gitlink — and, under it, `backends/platform/android/ports/
+// openssl`, since RDP's crypto is OpenSSL and nothing else, which is 64% of
+// what this backend adds to a build.
 
 // The crate at this directory's root, as the static library CMake links in:
 // see `rustStaticLibrary` in :backends.

@@ -6,7 +6,7 @@ set(GNUTLS_FOUND TRUE)
 # Read rather than repeated: the pin moves in backends/build.gradle, and a
 # hardcoded number here would go on satisfying a minimum the port no longer
 # meets. (The same reason cmake/pixman.cmake reads meson's.)
-file(READ "${CMAKE_CURRENT_LIST_DIR}/../../../../ports/gnutls/gen/arm64-v8a/config.h" _gnutls_config)
+file(READ "${CMAKE_CURRENT_LIST_DIR}/../../../../platform/android/ports/gnutls/gen/arm64-v8a/config.h" _gnutls_config)
 if(NOT _gnutls_config MATCHES "#define VERSION \"([0-9]+\\.[0-9]+\\.[0-9]+)\"")
     message(FATAL_ERROR "no VERSION in the generated gnutls config.h")
 endif()

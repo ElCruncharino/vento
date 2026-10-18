@@ -33,7 +33,7 @@ if(ANDROID)
 endif()
 include("${VENTO_BACKENDS}/cmake/warnings.cmake")
 if(ANDROID)
-    include("${VENTO_BACKENDS}/cmake/vento_android.cmake")
+    include("${VENTO_BACKENDS}/platform/android/cmake/vento_android.cmake")
 else()
     include("${VENTO_BACKENDS}/cmake/vento_desktop.cmake")
 endif()
@@ -55,9 +55,10 @@ endmacro()
 if(ANDROID)
     string(APPEND CMAKE_C_FLAGS_DEBUG " -O2 -DNDEBUG")
 
-    # Answers find_package(OpenSSL) with the port in backends/ports/openssl instead
-    # of the copy CMake ships, which would either fail against a sysroot that has no
-    # OpenSSL or find the host's. An override of the command rather than a module on
+    # Answers find_package(OpenSSL) with the port in
+    # backends/platform/android/ports/openssl instead of the copy CMake ships,
+    # which would either fail against a sysroot that has no OpenSSL or find the
+    # host's. An override of the command rather than a module on
     # CMAKE_MODULE_PATH, because winpr *replaces* that path with FreeRDP's own — and
     # it is winpr, in the scope where a module of ours is invisible, that looks for
     # OpenSSL a second time and fails the configure when it is not there.

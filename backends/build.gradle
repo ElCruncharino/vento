@@ -132,7 +132,8 @@ ext.generateNatives = { Project module, variant, String className, String librar
  * backend as a `session::Backend` over the C library's vtable, and the one JNI
  * layer in `platform/android` registered on the module's natives class — as a
  * static library per ABI, under the directory returned, which the module hands
- * CMake as `VENTO_RUST_LIBRARY_DIR` (`cmake/vento_android.cmake` links it).
+ * CMake as `VENTO_RUST_LIBRARY_DIR` (`platform/android/cmake/vento_android.cmake`
+ * links it).
  *
  * One task for every variant, since each builds the crate `--release` alike,
  * and before any CMake build, which links what it leaves; CMake itself only

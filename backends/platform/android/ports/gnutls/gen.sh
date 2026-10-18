@@ -23,7 +23,7 @@ export LC_ALL=C
 
 cd "$(dirname "$0")"
 port=$PWD
-root=$(cd ../../.. && pwd)
+root=$(cd ../../../../.. && pwd)
 src=$root/third_party/gnutls
 nettle=$root/third_party/nettle
 . ../ndk.sh

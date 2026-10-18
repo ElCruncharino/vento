@@ -6,7 +6,7 @@
 # `gnutls` is the one a consumer links: an interface over the lot of them, with
 # the public headers — one of which is generated — on its include path.
 
-set(GNUTLS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/gnutls")
+set(GNUTLS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../third_party/gnutls")
 if(NOT EXISTS "${GNUTLS_DIR}/lib/gnutls.h.in" AND NOT EXISTS "${GNUTLS_DIR}/lib/global.c")
     message(FATAL_ERROR "third_party/gnutls is empty — run `./gradlew :backends:fetchGnutlsSources`")
 endif()
