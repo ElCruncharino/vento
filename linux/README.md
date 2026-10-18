@@ -479,7 +479,8 @@ RustDesk's 10-20 ms of sound at a time, 55-65 ms for RDP's 23 ms waves, and 395 
 186 ms waves two at a time (and twice that before anything is dropped). Where
 the queue runs dry anyway and the far end's sound comes within half a second
 — later than anything it had shown — the session remembers how late, a
-step of 5 ms more, and the margin covers that from then on wherever the
+step of 5 ms more (to 100 ms; a write later than that was a stall, a gap
+whatever is kept, and is not remembered at all), and the margin covers that from then on wherever the
 rhythm of late does not, forgetting a step after every half minute of sound
 that did not run dry (a gap, then none: under 64 busy loops a SPICE session
 ran dry twice in its first 40 s and not in the 50 s after, and
@@ -502,7 +503,10 @@ the first 30 s — QEMU's sound 74 ms end to end on PipeWire rather than
 48-51, RDP's client share 41 rather than 28 — and nothing after (48 and
 26 ms). Loaded from before the connection, four of seven sessions ran dry
 once as the stream began, 111-411 ms late, with either margin: no margin is
-for that. Every stream starts at it, not at what the session's earlier
+for that, and it is not remembered — `pattern.sh`'s writes held back
+250 ms half a second in, beside 64 busy loops, play 22-30 ms behind a
+minute later on PipeWire and 84 on ALSA, where remembering it as 100 ms
+kept them 104-107 and 168. Every stream starts at it, not at what the session's earlier
 streams came down to, since its rhythm starts from nothing; the lateness
 the session remembers is a floor under it rather than added to it. A
 fixed total of 100 ms, which this replaced, held QEMU's sound about

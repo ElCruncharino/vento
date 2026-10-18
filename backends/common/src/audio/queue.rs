@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use super::resample::Resampler;
 use super::rhythm::{Rhythm, WINDOW};
-use super::{CLEAN, CLEAN_START, Controls, Format, LIMIT, MARGIN, MARGIN_START, MARGIN_STEP};
+use super::{CLEAN, CLEAN_START, Controls, Format, LIMIT, MARGIN, MARGIN_MAX, MARGIN_START, MARGIN_STEP};
 
 /// How long a queue that ran dry may stay dry with the far end's sound
 /// still to come: sound that arrives again sooner was late, and the session
@@ -57,12 +57,9 @@ pub struct Stats {
 /// cover, or, where it is more, what is left of the stream's start: a
 /// stream's margin starts at [`MARGIN_START`] and comes down a
 /// [`MARGIN_STEP`] after every [`CLEAN_START`] of sound that did not run dry.
-/// Until the queue has played a `WINDOW` — and again when the far end's
-/// sound starts after a pause of its own — the target also has what the
-/// platform says its device's first pulls may take beyond a period
-/// ([`Queue::set_first_pulls`]). The device's own buffer is behind the
-/// queue and comes on top of all of it: what is heard is the target and the
-/// device's buffer behind what arrived.
+/// The device's own buffer is behind the queue and comes on top of all of
+/// it: what is heard is the target and the device's buffer behind what
+/// arrived.
 ///
 /// The queue starts playing once it has the target, and plays silence when
 /// it runs dry until it has it again. Where it ran dry with the far end's
@@ -93,9 +90,6 @@ pub struct Queue {
     /// see [`Queue::set_device`].
     buffer: AtomicU64,
     period: AtomicU64,
-    /// What the device's first pulls may take beyond a period, in
-    /// microseconds: see [`Queue::set_first_pulls`].
-    first: AtomicU64,
     /// What the platform calls the output the device plays on, where it has
     /// more than one: see [`Queue::set_output`].
     output: Mutex<Option<&'static str>>,
@@ -138,10 +132,6 @@ struct Inner {
     /// last ran dry.
     start: Duration,
     fresh: usize,
-    /// The queue has played a `WINDOW` since it started from nothing: what
-    /// it keeps is what it has measured, and the device's first pulls are
-    /// behind it.
-    steady: bool,
     resampler: Resampler,
     stats: Stats,
 }
@@ -154,7 +144,6 @@ impl Queue {
             gain: AtomicU32::new(1.0f32.to_bits()),
             buffer: AtomicU64::new(0),
             period: AtomicU64::new(0),
-            first: AtomicU64::new(0),
             output: Mutex::new(None),
             born: Instant::now(),
             inner: Mutex::new(Inner {
@@ -170,7 +159,6 @@ impl Queue {
                 clean: 0,
                 start: MARGIN_START.saturating_sub(MARGIN),
                 fresh: 0,
-                steady: false,
                 resampler: Resampler::new(),
                 stats: Stats::default(),
             }),
@@ -208,22 +196,8 @@ impl Queue {
         self.period.store(micros(period), Ordering::Relaxed);
     }
 
-    /// How much more than a period the device may take at once in the first
-    /// pulls after the queue starts playing, where the platform knows its
-    /// device does: AAudio's, on a phone whose mixer reads two bursts at a
-    /// time. Part of the target until the queue has played a `WINDOW` (and
-    /// again when the far end's sound starts after a pause of its own),
-    /// after which what it keeps is what it measured it needed, the device's
-    /// pulls and all; not part of the margin, which is for the far end's
-    /// lateness.
-    pub fn set_first_pulls(&self, more: Duration) {
-        self.first.store(more.as_micros().min(u64::MAX as u128) as u64, Ordering::Relaxed);
-    }
-
-    /// The target, in frames of the stream: a period of the device's (and
-    /// what its first pulls may take beyond one, until the queue is
-    /// steady), what the far end's rhythm has needed of late and the
-    /// margin.
+    /// The target, in frames of the stream: a period of the device's, what
+    /// the far end's rhythm has needed of late and the margin.
     ///
     /// Past what a fixed target would keep where the far end makes it:
     /// Windows sends PCM in 186 ms waves, two at once every 372 ms, whatever
@@ -231,9 +205,8 @@ impl Queue {
     /// dropped most of. Such a stream is heard as far behind as its rhythm
     /// makes it, rather than in pieces.
     fn target(&self, inner: &Inner) -> usize {
-        let frames = |us: &AtomicU64| self.format.frames(Duration::from_micros(us.load(Ordering::Relaxed)));
-        let first = if inner.steady { 0 } else { frames(&self.first) };
-        frames(&self.period) + first + inner.rhythm.hold() + self.margin(inner)
+        let period = self.format.frames(Duration::from_micros(self.period.load(Ordering::Relaxed)));
+        period + inner.rhythm.hold() + self.margin(inner)
     }
 
     /// The margin, in frames of the stream: [`MARGIN`], and what the session
@@ -332,24 +305,37 @@ impl Queue {
         match inner.dry.take() {
             Some(dry) if dry < RESUME => {
                 // The far end's sound was later than the queue kept for:
-                // measured as the late write it is, and remembered.
+                // measured as the late write it is, and remembered — unless
+                // it was later than any margin is for, a stall (a machine
+                // that lost the processor, a network that paused), which
+                // the session does not keep allowing for after it.
                 inner.rhythm.wrote(at, frames, burst);
-                let seen = self.format.duration(inner.rhythm.lateness());
-                let late = self.controls.ran_dry(seen);
                 inner.clean = 0;
                 inner.fresh = 0;
-                log::info!(
-                    "audio: the far end's sound arrived {} ms after the queue ran dry, {} ms late; the session allows for {} ms now",
-                    dry.as_millis(),
-                    seen.as_millis(),
-                    late.as_millis()
-                );
+                let this = self.format.duration(inner.rhythm.last());
+                if this > MARGIN_MAX {
+                    log::info!(
+                        "audio: the far end's sound arrived {} ms after the queue ran dry, {} ms late: a stall, not allowed for from now on",
+                        dry.as_millis(),
+                        this.as_millis()
+                    );
+                } else {
+                    // What the window has shown, as before, unless what it
+                    // shows is an earlier stall's.
+                    let seen = self.format.duration(inner.rhythm.lateness());
+                    let seen = if seen > MARGIN_MAX { this } else { seen };
+                    let late = self.controls.ran_dry(seen);
+                    log::info!(
+                        "audio: the far end's sound arrived {} ms after the queue ran dry, {} ms late; the session allows for {} ms now",
+                        dry.as_millis(),
+                        seen.as_millis(),
+                        late.as_millis()
+                    );
+                }
             }
             Some(_) => {
-                // A new sound after a pause of the far end's own, which the
-                // queue starts on from nothing, as it did the first.
+                // A new sound after a pause of the far end's own.
                 inner.rhythm.restart();
-                inner.steady = false;
                 inner.rhythm.wrote(at, frames, burst);
             }
             None => inner.rhythm.wrote(at, frames, burst),
@@ -398,7 +384,6 @@ impl Queue {
         }
         inner.low = usize::MAX;
         inner.since = None;
-        inner.steady = true;
     }
 
     /// Drops the oldest down to the target. A skip is heard once; a queue
@@ -1139,53 +1124,74 @@ mod tests {
 
     /// AAudio's Legacy stream on the phone (`aaudio.rs`): 20 ms bursts, a
     /// 60 ms buffer filled at once, then two bursts back to back every
-    /// 40 ms, as its mixer reads them.
-    fn aaudio(q: &Queue, writes: &[(f64, usize)]) -> Vec<(f64, usize, Duration)> {
-        q.set_device(STEREO.duration(2880), STEREO.duration(960));
+    /// 40 ms, as its mixer reads them; the period the queue is told is
+    /// `period` frames.
+    fn aaudio(q: &Queue, writes: &[(f64, usize)], period: usize) -> Vec<(f64, usize, Duration)> {
+        q.set_device(STEREO.duration(2880), STEREO.duration(period));
         drive(q, writes, 960, 2, 3, &mut |_, _| {})
     }
 
     #[test]
-    fn the_devices_first_pulls_are_allowed_for_until_the_queue_is_steady() {
-        // QEMU's 10 ms writes, the one due as the device takes its sixth
-        // bunch 4 ms late, in a stream past its start (a session's later
-        // stream, with the start's margin gone). Counting a burst as the
-        // device's period, the queue starts with what the first two bursts
-        // take and nothing to spare after them, and the late write is a
-        // hole; with the second burst allowed for, it is not.
-        let writes = rhythm(48_000, 480, 1, 30.0, |k| if k == 24 { 4.0 } else { 0.0 });
-        let q = settled();
-        let pulls = aaudio(&q, &writes);
-        assert!(holes(&pulls, 960, &writes, 0.0) > 0, "without");
-        let q = settled();
-        q.set_device(STEREO.duration(2880), STEREO.duration(960));
-        q.set_first_pulls(STEREO.duration(960));
-        assert_eq!(target(&q), Duration::from_millis(20 + 20) + MARGIN);
-        let pulls = aaudio(&q, &writes);
-        assert_eq!(holes(&pulls, 960, &writes, 0.0), 0, "with");
-        // Once it has played a window, what it keeps is what it measured,
-        // which has the second burst in it; the target has it no more...
-        assert_eq!(target(&q), STEREO.duration(960 + 480) + MARGIN);
-        // ...until the far end's sound starts again after a pause of its
-        // own, which the queue starts on from nothing.
-        q.write_at(&frames(1, 10), ms(31_000.0));
-        assert_eq!(target(&q), STEREO.duration(960 + 960 + 480) + MARGIN);
+    fn a_device_that_takes_two_bursts_at_once_has_them_kept() {
+        // QEMU's 10 ms writes, the one due at the device's sixth read 4 ms
+        // late and the one due at its second after the pause, in a stream
+        // past its start, and a second's pause of the far end's
+        // 15 s in, after which the queue starts again from nothing — long
+        // after a first window, so nothing but the period can allow for the
+        // read. Told a burst as the period, the queue starts again with the
+        // first read and little to spare after it, and the late writes are
+        // holes; told what the mixer reads, they are not, nor at the start.
+        let writes: Vec<_> = rhythm(48_000, 480, 1, 30.0, |k| if k == 24 || k == 1608 { 4.0 } else { 0.0 })
+            .into_iter()
+            .filter(|w| w.0 < 15_000.0 || w.0 >= 16_000.0)
+            .collect();
+        let after = |period| {
+            let q = settled();
+            let pulls = aaudio(&q, &writes, period);
+            let start = holes(&pulls, 960, &writes, 0.0) - holes(&pulls, 960, &writes, 15_000.0);
+            // From the first read that played sound again.
+            let again = pulls.iter().position(|p| p.0 >= 16_000.0 && p.1 == 960).unwrap();
+            (start, holes(&pulls[again..], 960, &writes, 0.0))
+        };
+        let burst = after(960);
+        assert!(burst.0 > 0 && burst.1 > 0, "a burst: {burst:?}");
+        assert_eq!(after(1920), (0, 0), "what the mixer reads");
     }
 
     #[test]
-    fn a_steady_queue_keeps_the_devices_bunches_it_measured() {
-        // The same device and writes 4 ms late every five seconds, from a
-        // minute's start: no hole once the queue is playing, the second
-        // burst kept for all of it although the target no longer counts it.
+    fn a_steady_queue_keeps_the_mixers_reads_and_the_margin() {
+        // The same device, told what it reads, and writes 4 ms late every
+        // five seconds, from a minute's start: no hole, and before each read
+        // the two bursts and the margin besides.
         let writes = rhythm(48_000, 480, 1, 60.0, |k| if k % 500 == 24 { 4.0 } else { 0.0 });
         let q = queue();
-        q.set_first_pulls(STEREO.duration(960));
-        let pulls = aaudio(&q, &writes);
+        let pulls = aaudio(&q, &writes, 1920);
         assert_eq!(holes(&pulls, 960, &writes, 0.0), 0);
         assert_eq!(q.stats().underruns, 1, "the stream's end only");
-        // Before each bunch: the two bursts, and the margin besides.
         let first = pulls.windows(2).filter(|w| w[1].0 != w[0].0).map(|w| w[1]);
         let least = first.filter(|p| p.0 > 45_000.0 && p.0 < 59_000.0).map(|p| p.2).min().unwrap();
         assert!(least >= Duration::from_millis(40) + MARGIN, "{least:?}");
+    }
+
+    #[test]
+    fn a_stall_past_the_most_lateness_is_not_remembered() {
+        // QEMU's 10 ms writes held back 250 ms half a second in, as a loaded
+        // machine starting a session did: the queue runs dry, but the
+        // session does not allow for a quarter of a second from then on,
+        // and once the window has forgotten the stall the queue keeps what
+        // it did before it.
+        let q = queue();
+        let writes = rhythm(48_000, 480, 1, 60.0, |k| if (50..75).contains(&k) { 250.0 - 10.0 * (k - 50) as f64 } else { 0.0 });
+        let pulls = play(&q, &writes, 512);
+        assert!(holes(&pulls, 512, &writes, 0.0) > 0);
+        assert_eq!(q.stats().underruns, 1 + 1, "{:?} (the stall, and the stream's end)", q.stats());
+        assert_eq!(q.controls().late(), Duration::ZERO);
+        let level = level(&pulls, 52_000.0);
+        assert!(level < 10.7 + 10.0 + 10.0 + 1.0, "{level}");
+        // Up to the most, a stall is remembered as it was.
+        let q = queue();
+        let writes = rhythm(48_000, 480, 1, 10.0, |k| if (50..60).contains(&k) { 90.0 - 10.0 * (k - 50) as f64 } else { 0.0 });
+        play(&q, &writes, 512);
+        assert_eq!(q.controls().late(), Duration::from_millis(95));
     }
 }

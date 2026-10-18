@@ -17,7 +17,7 @@
 //! exits having played nothing.
 //!
 //! ```text
-//! audio_pattern PATTERN SECONDS [--stall-every S --stall MS] [--seed N]
+//! audio_pattern PATTERN SECONDS [--stall-every S] [--stall-at S] [--stall MS] [--seed N]
 //! ```
 //!
 //! PATTERN is one of:
@@ -37,7 +37,9 @@
 //!
 //! `--stall-every S --stall MS` holds the writer back MS milliseconds every
 //! S seconds, after which everything due is written at once: a protocol
-//! thread that lost the processor, or a network that paused. The lateness
+//! thread that lost the processor, or a network that paused. `--stall-at S`
+//! holds it back once, S seconds after `go` (then every `--stall-every`, if
+//! given): a session that starts on a loaded machine. The lateness
 //! is pseudo-random from `--seed` (12345), the same every run.
 //!
 //! On stdout: `READY pid=N`, then an `ONSET wall=<unix seconds> idx=<frame in
@@ -115,7 +117,9 @@ mod rig {
                 bursty: true,
                 ..p(48_000, 960, 1, 0.0, 0.0)
             },
-            _ => panic!("audio_pattern qemu|opus|rdp|rdp-pairs|winpcm|bursty SECONDS [--stall-every S --stall MS] [--seed N]"),
+            _ => panic!(
+                "audio_pattern qemu|opus|rdp|rdp-pairs|winpcm|bursty SECONDS [--stall-every S] [--stall-at S] [--stall MS] [--seed N]"
+            ),
         }
     }
 
@@ -125,11 +129,12 @@ mod rig {
         let mut args = std::env::args().skip(1);
         let name = args.next().expect("PATTERN");
         let seconds: f64 = args.next().expect("SECONDS").parse().unwrap();
-        let (mut stall_every, mut stall, mut seed) = (0.0f64, 0.0f64, 12345u32);
+        let (mut stall_every, mut stall_at, mut stall, mut seed) = (0.0f64, 0.0f64, 0.0f64, 12345u32);
         while let Some(a) = args.next() {
             let mut value = || args.next().expect("a value").parse::<f64>().unwrap();
             match a.as_str() {
                 "--stall-every" => stall_every = value(),
+                "--stall-at" => stall_at = value(),
                 "--stall" => stall = value() / 1000.0,
                 "--seed" => seed = value() as u32,
                 _ => panic!("unknown argument {a}"),
@@ -196,7 +201,7 @@ mod rig {
             let now = t0.elapsed().as_secs_f64();
             if go_frame.is_some() && now >= next_stall {
                 stalled_until = now + stall;
-                next_stall += stall_every;
+                next_stall += if stall_every > 0.0 { stall_every } else { f64::INFINITY };
                 eprintln!("STALL t={now:.3} for {:.0} ms", stall * 1000.0);
                 continue;
             }
@@ -204,7 +209,14 @@ mod rig {
                 // A second of the stream's frames from here, and on a whole
                 // write.
                 go_frame = Some(next + p.rate as u64);
-                next_stall = now + if stall_every > 0.0 { stall_every } else { f64::INFINITY };
+                next_stall = now
+                    + if stall_at > 0.0 {
+                        stall_at
+                    } else if stall_every > 0.0 {
+                        stall_every
+                    } else {
+                        f64::INFINITY
+                    };
             }
             if go_frame.is_none() && now > 30.0 {
                 eprintln!("no go within 30 s; nothing was played");

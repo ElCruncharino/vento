@@ -96,6 +96,9 @@ pub struct Rhythm {
     /// When the last write arrived, and how much has landed at once with it.
     last: Option<Duration>,
     group: usize,
+    /// How much later than its sound the last write came, in microseconds,
+    /// against the earliest of the run's writes in the window before it.
+    rose: i64,
 }
 
 impl Rhythm {
@@ -110,6 +113,7 @@ impl Rhythm {
             frames: 0,
             last: None,
             group: 0,
+            rose: 0,
         }
     }
 
@@ -123,12 +127,14 @@ impl Rhythm {
         let origin = *self.origin.get_or_insert(at);
         let position = self.format.duration(self.frames.min(usize::MAX as u64) as usize);
         let d = micros(at.saturating_sub(origin)) - micros(position);
+        let run = self.run;
+        let least = self.buckets.iter().filter(|b| b.used && b.run == run).map(|b| b.lo).min();
+        self.rose = least.map_or(0, |least| (d - least).max(0));
         self.frames += frames as u64;
         let together = self.last.is_some_and(|last| at.saturating_sub(last) <= TOGETHER);
         self.last = Some(at);
         let size = if burst { 0 } else { frames };
         self.group = if together { self.group + size } else { size };
-        let run = self.run;
         let b = &mut self.buckets[self.current];
         if !b.used || b.run != run {
             // A bucket that saw the run before keeps what it measured of it
@@ -146,6 +152,14 @@ impl Rhythm {
         b.hi = b.hi.max(d);
         b.write = b.write.max(size);
         b.group = b.group.max(self.group);
+    }
+
+    /// How much later than its sound the last write came, in frames of the
+    /// stream, against the earliest write of the window before it: what
+    /// [`lateness`](Rhythm::lateness) would be had the window seen nothing
+    /// else rise.
+    pub fn last(&self) -> usize {
+        self.format.frames(Duration::from_micros(self.rose as u64))
     }
 
     /// The far end paused: the next write starts a new run of `d`s.
@@ -409,5 +423,32 @@ pub(super) mod tests {
             r.wrote(ms(k as f64 * 10.0), 480, false);
         }
         assert!((held_ms(&r) - 10.0).abs() < 0.1, "{}", held_ms(&r));
+    }
+
+    #[test]
+    fn the_last_writes_own_lateness_is_apart_from_the_windows() {
+        // 10 ms writes, one held back 250 ms (and the ones due meanwhile
+        // with it), one 30 ms late a second later, and one 30 ms late at the
+        // end: the window's lateness is the stall's, the last write's own
+        // its 30 ms, and that of one on time nothing.
+        let mut r = rhythm(RATE);
+        let mut at = 0.0f64;
+        for k in 0..200 {
+            let late = match k {
+                50 => 250.0,
+                150 => 30.0,
+                _ => 0.0,
+            };
+            at = at.max(k as f64 * 10.0 + late);
+            r.wrote(ms(at), 480, false);
+            if k == 50 {
+                assert_eq!(r.last(), Format::new(RATE, 2).unwrap().frames(ms(250.0)));
+            }
+        }
+        let f = Format::new(RATE, 2).unwrap();
+        assert_eq!(r.lateness(), f.frames(ms(250.0)));
+        assert_eq!(r.last(), 0);
+        r.wrote(ms(2000.0 + 30.0), 480, false);
+        assert_eq!(r.last(), f.frames(ms(30.0)));
     }
 }

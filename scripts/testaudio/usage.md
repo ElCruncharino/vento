@@ -107,7 +107,7 @@ nodes of the one client.
 ## A far end's rhythm: pattern.sh
 
 ```sh
-./pattern.sh OUT_DIR PATTERN SECONDS [--stall-every S --stall MS] [--seed N]
+./pattern.sh OUT_DIR PATTERN SECONDS [--stall-every S] [--stall-at S] [--stall MS] [--seed N]
 ```
 
 `backends/platform/desktop/examples/audio_pattern.rs` writes into the
@@ -116,8 +116,9 @@ desktop's output the way a protocol's sound arrives — `qemu` (10 ms every
 18 ms late), `rdp-pairs` (two at a time, 10 ms either side), `winpcm`
 (Windows' 186 ms PCM waves two at a time), `bursty` (20 ms frames let go in
 bunches 20-100 ms apart) — with a half-second 440 Hz burst every two seconds,
-and `--stall-every`/`--stall` hold the writer back now and then, as a loaded
-machine or a network does. It prints when it wrote each burst, and the
+and `--stall-every`/`--stall` hold the writer back now and then
+(`--stall-at` once, that long after it starts), as a loaded machine or a
+network does. It prints when it wrote each burst, and the
 overlay's sound line every second; `pattern.py` matches each burst to the
 recording: the client's share of a session's latency (written to captured,
 with nothing of a far end's), 5 ms gaps and discontinuities per burst, and

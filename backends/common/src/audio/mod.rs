@@ -94,8 +94,12 @@ pub const CLEAN_START: Duration = Duration::from_secs(10);
 /// The most lateness a session remembers ([`Controls::late`]). Lateness
 /// beyond a tenth of a second is a stall rather than a rhythm, and is a gap
 /// whatever is kept for it; keeping that much more for the rest of the
-/// session would be heard as sound behind the picture. (Under 64 busy loops,
-/// what ran a SPICE session dry was 37 and 60 ms late.)
+/// session would be heard as sound behind the picture. So a queue that ran
+/// dry on a write later than this does not remember it at all: a SPICE
+/// session started under 64 busy loops ran dry 111-411 ms late as its sound
+/// began in four of seven tries, and remembering that as this much kept it
+/// 70 ms further behind for minutes. (What ran such sessions dry later on
+/// was 26-60 ms late.)
 pub const MARGIN_MAX: Duration = Duration::from_millis(100);
 
 /// What a session remembers beyond the lateness that ran a queue dry, and
@@ -404,7 +408,8 @@ impl Controls {
     /// How late the far end's sound has turned out to be, as the session
     /// remembers it: nothing to start with; whenever a queue ran dry before
     /// the far end's sound arrived, the lateness its writes showed then and
-    /// a [`MARGIN_STEP`] more (to [`MARGIN_MAX`] at most); a step less after
+    /// a [`MARGIN_STEP`] more (to [`MARGIN_MAX`] at most, and nothing for a
+    /// write later than that, which was a stall); a step less after
     /// every [`CLEAN`] of sound that did not run dry. What a [`Queue`] has
     /// seen of late covers lateness that comes every few seconds; this
     /// covers what comes less often than that, which is what ran it dry. A
