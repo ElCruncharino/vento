@@ -502,7 +502,7 @@ headless, any of which selects the probe instead of the window:
             let mailbox = Mailbox::new(None);
             let backend = {
                 let client_name = backends::client_name();
-                let identity = known_hosts::realvnc_identity(&self.dirs.config, &self.address);
+                let identity = known_hosts::saved_identity(&self.dirs.config, self.kind, &self.address);
                 let connect = Connect {
                     address: &self.address,
                     user: &self.user,

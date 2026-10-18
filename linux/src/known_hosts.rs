@@ -33,6 +33,7 @@
 //! beside itself and renamed over — so a crash leaves the old one or the new
 //! one, never half of either, and it is private to this user.
 
+use api::catalog::About;
 use api::trust;
 use std::fs::{DirBuilder, OpenOptions};
 use std::io::{self, Write};
@@ -288,9 +289,14 @@ pub fn realvnc_identities(config: &Path) -> Store {
 }
 
 /// The identity kept for `address`, for a session's
-/// [`Connect::identity`](api::kind::Connect::identity): read only, since a
-/// new one is kept when a session ends, and only by the window.
-pub fn realvnc_identity(config: &Path, address: &str) -> Option<String> {
+/// [`Connect::identity`](api::kind::Connect::identity) on `about`: read only
+/// for a backend that takes one back ([`About::saves_identity`]), so that no
+/// other backend's session opens the file, and only read, since a new one is
+/// kept when a session ends, and only by the window.
+pub fn saved_identity(config: &Path, about: &About, address: &str) -> Option<String> {
+    if !about.saves_identity {
+        return None;
+    }
     realvnc_identities(config).read_or_empty().get(address).map(str::to_owned)
 }
 
@@ -386,6 +392,21 @@ mod tests {
         assert_eq!(after, format!("host {FP}\ngarbage\nother AA\n"));
         // Nothing is left beside it.
         assert_eq!(std::fs::read_dir(dir.join("vento")).unwrap().count(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Only a backend that takes an identity back is handed the one kept
+    /// for the address; every other is handed none, whatever the file holds.
+    #[test]
+    fn only_a_backend_that_saves_identities_is_handed_one() {
+        let dir = scratch("identity");
+        realvnc_identities(&dir).set("127.0.0.1::5901", "blob").unwrap();
+        let address = "127.0.0.1::5901";
+        assert_eq!(saved_identity(&dir, &api::catalog::REALVNC, address).as_deref(), Some("blob"));
+        for about in api::catalog::ALL.iter().filter(|a| a.id != "realvnc") {
+            assert!(!about.saves_identity, "{}", about.id);
+            assert_eq!(saved_identity(&dir, about, address), None, "{}", about.id);
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 

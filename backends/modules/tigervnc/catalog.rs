@@ -24,6 +24,7 @@ pub static TIGERVNC: About = About {
     order: 17,
     pinning: Pinning::ADDRESS,
     user_has_domain: false,
+    saves_identity: false,
     options: OPTIONS,
 };
 

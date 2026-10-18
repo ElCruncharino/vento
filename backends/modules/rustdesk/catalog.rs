@@ -39,6 +39,7 @@ pub static RUSTDESK: About = About {
         first_sight_silent: true,
     },
     user_has_domain: false,
+    saves_identity: false,
     options: OPTIONS,
 };
 

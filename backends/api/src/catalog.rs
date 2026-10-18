@@ -43,6 +43,15 @@ pub struct About {
     /// (RDP's): a credentials prompt, which has no box for one, starts with
     /// it in the name ([`credentials::prompt_user`](crate::credentials::prompt_user)).
     pub user_has_domain: bool,
+    /// Whether the backend's library keeps identities of its own: one it
+    /// hands out to be remembered ([`Backend::saved_identity`]) and wants
+    /// handed back the next time ([`Connect::identity`]), RealVNC's core's
+    /// being the one. A client reads what it keeps of them only for such a
+    /// backend.
+    ///
+    /// [`Backend::saved_identity`]: crate::backend::Backend::saved_identity
+    /// [`Connect::identity`]: crate::kind::Connect::identity
+    pub saves_identity: bool,
     pub options: &'static [Spec],
 }
 
@@ -88,6 +97,7 @@ pub(crate) const FIXTURE: About = About {
     order: 0,
     pinning: Pinning::ADDRESS,
     user_has_domain: false,
+    saves_identity: false,
     options: &[],
 };
 

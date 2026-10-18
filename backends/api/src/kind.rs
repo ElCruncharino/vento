@@ -88,8 +88,9 @@ pub struct Connect<'a> {
     /// keeps that note: the identity a backend handed over through
     /// [`Backend::saved_identity`] after a session at this address, handed
     /// back so that it does not ask again about a server it recognises.
-    /// RealVNC's core is the one library with identities of its own; the
-    /// other backends' far ends are pinned by the client and ignore this.
+    /// Only for a backend whose [`About::saves_identity`] says so — RealVNC's
+    /// core is the one library with identities of its own — and `None` for
+    /// the others, whose far ends the client pins.
     pub identity: Option<&'a str>,
     /// What the far end lists this machine as: a phone's model, a desktop's
     /// host name.

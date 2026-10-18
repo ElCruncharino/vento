@@ -26,6 +26,9 @@ pub static REALVNC: About = About {
     order: 30,
     pinning: Pinning::ADDRESS,
     user_has_domain: false,
+    // The core asks to have an identity remembered after its security prompt,
+    // and is silent next time for a server it is handed back.
+    saves_identity: true,
     options: OPTIONS,
 };
 

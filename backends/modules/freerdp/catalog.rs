@@ -26,6 +26,7 @@ pub static FREERDP: About = About {
     // The prompt has no box for a domain, so it starts with it in the
     // name, as Windows shows it.
     user_has_domain: true,
+    saves_identity: false,
     options: OPTIONS,
 };
 
