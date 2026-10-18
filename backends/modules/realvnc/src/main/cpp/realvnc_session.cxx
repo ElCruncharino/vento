@@ -1473,6 +1473,13 @@ const vento_session_ops OPS = {
         op_answer_trust,
         op_disconnect,
         op_destroy,
+        // The optional three, none of which their core offers: no layout to
+        // number (`op_monitors` has none to report), no call that places
+        // screens, and a picture it decodes itself rather than through the
+        // platform's decoders. NULL, as the table says for each.
+        nullptr, // screens
+        nullptr, // request_layout
+        nullptr, // decoder_status
 };
 
 /* `RealVncCore`'s bootstrap: our own namespace rather than theirs, which
