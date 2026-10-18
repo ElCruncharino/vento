@@ -18,9 +18,9 @@ streams=1
 mkdir -p "$out"
 rm -f "$out/ctl" "$out/rec.raw" "$out/timeline.json"
 
-# The desktop crate's build script builds FFmpeg, whose assembly wants NASM;
+# The platform crate's build script builds FFmpeg, whose assembly wants NASM;
 # a PATH with one in it is the caller's business (see the repo's notes).
-(cd "$repo" && cargo build --offline -q -p remotedesktop-platform-desktop --features probe --example audio_rig)
+(cd "$repo" && cargo build --offline -q -p remotedesktop-platform-linux --features probe --example audio_rig)
 rig="$repo/target/debug/examples/audio_rig"
 
 module="$("$here/sink.sh" load)"

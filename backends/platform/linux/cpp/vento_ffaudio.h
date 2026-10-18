@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // A sound decoder on a desktop: libavcodec's AAC and Opus behind four calls,
-// which is all of FFmpeg `platform_desktop::ffmpeg_audio` sees, for the same
+// which is all of FFmpeg `platform_linux::ffmpeg_audio` sees, for the same
 // reason `vento_video.h` is narrow — the Rust half declares these by hand and
 // needs no FFmpeg headers.
 //

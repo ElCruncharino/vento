@@ -56,13 +56,13 @@ remotedesktop-platform-android.workspace = true
 # rather than a dev-dependency, since a dev-dependency cannot be optional;
 # nothing but the example names it.)
 [target.'cfg(not(target_os = "android"))'.dependencies]
-remotedesktop-platform-desktop = { workspace = true, optional = true }
+remotedesktop-platform-linux = { workspace = true, optional = true }
 
 # The probe is a development tool, built only when asked for: `cargo run
 # --features probe --example rustdesk-probe`. Without the feature `cargo test`
 # and `clippy --all-targets` leave it alone.
 [features]
-probe = ["dep:remotedesktop-platform-desktop"]
+probe = ["dep:remotedesktop-platform-linux"]
 
 [[example]]
 name = "rustdesk-probe"

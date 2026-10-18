@@ -6,7 +6,7 @@
 #
 # This is the only crate in the workspace with `jni` in it. A protocol crate
 # depends on it under a target cfg and nowhere else, which keeps the host
-# build — tests, examples, `remotedesktop-platform-desktop` — free of anything
+# build — tests, examples, `remotedesktop-platform-linux` — free of anything
 # that knows a phone exists; and `remotedesktop-common` does not depend on it
 # at all, because the layering runs the other way: this crate holds a
 # `session::Backend` for Java and implements `common::video::Decoders` for

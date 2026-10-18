@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // A video decoder on a desktop: libavcodec behind one narrow C API, which is
-// all of FFmpeg the Rust decoder (`platform_desktop::ffmpeg`) sees.
+// all of FFmpeg the Rust decoder (`platform_linux::ffmpeg`) sees.
 //
 // Narrow on purpose. FFmpeg's own API is hundreds of functions and structs
 // whose layout changes with every major release; this is a dozen calls and one

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // The TigerVNC backend's probe: `vento_tigervnc_config` from the command
-// line, over the body in `backends/platform/desktop/c`. C++
+// line, over the body in `backends/platform/linux/probe`. C++
 // only so that the link is: the body and this are C, the library behind
 // them is not.
 //

@@ -11,7 +11,7 @@
 //! planes are got at:
 //!
 //! - **Through `vento_video.h`, not FFmpeg's API.** libavcodec is reached
-//!   through a dozen C calls of our own (`c/vento_video.c`), and this file
+//!   through a dozen C calls of our own (`cpp/vento_video.c`), and this file
 //!   declares those by hand: no generated bindings, no FFmpeg headers, and
 //!   nothing here that changes with an FFmpeg release. The choices that are
 //!   libavcodec's — low delay, slice threads, AV1 as dav1d, only the last of
@@ -86,7 +86,7 @@ use common::video::{Changes, Codec, Decoded, Decoders, Dmabuf, DmabufLayer, GpuP
 /// setting, `--hw-decode`): `common`'s, since it is handed to every backend.
 pub use common::video::Hardware;
 
-/// `c/vento_video.h`, declared by hand: the whole of what this crate calls.
+/// `cpp/vento_video.h`, declared by hand: the whole of what this crate calls.
 mod sys {
     use std::ffi::{c_char, c_int};
 

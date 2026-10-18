@@ -41,7 +41,7 @@ include("${VENTO_BACKENDS}/cmake/warnings.cmake")
 if(ANDROID)
     include("${VENTO_BACKENDS}/platform/android/cmake/vento_android.cmake")
 else()
-    include("${VENTO_BACKENDS}/cmake/vento_desktop.cmake")
+    include("${VENTO_BACKENDS}/platform/linux/cmake/vento_linux.cmake")
 endif()
 
 # One shared library per protocol, as every other backend module does, so a
@@ -222,8 +222,8 @@ if(ANDROID)
 else()
     # The session, for whatever desktop process links it: the neutral include
     # directory is the interface, and `vento_log` is left to the platform —
-    # the probe's `vento_desktop`, or the library's own copy of it under
-    # VENTO_SHARED (vento_desktop.cmake). The H.264 context is inside
+    # the probe's `vento_linux`, or the library's own copy of it under
+    # VENTO_SHARED (vento_linux.cmake). The H.264 context is inside
     # `rfbclient`, and decodes with whatever the process hands the session —
     # the Linux client's FFmpeg — and the sound plays on whatever output it
     # hands over: the Linux client's ALSA. The probe, which is C and hands it

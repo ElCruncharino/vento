@@ -3,7 +3,7 @@
 
 //! The desktop's FFmpeg: dav1d and FFmpeg built from their submodules
 //! (`third_party/dav1d`, `third_party/ffmpeg`) into `OUT_DIR` as static
-//! libraries, and `c/vento_video.c` compiled over them, so that the Linux
+//! libraries, and `cpp/vento_video.c` compiled over them, so that the Linux
 //! client links no FFmpeg of the system's and needs none of its development
 //! files.
 //!
@@ -33,7 +33,7 @@
 //! (`HWACCELS`) are built against `third_party/libva`'s headers, installed
 //! into the prefix with the one libva generates, through pkg-config files of
 //! ours that say so. Nothing of libva is linked: its functions are
-//! `c/va_shim.c`'s, which loads the real ones when hardware decoding is first
+//! `cpp/va_shim.c`'s, which loads the real ones when hardware decoding is first
 //! asked for. So the binary runs where libva is not installed, and does not
 //! load it while hardware decoding is off.
 //!
@@ -64,7 +64,7 @@ const DECODERS: &[&str] = &[
     // decodes only with hardware acceleration, and is there for that alone.
     "libdav1d",
     "av1",
-    // The sound (`c/vento_ffaudio.c`): the AAC an RDP server sends, which
+    // The sound (`cpp/vento_ffaudio.c`): the AAC an RDP server sends, which
     // Windows does whenever it is offered, and the Opus RDP and RustDesk can
     // send. libavcodec's Opus decoder resamples its SILK half with
     // libswresample, which is why that is built.
@@ -73,9 +73,9 @@ const DECODERS: &[&str] = &[
 ];
 
 /// The hardware decoders of the codecs above, for the Rust decoder when
-/// hardware decoding is asked for (`c/vento_video.c`), which TigerVNC's and
+/// hardware decoding is asked for (`cpp/vento_video.c`), which TigerVNC's and
 /// FreeRDP's H.264 go through as well: VAAPI's for each. libva is no library at build time: it is reached
-/// through `c/va_shim.c`, so it is headers here (`third_party/libva`).
+/// through `cpp/va_shim.c`, so it is headers here (`third_party/libva`).
 const HWACCELS: &[&str] = &[
     "h264_vaapi",
     "hevc_vaapi",
@@ -85,12 +85,12 @@ const HWACCELS: &[&str] = &[
 ];
 
 fn main() {
-    println!("cargo:rerun-if-changed=c/vento_video.c");
-    println!("cargo:rerun-if-changed=c/vento_video.h");
-    println!("cargo:rerun-if-changed=c/vento_ffaudio.c");
-    println!("cargo:rerun-if-changed=c/vento_ffaudio.h");
-    println!("cargo:rerun-if-changed=c/va_shim.c");
-    println!("cargo:rerun-if-changed=c/va_shim.h");
+    println!("cargo:rerun-if-changed=cpp/vento_video.c");
+    println!("cargo:rerun-if-changed=cpp/vento_video.h");
+    println!("cargo:rerun-if-changed=cpp/vento_ffaudio.c");
+    println!("cargo:rerun-if-changed=cpp/vento_ffaudio.h");
+    println!("cargo:rerun-if-changed=cpp/va_shim.c");
+    println!("cargo:rerun-if-changed=cpp/va_shim.h");
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android") {
         return;
     }
@@ -182,8 +182,8 @@ fn main() {
     }
 
     cc::Build::new()
-        .file(manifest.join("c/vento_video.c"))
-        .file(manifest.join("c/vento_ffaudio.c"))
+        .file(manifest.join("cpp/vento_video.c"))
+        .file(manifest.join("cpp/vento_ffaudio.c"))
         .include(prefix.join("include"))
         .warnings(true)
         .compile("vento_video");
@@ -279,7 +279,7 @@ fn build_dav1d(source: &Path, root: &Path, prefix: &Path, cc: &Path, asm: bool) 
 /// libva's headers into the prefix, where its own install would put them
 /// (`include/va/`), with the one it generates: `va_version.h`, from its
 /// template and the version `meson.build` declares. Nothing of libva is
-/// compiled; its functions are `c/va_shim.c`'s.
+/// compiled; its functions are `cpp/va_shim.c`'s.
 fn install_libva_headers(source: &Path, prefix: &Path) {
     let into = prefix.join("include/va");
     fs::create_dir_all(&into).unwrap();
@@ -377,7 +377,7 @@ fn write_pkg_config(prefix: &Path) {
     .unwrap();
 }
 
-/// `c/va_shim.c` as `libvento_va.a` in the prefix, which the pkg-config files
+/// `cpp/va_shim.c` as `libvento_va.a` in the prefix, which the pkg-config files
 /// above name and FFmpeg's libraries are linked with from then on. Copied in
 /// only when it differs, so that a build of the C backends that links it is
 /// not made to link again for nothing.
@@ -385,7 +385,7 @@ fn build_va_shim(manifest: &Path, root: &Path, prefix: &Path) {
     let out = root.join("va-shim");
     fs::create_dir_all(&out).unwrap();
     cc::Build::new()
-        .file(manifest.join("c/va_shim.c"))
+        .file(manifest.join("cpp/va_shim.c"))
         .include(prefix.join("include"))
         .warnings(true)
         .pic(true)

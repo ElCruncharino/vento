@@ -19,8 +19,13 @@
 # link the same build (the `links` key is how `linux/build.rs` hears where).
 # Building it needs Meson, Ninja, make, pkg-config and a C compiler, and NASM on
 # x86 for the decoders' assembly; nothing of a system FFmpeg.
+#
+# Beside the crate is the rest of the Linux platform: `cpp/`, the C the Rust
+# decoders call into and the stderr `vento_log` a C backend links;
+# `cmake/vento_linux.cmake`, a C backend's host half; and `probe/`, the
+# development tools — the C probes' shared body and the two sound rigs.
 [package]
-name = "remotedesktop-platform-desktop"
+name = "remotedesktop-platform-linux"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -29,30 +34,33 @@ build = "build.rs"
 links = "vento_video"
 
 [lib]
-name = "platform_desktop"
+name = "platform_linux"
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
 log.workspace = true
 remotedesktop-common.workspace = true
 # Nothing of FFmpeg's own API: `src/ffmpeg.rs` and `src/ffmpeg_audio.rs` call
-# the functions of `c/vento_video.h` and `c/vento_ffaudio.h`, declared by
+# the functions of `cpp/vento_video.h` and `cpp/vento_ffaudio.h`, declared by
 # hand, and only those C files include FFmpeg's headers. No bindgen, no
 # generated bindings, and nothing on the Rust side that changes with an
 # FFmpeg release.
 
-# The two sound rigs under `examples/` (`scripts/testaudio/`), development
-# tools built only when asked for: `cargo build --features probe --example
-# audio_rig`. Without the feature `cargo test` and `clippy --all-targets`
-# leave them alone.
+# The two sound rigs in `probe/` (`scripts/testaudio/`), development tools
+# built only when asked for: `cargo build --features probe --example
+# audio_rig`. Examples by path, since they are with the C probe's body rather
+# than in `examples/`. Without the feature `cargo test` and `clippy
+# --all-targets` leave them alone.
 [features]
 probe = []
 
 [[example]]
 name = "audio_rig"
+path = "probe/audio_rig/main.rs"
 required-features = ["probe"]
 
 [[example]]
 name = "audio_pattern"
+path = "probe/audio_pattern.rs"
 required-features = ["probe"]
 
 [build-dependencies]

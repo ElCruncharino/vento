@@ -42,7 +42,7 @@ remotedesktop-session = { path = "../backends/session", features = ["c"] }
 # video. Its build script builds FFmpeg and dav1d from `third_party/`
 # statically, and says where (`links`), so that `build.rs` hands the same
 # libraries to TigerVNC and FreeRDP: no FFmpeg of the system's is linked.
-remotedesktop-platform-desktop = { path = "../backends/platform/desktop" }
+remotedesktop-platform-linux = { path = "../backends/platform/linux" }
 # The backends, each with its adapter in its own crate: the four protocols,
 # and the three C libraries' crates, whose libraries `build.rs` links.
 remotedesktop-rfb = { path = "../backends/modules/rfb" }

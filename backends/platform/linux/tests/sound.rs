@@ -13,7 +13,7 @@
 
 use common::audio::Format;
 use common::audio::decode::{Codec, Decoders, opus_head};
-use platform_desktop::ffmpeg_audio::FFmpegAudio;
+use platform_linux::ffmpeg_audio::FFmpegAudio;
 
 fn fixture(name: &str) -> Vec<u8> {
     let path = format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));

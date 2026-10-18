@@ -3,7 +3,7 @@
 vento's sound, played somewhere nobody hears it and recorded back: a PipeWire
 null sink, its monitor, and an analysis of what came out. For the desktop's
 audio output (`common::audio` over a PipeWire stream of its own,
-`backends/platform/desktop/src/pipewire.rs`, or ALSA, `alsa.rs`, without PipeWire)
+`backends/platform/linux/src/pipewire.rs`, or ALSA, `alsa.rs`, without PipeWire)
 and for every backend moved onto it.
 
 **Nothing here may be heard.** Sound goes to the null sink `vento_test` and
@@ -26,7 +26,7 @@ silence is played until `pactl` has shown the stream on the null sink.
                                        # a Windows RDP session's, the same way
 ```
 
-`rig.sh` needs NASM on `PATH` the first time it builds the desktop crate
+`rig.sh` needs NASM on `PATH` the first time it builds the platform crate
 (its build script builds FFmpeg). Python is the standard library only.
 
 ## Routing a stream to the sink
@@ -36,7 +36,7 @@ vento plays on a PipeWire stream of its own, and libpipewire reads
 plays into the null sink. So does ALSA's `default` device here, PipeWire's
 ALSA plugin, which is where vento's sound goes with `--audio-output=alsa`
 (or `VENTO_AUDIO_OUTPUT=alsa`; the rig and every other program built on the
-desktop crate read that) and where there is no PipeWire daemon. `sink.sh
+platform crate read that) and where there is no PipeWire daemon. `sink.sh
 check` finds vento's own streams by their process id (node `vento`) and the
 plugin's, which carry no process id, by its node name `alsa_playback.<program
 name>`; it says which output each came through (`PipeWire` or `ALSA`), and
@@ -52,8 +52,8 @@ follows:
 
 ## The output's rig
 
-`backends/platform/desktop/examples/audio_rig/` (built by `rig.sh` with
-the desktop crate's `probe` feature, which it needs) opens a 48 kHz stereo
+`backends/platform/linux/probe/audio_rig/` (built by `rig.sh` with
+the platform crate's `probe` feature, which it needs) opens a 48 kHz stereo
 stream on the desktop's output (PipeWire's, or ALSA's with
 `VENTO_AUDIO_OUTPUT=alsa`) and, once `rig.sh` says `go`, records the
 monitor with `parec` and plays a script, timing everything on its own clock:
@@ -111,7 +111,7 @@ nodes of the one client.
 ./pattern.sh OUT_DIR PATTERN SECONDS [--stall-every S] [--stall-at S] [--stall MS] [--seed N]
 ```
 
-`backends/platform/desktop/examples/audio_pattern.rs` (built by
+`backends/platform/linux/probe/audio_pattern.rs` (built by
 `pattern.sh` with the same `probe` feature) writes into the desktop's output the way a protocol's sound arrives — `qemu` (10 ms every
 10 ms), `opus` (20 ms every 20 ms), `rdp` (Windows' 23 ms AAC waves, up to
 18 ms late), `rdp-pairs` (two at a time, 10 ms either side), `winpcm`

@@ -46,7 +46,7 @@ if(ANDROID)
     add_library(remotedesktop_realvnc SHARED realvnc_traffic.c)
     remotedesktop_warnings(remotedesktop_realvnc)
 else()
-    include("${VENTO_BACKENDS}/cmake/vento_desktop.cmake")
+    include("${VENTO_BACKENDS}/platform/linux/cmake/vento_linux.cmake")
 
     # Off by default: every JNI call the core makes, as the jnivm trace prints
     # it, is how a class or method the stand-ins lack is found — the line
@@ -119,8 +119,8 @@ else()
 
     # The session and the hosting layer, for whatever desktop process links
     # them: the neutral include directory is the interface, and `vento_log` is
-    # left to the platform — the probe's `vento_desktop`, or the library's own
-    # copy of it under VENTO_SHARED (vento_desktop.cmake). The hosting layer's
+    # left to the platform — the probe's `vento_linux`, or the library's own
+    # copy of it under VENTO_SHARED (vento_linux.cmake). The hosting layer's
     # headers are its own and not on the interface.
     vento_backend_library(vento_realvnc realvnc_session.cxx
             host/DesktopCore.cxx host/Loader.cxx host/Looper.cxx host/Classes.cxx host/Files.cxx)

@@ -51,13 +51,15 @@ fn main() {
 
     // What the C build is made of, as far as cargo is asked to watch: the
     // build files, the neutral headers, each module's host half and the
-    // desktop platform sources. The vendored trees are not watched — they
-    // are submodules, and a change there is a rebuild somebody asks for.
+    // Linux platform's C and CMake half (not its `probe/`, which this build
+    // leaves off). The vendored trees are not watched — they are
+    // submodules, and a change there is a rebuild somebody asks for.
     for path in [
         "CMakeLists.txt",
         "cmake",
         "common/include",
-        "platform/desktop/c",
+        "platform/linux/cpp",
+        "platform/linux/cmake",
         "modules/libvnc/cpp",
         "modules/tigervnc/cpp",
         "modules/freerdp/cpp",
@@ -70,14 +72,14 @@ fn main() {
     for var in ["PATH", "CC", "CXX"] {
         println!("cargo:rerun-if-env-changed={var}");
     }
-    // The static FFmpeg the desktop platform crate built (its build script,
+    // The static FFmpeg the Linux platform crate built (its build script,
     // through its `links` key), which TigerVNC and FreeRDP link as the Rust
     // decoder does, so that the client has one FFmpeg and it is not the
     // system's.
     println!("cargo:rerun-if-env-changed=DEP_VENTO_VIDEO_PREFIX");
     let ffmpeg = PathBuf::from(
         env::var("DEP_VENTO_VIDEO_PREFIX")
-            .expect("remotedesktop-platform-desktop says where its FFmpeg is"),
+            .expect("remotedesktop-platform-linux says where its FFmpeg is"),
     );
 
     realvnc_bindings(&backends, &out);
@@ -158,7 +160,7 @@ fn build_c_backends(backends: &Path, out: &Path, ffmpeg: &Path) -> PathBuf {
     }
     let dst = cfg.build();
     // `build()` returns the install prefix; the build tree is `build/` under
-    // it, and `lib/` is where vento_desktop.cmake sends the libraries.
+    // it, and `lib/` is where vento_linux.cmake sends the libraries.
     dst.join("build").join("lib")
 }
 

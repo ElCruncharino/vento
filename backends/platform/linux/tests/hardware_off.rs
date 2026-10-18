@@ -9,7 +9,7 @@
 #![cfg(not(target_os = "android"))]
 
 use common::video::{Changes, Decoders};
-use platform_desktop::ffmpeg::{FFmpeg, Hardware, device_opened};
+use platform_linux::ffmpeg::{FFmpeg, Hardware, device_opened};
 
 mod clips;
 use clips::{annex_b, fixture, h264_aud, h265_aud, ivf};

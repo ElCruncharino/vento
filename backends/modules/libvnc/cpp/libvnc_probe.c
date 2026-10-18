@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // The libvncclient backend's probe: `vento_libvnc_config` from the command
-// line, over the body in `backends/platform/desktop/c`.
+// line, over the body in `backends/platform/linux/probe`.
 //
 //   vento_libvnc_probe HOST:DISPLAY --password vncpass --out shot.ppm
 

@@ -6,7 +6,7 @@
 //!
 //! A protocol asks for a decoder and does not know whose it is. What it holds
 //! is a [`Decoders`], handed to it by whoever started the session: the phone's
-//! MediaCodec in `platform_android`, libavcodec in `platform_desktop`, and
+//! MediaCodec in `platform_android`, libavcodec in `platform_linux`, and
 //! [`NoDecoders`] for a test that has neither. Which one that is was a
 //! `cfg(target_os)` inside the protocol until a second platform could decode,
 //! and the answer is the platform's rather than the protocol's — the same

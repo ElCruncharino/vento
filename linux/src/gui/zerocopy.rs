@@ -25,7 +25,7 @@
 //!
 //! **The arithmetic is the processor's.** The pass is
 //! `common::video::convert`'s integer expression, with its coefficients, and
-//! P010 narrowed to eight bits as `platform_desktop`'s `narrow` narrows it, so
+//! P010 narrowed to eight bits as `platform_linux`'s `narrow` narrows it, so
 //! a pixel is the one a readback would have made; the tests below hold it to
 //! that, for every pair of chroma samples.
 //!
@@ -828,9 +828,9 @@ mod tests {
         }
     }
 
-    /// The desktop crate's fixtures, cut into frames as its tests cut them.
+    /// The Linux platform crate's fixtures, cut into frames as its tests cut them.
     fn fixture(name: &str) -> (Codec, Vec<Vec<u8>>) {
-        let path = format!("{}/../backends/platform/desktop/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
+        let path = format!("{}/../backends/platform/linux/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
         let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
         let ivf = |b: &[u8]| {
             let mut at = u16::from_le_bytes([b[6], b[7]]) as usize;
@@ -880,7 +880,7 @@ mod tests {
         };
         for name in ["h264.h264", "vp9.ivf", "av1.ivf", "h265-main10.h265"] {
             let (codec, frames) = fixture(name);
-            let mut decoder = platform_desktop::ffmpeg::Decoder::with_hardware(codec, 128, 128, Hardware::Vaapi).unwrap();
+            let mut decoder = platform_linux::ffmpeg::Decoder::with_hardware(codec, 128, 128, Hardware::Vaapi).unwrap();
             if decoder.method() != Hardware::Vaapi {
                 eprintln!("{test}: skipped, no VAAPI ({:?})", decoder.software_reason());
                 return;

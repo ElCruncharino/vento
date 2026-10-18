@@ -65,7 +65,7 @@ mod rig {
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     use common::audio::{Format, Outputs};
-    use platform_desktop::audio::{Audio, Output};
+    use platform_linux::audio::{Audio, Output};
 
     /// Half of full scale, as `audio_rig`'s tone.
     const AMPLITUDE: f64 = 16384.0;

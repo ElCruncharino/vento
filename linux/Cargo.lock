@@ -3875,7 +3875,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "remotedesktop-platform-desktop"
+name = "remotedesktop-platform-linux"
 version = "0.0.1"
 dependencies = [
  "cc",
@@ -5111,7 +5111,7 @@ dependencies = [
  "remotedesktop-freerdp",
  "remotedesktop-ironrdp",
  "remotedesktop-libvnc",
- "remotedesktop-platform-desktop",
+ "remotedesktop-platform-linux",
  "remotedesktop-rfb",
  "remotedesktop-rustdesk",
  "remotedesktop-session",

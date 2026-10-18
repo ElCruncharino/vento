@@ -1,13 +1,14 @@
 # SPDX-FileCopyrightText: 2026 Patrick Gaskin
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# The desktop platform for a C backend, as `vento_android.cmake` is the
-# Android one: `backends/platform/desktop/c`, compiled once as two object libraries.
-# `vento_desktop` is the platform proper — `vento_log` onto stderr, which is
-# all a session file needs of one to link — and carries the neutral include
-# directory, so a target that links it finds `<vento/backend.h>`.
-# `vento_probe` is the probe body, which each module's host branch puts a
-# `main` of its own in front of. Object libraries do not pass their objects on
+# The Linux platform for a C backend, as `vento_android.cmake` is the
+# Android one: `backends/platform/linux`, compiled once as two object
+# libraries. `vento_linux` is the platform proper — `cpp/vento_log.c`, onto
+# stderr, which is all a session file needs of one to link — and carries the
+# neutral include directory, so a target that links it finds
+# `<vento/backend.h>`. `vento_probe` is the probe body, `probe/probe.c`, which
+# each module's host branch puts a `main` of its own in front of, and carries
+# `probe/` for its header. Object libraries do not pass their objects on
 # through one another, so a probe links both by name.
 #
 # The probes are a development tool, built only when asked for with
@@ -18,9 +19,7 @@
 # `vento <backend> <address> --probe N` goes through the same session files.
 #
 # Guarded, because the host root includes it once and each module includes it
-# again for the case where a module is configured on its own; the TigerVNC
-# audio sink is not here but under `platform/desktop/tigervnc`, compiled by
-# that module, since it speaks TigerVNC's headers.
+# again for the case where a module is configured on its own.
 #
 # `VENTO_SHARED` is the other shape a backend can take on the host: a shared
 # library per backend, `libvento_<name>.so` under `lib/` in the build tree,
@@ -31,25 +30,25 @@
 # `vento_backend_library` and `vento_backend_probe` are the two helpers that
 # know the difference, so that a module's host branch does not.
 
-get_filename_component(_VENTO_BACKENDS "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
+get_filename_component(_VENTO_LINUX "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
+get_filename_component(_VENTO_BACKENDS "${_VENTO_LINUX}/../.." ABSOLUTE)
 
 option(VENTO_SHARED "Build each host backend as a shared library carrying its dependencies and the logger" OFF)
 option(VENTO_PROBES "Build a probe in front of each host backend" OFF)
 
-if(NOT TARGET vento_desktop)
-    add_library(vento_desktop OBJECT "${_VENTO_BACKENDS}/platform/desktop/c/vento_log.c")
-    remotedesktop_warnings(vento_desktop)
+if(NOT TARGET vento_linux)
+    add_library(vento_linux OBJECT "${_VENTO_LINUX}/cpp/vento_log.c")
+    remotedesktop_warnings(vento_linux)
     # Its object goes into a shared library under VENTO_SHARED, and it is
     # compiled before any module has asked for position-independent code.
-    set_target_properties(vento_desktop PROPERTIES POSITION_INDEPENDENT_CODE ON)
-    target_include_directories(vento_desktop PUBLIC
-            "${_VENTO_BACKENDS}/common/include"
-            "${_VENTO_BACKENDS}/platform/desktop/c")
+    set_target_properties(vento_linux PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    target_include_directories(vento_linux PUBLIC "${_VENTO_BACKENDS}/common/include")
 
     if(VENTO_PROBES)
-        add_library(vento_probe OBJECT "${_VENTO_BACKENDS}/platform/desktop/c/probe.c")
+        add_library(vento_probe OBJECT "${_VENTO_LINUX}/probe/probe.c")
         remotedesktop_warnings(vento_probe)
-        target_link_libraries(vento_probe PUBLIC vento_desktop)
+        target_include_directories(vento_probe PUBLIC "${_VENTO_LINUX}/probe")
+        target_link_libraries(vento_probe PUBLIC vento_linux)
     endif()
 endif()
 
@@ -66,8 +65,8 @@ endif()
 # `${VENTO_BACKEND_LINK}`: PUBLIC for a static library, whose probe has to
 # link them too, and PRIVATE for a shared one, which already holds them.
 # `VENTO_FFMPEG_PREFIX`: the FFmpeg to link, as the static libraries the
-# desktop platform crate builds from `third_party/ffmpeg` and
-# `third_party/dav1d` (backends/platform/desktop/build.rs, which `linux/build.rs`
+# Linux platform crate builds from `third_party/ffmpeg` and
+# `third_party/dav1d` (backends/platform/linux/build.rs, which `linux/build.rs`
 # hears the prefix from and hands on). Given, it is the one FFmpeg of every
 # backend here — which is FreeRDP's scaler alone now, since every backend's
 # H.264 and sound is decoded by the Rust side through vento's decoders — and
@@ -78,7 +77,7 @@ endif()
 # One imported target per library, each carrying what a static link of it
 # needs after it — dav1d and libswresample after libavcodec (its AV1 and its
 # Opus decoder), libavutil after all, the libva shim after libavutil (its
-# VAAPI code calls libva through it: backends/platform/desktop/c/va_shim.c,
+# VAAPI code calls libva through it: backends/platform/linux/cpp/va_shim.c,
 # which loads libva only when something decodes in hardware, and no backend
 # here asks to), and the system's threads, libm and libdl — so that a module
 # names only the library it calls.
@@ -113,7 +112,7 @@ endif()
 function(vento_backend_library name)
     if(VENTO_SHARED)
         add_library(${name} SHARED ${ARGN})
-        target_link_libraries(${name} PRIVATE vento_desktop)
+        target_link_libraries(${name} PRIVATE vento_linux)
         target_link_options(${name} PRIVATE "LINKER:--exclude-libs,ALL")
         set_target_properties(${name} PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
     else()
@@ -134,6 +133,6 @@ function(vento_backend_probe name source)
     remotedesktop_warnings(${name}_probe)
     target_link_libraries(${name}_probe PRIVATE ${name} vento_probe)
     if(NOT VENTO_SHARED)
-        target_link_libraries(${name}_probe PRIVATE vento_desktop)
+        target_link_libraries(${name}_probe PRIVATE vento_linux)
     endif()
 endfunction()

@@ -47,7 +47,7 @@ the new release's tag, `patches/winit/` rebased onto it, and any patch
 upstream has taken dropped.
 
 `third_party/ffmpeg` and `third_party/dav1d` are the Linux client's too, and
-not in this round either: the static FFmpeg `backends/platform/desktop/build.rs`
+not in this round either: the static FFmpeg `backends/platform/linux/build.rs`
 builds for every desktop decoder (the Rust ones, which TigerVNC's and
 FreeRDP's H.264 and FreeRDP's AAC and Opus sound go through too, and
 FreeRDP's scaling, which links libswscale alone), each pinned at a release
@@ -62,7 +62,7 @@ Android builds neither.
 
 `third_party/libva` goes with FFmpeg: headers only, for its VAAPI decoders
 (`HWACCELS` in the same build script). Nothing of it is compiled or linked;
-libva is reached through `backends/platform/desktop/c/va_shim.c`, which
+libva is reached through `backends/platform/linux/cpp/va_shim.c`, which
 defines each libva function FFmpeg calls and loads the real one on first
 use. A newer FFmpeg may call a libva function the shim does not have yet,
 which is a link error naming it (`undefined symbol: va...`): add it to
@@ -71,7 +71,7 @@ picture (`vaSyncSurface`, `vaExportSurfaceHandle`) and reads FFmpeg's
 `AVVAAPIDeviceContext` for the display, which a new FFmpeg could rename.
 libva moves to a newer release's tag when FFmpeg wants newer headers (its
 configure says which `VA_CHECK_VERSION` a feature needs). Proven by the
-desktop crate's `hardware` and `hardware_auto` tests with
+Linux platform crate's `hardware` and `hardware_auto` tests with
 `VENTO_TEST_HW=require` on a machine with a VAAPI device, and
 `hardware_off`.
 

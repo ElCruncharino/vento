@@ -20,7 +20,7 @@
 #![cfg(not(target_os = "android"))]
 
 use common::video::{Changes, Codec, Decoded, Decoder as _, fourcc};
-use platform_desktop::ffmpeg::{Decoder, Hardware};
+use platform_linux::ffmpeg::{Decoder, Hardware};
 
 mod clips;
 use clips::{H, W, annex_b, difference, frames, h264_aud, h265_aud, ivf, pictures, planes_pictures};
@@ -367,7 +367,7 @@ fn one_device_for_every_decoder() {
     assert_eq!(render_nodes(), open, "a decoder opened a device of its own");
     drop(more);
     drop(first);
-    assert_eq!(platform_desktop::ffmpeg::device_opened(Hardware::Vaapi), Some(true));
+    assert_eq!(platform_linux::ffmpeg::device_opened(Hardware::Vaapi), Some(true));
     assert_eq!(render_nodes(), open, "the device closed with its decoders");
 }
 
@@ -432,7 +432,7 @@ fn without_a_device_it_is_software() {
     let status = hw.status().unwrap();
     eprintln!("without a device: {status}");
     assert!(status.starts_with("H.264 sw ") && status.contains(&why), "{status}");
-    assert_eq!(platform_desktop::ffmpeg::device_opened(Hardware::Vaapi), Some(false));
+    assert_eq!(platform_linux::ffmpeg::device_opened(Hardware::Vaapi), Some(false));
 }
 
 /// What a frame costs, software against VAAPI (or the methods

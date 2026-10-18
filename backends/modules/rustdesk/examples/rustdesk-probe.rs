@@ -25,7 +25,7 @@
 //! counted by arm, and the frames written out as a file to feed a decoder.
 //!
 //! `--ppm` is the other half of that: the frames through the decoder a session
-//! on this machine would use — libavcodec, as `platform_desktop` wraps it, into
+//! on this machine would use — libavcodec, as `platform_linux` wraps it, into
 //! the same diff and conversion the phone's MediaCodec feeds — and the first
 //! picture that comes out written as a PPM. Where the IVF says what the far end
 //! sent, this says what this code makes of it.
@@ -633,7 +633,7 @@ impl Video {
             .find(|c| c.name().replace('.', "") == self.codec)
             .ok_or_else(|| format!("{} is not a codec this decodes", self.codec))?;
         let (w, h) = (self.width as usize, self.height as usize);
-        let mut decoder = platform_desktop::ffmpeg::FFmpeg::default()
+        let mut decoder = platform_linux::ffmpeg::FFmpeg::default()
             .decoder(codec, w, h)
             .ok_or_else(|| format!("no {} decoder in this libavcodec", codec.name()))?;
         let mut out = vec![0u32; w * h];

@@ -35,8 +35,8 @@
 # `linux/` links them (its build.rs runs this file with that switch on);
 # -DVENTO_FFMPEG_PREFIX=DIR links FreeRDP's scaler against the static
 # FFmpeg under DIR instead of the host's, which is how that build
-# gives it the one `backends/platform/desktop/build.rs` made (see
-# cmake/vento_desktop.cmake).
+# gives it the one `backends/platform/linux/build.rs` made (see
+# platform/linux/cmake/vento_linux.cmake).
 #
 # Needs, as development packages: openssl, gnutls, nettle (with hogweed and
 # gmp), libjpeg-turbo, pixman, zlib, FFmpeg's libswscale and libavutil
@@ -59,7 +59,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 include(cmake/warnings.cmake)
-include(cmake/vento_desktop.cmake)
+include(platform/linux/cmake/vento_linux.cmake)
 
 # Four roots under Gradle, four subdirectories here; each branches on
 # `ANDROID` and takes its host half. The vendored trees under them share

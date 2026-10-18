@@ -11,7 +11,7 @@
 # crate under `backends/modules/`: the protocol crate for the four in Rust, a
 # small crate beside the C library for the others. None of them knows a
 # phone. `backends/platform/*` is where one platform's glue lives — Android's
-# JNI and MediaCodec in `android`, libavcodec in `desktop`. The one client
+# JNI and MediaCodec in `android`, libavcodec in `linux`. The one client
 # that is not a phone's is `linux/`: a desktop binary that holds a session on
 # any of the eight backends through those adapters, with the C libraries its
 # build.rs has CMake make. It is a workspace of its own, excluded here, and not for
@@ -42,12 +42,12 @@ members = [
     "backends/modules/tigervnc",
     "backends/modules/freerdp",
 ]
-# Every member but the desktop platform crate, which is the one whose build
+# Every member but the Linux platform crate, which is the one whose build
 # script builds dav1d and FFmpeg (minutes, once per target directory): a bare
 # `cargo build`, `test` or `clippy` here is the phone's crates and the
 # backends, and none of those needs it without its `probe` feature. The
 # Linux client builds it through its own workspace; `--workspace` or `-p
-# remotedesktop-platform-desktop` for its own tests.
+# remotedesktop-platform-linux` for its own tests.
 default-members = [
     "backends/common",
     "backends/session",
@@ -75,7 +75,7 @@ remotedesktop-common = { path = "backends/common", version = "0.0.1" }
 remotedesktop-session = { path = "backends/session", version = "0.0.1" }
 remotedesktop-tls = { path = "backends/tls", version = "0.0.1" }
 remotedesktop-platform-android = { path = "backends/platform/android", version = "0.0.1" }
-remotedesktop-platform-desktop = { path = "backends/platform/desktop", version = "0.0.1" }
+remotedesktop-platform-linux = { path = "backends/platform/linux", version = "0.0.1" }
 log = "0.4"
 # One version across the crates: a `Callbacks` built in one is used in another.
 jni = "0.22"

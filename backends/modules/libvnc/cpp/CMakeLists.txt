@@ -30,7 +30,7 @@ include("${VENTO_BACKENDS}/cmake/warnings.cmake")
 if(ANDROID)
     include("${VENTO_BACKENDS}/platform/android/cmake/vento_android.cmake")
 else()
-    include("${VENTO_BACKENDS}/cmake/vento_desktop.cmake")
+    include("${VENTO_BACKENDS}/platform/linux/cmake/vento_linux.cmake")
 endif()
 
 # One shared library per protocol, as every other backend module does, so a
@@ -133,8 +133,8 @@ if(ANDROID)
 else()
     # The session alone, for whatever desktop process links it: the neutral
     # include directory is its interface, and `vento_log` is left to the
-    # platform — the probe's `vento_desktop`, or the library's own copy of it
-    # under VENTO_SHARED (vento_desktop.cmake).
+    # platform — the probe's `vento_linux`, or the library's own copy of it
+    # under VENTO_SHARED (vento_linux.cmake).
     vento_backend_library(vento_libvnc libvnc_session.c)
     target_include_directories(vento_libvnc SYSTEM PRIVATE ${LIBVNC_INCLUDES})
     target_link_libraries(vento_libvnc ${VENTO_BACKEND_LINK} vncclient)

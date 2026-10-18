@@ -86,7 +86,7 @@
 # The Linux client's only, as winit is: the FFmpeg every desktop consumer of a
 # video or sound codec links (the Rust decoder, TigerVNC's H.264, FreeRDP's
 # H.264, sound and scaling), built statically by
-# backends/platform/desktop/build.rs with --disable-everything and the
+# backends/platform/linux/build.rs with --disable-everything and the
 # decoders those use, and dav1d for its AV1. Each at a release tag (FFmpeg
 # n8.1.3, the newest release; dav1d 1.5.4). The phone decodes with MediaCodec
 # and builds neither. FFmpeg as configured is LGPL 2.1 or later, dav1d
@@ -104,7 +104,7 @@
 # Headers only, for that FFmpeg's hardware decoders: libva's (MIT; its one
 # generated header, va_version.h, made by build.rs from its template) for
 # VAAPI. Not compiled or linked: FFmpeg's VAAPI code calls libva through
-# backends/platform/desktop/c/va_shim.c, which loads it on first use.
+# backends/platform/linux/cpp/va_shim.c, which loads it on first use.
 # libva 2.23.0.
 [submodule "third_party/libva"]
 	path = third_party/libva

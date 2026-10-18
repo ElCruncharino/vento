@@ -11,7 +11,7 @@
 //! when it is disconnected. `--list` prints the
 //! backends and their options. Any of the probe's flags
 //! (`--probe`, `--out`, `--click`, …) selects the headless mode instead — the
-//! spirit of `backends/platform/desktop/c/probe.c`, which is what proved
+//! spirit of `backends/platform/linux/probe/probe.c`, which is what proved
 //! each C session through the neutral API — which connects, prints every
 //! event, answers the prompts from the flags, writes the framebuffer and a
 //! thumbnail, prints the facts, and leaves with a status that is zero only

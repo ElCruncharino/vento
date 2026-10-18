@@ -6,7 +6,7 @@
 //! out with its streams, and the counterpart of
 //! `platform_android::mediacodec_audio`.
 //!
-//! Through `c/vento_ffaudio.h`, as the video is through `c/vento_video.h`:
+//! Through `cpp/vento_ffaudio.h`, as the video is through `cpp/vento_video.h`:
 //! four calls declared by hand, and the conversion to interleaved 16-bit
 //! samples done on the C side, where the decoder's own sample format is
 //! known. The FFmpeg is the client's one, the same build its video decodes
@@ -20,7 +20,7 @@ use std::ffi::{CStr, c_char, c_int};
 use common::audio::Format;
 use common::audio::decode::{self, Codec, Decoder, Decoders};
 
-/// `c/vento_ffaudio.h`, declared by hand.
+/// `cpp/vento_ffaudio.h`, declared by hand.
 mod sys {
     use std::ffi::{c_char, c_int};
 

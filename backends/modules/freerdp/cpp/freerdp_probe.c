@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // The FreeRDP backend's probe: `vento_freerdp_config` from the command
-// line, over the body in `backends/platform/desktop/c`.
+// line, over the body in `backends/platform/linux/probe`.
 //
 //   vento_freerdp_probe HOST --trust --user proto --password protopass --out shot.ppm
 

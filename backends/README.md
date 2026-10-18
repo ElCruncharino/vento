@@ -1,14 +1,30 @@
 # backends/
 
 The eight remote desktop backends, what they share, and how they are built
-for the phone and for the Linux client. This is a map of where things are
-now; the layout is being reorganised in stages, and each stage updates it.
+for the phone and for the Linux client.
 
 **The rule:** a thing that only one backend needs lives under that backend's
-module, `modules/<name>/`; `common/`, `session/` and `platform/` hold only
-what two or more backends, or both clients, share. Inside a module, each
-language has one place: the Rust crate at its root, the C in `cpp/`, the
-Java in `java/`, the options in `catalog.rs`.
+module, `modules/<name>/`; `common/`, `session/` and `tls/` hold only what
+two or more backends, or both clients, share; and what one platform needs of
+all of them lives under that platform, `platform/<os>/` — its crate, its C,
+its CMake half and, for the phone, its Java and its ports. Inside a module,
+each language has one place: the Rust crate at its root, the C in `cpp/`,
+the Java in `java/`, the options in `catalog.rs`. What is left at the top is
+what builds them all: the Gradle parent, its tasks, the host CMake root and
+the CMake both builds include.
+
+    backends/
+      README.md, UPGRADING.md
+      build.gradle      the :backends Gradle module, parent of the modules
+      buildSrc/         the Gradle tasks its helpers use
+      CMakeLists.txt    the host build of the C backends
+      cmake/            warnings.cmake, reproducible.cmake
+      common/  session/  tls/  codegen/  vectors/
+      modules/<name>/   one per backend (eight)
+      platform/
+        android/        crate, java/, javatest/, c/, cmake/, ports/
+        linux/          crate, cpp/, cmake/, probe/, tests/
+      build/            the :backends module's Gradle output, untracked
 
 ## The backends: `modules/<name>/`
 
@@ -60,18 +76,28 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
 - `tls/` — rustls pinning, for the Rust backends that speak TLS.
 - `codegen/` (`vento-codegen`) — the phone's Java catalogs and natives
   classes, generated from `session` at build time on the host.
-- `platform/android/` — the phone's platform: the one JNI layer, MediaCodec
-  and AAudio (the crate), and, in `java/`, the `:backends` module's Java —
-  the seam every backend's provider is written against, the files with no
-  package directories over them — with its tests in `javatest/`; `c/`, the
-  logcat logger and the export map a C backend's library is linked with;
-  `cmake/vento_android.cmake`, a C backend's Android half
-  (`vento_android_library`); and `ports/`, the generated Android builds of
-  openssl, nettle and gnutls (`gen.sh` in each regenerates its `gen/`).
-- `platform/desktop/` — FFmpeg (built statically from `third_party/`), the
-  ALSA/PipeWire outputs and the desktop C platform (`c/`, with the C probes'
-  shared body).
 - `vectors/` — test cases both the Rust and the Java tests read.
+
+## The platforms: `platform/<os>/`
+
+- `platform/android/` (`remotedesktop-platform-android`) — the phone's
+  platform: the one JNI layer, MediaCodec and AAudio (the crate), and, in
+  `java/`, the `:backends` module's Java — the seam every backend's provider
+  is written against, the files with no package directories over them — with
+  its tests in `javatest/`; `c/`, the logcat logger and the export map a C
+  backend's library is linked with; `cmake/vento_android.cmake`, a C
+  backend's Android half (`vento_android_library`); and `ports/`, the
+  generated Android builds of openssl, nettle and gnutls (`gen.sh` in each
+  regenerates its `gen/`).
+- `platform/linux/` (`remotedesktop-platform-linux`) — the Linux client's
+  platform: FFmpeg, built statically from `third_party/` by `build.rs`, and
+  the decoders and the PipeWire/ALSA outputs over it (the crate); `cpp/`, the
+  C those decoders call and the stderr logger a C backend links;
+  `cmake/vento_linux.cmake`, a C backend's host half (`vento_backend_library`,
+  `vento_backend_probe`, `VENTO_SHARED`, `VENTO_PROBES`,
+  `VENTO_FFMPEG_PREFIX`); `probe/`, the development tools — the C probes'
+  shared body and the two sound rigs (`--features probe`); and `tests/`, the
+  decoders' fixture tests.
 
 ## Building them
 
@@ -83,9 +109,9 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
   patch check), pulled in by the root `buildSrc`.
 - `CMakeLists.txt` — the host CMake build of the C backends, which
   `linux/build.rs` runs (`VENTO_SHARED=ON`) and which builds the C probes
-  with `-DVENTO_PROBES=ON`. `cmake/` holds what both builds include,
-  `warnings.cmake` and `reproducible.cmake`, and the host's half of a C
-  backend, `vento_desktop.cmake`; the phone's is in `platform/android/cmake/`.
+  with `-DVENTO_PROBES=ON`. Each platform's half of a C backend's CMake is
+  that platform's (`platform/<os>/cmake/`); `cmake/` holds what both builds
+  include, `warnings.cmake` and `reproducible.cmake`.
 - `UPGRADING.md` — how the upstreams behind the backends are moved, and what
   adding a backend touches.
 

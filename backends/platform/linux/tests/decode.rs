@@ -16,7 +16,7 @@
 use std::ops::Range;
 
 use common::video::{Changes, Codec, Decoder, Decoders};
-use platform_desktop::ffmpeg::FFmpeg;
+use platform_linux::ffmpeg::FFmpeg;
 
 mod clips;
 use clips::{annex_b, fixture, frames, h264_aud, h265_aud, ivf, pictures, planes_pictures};

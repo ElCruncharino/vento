@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // The RealVNC backend's probe: `vento_realvnc_config` from the command line,
-// over the body in `backends/platform/desktop/c`. The libraries are not in
+// over the body in `backends/platform/linux/probe`. The libraries are not in
 // this repository; `--libs` says where a copy out of the viewer's APK is,
 // and the session refuses any other build than the pinned one.
 //

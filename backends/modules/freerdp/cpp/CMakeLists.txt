@@ -35,7 +35,7 @@ include("${VENTO_BACKENDS}/cmake/warnings.cmake")
 if(ANDROID)
     include("${VENTO_BACKENDS}/platform/android/cmake/vento_android.cmake")
 else()
-    include("${VENTO_BACKENDS}/cmake/vento_desktop.cmake")
+    include("${VENTO_BACKENDS}/platform/linux/cmake/vento_linux.cmake")
 endif()
 
 # One shared library per protocol, as every other backend module does, so a
@@ -160,7 +160,7 @@ else()
     endforeach()
     # Their FindFFmpeg looks for eight libraries and skips the search when
     # FFMPEG_LIBRARIES is cached. Where the Linux client's build gives a static
-    # FFmpeg (VENTO_FFMPEG_PREFIX, vento_desktop.cmake) the two the scaler
+    # FFmpeg (VENTO_FFMPEG_PREFIX, vento_linux.cmake) the two the scaler
     # needs are cached here, as the results that module would have come to,
     # and the other six as not found, so that nothing of the host's —
     # libavcodec, libavformat, libavfilter and libavdevice included, which it
@@ -249,8 +249,8 @@ if(ANDROID)
 else()
     # The session alone, for whatever desktop process links it: the neutral
     # include directory is its interface, and `vento_log` is left to the
-    # platform — the probe's `vento_desktop`, or the library's own copy of it
-    # under VENTO_SHARED (vento_desktop.cmake). OpenSSL's headers are the ones
+    # platform — the probe's `vento_linux`, or the library's own copy of it
+    # under VENTO_SHARED (vento_linux.cmake). OpenSSL's headers are the ones
     # their configure found, for the same constants.
     vento_backend_library(vento_freerdp freerdp_session.c h264_vento.c rdpsnd_vento.c)
     target_include_directories(vento_freerdp SYSTEM PRIVATE ${FREERDP_INCLUDES}

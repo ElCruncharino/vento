@@ -3,8 +3,9 @@
 
 // `vento_log` for a desktop process: one line on stderr, with the level and
 // the tag in front, where the Android adapter has logcat. This is the whole
-// of what `backends/platform/desktop/c` has to be for the three session
-// files to link; everything else in this directory is the probe.
+// of what the Linux platform has to be for a C backend's session file to
+// link (`vento_linux`, in `cmake/vento_linux.cmake`); the rest of `cpp/` is
+// the C the Rust decoders call, and the probe's body is in `probe/`.
 
 #include <stdarg.h>
 #include <stdbool.h>

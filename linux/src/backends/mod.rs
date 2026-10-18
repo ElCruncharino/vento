@@ -18,8 +18,8 @@ pub mod realvnc;
 pub use session::kind::{CONNECT_TIMEOUT_MS, Connect, Dirs, Kind, Platform};
 pub use session::trust::{Pinned, pinned_as};
 
-pub use platform_desktop::audio::{Audio, Output as AudioOutput};
-pub use platform_desktop::ffmpeg::{FFmpeg, Hardware};
+pub use platform_linux::audio::{Audio, Output as AudioOutput};
+pub use platform_linux::ffmpeg::{FFmpeg, Hardware};
 use std::sync::Arc;
 
 /// What the far end lists this machine as, where a phone says its model.
@@ -41,7 +41,7 @@ pub fn client_name() -> String {
 /// through it takes at its next picture (RustDesk), and which every backend
 /// is handed at connect through [`Connect::hardware`], the same answer.
 ///
-/// [`FFmpeg::set_hardware`]: platform_desktop::ffmpeg::FFmpeg::set_hardware
+/// [`FFmpeg::set_hardware`]: platform_linux::ffmpeg::FFmpeg::set_hardware
 pub fn decoders(hardware: Hardware) -> Arc<FFmpeg> {
     Arc::new(FFmpeg::new(hardware))
 }

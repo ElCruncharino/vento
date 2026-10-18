@@ -102,7 +102,7 @@ session.
 
 **No FFmpeg of the system's**, neither its development files nor its
 libraries: the client's FFmpeg is built from `third_party/ffmpeg` (n8.1.3) and
-`third_party/dav1d` (1.5.4) by `backends/platform/desktop/build.rs`, once per
+`third_party/dav1d` (1.5.4) by `backends/platform/linux/build.rs`, once per
 target directory and profile (about a minute and a half; a stamp beside it
 says what it was built from, and it is built again only when that changes),
 as static libraries that the Rust decoders (RustDesk's video, and TigerVNC's
@@ -119,9 +119,9 @@ libswscale and libswresample (which libavcodec's Opus decoder needs), and
 the hardware decoders of those video codecs: VAAPI's for each (with libavcodec's
 own AV1 decoder, which decodes only on hardware), built against headers from
 `third_party/libva` (2.23.0) and nothing else of it: FFmpeg's VAAPI code
-reaches libva through `c/va_shim.c`, which loads `libva.so.2` and
+reaches libva through `cpp/va_shim.c`, which loads `libva.so.2` and
 `libva-drm.so.2` on first use, so the binary does not depend on it. Its own code
-(`backends/platform/desktop/c/vento_video.c` and `vento_ffaudio.c`) is the
+(`backends/platform/linux/cpp/vento_video.c` and `vento_ffaudio.c`) is the
 only C that includes FFmpeg's headers for the Rust decoders, which call a
 few dozen functions of it declared by hand.
 
@@ -438,7 +438,7 @@ its windows on a signal: paused (the socket's receive queue filled to 10 KB,
 no commits) while suspended, live again when it was not.
 
 **Sound** plays as a PipeWire stream of the session's own where a PipeWire
-daemon answers (`backends/platform/desktop/src/pipewire.rs`), and on ALSA's
+daemon answers (`backends/platform/linux/src/pipewire.rs`), and on ALSA's
 `default` device where none does (`alsa.rs`: PulseAudio's plugin on a
 PulseAudio desktop, PipeWire's from a sandbox that is granted only the pulse
 socket, a card on a desktop with no sound server). libpipewire-0.3 is

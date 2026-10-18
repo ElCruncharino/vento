@@ -4,7 +4,7 @@
 // `vento_log` for the phone: logcat, under the backend's tag. The one thing a
 // C backend's session file asks of Android that the Rust half linked beside
 // it cannot answer, because it is variadic — so it is C, and it is all of the
-// C this platform has; `platform/desktop/c/vento_log.c` is its twin on stderr.
+// C this platform has; `platform/linux/cpp/vento_log.c` is its twin on stderr.
 
 #include <stdarg.h>
 

@@ -495,7 +495,7 @@ impl Decoder {
             // that says nothing is taken for BT.601, which is what the encoders
             // this has met produce untagged — a RustDesk peer's libvpx and
             // libaom are handed libyuv's BT.601 and told nothing — and what
-            // `platform_desktop`'s libavcodec path takes silence for too.
+            // `platform_linux`'s libavcodec path takes silence for too.
             // (A framework that fills in a default of its own by picture size
             // answers before this does.)
             let mut standard = 0;
