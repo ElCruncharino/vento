@@ -36,7 +36,8 @@ impl Framebuffer {
     }
 
     /// Nothing is preserved: a surface that changes size is a surface the
-    /// server is about to draw the whole of.
+    /// server is about to draw the whole of. The caller has held the size to
+    /// [`runtime::MAX_DESKTOP_PIXELS`]; this allocates whatever it is given.
     pub fn resize(&mut self, width: usize, height: usize) {
         self.width = width;
         self.height = height;
@@ -52,7 +53,7 @@ impl Framebuffer {
     /// alignment: taking the bytes here makes the packing this loop's job and
     /// saves the whole image being copied into a second buffer to have it done.
     pub fn blit(&mut self, x: usize, y: usize, w: usize, h: usize, src: &[u8]) {
-        if src.len() < w * h * 4 {
+        if w.checked_mul(h).and_then(|n| n.checked_mul(4)).is_none_or(|n| src.len() < n) {
             return;
         }
         let Some((x, y, cw, ch)) = self.clip(x, y, w, h) else {

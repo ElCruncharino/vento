@@ -67,3 +67,35 @@ pub use client::{Client, Config, Info, VERSION, compression_of};
 pub use runtime::{Credentials, Handler};
 pub use error::{Error, Result};
 pub use framebuffer::Framebuffer;
+
+/// What the channels' tests feed a message through: a handler that takes
+/// everything and keeps none of it, since what those tests ask is whether a
+/// message is survived, and a runtime to wait on the async ones with.
+#[cfg(test)]
+mod testing {
+    use runtime::{Credentials, Handler};
+
+    pub struct Nothing;
+
+    impl Handler for Nothing {
+        fn connected(&mut self, _width: usize, _height: usize) {}
+        fn desktop_size(&mut self, _width: usize, _height: usize) {}
+        fn damaged(&mut self, _x: usize, _y: usize, _width: usize, _height: usize) {}
+        fn frame_end(&mut self) {}
+        fn cursor(&mut self, _p: &[u32], _w: usize, _h: usize, _hx: i32, _hy: i32) {}
+        fn clipboard(&mut self, _text: &str) {}
+        fn credentials(&mut self, _needs_user: bool) -> Option<Credentials> {
+            None
+        }
+        fn trust(&mut self, _fingerprint: &str) -> bool {
+            false
+        }
+    }
+
+    pub fn block_on<F: std::future::Future>(future: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(future)
+    }
+}

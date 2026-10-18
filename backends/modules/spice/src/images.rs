@@ -21,6 +21,11 @@ use std::io::Read;
 use std::sync::Arc;
 
 /// A decoded image: `R, G, B, A` bytes, row-major, top-down.
+///
+/// The size is a claim about the pixels rather than a property of them, and
+/// the claim comes from the server (a descriptor) or from a decoder of
+/// theirs: [`fit`], the one place an image is indexed by its size, checks the
+/// two agree first.
 pub struct Image {
     pub width: usize,
     pub height: usize,
@@ -38,7 +43,9 @@ pub struct Images {
     /// The server's own image cache, which is a different thing: it names an
     /// image the server has sent before and expects this end to have kept. Its
     /// size is what `DISPLAY_INIT` promised, so a client that keeps less than it
-    /// said is a client that will miss.
+    /// said is a client that will miss. Each entry is the image's size and
+    /// then its pixels ([`keep`]), since the descriptor that later names it
+    /// carries a size of its own and is not where the pixels came from.
     cache: ByteBoundedLru,
     jpeg: Arc<dyn JpegDecoder>,
     /// What has actually arrived, for the panel's encoding row: a list of what
@@ -75,7 +82,7 @@ impl Images {
         height: usize,
     ) -> Option<Image> {
         let image = self.decode(descriptor, data).await?;
-        Some(fit(image, src, width, height))
+        fit(image, src, width, height)
     }
 
     /// Every image encoding this client understands, dispatched on the
@@ -84,6 +91,13 @@ impl Images {
     async fn decode(&mut self, descriptor: &ImageDescriptor, data: &[u8]) -> Option<Image> {
         let kind = ImageType::from_u8(descriptor.image_type);
         self.seen.insert(name(descriptor.image_type));
+        // QUIC and LZ4 are handed the descriptor's size and allocate by it, so
+        // a size no desktop could be is refused before they are asked.
+        let pixels = (descriptor.width as usize).checked_mul(descriptor.height as usize);
+        if pixels.is_none_or(|n| n > runtime::MAX_DESKTOP_PIXELS) {
+            log::warn!("display: a {}x{} image", descriptor.width, descriptor.height);
+            return None;
+        }
         let decoded: Option<DecompressedImage> = match kind {
             Some(ImageType::Pixmap) => pixmap(data, descriptor.image_id),
             // The four-byte prefix is the compressed size, which the message
@@ -147,13 +161,12 @@ impl Images {
                     descriptor.image_id,
                 ))
             }
+            // The image at the size it was kept, whatever this descriptor
+            // says: a server that names a cached pixel as 100×100 has its
+            // pixel drawn over the box, rather than a hundred rows read past
+            // it.
             Some(ImageType::FromCache) | Some(ImageType::FromCacheLossless) => {
-                let pixels = self.cache.get(&descriptor.image_id)?.clone();
-                return Some(Image {
-                    width: descriptor.width as usize,
-                    height: descriptor.height as usize,
-                    pixels,
-                });
+                return kept(&mut self.cache, descriptor.image_id);
             }
             other => {
                 log::warn!("display: image type {other:?} is not decoded here");
@@ -178,8 +191,7 @@ impl Images {
                     .evict_older_than(decoded.image_id.saturating_sub(decoded.win_head_dist as u64));
             }
         } else if descriptor.flags & IMAGE_FLAGS_CACHE_ME != 0 {
-            self.cache
-                .insert(decoded.image_id, decoded.pixels.clone());
+            keep(&mut self.cache, &decoded);
         }
 
         Some(Image {
@@ -202,6 +214,27 @@ impl Images {
     }
 }
 
+/// Into the server's cache, as the image's width and height and then its
+/// pixels: one entry, so the size is evicted with the pixels it describes.
+fn keep(cache: &mut ByteBoundedLru, image: &DecompressedImage) {
+    let mut entry = Vec::with_capacity(8 + image.pixels.len());
+    entry.extend_from_slice(&image.width.to_le_bytes());
+    entry.extend_from_slice(&image.height.to_le_bytes());
+    entry.extend_from_slice(&image.pixels);
+    cache.insert(image.image_id, entry);
+}
+
+/// What [`keep`] put there, or nothing for an id this end did not keep.
+fn kept(cache: &mut ByteBoundedLru, id: u64) -> Option<Image> {
+    let entry = cache.get(&id)?;
+    let (size, pixels) = entry.split_at_checked(8)?;
+    Some(Image {
+        width: u32::from_le_bytes(size[0..4].try_into().ok()?) as usize,
+        height: u32::from_le_bytes(size[4..8].try_into().ok()?) as usize,
+        pixels: pixels.to_vec(),
+    })
+}
+
 /// A 32-bit SPICE bitmap, which is the uncompressed case: a header of its own
 /// and then rows that are bottom-up unless the flag says otherwise.
 fn pixmap(data: &[u8], id: u64) -> Option<DecompressedImage> {
@@ -221,10 +254,12 @@ fn pixmap(data: &[u8], id: u64) -> Option<DecompressedImage> {
         return None;
     }
     let rows = &data[18..];
-    if width == 0 || height == 0 || stride < width * 4 || stride.checked_mul(height)? > rows.len() {
+    // Checked, as a 32-bit phone's `usize` is the fields' own width.
+    let row = width.checked_mul(4)?;
+    if width == 0 || height == 0 || stride < row || stride.checked_mul(height)? > rows.len() {
         return None;
     }
-    let mut pixels = vec![0u8; width * height * 4];
+    let mut pixels = vec![0u8; row.checked_mul(height)?];
     for y in 0..height {
         let source = if top_down { y } else { height - 1 - y };
         let src = &rows[source * stride..source * stride + width * 4];
@@ -341,7 +376,21 @@ fn lz_alpha(data: &[u8], pixels: &mut [u8]) -> bool {
 ///
 /// The ordinary case is that neither happens: the image is exactly the
 /// rectangle, and this hands it straight back.
-fn fit(image: Image, src: (u32, u32, u32, u32), width: usize, height: usize) -> Image {
+///
+/// Nothing for an image whose pixels are not the size it claims, and for a
+/// box bigger than any desktop could be ([`runtime::MAX_DESKTOP_PIXELS`]):
+/// both sizes are the server's word, and this is where they are indexed by.
+fn fit(image: Image, src: (u32, u32, u32, u32), width: usize, height: usize) -> Option<Image> {
+    let claimed = image.width.checked_mul(image.height).and_then(|n| n.checked_mul(4));
+    if claimed != Some(image.pixels.len()) {
+        log::warn!(
+            "display: a {}x{} image of {} bytes",
+            image.width,
+            image.height,
+            image.pixels.len()
+        );
+        return None;
+    }
     let (left, top, right, bottom) = (
         (src.0 as usize).min(image.width),
         (src.1 as usize).min(image.height),
@@ -350,19 +399,24 @@ fn fit(image: Image, src: (u32, u32, u32, u32), width: usize, height: usize) -> 
     );
     let (crop_w, crop_h) = (right.saturating_sub(left), bottom.saturating_sub(top));
     if crop_w == 0 || crop_h == 0 {
-        return image;
+        return Some(image);
     }
     if left == 0 && top == 0 && crop_w == image.width && crop_h == image.height
         && (width == 0 || height == 0 || (width == image.width && height == image.height))
     {
-        return image;
+        return Some(image);
     }
     let (width, height) = if width == 0 || height == 0 {
         (crop_w, crop_h)
     } else {
         (width, height)
     };
-    let mut pixels = vec![0u8; width * height * 4];
+    let count = width.checked_mul(height).filter(|&n| n <= runtime::MAX_DESKTOP_PIXELS);
+    let Some(count) = count else {
+        log::warn!("display: a draw into a {width}x{height} box");
+        return None;
+    };
+    let mut pixels = vec![0u8; count * 4];
     for y in 0..height {
         let sy = top + y * crop_h / height;
         for x in 0..width {
@@ -372,11 +426,11 @@ fn fit(image: Image, src: (u32, u32, u32, u32), width: usize, height: usize) -> 
             pixels[to..to + 4].copy_from_slice(&image.pixels[from..from + 4]);
         }
     }
-    Image {
+    Some(Image {
         width,
         height,
         pixels,
-    }
+    })
 }
 
 /// What the panel calls each encoding.
@@ -466,7 +520,7 @@ mod tests {
     #[test]
     fn a_whole_image_into_its_own_box_is_untouched() {
         let source = image(2, 2, |x, y| [x as u8, y as u8, 0, 0xff]);
-        let fitted = fit(source, (0, 0, 2, 2), 2, 2);
+        let fitted = fit(source, (0, 0, 2, 2), 2, 2).unwrap();
         assert_eq!(fitted.width, 2);
         assert_eq!(&fitted.pixels[0..4], &[0, 0, 0, 0xff]);
     }
@@ -474,10 +528,79 @@ mod tests {
     #[test]
     fn a_source_rectangle_crops() {
         let source = image(4, 4, |x, y| [x as u8, y as u8, 0, 0xff]);
-        let fitted = fit(source, (1, 2, 3, 4), 2, 2);
+        let fitted = fit(source, (1, 2, 3, 4), 2, 2).unwrap();
         assert_eq!((fitted.width, fitted.height), (2, 2));
         assert_eq!(&fitted.pixels[0..4], &[1, 2, 0, 0xff], "top left is (1,2)");
         assert_eq!(&fitted.pixels[12..16], &[2, 3, 0, 0xff], "and (2,3)");
+    }
+
+    /// A one-pixel top-down BGRA bitmap, and the descriptor that asks for it
+    /// to be kept as `id`.
+    fn cached_pixel(id: u64) -> (ImageDescriptor, Vec<u8>) {
+        let mut data = vec![9u8, 0x04];
+        data.extend_from_slice(&1u32.to_le_bytes());
+        data.extend_from_slice(&1u32.to_le_bytes());
+        data.extend_from_slice(&4u32.to_le_bytes());
+        data.extend_from_slice(&0u32.to_le_bytes());
+        data.extend_from_slice(&[0x11, 0x22, 0x33, 0x44]);
+        let descriptor = ImageDescriptor {
+            image_id: id,
+            image_type: ImageType::Pixmap as u8,
+            flags: IMAGE_FLAGS_CACHE_ME,
+            width: 1,
+            height: 1,
+        };
+        (descriptor, data)
+    }
+
+    /// A cached image is the size it was when it was kept. The descriptor
+    /// that names it carries a size too, and a server that says 100×100 for
+    /// a pixel it cached is a server whose word is not what the pixels are:
+    /// what is drawn is the pixel, stretched over the box, rather than a
+    /// read a hundred rows past it.
+    #[test]
+    fn a_cached_image_is_its_own_size_whatever_the_descriptor_says() {
+        use crate::testing::block_on;
+        let mut images = Images::new(1 << 20);
+        let (keep, data) = cached_pixel(7);
+        assert!(block_on(images.draw(&keep, &data, (0, 0, 1, 1), 1, 1)).is_some());
+        for kind in [ImageType::FromCache, ImageType::FromCacheLossless] {
+            let named = ImageDescriptor {
+                image_id: 7,
+                image_type: kind as u8,
+                flags: 0,
+                width: 100,
+                height: 100,
+            };
+            let image = block_on(images.draw(&named, &[], (0, 0, 50, 50), 50, 50)).unwrap();
+            assert_eq!((image.width, image.height), (50, 50));
+            assert_eq!(image.pixels.len(), 50 * 50 * 4);
+            assert_eq!(&image.pixels[..4], &[0x33, 0x22, 0x11, 0x44]);
+        }
+    }
+
+    /// A draw's box is two 32-bit fields of the server's, and a box no
+    /// desktop could hold is refused before an image that size is made.
+    #[test]
+    fn a_box_bigger_than_any_desktop_is_refused() {
+        use crate::testing::block_on;
+        let mut images = Images::new(1 << 20);
+        let (keep, data) = cached_pixel(7);
+        assert!(block_on(images.draw(&keep, &data, (0, 0, 1, 1), 100_000, 100_000)).is_none());
+        let (keep, data) = cached_pixel(8);
+        assert!(block_on(images.draw(&keep, &data, (0, 0, 1, 1), 1 << 33, 1 << 33)).is_none());
+    }
+
+    /// An image whose pixels are not the size it says is refused by the one
+    /// function that indexes it by that size.
+    #[test]
+    fn an_image_that_is_not_its_own_size_is_refused() {
+        let image = Image {
+            width: 100,
+            height: 100,
+            pixels: vec![0; 4],
+        };
+        assert!(fit(image, (0, 0, 50, 50), 50, 50).is_none());
     }
 
     /// An image smaller than its box is stretched rather than left in a corner
@@ -485,7 +608,7 @@ mod tests {
     #[test]
     fn an_image_smaller_than_its_box_is_scaled() {
         let source = image(2, 1, |x, _| [x as u8 * 10, 0, 0, 0xff]);
-        let fitted = fit(source, (0, 0, 2, 1), 4, 2);
+        let fitted = fit(source, (0, 0, 2, 1), 4, 2).unwrap();
         assert_eq!((fitted.width, fitted.height), (4, 2));
         let at = |i: usize| fitted.pixels[i * 4];
         assert_eq!([at(0), at(1), at(2), at(3)], [0, 0, 10, 10]);
