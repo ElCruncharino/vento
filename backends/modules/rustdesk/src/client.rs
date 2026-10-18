@@ -1359,10 +1359,19 @@ impl Client {
             return;
         }
         let content = if clip.compress {
-            zstd::decode_all(&clip.content[..]).unwrap_or_default()
+            unzstd(&clip.content, runtime::MAX_CLIPBOARD).unwrap_or_default()
         } else {
-            clip.content.to_vec()
+            clip.content
         };
+        if content.len() > runtime::MAX_CLIPBOARD {
+            // Skipped whole, as every backend skips one: a part of a text
+            // pasted here would read as the whole of it.
+            log::warn!(
+                "the peer's clipboard is over the {} bytes this client takes; skipped",
+                runtime::MAX_CLIPBOARD
+            );
+            return;
+        }
         if let Ok(text) = String::from_utf8(content) {
             if !text.is_empty() {
                 // The length rather than the text: a clipboard is somebody's
@@ -1881,9 +1890,17 @@ impl Cursor {
         if width == 0 || height == 0 {
             return None;
         }
-        // Their cursors are zstd, as their clipboard is.
-        let rgba = zstd::decode_all(&data.colors[..]).unwrap_or_default();
-        if rgba.len() < width * height * 4 {
+        // Two 32-bit fields of the peer's, so held to the shared bound before
+        // they size anything; within it the product cannot overflow.
+        if width > runtime::MAX_CURSOR_SIDE || height > runtime::MAX_CURSOR_SIDE {
+            log::warn!("a {width}x{height} cursor is bigger than any cursor");
+            return None;
+        }
+        let bytes = width * height * 4;
+        // Their cursors are zstd, as their clipboard is, and decoded no
+        // further than the size needs: anything past it is not drawn.
+        let rgba = unzstd(&data.colors, bytes).unwrap_or_default();
+        if rgba.len() < bytes {
             log::warn!("a {width}x{height} cursor arrived as {} bytes", rgba.len());
             return None;
         }
@@ -1904,6 +1921,19 @@ impl Cursor {
     fn deliver(&self, handler: &mut dyn Handler) {
         handler.cursor(&self.pixels, self.width, self.height, self.hot_x, self.hot_y);
     }
+}
+
+/// A zstd message of the peer's, decoded no further than one byte past
+/// `limit`, so a caller can tell a message that fits from one that does not
+/// without the rest being made: how much a message decodes to is the peer's
+/// to say, and a few hundred kilobytes of RLE blocks say gigabytes. Nothing
+/// for one that does not decode.
+fn unzstd(data: &[u8], limit: usize) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let decoder = zstd::stream::read::Decoder::with_buffer(data).ok()?;
+    let mut out = Vec::new();
+    decoder.take(limit as u64 + 1).read_to_end(&mut out).ok()?;
+    Some(out)
 }
 
 /// `sha256(sha256(password ++ salt) ++ challenge)`. The inner hash is what a
@@ -2396,5 +2426,97 @@ mod tests {
         assert_eq!(decoders.made.load(Ordering::Relaxed), 1);
         assert!(client.gpu_picture().is_none());
         assert_eq!(damage.0, [(0, 0, 4, 2)], "converted whole");
+    }
+
+    /// A zstd frame that is `total` bytes of `byte` once decoded, as RLE
+    /// blocks of 128 KiB: four bytes on the wire for each, so 5 GiB of
+    /// output is 160 KiB of message, well inside a frame their wire takes.
+    fn zstd_rle(byte: u8, total: usize) -> Vec<u8> {
+        const BLOCK: usize = 128 << 10;
+        let mut out = vec![0x28, 0xb5, 0x2f, 0xfd]; // the magic, little-endian
+        out.push(0); // no content size, no checksum, no dictionary, windowed
+        out.push(7 << 3); // a 128 KiB window
+        let mut left = total;
+        while left > 0 {
+            let size = left.min(BLOCK);
+            left -= size;
+            let header = (size << 3) | (1 << 1) | usize::from(left == 0); // RLE
+            out.extend_from_slice(&header.to_le_bytes()[..3]);
+            out.push(byte);
+        }
+        out
+    }
+
+    #[derive(Default)]
+    struct Pasted(Vec<String>);
+    impl Handler for Pasted {
+        fn connected(&mut self, _width: usize, _height: usize) {}
+        fn desktop_size(&mut self, _width: usize, _height: usize) {}
+        fn damaged(&mut self, _x: usize, _y: usize, _width: usize, _height: usize) {}
+        fn frame_end(&mut self) {}
+        fn cursor(&mut self, _p: &[u32], _w: usize, _h: usize, _hx: i32, _hy: i32) {}
+        fn clipboard(&mut self, text: &str) {
+            self.0.push(text.to_string());
+        }
+        fn credentials(&mut self, _needs_user: bool) -> Option<runtime::Credentials> {
+            None
+        }
+        fn trust(&mut self, _fingerprint: &str) -> bool {
+            false
+        }
+    }
+
+    fn text_clipboard(content: Vec<u8>) -> Clipboard {
+        let mut clip = Clipboard::new();
+        clip.compress = true;
+        clip.content = content;
+        clip.format = ClipboardFormat::Text.into();
+        clip
+    }
+
+    /// The peer's clipboard is zstd, and how much it decodes to is the peer's
+    /// to say: a few hundred kilobytes that decode to gigabytes are skipped
+    /// once they pass the shared bound, rather than decoded until the
+    /// allocation fails, and a clipboard at the bound still arrives whole.
+    #[test]
+    fn a_clipboard_is_decoded_only_as_far_as_the_bound() {
+        let client = Client::new(Arc::new(video::NoDecoders));
+        let mut pasted = Pasted::default();
+        client.clipboard_arrived(text_clipboard(zstd_rle(b'x', 5 << 30)), &mut pasted);
+        client.clipboard_arrived(text_clipboard(zstd_rle(b'x', runtime::MAX_CLIPBOARD + 1)), &mut pasted);
+        assert!(pasted.0.is_empty(), "nothing of a clipboard past the bound");
+        client.clipboard_arrived(text_clipboard(zstd_rle(b'y', runtime::MAX_CLIPBOARD)), &mut pasted);
+        let plain = zstd::encode_all(&b"hello"[..], 3).unwrap();
+        client.clipboard_arrived(text_clipboard(plain), &mut pasted);
+        assert_eq!(pasted.0.len(), 2);
+        assert_eq!(pasted.0[0].len(), runtime::MAX_CLIPBOARD);
+        assert_eq!(pasted.0[1], "hello");
+    }
+
+    fn cursor_data(width: i32, height: i32, colors: Vec<u8>) -> crate::protos::message::CursorData {
+        let mut data = crate::protos::message::CursorData::new();
+        data.width = width;
+        data.height = height;
+        data.colors = colors;
+        data
+    }
+
+    /// A cursor's size is two 32-bit fields of the peer's and its pixels zstd:
+    /// the size is held to the shared cursor bound, and the pixels are decoded
+    /// no further than that size needs, before anything is made of them.
+    #[test]
+    fn a_cursor_is_decoded_only_as_far_as_its_size() {
+        let bomb = zstd_rle(0xff, 5 << 30);
+        let four = Cursor::of(cursor_data(2, 2, bomb.clone())).expect("four pixels out of gigabytes");
+        assert_eq!(four.pixels, [u32::MAX; 4], "and the rest never made");
+        assert!(Cursor::of(cursor_data(i32::MAX, i32::MAX, bomb)).is_none());
+        let side = runtime::MAX_CURSOR_SIDE as i32;
+        assert!(Cursor::of(cursor_data(side + 1, 1, zstd_rle(0xff, (side as usize + 1) * 4))).is_none());
+
+        let cursor = Cursor::of(cursor_data(side, 1, zstd_rle(0xff, side as usize * 4))).unwrap();
+        assert_eq!((cursor.width, cursor.height, cursor.pixels.len()), (side as usize, 1, side as usize));
+        let small = zstd::encode_all(&[1u8, 2, 3, 4, 5, 6, 7, 8][..], 3).unwrap();
+        let cursor = Cursor::of(cursor_data(2, 1, small)).unwrap();
+        assert_eq!(cursor.pixels, [0x0403_0201, 0x0807_0605]);
     }
 }
