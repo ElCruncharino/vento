@@ -38,9 +38,9 @@ members = [
     "backends/modules/ironrdp",
     "backends/modules/spice",
     "backends/modules/rustdesk",
-    "backends/modules/libvnc/src/main/rust",
-    "backends/modules/tigervnc/src/main/rust",
-    "backends/modules/freerdp/src/main/rust",
+    "backends/modules/libvnc",
+    "backends/modules/tigervnc",
+    "backends/modules/freerdp",
 ]
 # Every member but the desktop platform crate, which is the one whose build
 # script builds dav1d and FFmpeg (minutes, once per target directory): a bare
@@ -58,9 +58,9 @@ default-members = [
     "backends/modules/ironrdp",
     "backends/modules/spice",
     "backends/modules/rustdesk",
-    "backends/modules/libvnc/src/main/rust",
-    "backends/modules/tigervnc/src/main/rust",
-    "backends/modules/freerdp/src/main/rust",
+    "backends/modules/libvnc",
+    "backends/modules/tigervnc",
+    "backends/modules/freerdp",
 ]
 exclude = ["third_party", "linux"]
 

@@ -37,9 +37,9 @@ clients, and what differs between them is each client's own code.
   cursor, pointer mode and clipboard, not a backlog. This crate re-exports
   its `backend`, `events` and `options` under those names.
 - **The adapters** — `src/backend.rs` in each Rust protocol crate
-  (`backends/modules/{rfb,ironrdp,rustdesk,spice}`), and a small
-  crate beside each open C library (`backends/modules/{libvnc,tigervnc,
-  freerdp}/src/main/rust`) over the session crate's C adapter, linked on the
+  (`backends/modules/{rfb,ironrdp,rustdesk,spice}`), and a small crate
+  beside each open C library (`backends/modules/{libvnc,tigervnc,freerdp}`,
+  the C in its `cpp/`) over the session crate's C adapter, linked on the
   phone into the library CMake makes of the C. RealVNC's is the one still
   here, **`src/backends/realvnc.rs`**, since its library is the viewer's own
   and hosted for this client alone (the phone's RealVNC backend is its own

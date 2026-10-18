@@ -2,13 +2,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # The host build of the C backends: the session files under
-# `modules/*/src/main/cpp`, against the libraries a Linux desktop has instead
+# `modules/*/cpp`, against the libraries a Linux desktop has instead
 # of the ports and vendored trees the phone needs, and, with `-DVENTO_PROBES=ON`,
 # a probe in front of each that connects, prints every callback and writes the
 # framebuffer out.
 # Three of them are open clients; the fourth, RealVNC, is their proprietary
 # Android core run in this process by the hosting layer in its module
-# (`modules/realvnc/src/main/cpp/host`), from two libraries the user takes out
+# (`modules/realvnc/cpp/host`), from two libraries the user takes out
 # of the viewer's APK (README.md says how) — the build needs nothing of
 # theirs, the probe needs the two files.
 # Gradle never reads this file — each module's CMakeLists is its own root
@@ -65,9 +65,9 @@ include(cmake/vento_desktop.cmake)
 # `ANDROID` and takes its host half. The vendored trees under them share
 # this one cache, which is why every option a tree reads is forced in its
 # module rather than left to a default.
-add_subdirectory(modules/libvnc/src/main/cpp libvnc)
-add_subdirectory(modules/tigervnc/src/main/cpp tigervnc)
-add_subdirectory(modules/freerdp/src/main/cpp freerdp)
+add_subdirectory(modules/libvnc/cpp libvnc)
+add_subdirectory(modules/tigervnc/cpp tigervnc)
+add_subdirectory(modules/freerdp/cpp freerdp)
 
 option(VENTO_REALVNC "Build the RealVNC backend's host half (needs clang)" ON)
 if(NOT VENTO_REALVNC)
@@ -76,5 +76,5 @@ elseif(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR NOT CMAKE_C_COMPILER_ID MATC
     message(STATUS "RealVNC: skipped, since its hosting layer needs clang and this is "
             "${CMAKE_CXX_COMPILER_ID} (CC=clang CXX=clang++ cmake ... to build it)")
 else()
-    add_subdirectory(modules/realvnc/src/main/cpp realvnc)
+    add_subdirectory(modules/realvnc/cpp realvnc)
 endif()

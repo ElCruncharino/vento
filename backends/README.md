@@ -6,7 +6,9 @@ now; the layout is being reorganised in stages, and each stage updates it.
 
 **The rule:** a thing that only one backend needs lives under that backend's
 module, `modules/<name>/`; `common/`, `session/` and `platform/` hold only
-what two or more backends, or both clients, share.
+what two or more backends, or both clients, share. Inside a module, each
+language has one place: the Rust crate at its root, the C in `cpp/`, the
+Java in `java/`, the options in `catalog.rs`.
 
 ## The backends: `modules/<name>/`
 
@@ -20,17 +22,17 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
   Compiled by `session` by path (`session/src/catalog.rs`), so that
   `vento-codegen` builds from `session` alone; Gradle's `codegenSources`
   lists every one.
-- `build.gradle` — the Android module, its source sets pointed at the
-  directories below rather than at AGP's `src/main/`.
-- `Cargo.toml`, `src/`, `examples/`, `build.rs` — the backend's crate, at the
-  module's root: the protocol itself for the four in Rust (and its `probe`
-  example, behind the `probe` feature). libvnc, tigervnc and freerdp still
-  have theirs in `src/main/rust/` until they are flattened too: the small
-  adapter over the C library, whose `build.rs` reads the backend's header
-  into Rust with bindgen. RealVNC has no crate; its Linux adapter is
-  `linux/src/backends/realvnc.rs`, and `linux/build.rs` reads its header.
-- `src/main/cpp/` (the four C backends) — the C/C++ session over the
-  upstream library, its CMake for both builds, the host probe's `main`
+- `build.gradle` — the Android module, its source sets and its CMake
+  pointed at the directories below rather than at AGP's `src/main/`.
+- `Cargo.toml`, `src/`, `build.rs`, `examples/` — the backend's crate, at
+  the module's root: the protocol itself for the four in Rust (and its
+  `probe` example, behind the `probe` feature), or the small adapter over
+  the C library for libvnc, tigervnc and freerdp, whose `build.rs` reads the
+  backend's header into Rust with bindgen. RealVNC has no crate; its Linux
+  adapter is `linux/src/backends/realvnc.rs`, and `linux/build.rs` reads its
+  header.
+- `cpp/` (the four C backends) — the C/C++ session over the upstream
+  library, its CMake for both builds, the host probe's `main`
   (`-DVENTO_PROBES=ON`), and `include/vento/<name>.h`, the backend's own C
   API: its config, its constructor and its live calls. RealVNC's also holds
   `host/`, the hosting layer that runs their Android viewer core in a Linux
@@ -38,8 +40,9 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
 - `java/` — the backend's provider and whatever else of it the phone needs
   in Java: the `.java` files themselves, with no package directories over
   them (javac goes by each file's `package` line). `resources/` — its
-  `META-INF/services` registration. (The four C backends: still
-  `src/main/java/` and `src/main/resources/`.)
+  `META-INF/services` registration.
+- `build/`, and `.cxx/` for a C backend — Gradle's and the NDK's CMake's
+  outputs, untracked.
 
 ## What they share
 

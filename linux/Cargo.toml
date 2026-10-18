@@ -49,9 +49,9 @@ remotedesktop-rfb = { path = "../backends/modules/rfb" }
 remotedesktop-ironrdp = { path = "../backends/modules/ironrdp" }
 remotedesktop-rustdesk = { path = "../backends/modules/rustdesk" }
 remotedesktop-spice = { path = "../backends/modules/spice" }
-remotedesktop-libvnc = { path = "../backends/modules/libvnc/src/main/rust" }
-remotedesktop-tigervnc = { path = "../backends/modules/tigervnc/src/main/rust" }
-remotedesktop-freerdp = { path = "../backends/modules/freerdp/src/main/rust" }
+remotedesktop-libvnc = { path = "../backends/modules/libvnc" }
+remotedesktop-tigervnc = { path = "../backends/modules/tigervnc" }
+remotedesktop-freerdp = { path = "../backends/modules/freerdp" }
 # The window. winit owns the event loop and the Wayland connection, egui
 # draws into it through egui-winit and egui-wgpu, and the three wayland
 # crates are for the one protocol winit does not speak — the keyboard

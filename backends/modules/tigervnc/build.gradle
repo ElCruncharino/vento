@@ -5,13 +5,13 @@ plugins {
     id 'com.android.library'
 }
 
-// The three parts of the TigerVNC backend: `src/main/cpp`, a shim over
-// TigerVNC's own client code that names no platform but the two media sinks
-// beside it; `src/main/rust`, the backend as a `session::Backend` over it —
-// the one the Linux client holds — and the JNI layer every backend shares,
-// registered on the generated natives class; and `src/main/java`'s provider,
-// which holds a session as a `NativeBackend`. The AAR carries the one library
-// CMake links the first two into.
+// The three parts of the TigerVNC backend: `cpp/`, a shim over TigerVNC's own
+// client code that names no platform but the two media sinks beside it; the
+// crate at this directory's root (`Cargo.toml`, `src/`), the backend as a
+// `session::Backend` over it — the one the Linux client holds — and the JNI
+// layer every backend shares, registered on the generated natives class; and
+// `java/`'s provider, which holds a session as a `NativeBackend`. The AAR
+// carries the one library CMake links the first two into.
 //
 // As with libvncclient, the native half is not in this directory: it is
 // `third_party/tigervnc`, a submodule at the repository root, pinned by its
@@ -19,8 +19,8 @@ plugins {
 // C++, so it is the one that has to say what to do with the runtime — static,
 // because nothing else here needs a copy.
 
-// The crate in `src/main/rust`, as the static library CMake links in: see
-// `rustStaticLibrary` in :backends.
+// The crate at this directory's root, as the static library CMake links in:
+// see `rustStaticLibrary` in :backends.
 final rustLibraries = project(':backends').rustStaticLibrary(project, 'remotedesktop-tigervnc')
 
 android {
@@ -51,7 +51,7 @@ android {
 
     externalNativeBuild {
         cmake {
-            path 'src/main/cpp/CMakeLists.txt'
+            path 'cpp/CMakeLists.txt'
             version = '3.30.5'
         }
     }
@@ -59,6 +59,15 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_21
         targetCompatibility JavaVersion.VERSION_21
+    }
+
+    // Not AGP's `src/main/`: `src/` here is the crate's. The Java is in
+    // `java/`, the files themselves with no package directories over them
+    // (javac goes by the `package` line), and the provider's registration is
+    // in `resources/`; the C is `cpp/`, above.
+    sourceSets.main {
+        java.srcDirs = ['java']
+        resources.srcDirs = ['resources']
     }
 
     publishing {

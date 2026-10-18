@@ -116,7 +116,8 @@ for entry in "${MODULES[@]}"; do
     symbols="$(readelf -W --dyn-syms "$so" | awk '$4=="FUNC"{print $NF}')"
 
     if [ "$bound" = exported ]; then
-        java="backends/modules/$module/src/main/java/$class.java"
+        # A module's Java is the files themselves, with no package directories.
+        java="backends/modules/$module/java/$(basename "$class").java"
         prefix="Java_$(dirname "$class" | tr / _)_$(basename "$class")"
         while read -r method; do
             [ -n "$method" ] || continue

@@ -58,10 +58,10 @@ fn main() {
         "cmake",
         "common/include",
         "platform/desktop/c",
-        "modules/libvnc/src/main/cpp",
-        "modules/tigervnc/src/main/cpp",
-        "modules/freerdp/src/main/cpp",
-        "modules/realvnc/src/main/cpp",
+        "modules/libvnc/cpp",
+        "modules/tigervnc/cpp",
+        "modules/freerdp/cpp",
+        "modules/realvnc/cpp",
     ] {
         println!("cargo:rerun-if-changed={}", backends.join(path).display());
     }
@@ -108,7 +108,7 @@ fn main() {
 /// needed by the session crate either way, clang on the path or not — and
 /// used only under the `realvnc` cfg.
 fn realvnc_bindings(backends: &Path, out: &Path) {
-    let own = backends.join("modules/realvnc/src/main/cpp/include");
+    let own = backends.join("modules/realvnc/cpp/include");
     let shared = backends.join("common/include");
     bindgen::Builder::default()
         .header_contents("realvnc.h", "#include <vento/realvnc.h>\n")
