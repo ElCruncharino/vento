@@ -16,7 +16,7 @@
 use super::settings::Settings;
 use super::Request;
 use crate::backends::{self, Kind, Platform};
-use crate::options::{self, Kind as OptionKind, Options, Spec};
+use crate::options::{self, Options, Spec, Type};
 use egui::{Align, ComboBox, Grid, Layout, RichText, ScrollArea, TextEdit, Ui};
 use std::collections::BTreeMap;
 
@@ -271,14 +271,14 @@ fn option_row(ui: &mut Ui, spec: &'static Spec, values: &mut BTreeMap<&'static s
         label.on_hover_text(summary);
     }
     let value = values.entry(spec.key).or_insert_with(|| spec.default.to_string());
-    match spec.kind {
-        OptionKind::Bool => {
+    match spec.ty {
+        Type::Bool => {
             let mut on = value == "true";
             if ui.checkbox(&mut on, "").changed() {
                 *value = if on { "true" } else { "false" }.to_string();
             }
         }
-        OptionKind::Choice => {
+        Type::Choice => {
             // A choice whose switch is off is not offered at all.
             let offered: Vec<&options::Choice> = spec
                 .choices
@@ -301,7 +301,7 @@ fn option_row(ui: &mut Ui, spec: &'static Spec, values: &mut BTreeMap<&'static s
                     }
                 });
         }
-        OptionKind::Int | OptionKind::Text => {
+        Type::Int | Type::Text => {
             ui.add(TextEdit::singleline(value).desired_width(f32::INFINITY));
         }
     }

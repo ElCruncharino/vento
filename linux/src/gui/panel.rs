@@ -32,7 +32,7 @@
 use super::settings::Settings;
 use crate::backend::{ConnectionFact, Facts, Field, Monitor, Traffic};
 use crate::backends::Platform;
-use crate::options::{self, Kind, Options, Spec};
+use crate::options::{self, Options, Spec, Type};
 use media::audio::Switch;
 use egui::{
     Align, Align2, ComboBox, Grid, Layout, Response, RichText, ScrollArea, Sense, TextEdit, Ui, WidgetInfo,
@@ -298,14 +298,14 @@ impl Panel {
             label.on_hover_text(summary);
         }
         let current = values.get(spec.key);
-        match spec.kind {
-            Kind::Bool => {
+        match spec.ty {
+            Type::Bool => {
                 let mut on = current.eq_ignore_ascii_case("true");
                 if ui.checkbox(&mut on, "").changed() {
                     actions.push(Action::SetOption(spec.key, if on { "true" } else { "false" }.to_string()));
                 }
             }
-            Kind::Choice => {
+            Type::Choice => {
                 let offered: Vec<&options::Choice> = spec
                     .choices
                     .iter()
@@ -326,7 +326,7 @@ impl Panel {
                         }
                     });
             }
-            Kind::Int | Kind::Text => {
+            Type::Int | Type::Text => {
                 let buffer = self.edits.entry(spec.key).or_insert_with(|| current.to_string());
                 let field = ui.add(TextEdit::singleline(buffer).desired_width(f32::INFINITY));
                 if field.lost_focus() {

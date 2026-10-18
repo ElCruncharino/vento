@@ -36,7 +36,7 @@ mod host {
     use vento::gui;
     use api::trust::{self, Decision};
     use vento::known_hosts::KnownHosts;
-    use vento::options::{self, Options};
+    use vento::options::{self, Options, Type};
     use vento::ppm;
 
     /// What the command line resolved to.
@@ -188,11 +188,11 @@ headless, any of which selects the probe instead of the window:
             println!("{}  {} — {}", kind.id, kind.name, (kind.version)());
             println!("    {}", kind.description);
             for spec in kind.options {
-                let kind_note = match spec.kind {
-                    options::Kind::Bool => "true|false".to_string(),
-                    options::Kind::Int => "N".to_string(),
-                    options::Kind::Text => "text".to_string(),
-                    options::Kind::Choice => spec
+                let type_note = match spec.ty {
+                    Type::Bool => "true|false".to_string(),
+                    Type::Int => "N".to_string(),
+                    Type::Text => "text".to_string(),
+                    Type::Choice => spec
                         .choices
                         .iter()
                         .map(|c| c.value)
@@ -207,7 +207,7 @@ headless, any of which selects the probe instead of the window:
                     "    -o {}={}  [{}]{} — {}",
                     spec.key,
                     spec.default,
-                    kind_note,
+                    type_note,
                     gate,
                     spec.summary_on(Platform::Linux).unwrap_or(spec.label)
                 );
