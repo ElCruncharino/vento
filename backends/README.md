@@ -4,9 +4,9 @@ The eight remote desktop backends, what they share, and how they are built
 for the phone and for the Linux client.
 
 **The rule:** a thing that only one backend needs lives under that backend's
-module, `modules/<name>/`; `common/` and `session/` hold only what two or
-more backends, or both clients, share; and what one platform needs of
-all of them lives under that platform, `platform/<os>/` — its crate, its C,
+module, `modules/<name>/`; `runtime/`, `media/` and `session/` hold only
+what two or more backends, or both clients, share; and what one platform
+needs of all of them lives under that platform, `platform/<os>/` — its crate, its C,
 its CMake half and, for the phone, its Java and its ports. Inside a module,
 each language has one place: the Rust crate at its root, the C in `cpp/`,
 the Java in `java/`, the options in `catalog.rs`. What is left at the top is
@@ -19,7 +19,7 @@ the CMake both builds include.
       buildSrc/         the Gradle tasks its helpers use
       CMakeLists.txt    the host build of the C backends
       cmake/            warnings.cmake, reproducible.cmake
-      common/  session/  codegen/  vectors/
+      runtime/  media/  session/  codegen/  vectors/
       modules/<name>/   one per backend (eight)
       platform/
         android/        crate, java/, javatest/, cpp/, cmake/, ports/
@@ -62,19 +62,27 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
 
 ## What they share
 
-- `common/` (`remotedesktop-common`) — what a protocol is written against:
-  the session thread, handler and events, video and audio, the rustls
-  pinning and shared stream of the Rust backends that speak TLS (`tls`), and
-  the neutral C API in `common/include/vento/` (`backend.h`, `video.h`,
-  `audio.h`, `log.h`, `text.h`; each C backend's own header is in its
-  module).
+- `runtime/` (`remotedesktop-runtime`) — what a protocol is written
+  against: the `Client` it implements, the handler its thread calls and the
+  events a platform answers with, the session thread and the bridge between
+  them, the address parser, the dial a hang-up interrupts, and the rustls
+  pinning and shared stream of the Rust backends that speak TLS (`tls`).
+- `media/` (`remotedesktop-media`) — what a protocol hands its picture and
+  sound to: video (the decoders a platform supplies, and what is done with
+  their planes) and audio (the outputs a platform supplies, their decoders,
+  and the queue a device drains). It needs nothing of `runtime/`, nor
+  `runtime/` of it; `session/` holds both, and the Linux platform crate
+  depends on this one alone.
 - `session/` (`remotedesktop-session`) — what a client holds a session by:
   the `Backend` trait, events, the catalog registry and the shape of an
   option, `Kind`/`Connect`, and the rules both clients keep alike
   (credentials, trust), held to `vectors/`. With the `c` feature, the one
   adapter over the C vtable and the shared headers' declarations
   (`session::c::ffi`), which each C backend's own declarations are written
-  over.
+  over. The neutral C API it adapts is in `session/include/vento/`
+  (`backend.h`, `video.h`, `audio.h`, `log.h`, `text.h`; each C backend's
+  own header is in its module): with the crate that reads them into Rust,
+  as each backend's header is with its own.
 - `codegen/` (`vento-codegen`) — the phone's Java catalogs and natives
   classes, generated from `session` at build time on the host.
 - `vectors/` — test cases both the Rust and the Java tests read.

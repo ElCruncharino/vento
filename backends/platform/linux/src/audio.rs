@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The desktop's sound output, as this platform's `common::audio::Outputs`:
+//! The desktop's sound output, as this platform's `media::audio::Outputs`:
 //! a PipeWire stream of its own per stream ([`pipewire`](crate::pipewire)),
 //! where a PipeWire daemon answers, and ALSA's `default` device
 //! ([`alsa`](crate::alsa)) where none does or libpipewire is not there — a
@@ -18,8 +18,8 @@
 
 use std::sync::Arc;
 
-use common::audio::decode::Decoders;
-use common::audio::{Controls, Device, Outputs, Queue};
+use media::audio::decode::Decoders;
+use media::audio::{Controls, Device, Outputs, Queue};
 
 use crate::ffmpeg_audio::FFmpegAudio;
 use crate::pipewire::Title;

@@ -64,7 +64,7 @@ mod rig {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-    use common::audio::{Format, Outputs};
+    use media::audio::{Format, Outputs};
     use platform_linux::audio::{Audio, Output};
 
     /// Half of full scale, as `audio_rig`'s tone.

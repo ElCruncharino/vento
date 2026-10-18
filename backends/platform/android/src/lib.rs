@@ -6,8 +6,8 @@
 //! natives `NativeBackend.java` calls, [`bitmap`], which writes pixels
 //! straight into a Java `Bitmap`, [`log`], which points the `log` crate at
 //! logcat, [`mediacodec`], which is the phone's video decoder speaking
-//! `common::video::Decoders`, [`aaudio`], which is its sound output speaking
-//! `common::audio::Outputs`, and [`mediacodec_audio`], its AAC and Opus
+//! `media::video::Decoders`, [`aaudio`], which is its sound output speaking
+//! `media::audio::Outputs`, and [`mediacodec_audio`], its AAC and Opus
 //! decoders — and [`surface`], the JNI table itself, which
 //! is plain data and builds everywhere, because the code generator that
 //! writes each module's natives class runs on the host.

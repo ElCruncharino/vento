@@ -57,7 +57,7 @@ fn main() {
     for path in [
         "CMakeLists.txt",
         "cmake",
-        "common/include",
+        "session/include",
         "platform/linux/cpp",
         "platform/linux/cmake",
         "modules/libvnc/cpp",
@@ -111,7 +111,7 @@ fn main() {
 /// used only under the `realvnc` cfg.
 fn realvnc_bindings(backends: &Path, out: &Path) {
     let own = backends.join("modules/realvnc/cpp/include");
-    let shared = backends.join("common/include");
+    let shared = backends.join("session/include");
     bindgen::Builder::default()
         .header_contents("realvnc.h", "#include <vento/realvnc.h>\n")
         .clang_arg(format!("-I{}", own.display()))

@@ -4,9 +4,11 @@
 # module's directory, `backends/modules/<name>/`, except RealVNC's, which has
 # none, so adding a protocol is a line in each list below.
 #
-# The layering is the point. `backends/common` is the neutral layer a protocol
-# is written against; `backends/session` is the one a client holds a session
-# by — the `Backend` trait, the events, the options and the rules every client
+# The layering is the point. `backends/runtime` is the neutral layer a
+# protocol is written against — the handler, the events, the thread a session
+# runs on, its TLS — and `backends/media` beside it the picture and the
+# sound, which a protocol hands on without knowing whose decoders or output
+# take them; `backends/session` is the one a client holds a session by — the `Backend` trait, the events, the options and the rules every client
 # keeps alike — and each backend's adapter to it lives in that backend's own
 # crate under `backends/modules/`: the protocol crate for the four in Rust, a
 # small crate beside the C library for the others. None of them knows a
@@ -22,14 +24,16 @@
 # metadata --filter-platform` filters packages, not features. Its own lock
 # file keeps all of that out of this graph; it reaches these crates by path.
 # What a platform supplies, it supplies by implementing a trait of
-# `common`'s (`Events`, `video::Decoders`) and handing it to the session, so no
+# `runtime`'s or `media`'s (`Events`, `video::Decoders`, `audio::Outputs`) and
+# handing it to the session, so no
 # protocol crate says which platform it is on. A protocol crate depends on a
 # platform crate only under a target cfg — `android` for the library the app
 # loads, `desktop` for its probe — so neither build sees the other's.
 [workspace]
 resolver = "2"
 members = [
-    "backends/common",
+    "backends/runtime",
+    "backends/media",
     "backends/session",
     "backends/codegen",
     "backends/platform/*",
@@ -48,7 +52,8 @@ members = [
 # Linux client builds it through its own workspace; `--workspace` or `-p
 # remotedesktop-platform-linux` for its own tests.
 default-members = [
-    "backends/common",
+    "backends/runtime",
+    "backends/media",
     "backends/session",
     "backends/codegen",
     "backends/platform/android",
@@ -69,7 +74,8 @@ license = "GPL-3.0-or-later"
 publish = false
 
 [workspace.dependencies]
-remotedesktop-common = { path = "backends/common", version = "0.0.1" }
+remotedesktop-runtime = { path = "backends/runtime", version = "0.0.1" }
+remotedesktop-media = { path = "backends/media", version = "0.0.1" }
 remotedesktop-session = { path = "backends/session", version = "0.0.1" }
 remotedesktop-platform-android = { path = "backends/platform/android", version = "0.0.1" }
 remotedesktop-platform-linux = { path = "backends/platform/linux", version = "0.0.1" }

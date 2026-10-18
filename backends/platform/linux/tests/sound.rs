@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! libavcodec's AAC and Opus through `common::audio::decode`, against clips
+//! libavcodec's AAC and Opus through `media::audio::decode`, against clips
 //! of a known tone: the format that comes out, its pitch and its level. How
 //! the clips were made is `fixtures/generate-sound.sh`.
 //!
@@ -11,8 +11,8 @@
 
 #![cfg(not(target_os = "android"))]
 
-use common::audio::Format;
-use common::audio::decode::{Codec, Decoders, opus_head};
+use media::audio::Format;
+use media::audio::decode::{Codec, Decoders, opus_head};
 use platform_linux::ffmpeg_audio::FFmpegAudio;
 
 fn fixture(name: &str) -> Vec<u8> {

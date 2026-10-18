@@ -7,7 +7,7 @@
 // the framebuffer holds to a file and leave. One body, written against the
 // vtable in `vento/backend.h` and nothing else, under three `main`s that each
 // parse their own backend's configuration and hand over its `create` — the
-// same split as the Rust probes, where `common` is the body and a protocol
+// same split as the Rust probes, where `runtime` is the body and a protocol
 // crate is the `main`.
 //
 // Its value is the proof: a session that reaches `connected` through this has

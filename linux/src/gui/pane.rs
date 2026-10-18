@@ -40,7 +40,7 @@ use super::super::view::{Layout, ScaleMode, View};
 use super::super::Host;
 use super::{Capture, LEFT, MIDDLE, NOTCH_POINTS, RIGHT, Session, WindowOp, on_off};
 use crate::backend::Monitor;
-use common::audio::Switch;
+use media::audio::Switch;
 use egui::{
     Align2, Color32, CursorIcon, Frame, Id, LayerId, Margin, Order, PointerButton, Pos2, Rect, Response, RichText,
     Sense, Stroke, Vec2, ViewportId, pos2, vec2,

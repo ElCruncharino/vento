@@ -180,15 +180,14 @@ if(ANDROID)
 endif()
 
 # Their sub-projects put their own tree on the include path as
-# `${CMAKE_SOURCE_DIR}/common`, which under the Gradle build is a directory
-# that does not exist and under the host root is `backends/common`, which has
-# no header of theirs in it — a stale -I either way and nothing worse, as long
-# as the real one is here. This directory goes on the path too, for the H.264
+# `${CMAKE_SOURCE_DIR}/common`, which under the Gradle build and the host
+# root alike is a directory that does not exist — a stale -I and nothing
+# worse, as long as the real one is here. This directory goes on the path too, for the H.264
 # branch of theirs that includes our context by name, and the neutral headers
 # for the table it calls through. libtool control files are for the autotools
 # half of their build, of which there is none here.
 include_directories("${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}"
-        "${VENTO_BACKENDS}/common/include")
+        "${VENTO_BACKENDS}/session/include")
 include_directories(SYSTEM "${THIRD_PARTY}/tigervnc/common")
 macro(libtool_create_control_file)
 endmacro()

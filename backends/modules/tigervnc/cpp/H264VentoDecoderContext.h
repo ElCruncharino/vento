@@ -5,7 +5,7 @@
 //
 // Their two are FFmpeg's libavcodec and Windows' Media Foundation, each a
 // decoder of the library's own. This one hands the rectangle to the platform's
-// `common::video::Decoders` through `vento/video.h` — the Linux client's
+// `media::video::Decoders` through `vento/video.h` — the Linux client's
 // FFmpeg, on VAAPI where the person chose it, and the phone's MediaCodec — so
 // that TigerVNC's H.264 is decoded by the same code as RustDesk's video on both
 // platforms: one colour rule, one hardware path with one fallback, and the same

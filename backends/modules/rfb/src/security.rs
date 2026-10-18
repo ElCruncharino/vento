@@ -6,7 +6,7 @@
 use crate::error::{Error, Result};
 use crate::proto::{Reader, Writer, latin1, to_latin1};
 use crate::transport::Wire;
-use common::Credentials;
+use runtime::Credentials;
 use cipher::{BlockCipherEncrypt, KeyInit};
 use std::io::{Read, Write};
 

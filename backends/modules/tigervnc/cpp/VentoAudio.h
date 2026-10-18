@@ -6,7 +6,7 @@
 // played on the platform's output, which the session is handed in its config
 // as `vento/audio.h`'s table — AAudio on the phone, a PipeWire stream (or
 // ALSA's default device) on the Linux client, behind the one queue and policy every backend's sound
-// shares (`common::audio`). Their viewer's own sinks, PulseAudio and waveOut
+// shares (`media::audio`). Their viewer's own sinks, PulseAudio and waveOut
 // behind an `AudioOutput` in `vncviewer/`, are not compiled here, and neither
 // is a sink of this module's any more: how far ahead sound is kept, what is
 // dropped when it gets too far ahead, and opening the device off this

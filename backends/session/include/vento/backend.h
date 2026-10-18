@@ -4,7 +4,7 @@
 // The neutral layer's C face: what a borrowed C or C++ client is written
 // against, and what a platform is written to, with neither knowing the other.
 //
-// It is `backends/common` in Rust — `Events` on the way out and `Session` on
+// It is `backends/runtime` in Rust — `Events` on the way out and `Session` on
 // the way in — said again in C, because three of the clients here are C and
 // C++ libraries with a shim of ours around each, and those shims were three
 // copies of one JNI binding. What differed between them was the protocol's;
@@ -12,10 +12,13 @@
 // `session::c` in `backends/session` is every C backend as a
 // `session::Backend`, and each client holds that — the Linux one directly,
 // the phone through the one JNI layer in `backends/platform/android`, linked
-// into each C backend's own library. A platform's C is `vento_log` and
-// nothing else: logcat on the phone, stderr on a desktop.
+// into each C backend's own library. So this header is that crate's, in
+// `backends/session/include/vento/` with the other neutral headers: the
+// session crate reads them into Rust, and each C backend's crate reads its
+// own header over them. A platform's C is `vento_log` and nothing else:
+// logcat on the phone, stderr on a desktop.
 //
-// The shape is `common::Events`, method for method: `vento_callbacks` is the outward half, fire-and-forget, with every
+// The shape is `runtime::Events`, method for method: `vento_callbacks` is the outward half, fire-and-forget, with every
 // question a protocol can ask turned into an event that says one is pending,
 // answered later through the session. The inward half is `vento_session`, an
 // opaque object reached through a vtable, so that three backends can live in
@@ -69,7 +72,7 @@
 // session files fill it in during the copy they make anyway. The cursor
 // comes in the same order; a platform that wants `Color`'s `0xAARRGGBB`
 // swaps on its side of the call, where it already has to copy, and hashes
-// there too — see `common::cursor` for the two things every platform so far
+// there too — see `runtime::cursor` for the two things every platform so far
 // has wanted.
 
 #ifndef VENTO_BACKEND_H
@@ -153,7 +156,7 @@ typedef struct vento_callbacks {
        same things to the protocol thread and only one of these questions can
        be outstanding. */
     void (*unverified)(void *user, const char *why);
-    /* The first of three extensions over `common::Events`, and only TigerVNC
+    /* The first of three extensions over `runtime::Events`, and only TigerVNC
        calls it: for an RSA-AES server key, which their viewer shows and asks
        about every time and keeps nothing of, so what crosses here is that
        question — a title and a text, in its words — rather than a fingerprint

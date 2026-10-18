@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! A desktop's sound decoders, libavcodec's AAC and Opus: [`FFmpegAudio`] is
-//! this platform's `common::audio::decode::Decoders`, which [`Audio`] hands
+//! this platform's `media::audio::decode::Decoders`, which [`Audio`] hands
 //! out with its streams, and the counterpart of
 //! `platform_android::mediacodec_audio`.
 //!
@@ -17,8 +17,8 @@
 
 use std::ffi::{CStr, c_char, c_int};
 
-use common::audio::Format;
-use common::audio::decode::{self, Codec, Decoder, Decoders};
+use media::audio::Format;
+use media::audio::decode::{self, Codec, Decoder, Decoders};
 
 /// `cpp/vento_ffaudio.h`, declared by hand.
 mod sys {

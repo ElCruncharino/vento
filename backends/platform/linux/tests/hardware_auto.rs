@@ -12,7 +12,7 @@
 
 #![cfg(not(target_os = "android"))]
 
-use common::video::Decoder as _;
+use media::video::Decoder as _;
 use platform_linux::ffmpeg::{Decoder, Hardware};
 
 mod clips;

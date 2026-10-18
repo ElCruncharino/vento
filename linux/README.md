@@ -22,7 +22,7 @@ clients, and what differs between them is each client's own code.
 
 - **`backends/session`** — the `Backend` trait and the value types around it
   (`Facts`, `ConnectionFact`, `Monitor`, `Traffic`, `Picture`); the `Event`
-  enum (`common::Events` plus the C API's `question`, `security_needed`,
+  enum (`runtime::Events` plus the C API's `question`, `security_needed`,
   `message`) and the `Mailbox` a session pushes them onto, with a wake hook
   the window hands its repaint request to; the option descriptions and the
   catalog of the eight backends, so `-o key=value` and the dialog's rows are
@@ -169,7 +169,7 @@ decoder waits for the GPU to finish it and hands it out held, its surface
 exported as two DMA-BUFs (Y, and U and V interleaved; Intel's 4-tiled
 layout on Lunar Lake). The window imports a surface once and keeps the
 import while the decoder reuses the surface, converts each picture with one
-render pass — `common::video::convert`'s integer arithmetic, P010 narrowed
+render pass — `media::video::convert`'s integer arithmetic, P010 narrowed
 as in software — into a texture of the picture's size, and draws that
 texture where the desktop's tiles would be: the same view and filter, every
 window, the cursor on top, and the same pixels (a screenshot of an H.264
@@ -466,7 +466,7 @@ the graph — the client's share of RDP's sound is 23-28 ms rather than 84-89
 (77 rather than 105 when the queue kept a fixed total of 100 ms) and a mute
 is heard in 5 ms rather than 55-65.
 
-Either way it is behind one queue for every backend (`common::audio`),
+Either way it is behind one queue for every backend (`media::audio`),
 which keeps in front of the device only as much as keeps the device from
 finding it empty: a period of the device's, what the far end's own rhythm
 has needed over the last eight seconds — its largest write, or the most that
@@ -542,7 +542,7 @@ device (`rdpsnd_vento.c`) in place of FreeRDP's PulseAudio one, so the client
 no longer links libpulse and the fifteen libraries behind it; a session
 handed no output does not ask the server for sound. The device plays PCM
 itself, and AAC and Opus through the platform's decoders
-(`common::audio::decode`: the client's FFmpeg here, MediaCodec on the phone)
+(`media::audio::decode`: the client's FFmpeg here, MediaCodec on the phone)
 rather than FreeRDP's, which is built without FFmpeg for its sound; Windows
 picks AAC when it is offered (Windows 10 offers AAC, PCM, ADPCM, A-law and
 GSM, and sends raw AAC LC frames at 44.1 kHz stereo, one 23 ms frame a
@@ -623,7 +623,7 @@ device; 113-118 ms, flat over two minutes, before PipeWire). The
 probe prints `audio playing` and `audio stopped` as a session's
 sound starts and stops, and the session's sound switch as it changes. The
 switch is the backend's to offer, as soon as its protocol says the far end
-may send sound, and is one of two kinds (`common::audio::Switch`): **Enable
+may send sound, and is one of two kinds (`media::audio::Switch`): **Enable
 audio**, where the far end can be asked to stop sending its sound and to send
 it again during the session — TigerVNC's QEMU audio, SPICE and RustDesk,
 above — and off, nothing arrives; and **Mute audio**, where it cannot —
@@ -700,7 +700,7 @@ is showing is in the tooltip too. On it:
   sound output, a protocol without sound. The connection's Audio option is
   where an Enable switch starts, so a session begun without its sound can
   still ask for it. A mute is at once and needs no reconnect: it is applied
-  where the device takes the samples (`common::audio::Controls`), so what is
+  where the device takes the samples (`media::audio::Controls`), so what is
   queued keeps draining under it and unmuting is the sound as it is now;
   from the click to the null sink going silent took 65-101 ms (TigerVNC,
   FreeRDP and SPICE alike, the device's 50 ms buffer, a frame and the

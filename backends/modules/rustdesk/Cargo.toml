@@ -2,7 +2,7 @@
 # Android the library is that client as a `session::Backend` (`src/backend.rs`)
 # registered through the platform crate's one JNI layer, so `cargo test` and
 # `cargo run --features probe --example rustdesk-probe` exercise it on the
-# host. The picture is decoded by whatever `common::video::Decoders` the
+# host. The picture is decoded by whatever `media::video::Decoders` the
 # client is handed: the phone's MediaCodec, named in `src/lib.rs`, libavcodec
 # in the probe.
 [package]
@@ -20,7 +20,8 @@ crate-type = ["lib", "cdylib"]
 
 [dependencies]
 log.workspace = true
-remotedesktop-common.workspace = true
+remotedesktop-runtime.workspace = true
+remotedesktop-media.workspace = true
 # Their session cipher and both signatures: xsalsa20-poly1305, curve25519 boxes
 # and ed25519, which is libsodium's set and is what they link. Pure Rust, so
 # nothing here needs a C library that is not already being built.

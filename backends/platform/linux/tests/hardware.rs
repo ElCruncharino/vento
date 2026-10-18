@@ -19,7 +19,7 @@
 
 #![cfg(not(target_os = "android"))]
 
-use common::video::{Changes, Codec, Decoded, Decoder as _, fourcc};
+use media::video::{Changes, Codec, Decoded, Decoder as _, fourcc};
 use platform_linux::ffmpeg::{Decoder, Hardware};
 
 mod clips;

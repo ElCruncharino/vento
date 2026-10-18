@@ -34,7 +34,7 @@ path = "src/main.rs"
 
 [dependencies]
 log = "0.4"
-remotedesktop-common = { path = "../backends/common" }
+remotedesktop-media = { path = "../backends/media" }
 # The seam every backend is held by, and the one adapter over the C vtable
 # (the `c` feature), which RealVNC's adapter here fills in.
 remotedesktop-session = { path = "../backends/session", features = ["c"] }
@@ -111,11 +111,11 @@ ttf-parser = "0.25"
 [patch.crates-io]
 winit = { path = "../third_party/winit" }
 
-# The conversion every decoded frame goes through (`common::video::convert`),
+# The conversion every decoded frame goes through (`media::video::convert`),
 # optimised even in a debug build, which is how `cargo run` runs it. Unoptimised
 # its row loop is most of a RustDesk session's processor, and the SSE2 one is
 # slower still, every intrinsic a call: 53 and 94 ms of a 1920×1200 frame,
 # where optimised they are 21 and 1. The crate is small, so this costs seconds
 # of a build, and its debug info is kept.
-[profile.dev.package.remotedesktop-common]
+[profile.dev.package.remotedesktop-media]
 opt-level = 3

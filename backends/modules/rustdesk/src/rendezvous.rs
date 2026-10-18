@@ -38,7 +38,7 @@ use crate::protos::rendezvous::{
     rendezvous_message,
 };
 use crate::wire::{self, Traffic};
-use common::Hangup;
+use runtime::Hangup;
 
 /// Their default ports (`libs/hbb_common/src/config.rs`): the rendezvous
 /// server, the relay beside it, and direct access two above.

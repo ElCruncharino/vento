@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use common::audio::{Format, Outputs, Stream};
+use media::audio::{Format, Outputs, Stream};
 use platform_linux::audio::{Audio, Output};
 
 const RATE: u32 = 48_000;

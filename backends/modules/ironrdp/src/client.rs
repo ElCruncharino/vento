@@ -14,8 +14,8 @@ use crate::framebuffer::Framebuffer;
 use crate::keymap::{self, Key};
 use crate::sound::{QUIET, Sound};
 use crate::tls;
-use common::audio::{Outputs, Player};
-use common::{Credentials, Handler, Hangup};
+use media::audio::{Outputs, Player};
+use runtime::{Credentials, Handler, Hangup};
 
 use ironrdp_blocking::{Framed, connect_begin, connect_finalize, mark_as_upgraded};
 use ironrdp_cliprdr::CliprdrClient;
@@ -1645,7 +1645,7 @@ fn covers(flat: &[i32], (width, height): (usize, usize)) -> bool {
 /// convention here — that is a VNC habit, and 3389 is the only port RDP has
 /// ever used.
 fn resolve(address: &str) -> Result<(String, u16)> {
-    common::address::split(address, 3389, common::address::Ports::Plain).map_err(Error::Protocol)
+    runtime::address::split(address, 3389, runtime::address::Ports::Plain).map_err(Error::Protocol)
 }
 
 /// Each address in turn, through `hangup` so that a close ends the dial too.
@@ -1669,10 +1669,10 @@ fn connect(hangup: &Hangup, host: &str, port: u16, timeout: Duration) -> Result<
     })))
 }
 
-/// The shape `common::Session` runs: the inherent `run` and `close` are the
+/// The shape `runtime::Session` runs: the inherent `run` and `close` are the
 /// implementation, and this is them written down for a session that does not
 /// know which protocol it has.
-impl common::Client for Client {
+impl runtime::Client for Client {
     type Config = Config;
     type Error = Error;
     const NAME: &'static str = "rdp";
@@ -1702,7 +1702,7 @@ impl Default for Client {
 mod tests {
     use super::*;
 
-    /// The forms are `common::address`'s; what is this client's own is the
+    /// The forms are `runtime::address`'s; what is this client's own is the
     /// default port and the display rule being off.
     #[test]
     fn addresses() {

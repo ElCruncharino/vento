@@ -14,21 +14,16 @@
 //! place this crate is opinionated, because it is the one seam a second
 //! platform has to fit.
 //!
-//! A protocol whose picture is video also gets a [`video::Decoders`] from
-//! whoever started it, and does not know whose: the phone's hardware, or
-//! libavcodec on a desktop. What is done with a decoder's planes afterwards —
-//! finding what moved, and converting only that — is [`video`]'s and the same
-//! for both.
-//!
 //! A protocol that reaches TLS reaches it through [`tls`]: the certificate
 //! pinned rather than verified, and one connection read and written by two
 //! threads.
 //!
-//! What is not here: anything with `jni` in it, which is
+//! What is not here: the picture and the sound, which are
+//! `remotedesktop-media`'s (`media::video`, `media::audio`) and need nothing
+//! of this crate; and anything with `jni` in it, which is
 //! `remotedesktop-platform-android`.
 
 pub mod address;
-pub mod audio;
 pub mod client;
 pub mod cursor;
 pub mod events;
@@ -37,7 +32,6 @@ pub mod hangup;
 pub mod session;
 pub mod slot;
 pub mod tls;
-pub mod video;
 
 pub use client::Client;
 pub use events::Events;

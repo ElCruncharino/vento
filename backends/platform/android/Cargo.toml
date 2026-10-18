@@ -7,10 +7,11 @@
 # This is the only crate in the workspace with `jni` in it. A protocol crate
 # depends on it under a target cfg and nowhere else, which keeps the host
 # build — tests, examples, `remotedesktop-platform-linux` — free of anything
-# that knows a phone exists; and `remotedesktop-common` does not depend on it
-# at all, because the layering runs the other way: this crate holds a
-# `session::Backend` for Java and implements `common::video::Decoders` for
-# MediaCodec, and neither `common` nor `session` hears about either.
+# that knows a phone exists; and neither `remotedesktop-runtime` nor
+# `remotedesktop-media` depends on it at all, because the layering runs the
+# other way: this crate holds a `session::Backend` for Java and implements
+# `media::video::Decoders` for MediaCodec, and neither `media` nor `session`
+# hears about either.
 #
 # On a host target the crate is the JNI table and nothing else: plain data,
 # no dependencies to fetch, read by `vento-codegen` to write each module's
@@ -33,7 +34,8 @@ name = "platform_android"
 
 [target.'cfg(target_os = "android")'.dependencies]
 log.workspace = true
-remotedesktop-common.workspace = true
+remotedesktop-runtime.workspace = true
+remotedesktop-media.workspace = true
 remotedesktop-session.workspace = true
 jni.workspace = true
 android_logger.workspace = true

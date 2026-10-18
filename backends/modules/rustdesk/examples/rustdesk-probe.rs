@@ -253,7 +253,7 @@ fn connect_direct(args: &Args) -> Result<Stream, String> {
 fn connect_by_id(args: &Args) -> Result<Stream, String> {
     // Nothing hangs a probe up but the process ending, so its hangup is never
     // rung.
-    let hangup = common::Hangup::new();
+    let hangup = runtime::Hangup::new();
     let reached = rendezvous::reach(&hangup, &args.peer, &args.server, key_of(args), Duration::from_secs(10))
         .map_err(|e| e.to_string())?;
     println!(
@@ -625,7 +625,7 @@ impl Video {
     /// next key frame.
     #[cfg(not(target_os = "android"))]
     fn write_ppm(&self, path: &str) -> Result<usize, String> {
-        use common::video::{Changes, Decoders};
+        use media::video::{Changes, Decoders};
         use remotedesktop_rustdesk::Codec;
 
         let codec = Codec::ALL

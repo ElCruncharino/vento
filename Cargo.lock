@@ -2548,17 +2548,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "remotedesktop-common"
-version = "0.0.1"
-dependencies = [
- "libc",
- "log",
- "rustls",
- "sha2 0.11.0",
- "socket2",
-]
-
-[[package]]
 name = "remotedesktop-freerdp"
 version = "0.0.1"
 dependencies = [
@@ -2586,8 +2575,9 @@ dependencies = [
  "ironrdp-session",
  "ironrdp-svc",
  "log",
- "remotedesktop-common",
+ "remotedesktop-media",
  "remotedesktop-platform-android",
+ "remotedesktop-runtime",
  "remotedesktop-session",
  "rustls",
  "x509-cert 0.2.5",
@@ -2604,13 +2594,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "remotedesktop-media"
+version = "0.0.1"
+dependencies = [
+ "log",
+]
+
+[[package]]
 name = "remotedesktop-platform-android"
 version = "0.0.1"
 dependencies = [
  "android_logger",
  "jni",
  "log",
- "remotedesktop-common",
+ "remotedesktop-media",
+ "remotedesktop-runtime",
  "remotedesktop-session",
 ]
 
@@ -2620,7 +2618,7 @@ version = "0.0.1"
 dependencies = [
  "cc",
  "log",
- "remotedesktop-common",
+ "remotedesktop-media",
 ]
 
 [[package]]
@@ -2631,11 +2629,22 @@ dependencies = [
  "des",
  "flate2",
  "log",
- "remotedesktop-common",
  "remotedesktop-platform-android",
+ "remotedesktop-runtime",
  "remotedesktop-session",
  "rustls",
  "sha2 0.11.0",
+]
+
+[[package]]
+name = "remotedesktop-runtime"
+version = "0.0.1"
+dependencies = [
+ "libc",
+ "log",
+ "rustls",
+ "sha2 0.11.0",
+ "socket2",
 ]
 
 [[package]]
@@ -2646,9 +2655,10 @@ dependencies = [
  "log",
  "protobuf",
  "protobuf-codegen",
- "remotedesktop-common",
+ "remotedesktop-media",
  "remotedesktop-platform-android",
  "remotedesktop-platform-linux",
+ "remotedesktop-runtime",
  "remotedesktop-session",
  "sha2 0.11.0",
  "socket2",
@@ -2661,7 +2671,8 @@ version = "0.0.1"
 dependencies = [
  "bindgen",
  "log",
- "remotedesktop-common",
+ "remotedesktop-media",
+ "remotedesktop-runtime",
  "serde_json",
 ]
 
@@ -2671,8 +2682,9 @@ version = "0.0.1"
 dependencies = [
  "flate2",
  "log",
- "remotedesktop-common",
+ "remotedesktop-media",
  "remotedesktop-platform-android",
+ "remotedesktop-runtime",
  "remotedesktop-session",
  "rustls",
  "shakenfist-spice-compression",

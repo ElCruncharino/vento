@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! libavcodec through `common::video`, against clips whose picture is known:
+//! libavcodec through `media::video`, against clips whose picture is known:
 //! the colour that comes out, which rows a frame says it moved, and that the
 //! rows it does not name are left alone. How the clips were made, and what is
 //! in them, is `fixtures/generate.sh`.
@@ -15,7 +15,7 @@
 
 use std::ops::Range;
 
-use common::video::{Changes, Codec, Decoder, Decoders};
+use media::video::{Changes, Codec, Decoder, Decoders};
 use platform_linux::ffmpeg::FFmpeg;
 
 mod clips;

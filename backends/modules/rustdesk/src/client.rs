@@ -49,10 +49,10 @@ use crate::protos::message::{
 };
 use crate::rendezvous;
 use crate::wire::{self, Traffic};
-use common::audio::decode::Codec as SoundCodec;
-use common::audio::{Format, Outputs, Player};
-use common::{Handler, Hangup};
-use common::video::{self, Codec, Decoded, Decoders, GpuPicture, Hardware};
+use media::audio::decode::Codec as SoundCodec;
+use media::audio::{Format, Outputs, Player};
+use runtime::{Handler, Hangup};
+use media::video::{self, Codec, Decoded, Decoders, GpuPicture, Hardware};
 
 /// Their default direct-access port, which is `RENDEZVOUS_PORT + 2`.
 pub const DIRECT_PORT: u16 = 21118;
@@ -1778,10 +1778,10 @@ impl Client {
     }
 }
 
-/// The shape `common::Session` runs: the inherent `run` and `close` are the
+/// The shape `runtime::Session` runs: the inherent `run` and `close` are the
 /// implementation, and this is them written down for a session that does not
 /// know which protocol it has.
-impl common::Client for Client {
+impl runtime::Client for Client {
     type Config = Config;
     type Error = Error;
     const NAME: &'static str = "rustdesk";
@@ -1928,7 +1928,7 @@ fn login_hash(password: &str, hash: &Hash) -> Vec<u8> {
 /// `host` or `host:port`, plus the bracketed IPv6 form. The direct mode's
 /// address only; an id is not one of these and never reaches here.
 fn resolve(address: &str) -> Result<SocketAddr> {
-    let (host, port) = common::address::split(address, DIRECT_PORT, common::address::Ports::Plain)
+    let (host, port) = runtime::address::split(address, DIRECT_PORT, runtime::address::Ports::Plain)
         .map_err(Error::Address)?;
     (host.as_str(), port)
         .to_socket_addrs()
@@ -2021,7 +2021,7 @@ mod tests {
         fn frame_end(&mut self) {}
         fn cursor(&mut self, _p: &[u32], _w: usize, _h: usize, _hx: i32, _hy: i32) {}
         fn clipboard(&mut self, _text: &str) {}
-        fn credentials(&mut self, _needs_user: bool) -> Option<common::Credentials> {
+        fn credentials(&mut self, _needs_user: bool) -> Option<runtime::Credentials> {
             None
         }
         fn trust(&mut self, _fingerprint: &str) -> bool {
@@ -2081,23 +2081,23 @@ mod tests {
     }
 
     /// An output that decodes Opus where told to, and plays nothing.
-    struct Sounding(Arc<common::audio::Controls>, bool);
+    struct Sounding(Arc<media::audio::Controls>, bool);
 
     impl Outputs for Sounding {
-        fn controls(&self) -> &Arc<common::audio::Controls> {
+        fn controls(&self) -> &Arc<media::audio::Controls> {
             &self.0
         }
 
-        fn device(&self, _queue: Arc<common::audio::Queue>) -> std::result::Result<Box<dyn common::audio::Device>, String> {
+        fn device(&self, _queue: Arc<media::audio::Queue>) -> std::result::Result<Box<dyn media::audio::Device>, String> {
             Err("not in a test".into())
         }
 
-        fn decoders(&self) -> Option<&dyn common::audio::decode::Decoders> {
+        fn decoders(&self) -> Option<&dyn media::audio::decode::Decoders> {
             self.1.then_some(self as _)
         }
     }
 
-    impl common::audio::decode::Decoders for Sounding {
+    impl media::audio::decode::Decoders for Sounding {
         fn decodable(&self, codec: SoundCodec) -> bool {
             codec == SoundCodec::Opus
         }
@@ -2107,7 +2107,7 @@ mod tests {
             _codec: SoundCodec,
             _format: Format,
             _config: &[u8],
-        ) -> std::result::Result<Box<dyn common::audio::decode::Decoder>, String> {
+        ) -> std::result::Result<Box<dyn media::audio::decode::Decoder>, String> {
             Err("not in a test".into())
         }
     }
@@ -2128,7 +2128,7 @@ mod tests {
             audio,
             sound: true,
         };
-        let controls = Arc::new(common::audio::Controls::new());
+        let controls = Arc::new(media::audio::Controls::new());
         assert!(sound_of(&config(None)).is_none());
         assert!(sound_of(&config(Some(Arc::new(Sounding(Arc::clone(&controls), false))))).is_none());
         assert!(sound_of(&config(Some(Arc::new(Sounding(controls, true))))).is_some());
@@ -2141,7 +2141,7 @@ mod tests {
 
     #[test]
     fn the_switch_asks_the_peer_with_the_audio_option_alone() {
-        let controls = Arc::new(common::audio::Controls::new());
+        let controls = Arc::new(media::audio::Controls::new());
         let audio: Arc<dyn Outputs> = Arc::new(Sounding(Arc::clone(&controls), true));
         let client = Client::new(Arc::new(video::NoDecoders));
         let (out, sent) = channel::<Vec<u8>>();
@@ -2149,7 +2149,7 @@ mod tests {
         client.sound.store(true, Ordering::Relaxed);
         client.offer_sound(&audio);
         let sound = controls.sound();
-        assert_eq!((sound.switch, sound.enabled), (Some(common::audio::Switch::Enable), true));
+        assert_eq!((sound.switch, sound.enabled), (Some(media::audio::Switch::Enable), true));
 
         let asked = |sent: &std::sync::mpsc::Receiver<Vec<u8>>| {
             let message = Message::parse_from_bytes(&sent.try_recv().unwrap()).unwrap();
@@ -2336,7 +2336,7 @@ mod tests {
         fn frame_end(&mut self) {}
         fn cursor(&mut self, _p: &[u32], _w: usize, _h: usize, _hx: i32, _hy: i32) {}
         fn clipboard(&mut self, _text: &str) {}
-        fn credentials(&mut self, _needs_user: bool) -> Option<common::Credentials> {
+        fn credentials(&mut self, _needs_user: bool) -> Option<runtime::Credentials> {
             None
         }
         fn trust(&mut self, _fingerprint: &str) -> bool {

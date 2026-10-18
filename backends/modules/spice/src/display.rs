@@ -21,7 +21,7 @@
 use crate::error::Result;
 use crate::framebuffer::Framebuffer;
 use crate::images::Images;
-use common::Handler;
+use runtime::Handler;
 use shakenfist_spice_compression::{JpegDecoderRsDecoder, VideoDecoder, video};
 use shakenfist_spice_protocol::constants::display_server;
 use shakenfist_spice_protocol::messages::{

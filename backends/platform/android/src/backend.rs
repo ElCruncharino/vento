@@ -48,9 +48,9 @@
 //! never crosses at all.
 
 use crate::{bitmap, string};
-pub use common::audio::Outputs;
-use common::audio::Switch;
-pub use common::video::Decoders;
+pub use media::audio::Outputs;
+use media::audio::Switch;
+pub use media::video::Decoders;
 use jni::errors::{Error, LogErrorAndDefault};
 use jni::objects::{Global, JIntArray, JLongArray, JMethodID, JObject, JObjectArray, JString};
 use jni::signature::{Primitive, ReturnType};
@@ -563,7 +563,7 @@ fn set_muted<'local>(_env: &mut Env<'local>, _this: JObject<'local>, handle: jlo
 
 /// The session's Enable switch: asks the far end to stop sending its sound,
 /// or to send it again, where the backend offered that
-/// (`common::audio::Switch::Enable`, said through `onSound`). A switch that
+/// (`media::audio::Switch::Enable`, said through `onSound`). A switch that
 /// asks nothing — a mute, or none — is left alone and says so.
 fn set_sound_enabled<'local>(
     _env: &mut Env<'local>,
@@ -657,7 +657,7 @@ fn info<'local>(
 }
 
 /// The debug overlay's sound line, in the Linux client's words
-/// (`common::audio::Sound::line`): what plays and how far behind, or
+/// (`media::audio::Sound::line`): what plays and how far behind, or
 /// "nothing playing", and DISABLED or MUTED. Null where the session has no
 /// sound switch, which is when an overlay has no such line.
 fn sound_line<'local>(env: &mut Env<'local>, _this: JObject<'local>, handle: jlong) -> Result<JString<'local>, Error> {
@@ -924,13 +924,13 @@ impl Outlet {
                             let argb: Vec<u32> = c
                                 .rgba
                                 .chunks_exact(4)
-                                .map(|p| common::cursor::swap_rb(u32::from_le_bytes([p[0], p[1], p[2], p[3]])))
+                                .map(|p| runtime::cursor::swap_rb(u32::from_le_bytes([p[0], p[1], p[2], p[3]])))
                                 .collect();
                             (argb, c.width, c.height, c.hot_x, c.hot_y)
                         }
                         None => (Vec::new(), 0, 0, 0, 0),
                     };
-                    let hash = common::cursor::hash(&argb, w, h) as jlong;
+                    let hash = runtime::cursor::hash(&argb, w, h) as jlong;
                     let ints: Vec<jint> = argb.iter().map(|&p| p as jint).collect();
                     let array = env.new_int_array(ints.len())?;
                     if !ints.is_empty() {

@@ -7,7 +7,7 @@
 
 use crate::client::Screen;
 use crate::{Client, Config, Security};
-use common::{Bridge, Session};
+use runtime::{Bridge, Session};
 use session::backend::{Backend, ConnectionFact, Credentials, Facts, Field, Monitor, Picture, Traffic};
 use session::credentials::fill_user;
 use session::events::{Feed, Mailbox};

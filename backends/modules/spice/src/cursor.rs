@@ -12,7 +12,7 @@
 //! end's in client mode, and neither of them is this channel's.
 
 use crate::error::Result;
-use common::Handler;
+use runtime::Handler;
 use shakenfist_spice_protocol::constants::cursor_server;
 use shakenfist_spice_protocol::messages::{CursorInit, CursorSet, SpiceCursorHeader};
 use std::collections::HashMap;

@@ -12,7 +12,7 @@ use crate::proto::{Counter, MAX_CUT_TEXT, Reader, Writer, latin1, to_latin1};
 use crate::security::{self, Security};
 use crate::transport::{Wire, Writes};
 use crate::zlib::ZlibStream;
-use common::{Credentials, Handler, Hangup};
+use runtime::{Credentials, Handler, Hangup};
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -1157,7 +1157,7 @@ impl Rate {
 /// form. The display convention is older than the port one and every VNC client
 /// still takes it, so `10.0.0.5:1` has to mean 5901 rather than port 1.
 fn resolve(address: &str) -> Result<(String, u16)> {
-    common::address::split(address, 5900, common::address::Ports::Display).map_err(Error::Address)
+    runtime::address::split(address, 5900, runtime::address::Ports::Display).map_err(Error::Address)
 }
 
 /// Each address in turn, through `hangup` so that a close ends the dial too.
@@ -1178,10 +1178,10 @@ fn connect(hangup: &Hangup, host: &str, port: u16, timeout: Duration) -> Result<
     })))
 }
 
-/// The shape `common::Session` runs: the inherent `run` and `close` are the
+/// The shape `runtime::Session` runs: the inherent `run` and `close` are the
 /// implementation, and this is them written down for a session that does not
 /// know which protocol it has.
-impl common::Client for Client {
+impl runtime::Client for Client {
     type Config = Config;
     type Error = Error;
     const NAME: &'static str = "rfb";
@@ -1211,7 +1211,7 @@ impl Default for Client {
 mod tests {
     use super::*;
 
-    /// The forms are `common::address`'s; what is this client's own is the
+    /// The forms are `runtime::address`'s; what is this client's own is the
     /// default port and the display rule being on.
     #[test]
     fn addresses() {

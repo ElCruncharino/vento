@@ -8,7 +8,7 @@
 //! On Lunar Lake the readback was most of what a hardware picture cost —
 //! iHD's map of a 1080p surface is 4 to 7 ms, and the conversion after it
 //! another 3 — so the hardware path was slower than software's. Left on the
-//! GPU (`common::video::GpuPicture`), a picture costs the decode, the wait
+//! GPU (`media::video::GpuPicture`), a picture costs the decode, the wait
 //! for it, and a pass of this module's.
 //!
 //! **Converted once, then drawn like any other.** Each new picture is
@@ -24,7 +24,7 @@
 //! way of drawing the desktop, converted again in every window every frame.
 //!
 //! **The arithmetic is the processor's.** The pass is
-//! `common::video::convert`'s integer expression, with its coefficients, and
+//! `media::video::convert`'s integer expression, with its coefficients, and
 //! P010 narrowed to eight bits as `platform_linux`'s `narrow` narrows it, so
 //! a pixel is the one a readback would have made; the tests below hold it to
 //! that, for every pair of chroma samples.
@@ -54,8 +54,8 @@
 //! largest texture — the window says why once and the session goes on with
 //! its pictures read back, as without this.
 
-use common::video::convert::coefficients;
-use common::video::{Dmabuf, GpuPicture, fourcc};
+use media::video::convert::coefficients;
+use media::video::{Dmabuf, GpuPicture, fourcc};
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::sync::Arc;
@@ -601,8 +601,8 @@ fn bind(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use common::video::convert::{Frame, Plane};
-    use common::video::{Changes, Codec, Decoded, Decoder as _, Hardware, Output};
+    use media::video::convert::{Frame, Plane};
+    use media::video::{Changes, Codec, Decoded, Decoder as _, Hardware, Output};
 
     #[test]
     fn imports_are_kept_by_surface_and_dropped_with_their_pool() {

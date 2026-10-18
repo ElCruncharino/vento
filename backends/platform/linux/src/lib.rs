@@ -3,9 +3,9 @@
 
 //! The parts of a backend that are about Linux rather than about a
 //! protocol: [`ffmpeg`], which is libavcodec speaking
-//! `common::video::Decoders`, [`audio`], which is PipeWire's streams
+//! `media::video::Decoders`, [`audio`], which is PipeWire's streams
 //! ([`pipewire`]) or ALSA's default device ([`alsa`]) speaking
-//! `common::audio::Outputs`, and [`ffmpeg_audio`], libavcodec again, for
+//! `media::audio::Outputs`, and [`ffmpeg_audio`], libavcodec again, for
 //! the sound that arrives as AAC or Opus.
 //!
 //! It is the Linux client's platform, as `platform_android` is the phone's:

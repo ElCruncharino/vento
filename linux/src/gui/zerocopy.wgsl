@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // A picture left on the GPU, NV12 or P010 in two textures, into the
-// `R, G, B, A` the desktop's texture holds: `common::video::convert`'s
+// `R, G, B, A` the desktop's texture holds: `media::video::convert`'s
 // arithmetic, in integers, so that every pixel is the one the processor
 // would have made of the same samples (`zerocopy.rs` tests that it is).
 //

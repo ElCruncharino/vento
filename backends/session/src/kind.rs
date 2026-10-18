@@ -9,8 +9,8 @@ use crate::backend::Backend;
 use crate::catalog::About;
 use crate::events::Mailbox;
 use crate::options::Options;
-use common::audio::Outputs;
-use common::video::Decoders;
+use media::audio::Outputs;
+use media::video::Decoders;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -174,7 +174,7 @@ impl Kind {
 mod tests {
     use super::*;
     use crate::events::Event;
-    use common::audio::{Controls, Device, Format, Queue};
+    use media::audio::{Controls, Device, Format, Queue};
 
     struct Quiet;
     impl Device for Quiet {}
@@ -225,8 +225,8 @@ mod tests {
         let mut stream = audio.open(Format::new(48_000, 2).unwrap()).unwrap();
         stream.write(&[0, 0]);
         let playing = |playing: bool| {
-            Some(Event::Sound(common::audio::Sound {
-                switch: playing.then_some(common::audio::Switch::Mute),
+            Some(Event::Sound(media::audio::Sound {
+                switch: playing.then_some(media::audio::Switch::Mute),
                 enabled: true,
                 muted: false,
                 playing,
@@ -236,6 +236,6 @@ mod tests {
         drop(stream);
         assert_eq!(mailbox.take(), playing(false));
         audio.controls().offer_enable(false, Box::new(|_| {}));
-        assert!(matches!(mailbox.take(), Some(Event::Sound(s)) if s.switch == Some(common::audio::Switch::Enable) && !s.enabled));
+        assert!(matches!(mailbox.take(), Some(Event::Sound(s)) if s.switch == Some(media::audio::Switch::Enable) && !s.enabled));
     }
 }

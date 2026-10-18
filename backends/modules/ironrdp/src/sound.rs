@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The server's sound: IronRDP's rdpsnd channel, with a handler that plays
-//! what it is sent on the session's output (`common::audio`).
+//! what it is sent on the session's output (`media::audio`).
 //!
 //! Their channel does the protocol — the format exchange, the training, a
 //! confirmation for every wave — and asks its handler for the formats to
@@ -23,8 +23,8 @@
 //! the stream is closed instead two seconds after the last wave was
 //! ([`QUIET`]), from the session's loop.
 
-use common::audio::decode::Codec;
-use common::audio::{Format, Outputs, Player};
+use media::audio::decode::Codec;
+use media::audio::{Format, Outputs, Player};
 use ironrdp_core::{Decode as _, ReadCursor, impl_as_any};
 use ironrdp_pdu::PduResult;
 use ironrdp_pdu::gcc::{ChannelName, ChannelOptions};
@@ -171,7 +171,7 @@ fn kind_of(f: &AudioFormat, player: &Player) -> Option<Kind> {
         // describes with no extra bytes; extra bytes would be a
         // HEAACWAVEINFO, a profile nobody here has been sent.
         WaveFormat::AAC_MS if extra.is_empty() && player.decodable(Codec::Aac) => {
-            common::audio::decode::aac_config(format).map(|_| Kind::Coded(Codec::Aac, format, Vec::new()))
+            media::audio::decode::aac_config(format).map(|_| Kind::Coded(Codec::Aac, format, Vec::new()))
         }
         // Opus packets, set up by an identification header where the server
         // gives one and by the format alone where not.
@@ -270,8 +270,8 @@ impl RdpsndClientHandler for Waves {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use common::audio::decode::{Decoder, Decoders};
-    use common::audio::{Controls, Device, Queue};
+    use media::audio::decode::{Decoder, Decoders};
+    use media::audio::{Controls, Device, Queue};
 
     struct Quiet;
     impl Device for Quiet {}
@@ -336,7 +336,7 @@ mod tests {
         );
         assert_eq!(kind_of(&windows[2], &player), Some(Kind::Pcm(Format::new(44_100, 2).unwrap())));
         // Without decoders, PCM alone.
-        let plain = Player::new(Arc::new(common::audio::NoOutputs::new()));
+        let plain = Player::new(Arc::new(media::audio::NoOutputs::new()));
         assert_eq!(playable(&windows, &plain), [windows[2].clone()]);
     }
 
@@ -370,6 +370,6 @@ mod tests {
         assert_eq!(controls.sound().switch, None);
         let _ = sound.process(&list(vec![format(WaveFormat::PCM, 44_100, 2, 16, None)]));
         let offered = controls.sound();
-        assert_eq!((offered.switch, offered.playing), (Some(common::audio::Switch::Mute), false));
+        assert_eq!((offered.switch, offered.playing), (Some(media::audio::Switch::Mute), false));
     }
 }

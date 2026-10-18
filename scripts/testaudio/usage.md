@@ -2,7 +2,7 @@
 
 vento's sound, played somewhere nobody hears it and recorded back: a PipeWire
 null sink, its monitor, and an analysis of what came out. For the desktop's
-audio output (`common::audio` over a PipeWire stream of its own,
+audio output (`media::audio` over a PipeWire stream of its own,
 `backends/platform/linux/src/pipewire.rs`, or ALSA, `alsa.rs`, without PipeWire)
 and for every backend moved onto it.
 
@@ -82,7 +82,7 @@ resume after the stall are heard; how much of the burst was heard, and the
 stream's own latency (queue plus device) over the run. `results.json` beside
 the recording has all of it.
 
-What to expect, from the policy in `common::audio`: the queue keeps a
+What to expect, from the policy in `media::audio`: the queue keeps a
 device period, the rig's 10 ms writes and their lateness, and a margin
 (`Queue`'s target) — the stream's start's 30 ms, for all of the rig's 22 s,
 which comes down to 10 ms only after 40 s of sound — the device's buffer behind it, and never more than

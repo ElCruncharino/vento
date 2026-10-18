@@ -1,23 +1,25 @@
-# What every client here speaks to and no protocol owns: the `Handler` a
-# protocol thread calls, the `Events` a platform answers it with, the `Session`
-# that runs one on a thread of its own, the video decoder a platform supplies
-# and what is done with its planes afterwards, the pinned TLS of the
-# protocols that reach it — and the address parser, which is the one thing
-# every client does before any of that.
+# What every protocol here is written against and no protocol owns: the
+# `Client` a protocol implements, the `Handler` its thread calls, the `Events`
+# a platform answers it with, the `Session` that runs one on a thread of its
+# own and the `Bridge` between them, the dial a hang-up can interrupt, the
+# pinned TLS of the protocols that reach it — and the address parser, which
+# is the one thing every client does before any of that. The picture and the
+# sound a session carries are `remotedesktop-media`'s, which needs nothing of
+# this crate and this crate nothing of it.
 #
 # Nothing in here knows what a phone is. The Android half of a backend is
 # `remotedesktop-platform-android`, which depends on this crate and not the
 # other way round, so a desktop client can be built on this layer without a
 # `jni` anywhere in its graph.
 [package]
-name = "remotedesktop-common"
+name = "remotedesktop-runtime"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
 
 [lib]
-name = "common"
+name = "runtime"
 
 [dependencies]
 log.workspace = true

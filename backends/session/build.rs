@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! With the `c` feature: `vento/backend.h`, `vento/video.h` and
-//! `vento/audio.h`, as Rust, for `src/c/ffi.rs`.
+//! `vento/audio.h`, this crate's `include/`, as Rust, for `src/c/ffi.rs`.
 //!
 //! Generated rather than written: the vtable's member order is the ABI, and a
 //! `#[repr(C)]` copy by hand would be a second place it is kept, drifting the
@@ -25,7 +25,7 @@ fn generate_bindings() {
     use std::path::PathBuf;
 
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let include = manifest.join("../common/include");
+    let include = manifest.join("include");
     println!("cargo:rerun-if-changed={}", include.display());
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let bindings = bindgen::Builder::default()

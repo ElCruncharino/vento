@@ -3,14 +3,14 @@
 
 //! The phone's sound decoders, MediaCodec's AAC and Opus:
 //! [`MediaCodecAudio`] is this platform's
-//! `common::audio::decode::Decoders`, which [`AAudio`] hands out with its
+//! `media::audio::decode::Decoders`, which [`AAudio`] hands out with its
 //! streams, and the counterpart of `platform_linux::ffmpeg_audio`.
 //!
 //! Through the same NDK calls as the video ([`mediacodec`]), in their
 //! synchronous form and on the caller's thread: a packet of sound is a
 //! millisecond of a decoder's work, and a thread and a queue of our own
 //! around it would only add a hop. What MediaCodec wants and a protocol does
-//! not send is made up from the stream's format (`common::audio::decode`):
+//! not send is made up from the stream's format (`media::audio::decode`):
 //! AAC's AudioSpecificConfig as `csd-0`, and for Opus its identification
 //! header as `csd-0`, the pre-skip and the seek pre-roll in nanoseconds as
 //! `csd-1` and `csd-2`, which is how MediaCodec's Opus decoder is told them.
@@ -29,8 +29,8 @@
 use std::ffi::{CString, c_void};
 use std::sync::OnceLock;
 
-use common::audio::Format;
-use common::audio::decode::{self, Codec, Decoder, Decoders, opus_pre_skip};
+use media::audio::Format;
+use media::audio::decode::{self, Codec, Decoder, Decoders, opus_pre_skip};
 
 use crate::mediacodec::{
     AMEDIA_OK, AMediaCodec, AMediaCodec_configure, AMediaCodec_createDecoderByType, AMediaCodec_delete,

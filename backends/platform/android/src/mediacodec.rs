@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The phone's own decoder, through the NDK's C API: [`MediaCodec`] is this
-//! platform's `common::video::Decoders`.
+//! platform's `media::video::Decoders`.
 //!
 //! The decode is the phone's hardware, which is what keeps a backend that
 //! receives video from being a codec project: nothing here implements VP9,
 //! and MediaCodec is a C API, so this reaches it with an `extern "C"` block
 //! and no JNI, no Java and no thread of its own. Everything after the decode —
-//! what moved, and the conversion of only that — is `common::video::Output`,
+//! what moved, and the conversion of only that — is `media::video::Output`,
 //! the same as libavcodec's on a desktop.
 //!
 //! Declared here rather than taken from a crate: it is a dozen functions with a
@@ -33,8 +33,8 @@
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::sync::OnceLock;
 
-use common::video::convert::{Frame, Plane};
-use common::video::{Changes, Codec, Decoders, Output};
+use media::video::convert::{Frame, Plane};
+use media::video::{Changes, Codec, Decoders, Output};
 
 #[repr(C)]
 pub(crate) struct AMediaCodec {
@@ -194,8 +194,8 @@ impl Decoders for MediaCodec {
         codec: Codec,
         width: usize,
         height: usize,
-    ) -> Option<Box<dyn common::video::Decoder>> {
-        Decoder::new(codec, width, height).map(|d| Box::new(d) as Box<dyn common::video::Decoder>)
+    ) -> Option<Box<dyn media::video::Decoder>> {
+        Decoder::new(codec, width, height).map(|d| Box::new(d) as Box<dyn media::video::Decoder>)
     }
 }
 
@@ -410,7 +410,7 @@ impl Decoder {
     }
 
     /// The next decoded buffer in the order they were fed, for
-    /// [`decode_planes`](common::video::Decoder::decode_planes): one picture
+    /// [`decode_planes`](media::video::Decoder::decode_planes): one picture
     /// a frame, none passed over. A wait that runs out leaves its picture
     /// owed, and an owed picture is the frame before's, so it is released
     /// unread when it comes rather than handed over as this frame's.
@@ -549,7 +549,7 @@ impl Decoder {
     }
 }
 
-impl common::video::Decoder for Decoder {
+impl media::video::Decoder for Decoder {
     fn decode(
         &mut self,
         data: &[u8],
