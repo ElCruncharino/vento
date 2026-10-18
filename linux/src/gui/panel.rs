@@ -50,7 +50,19 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
-    /// The desktop's own name for itself, where the protocol has said it.
+    /// What the backend said, with the desktop's name made [`printable`]:
+    /// here, once, so that every window's title, the panel's heading and its
+    /// row, and the name a mixer lists the session's sound under have the
+    /// same, and none of them a far end's control characters.
+    pub fn new(facts: Facts, mut info: Vec<ConnectionFact>, traffic: Option<Traffic>) -> Snapshot {
+        for fact in info.iter_mut().filter(|f| f.field == Field::DesktopName) {
+            fact.value = printable(&fact.value);
+        }
+        Snapshot { facts, info, traffic }
+    }
+
+    /// The desktop's own name for itself, where the protocol has said it
+    /// (and it is not all control characters).
     pub fn desktop_name(&self) -> Option<&str> {
         self.info
             .iter()
@@ -58,6 +70,36 @@ impl Snapshot {
             .map(|f| f.value.as_str())
             .filter(|v| !v.is_empty())
     }
+}
+
+/// The most of a far end's name for itself that is kept, in characters: a
+/// window list or a task bar shows a few dozen, and the name is the far
+/// end's to make as long as it likes (RFB's may be 4 GB).
+pub const NAME_MAX: usize = 128;
+
+/// `name`, a far end's or one typed or pasted, fit to be a window's title:
+/// control characters dropped — a NUL, which neither X11's title property
+/// nor Wayland's `set_title` can carry (winit panics on one), an escape, a
+/// bell — and the ones that are white space (a tab, a newline) made a space;
+/// white space at either end trimmed; and no more than [`NAME_MAX`]
+/// characters, the last of them an ellipsis where it was cut.
+pub fn printable(name: &str) -> String {
+    let mut chars = name
+        .chars()
+        .filter_map(|c| match c {
+            c if c.is_control() && c.is_whitespace() => Some(' '),
+            c if c.is_control() => None,
+            c => Some(c),
+        })
+        .skip_while(|c| c.is_whitespace());
+    let mut out: String = chars.by_ref().take(NAME_MAX).collect();
+    if chars.next().is_some() {
+        out.pop();
+        out.truncate(out.trim_end().len());
+        out.push('…');
+    }
+    out.truncate(out.trim_end().len());
+    out
 }
 
 /// What the session's controls are set to, for drawing them.

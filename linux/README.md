@@ -396,10 +396,18 @@ released as when the window is closed. Only an asked-for disconnect does: if
 the far end hangs up or the connection fails, the dialog comes up with the
 reason as for any other session, and a session started from there afterwards
 goes back to the dialog when it is disconnected. The window's title is the desktop's name once
-the protocol has said it, and rings the bell by putting one in the title for a
+the protocol has said it (the address until then), and rings the bell by putting one in the title for a
 moment — unless the backend's Bell option (`AcceptBell`, on the VNC backends)
 is off, in which case a bell is dropped before the window or the probe sees
-it.
+it. The name is the far end's to choose, so it is cleaned once, as the
+client reads it, for every place it shows — each window's title, the
+panel's heading and row, the name a mixer lists the session's sound under:
+control characters are dropped (a NUL, which neither X11's title property
+nor Wayland's can carry, used to take the client down), tabs and newlines
+become spaces, the ends are trimmed, and past 128 characters it is cut with
+an ellipsis; a name of nothing but control characters is none, and the
+address stands in. A typed or pasted address is cleaned the same way
+before it is a title.
 
 Nothing in the interface fades or folds: egui's own animations are off
 (`animation_time` and the programmatic scroll's, both zero), so a dropdown, a

@@ -69,7 +69,7 @@ use super::follow::{Ask, Follower, Shown, Takes};
 use super::hud::Hud;
 
 use super::keys::{self, KeyIds};
-use super::panel::{Action, Controls, Panel, Snapshot};
+use super::panel::{Action, Controls, Panel, Snapshot, printable};
 use super::display_server::{self, DisplayServer};
 use super::prompts::{self, Answer, Form, Prompt};
 use super::settings::Settings;
@@ -180,6 +180,17 @@ fn popout_size(w: i32, h: i32) -> (u32, u32) {
     let (w, h) = (w.max(1) as f32, h.max(1) as f32);
     let fit = (1280.0 / w).min(800.0 / h).min(1.0);
     ((w * fit).round().max(200.0) as u32, (h * fit).round().max(150.0) as u32)
+}
+
+/// A window's title from the session's `name` (already [`printable`]): the
+/// bell on it while it rings, and the far end's `monitor` the window shows,
+/// where it shows one of several.
+fn window_title(name: &str, ringing: bool, monitor: Option<usize>) -> String {
+    let bell = if ringing { "🔔 " } else { "" };
+    match monitor {
+        Some(i) => format!("{bell}{name} — monitor {} — Vento", i + 1),
+        None => format!("{bell}{name} — Vento"),
+    }
 }
 
 pub struct Session {
@@ -336,7 +347,8 @@ impl Session {
             audio: Some(Arc::clone(&audio) as _),
         };
         let backend = request.kind.start(&connect)?;
-        let title = request.address.clone();
+        // Typed or pasted, and a title before the desktop has a name.
+        let title = printable(&request.address);
         let live = request.options.clone();
         // What the backend was created with, which it already acts on: the
         // toolbar and the window's own idea of where input goes start from
@@ -495,15 +507,12 @@ impl Session {
     }
 
     /// A window's title: the session's, with the far end's `monitor` the
-    /// window shows, where it shows one of several.
+    /// window shows, where it shows one of several. The name in it is
+    /// [`printable`], as the snapshot and the session keep it.
     pub fn title_of(&self, monitor: Option<usize>) -> String {
         let name = self.snapshot.desktop_name().unwrap_or(&self.title);
         let ringing = self.bell_until.is_some_and(|t| Instant::now() < t);
-        let bell = if ringing { "🔔 " } else { "" };
-        match monitor {
-            Some(i) => format!("{bell}{name} — monitor {} — Vento", i + 1),
-            None => format!("{bell}{name} — Vento"),
-        }
+        window_title(name, ringing, monitor)
     }
 
     // ---- events from the backend -------------------------------------------
@@ -682,15 +691,10 @@ impl Session {
         self.last_poll = Some(Instant::now());
         let mut info = self.backend.info();
         api::backend::with_sound(&mut info, self.audio.controls());
-        self.snapshot = Snapshot {
-            facts: self.backend.facts(),
-            info,
-            traffic: self.backend.traffic(),
-        };
+        self.snapshot = Snapshot::new(self.backend.facts(), info, self.backend.traffic());
         // The name a mixer lists the session's sound under is the one its
         // window's title starts with.
-        self.audio
-            .set_title(self.snapshot.desktop_name().unwrap_or(&self.request.address));
+        self.audio.set_title(self.snapshot.desktop_name().unwrap_or(&self.title));
         ctx.request_repaint_after(POLL);
         // The other windows' titles and overlays come from the poll too.
         self.redraw_others = true;
@@ -1375,7 +1379,7 @@ impl Session {
             return;
         }
         let state = self.state_line();
-        let title = self.request.address.clone();
+        let title = self.title.clone();
         let controls = Controls {
             sound: self.sound.switch.map(|switch| (switch, self.sound.on())),
             specs: self.request.kind.options,
@@ -1668,7 +1672,9 @@ fn on_off(on: bool) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use super::super::panel::NAME_MAX;
     use super::*;
+    use crate::backend::{ConnectionFact, Field};
 
     #[test]
     fn the_capture_moves_with_the_focus_only_from_the_window_holding_it() {
@@ -1682,6 +1688,36 @@ mod tests {
         // Held elsewhere, or nowhere: the move is none of its business.
         assert_eq!(handover(Some(other), main, true), Handover::Nothing);
         assert_eq!(handover(None, main, true), Handover::Nothing);
+    }
+
+    #[test]
+    fn a_far_ends_name_is_titled_without_its_control_characters() {
+        // The name a hostile or careless server gives its desktop goes into
+        // every window's title, which winit hands X11 as a C string and
+        // Wayland likewise: a NUL in it panicked the client. Cleaned once in
+        // the snapshot, it is a title a C string can carry, for the main
+        // window and a pop-out alike.
+        let named = |name: &str| {
+            let info = vec![ConnectionFact::of(Field::DesktopName, "Desktop", name)];
+            Snapshot::new(Default::default(), info, None)
+        };
+        let snapshot = named("evil\0na\x1bme\u{7}\tdesk\r\n");
+        assert_eq!(snapshot.desktop_name(), Some("evilname desk"));
+        assert_eq!(snapshot.info[0].value, "evilname desk", "the panel's row too");
+        for monitor in [None, Some(1)] {
+            let title = window_title(snapshot.desktop_name().unwrap(), true, monitor);
+            assert!(std::ffi::CString::new(title.clone()).is_ok(), "{title:?}");
+        }
+        assert_eq!(window_title("evilname desk", false, Some(1)), "evilname desk — monitor 2 — Vento");
+        // Nothing but control characters is no name: the address stands in.
+        assert_eq!(named("\0\0\x01").desktop_name(), None);
+        // A name of a megabyte is cut to NAME_MAX characters, the last an
+        // ellipsis, wherever its characters' bytes fall.
+        let long = named(&"é".repeat(1 << 20));
+        let name = long.desktop_name().unwrap();
+        assert_eq!(name.chars().count(), NAME_MAX);
+        assert!(name.ends_with("é…"), "{name}");
+        assert_eq!(printable(&"x".repeat(NAME_MAX)), "x".repeat(NAME_MAX), "up to the cap, kept whole");
     }
 
     #[test]
