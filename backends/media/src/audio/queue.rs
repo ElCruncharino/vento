@@ -66,7 +66,13 @@ pub struct Stats {
 /// sound arriving again within `RESUME` — the sound was later than
 /// anything the rhythm had shown — the session remembers that lateness, so
 /// that the next time it is not too late, and forgets it again slowly after
-/// a long while of sound that did not run dry; unless it was later than
+/// a long while of sound that did not run dry; and the queue starts again
+/// as soon as what it has lasts, with the period and the margin, until the
+/// far end's next write if that is no later against its sound than this one
+/// was (`Rhythm::keep`), rather than once it has the whole target, which
+/// counts the lateness from the earliest write of the window on (for
+/// Windows' PCM, whose next pair is 372 ms away, the difference between a
+/// gap of the lateness and one of the pair); unless it was later than
 /// [`MARGIN_MAX`](super::MARGIN_MAX), a stall, after which the rhythm starts
 /// a new run, what the far end sends to catch up counts as a burst, and the
 /// queue starts again only once it has caught up, at its target, the rest
@@ -82,7 +88,8 @@ pub struct Stats {
 /// dropping the oldest when the writer has got too far ahead — is the writer
 /// moving the reader's end, which a single-producer ring does not allow.
 /// The lock is held for a copy of one write or one device buffer and the
-/// bookkeeping of the policy, never across a call into the device or the sound server,
+/// bookkeeping of the policy, never across a call into the device or the
+/// sound server or a log line (which may block on a pipe or logcat),
 /// so neither side waits longer than that copy for the other; the gain is
 /// applied after it is let go.
 pub struct Queue {
@@ -139,6 +146,10 @@ struct Inner {
     /// When the last write of the far end's catching up after a stall
     /// arrived, while it is: see `wrote`.
     catching: Option<Duration>,
+    /// While the queue starts again after running dry on a late write, what
+    /// it has to have beyond the period and the margin as of the last write
+    /// (`Rhythm::keep`), in frames of the stream: see `pull`.
+    resume: Option<usize>,
     resampler: Resampler,
     stats: Stats,
 }
@@ -167,6 +178,7 @@ impl Queue {
                 start: MARGIN_START.saturating_sub(MARGIN),
                 fresh: 0,
                 catching: None,
+                resume: None,
                 resampler: Resampler::new(),
                 stats: Stats::default(),
             }),
@@ -213,8 +225,12 @@ impl Queue {
     /// dropped most of. Such a stream is heard as far behind as its rhythm
     /// makes it, rather than in pieces.
     fn target(&self, inner: &Inner) -> usize {
-        let period = self.format.frames(Duration::from_micros(self.period.load(Ordering::Relaxed)));
-        period + inner.rhythm.hold() + self.margin(inner)
+        self.period() + inner.rhythm.hold() + self.margin(inner)
+    }
+
+    /// The device's period, in frames of the stream.
+    fn period(&self) -> usize {
+        self.format.frames(Duration::from_micros(self.period.load(Ordering::Relaxed)))
     }
 
     /// The margin, in frames of the stream: [`MARGIN`], and what the session
@@ -284,26 +300,35 @@ impl Queue {
 
     fn write_at(&self, samples: &[i16], at: Duration) {
         let whole = samples.len() / self.format.channels * self.format.channels;
-        let mut inner = self.inner.lock().unwrap();
-        let before = inner.samples.len();
-        inner.samples.extend(&samples[..whole]);
-        self.wrote(&mut inner, before, whole, at);
+        let notes = {
+            let mut inner = self.inner.lock().unwrap();
+            let before = inner.samples.len();
+            inner.samples.extend(&samples[..whole]);
+            self.wrote(&mut inner, before, whole, at)
+        };
+        notes.log();
     }
 
     /// Whole frames, as native-endian bytes.
     pub fn write_bytes(&self, bytes: &[u8]) {
         let at = self.born.elapsed();
         let whole = bytes.len() / self.format.frame_bytes() * self.format.frame_bytes();
-        let mut inner = self.inner.lock().unwrap();
-        let before = inner.samples.len();
-        inner
-            .samples
-            .extend(bytes[..whole].chunks_exact(2).map(|b| i16::from_ne_bytes([b[0], b[1]])));
-        self.wrote(&mut inner, before, whole / 2, at);
+        let notes = {
+            let mut inner = self.inner.lock().unwrap();
+            let before = inner.samples.len();
+            inner
+                .samples
+                .extend(bytes[..whole].chunks_exact(2).map(|b| i16::from_ne_bytes([b[0], b[1]])));
+            self.wrote(&mut inner, before, whole / 2, at)
+        };
+        notes.log();
     }
 
-    /// `samples` more were queued at `at`, on top of `before`.
-    fn wrote(&self, inner: &mut Inner, before: usize, samples: usize, at: Duration) {
+    /// `samples` more were queued at `at`, on top of `before`. What is worth
+    /// a log line is returned to be logged once the lock is let go, since
+    /// the device's thread waits on it to pull.
+    fn wrote(&self, inner: &mut Inner, before: usize, samples: usize, at: Duration) -> Notes {
+        let mut notes = Notes::default();
         inner.waited = 0;
         let frames = samples / self.format.channels;
         inner.stats.written += frames as u64;
@@ -334,31 +359,31 @@ impl Queue {
                     inner.rhythm.restart();
                     inner.rhythm.wrote(at, frames, true);
                     inner.catching = Some(at);
-                    log::info!(
-                        "audio: the far end's sound arrived {} ms after the queue ran dry, {} ms late: a stall, skipped",
-                        dry.as_millis(),
-                        late.as_millis()
-                    );
+                    inner.resume = None;
+                    notes.dry = Some((dry, late, None));
                 } else {
                     // Later than the queue kept for: measured as the late
-                    // write it is, and remembered.
+                    // write it is, and remembered; and the queue starts
+                    // again from it.
                     inner.rhythm.wrote(at, frames, burst);
                     let seen = self.format.duration(inner.rhythm.lateness());
                     let late = self.controls.ran_dry(seen);
-                    log::info!(
-                        "audio: the far end's sound arrived {} ms after the queue ran dry, {} ms late; the session allows for {} ms now",
-                        dry.as_millis(),
-                        seen.as_millis(),
-                        late.as_millis()
-                    );
+                    inner.resume = Some(inner.rhythm.keep(at));
+                    notes.dry = Some((dry, seen, Some(late)));
                 }
             }
             Some(_) => {
                 // A new sound after a pause of the far end's own.
                 inner.rhythm.restart();
                 inner.rhythm.wrote(at, frames, burst);
+                inner.resume = None;
             }
-            None => inner.rhythm.wrote(at, frames, burst),
+            None => {
+                inner.rhythm.wrote(at, frames, burst);
+                if inner.resume.is_some() {
+                    inner.resume = Some(inner.rhythm.keep(at));
+                }
+            }
         }
         if inner.primed {
             let since = *inner.since.get_or_insert(at);
@@ -368,42 +393,36 @@ impl Queue {
             if !inner.start.is_zero() && self.format.duration(inner.fresh) >= CLEAN_START {
                 inner.fresh = 0;
                 inner.start = inner.start.saturating_sub(MARGIN_STEP);
-                log::debug!(
-                    "audio: the stream has played {} s without running dry; its margin is {} ms now",
-                    CLEAN_START.as_secs(),
-                    self.format.duration(self.margin(inner)).as_millis()
-                );
+                notes.margin = Some(self.format.duration(self.margin(inner)));
             }
             if self.format.duration(inner.clean) >= CLEAN {
                 inner.clean = 0;
-                if let Some(late) = self.controls.clean() {
-                    log::debug!("audio: no late sound for a while; the session allows for {} ms now", late.as_millis());
-                }
+                notes.late = self.controls.clean();
             }
             if at.saturating_sub(since) >= WINDOW {
-                self.settle(inner);
+                notes.settled = self.settle(inner);
             }
         }
         if inner.samples.len() > self.limit(inner) * self.format.channels {
             self.trim(inner);
         }
+        notes
     }
 
     /// Drops what the queue kept beyond the target's margin for a whole
     /// window — the least it held before a write, less the margin — where
-    /// that is worth a skip, and starts the next window.
-    fn settle(&self, inner: &mut Inner) {
+    /// that is worth a skip, and starts the next window. What was dropped,
+    /// if anything, for a log line.
+    fn settle(&self, inner: &mut Inner) -> Option<Duration> {
         let margin = self.margin(inner);
         let excess = inner.low.saturating_sub(margin);
-        if excess >= self.format.frames(SETTLE) {
-            log::debug!(
-                "audio: the queue kept {} ms more than it needed; dropped",
-                self.format.duration(excess).as_millis()
-            );
+        let dropped = (excess >= self.format.frames(SETTLE)).then(|| {
             self.skip(inner, excess);
-        }
+            self.format.duration(excess)
+        });
         inner.low = usize::MAX;
         inner.since = None;
+        dropped
     }
 
     /// Drops the oldest down to the target. A skip is heard once; a queue
@@ -463,7 +482,15 @@ impl Queue {
             inner.pulled = inner.pulled.saturating_add(frames);
             if !inner.primed && !filling {
                 let queued = inner.samples.len() / self.format.channels;
-                let target = self.target(inner);
+                let mut target = self.target(inner);
+                if let Some(keep) = inner.resume {
+                    // Starting again after a late write: what lasts until
+                    // the next as late as the latest, less what has been
+                    // waited since the last write arrived, which the far
+                    // end's next write is that much nearer.
+                    let waited = self.format.frames(device.duration(inner.waited));
+                    target = target.min(self.period() + self.margin(inner) + keep.saturating_sub(waited));
+                }
                 let caught_up = inner.catching.is_none();
                 if (queued >= target && caught_up)
                     || (queued > 0 && inner.waited >= device.frames(self.format.duration(target)))
@@ -474,6 +501,7 @@ impl Queue {
                     self.trim(inner);
                     inner.primed = true;
                     inner.waited = 0;
+                    inner.resume = None;
                     inner.resampler.reset();
                 } else if queued > 0 {
                     inner.waited += frames;
@@ -508,6 +536,53 @@ impl Queue {
     #[cfg(test)]
     pub(super) fn take_all(&self) -> Vec<i16> {
         self.inner.lock().unwrap().samples.drain(..).collect()
+    }
+}
+
+/// What a write did that is worth a log line, logged by [`Notes::log`] once
+/// the queue's lock is let go.
+#[derive(Default)]
+struct Notes {
+    /// The queue had run dry: for how long, how late the write was, and what
+    /// the session allows for now — `None` for a stall, which it does not.
+    dry: Option<(Duration, Duration, Option<Duration>)>,
+    /// The stream's margin came down a step, to this.
+    margin: Option<Duration>,
+    /// The session forgot a step of lateness, down to this.
+    late: Option<Duration>,
+    /// The queue dropped this much it had kept beyond its margin.
+    settled: Option<Duration>,
+}
+
+impl Notes {
+    fn log(self) {
+        match self.dry {
+            Some((dry, late, None)) => log::info!(
+                "audio: the far end's sound arrived {} ms after the queue ran dry, {} ms late: a stall, skipped",
+                dry.as_millis(),
+                late.as_millis()
+            ),
+            Some((dry, seen, Some(late))) => log::info!(
+                "audio: the far end's sound arrived {} ms after the queue ran dry, {} ms late; the session allows for {} ms now",
+                dry.as_millis(),
+                seen.as_millis(),
+                late.as_millis()
+            ),
+            None => {}
+        }
+        if let Some(margin) = self.margin {
+            log::debug!(
+                "audio: the stream has played {} s without running dry; its margin is {} ms now",
+                CLEAN_START.as_secs(),
+                margin.as_millis()
+            );
+        }
+        if let Some(late) = self.late {
+            log::debug!("audio: no late sound for a while; the session allows for {} ms now", late.as_millis());
+        }
+        if let Some(excess) = self.settled {
+            log::debug!("audio: the queue kept {} ms more than it needed; dropped", excess.as_millis());
+        }
     }
 }
 
@@ -618,19 +693,20 @@ mod tests {
         assert!(pull(&q).iter().all(|&s| s == 0));
         q.write_at(&frames(100, 10), ms(40.0));
         assert_eq!(q.controls().late(), Duration::from_millis(20));
-        // Less than the target (a write, its lateness, and the margin with
-        // the step the rhythm does not cover) is not enough to start
-        // again...
+        // The target is a write, its lateness, and the margin with the step
+        // the rhythm does not cover; but the queue starts again from this
+        // write, the latest of the window, so what it needs is a write's
+        // worth and the margin: 25 ms. Less is not enough...
         assert_eq!(q.margin_now(), MARGIN + MARGIN_STEP);
         assert_eq!(target(&q), Duration::from_millis(40));
         assert!(pull(&q).iter().all(|&s| s == 0));
         q.write_at(&frames(100, 10), ms(50.0));
-        q.write_at(&frames(100, 10), ms(60.0));
         assert!(pull(&q).iter().all(|&s| s == 0));
-        // ...and the target is.
-        q.write_at(&frames(100, 10), ms(70.0));
+        // ...and that is, without waiting for the whole target.
+        q.write_at(&frames(100, 10), ms(60.0));
         assert_ne!(pull(&q)[0], 0);
         assert_eq!(q.stats().underruns, 1);
+        assert_eq!(q.stats().dropped, 0);
     }
 
     #[test]
@@ -1257,5 +1333,69 @@ mod tests {
         assert_eq!(q.controls().late(), Duration::from_millis(95));
         let dropped = |t: f64| seen.iter().find(|s| s.0 >= t).unwrap().2;
         assert!(dropped(6_000.0) - dropped(4_000.0) < STEREO.frames(ms(10.0)) as u64, "{seen:?}");
+    }
+
+    /// Windows' PCM pairs, a little late at random, in front of ALSA, and
+    /// the pair due 15 s in late by `ms` (the start's margin is 25 ms then):
+    /// the pulls, the late pair's arrival and what was dropped in the two
+    /// seconds from just before it.
+    fn pcm_late_pair(q: &Queue, ms: f64) -> (Vec<(f64, usize, Duration)>, f64, u64) {
+        let mut late = Lcg(5);
+        let writes = rhythm(44_100, 8192, 2, 40.0, |k| if k == 40 { ms } else { 2.0 * late.next() });
+        let at = writes[80].0;
+        let (mut before, mut after) = (0, 0);
+        q.set_device(q.format().duration(551), q.format().duration(551));
+        let pulls = drive(q, &writes, 551, 1, 1, &mut |t, q| {
+            if t < at {
+                before = q.stats().dropped;
+            }
+            if t < at + 2_000.0 {
+                after = q.stats().dropped;
+            }
+        });
+        (pulls, at, after - before)
+    }
+
+    /// How long the pulls around `at` played silence, in milliseconds.
+    fn silent(pulls: &[(f64, usize, Duration)], period: usize, at: f64, rate: u32) -> f64 {
+        let missing: usize = pulls.iter().filter(|p| p.0 > at - 1_000.0 && p.0 < at + 2_000.0).map(|p| period - p.1).sum();
+        missing as f64 * 1000.0 / rate as f64
+    }
+
+    #[test]
+    fn a_late_pair_is_late_by_its_own_lateness_and_remembered() {
+        // Windows' PCM, its pair due 15 s in 60 ms late: the queue runs dry
+        // for what the margin did not cover, and the pair is measured as the
+        // 60 ms late it is, not as a wave more (the second of the pair before
+        // it is a wave further on and arrived with the first) — which would
+        // be a stall: remembered, nothing of it dropped, and the queue plays
+        // on from where it stopped.
+        let format = Format::new(44_100, 2).unwrap();
+        let q = Queue::new(format, Arc::new(Controls::new()));
+        let (pulls, at, dropped) = pcm_late_pair(&q, 60.0);
+        assert_eq!(q.stats().underruns, 1 + 1, "{:?} (the late pair, and the stream's end)", q.stats());
+        let late = q.controls().late();
+        assert!(late >= Duration::from_millis(60) && late <= Duration::from_millis(70), "{late:?}");
+        // Dry for what the margin and the period did not cover, then those
+        // again before it starts: a gap of about the lateness, where waiting
+        // for the whole target (the pair and its lateness) took until the
+        // next pair, 312 ms on.
+        let silent = silent(&pulls, 551, at, 44_100);
+        assert!(silent < 75.0, "{silent} ms of silence");
+        assert!(dropped < format.frames(ms(10.0)) as u64, "{dropped} frames dropped with it");
+        assert_eq!(holes(&pulls, 551, &rhythm(44_100, 8192, 2, 40.0, |_| 0.0), at + 1_000.0), 0);
+    }
+
+    #[test]
+    fn a_stalled_pair_is_still_a_stall() {
+        // The same pair 250 ms late: past the most lateness, so not
+        // remembered and its backlog skipped, as for writes one at a time.
+        let format = Format::new(44_100, 2).unwrap();
+        let q = Queue::new(format, Arc::new(Controls::new()));
+        let (pulls, at, dropped) = pcm_late_pair(&q, 250.0);
+        assert_eq!(q.stats().underruns, 1 + 1, "{:?}", q.stats());
+        assert_eq!(q.controls().late(), Duration::ZERO);
+        assert!(dropped >= format.frames(ms(250.0)) as u64, "{dropped} frames dropped with it");
+        assert_eq!(holes(&pulls, 551, &rhythm(44_100, 8192, 2, 40.0, |_| 0.0), at + 1_000.0), 0);
     }
 }

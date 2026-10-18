@@ -476,7 +476,9 @@ which keeps in front of the device only as much as keeps the device from
 finding it empty: a period of the device's, what the far end's own rhythm
 has needed over the last eight seconds — its largest write, or the most that
 lands at once, and how much later than its sound a write has come against
-the writes before it — and a margin: 30 ms as a stream starts, 5 ms less
+the writes before it (writes that land together as late as the first of
+them: the second of Windows' pairs is a wave further on, no lateness) — and
+a margin: 30 ms as a stream starts, 5 ms less
 after every 10 s of its sound that did not run dry, and 10 ms from 40 s on;
 with the device's buffer behind that (ALSA's is 50 ms; PipeWire's a cycle,
 5-11 ms on a null sink), and never more than 250 ms together, past which the
@@ -489,8 +491,12 @@ the queue runs dry anyway and the far end's sound comes within half a second
 step of 5 ms more (to 100 ms; a write later than that was a stall, a gap
 whatever is kept, and is not remembered at all, and what the far end sends
 to catch up after it is skipped in one jump rather than played behind),
-and the margin covers that from then on wherever the rhythm of late does
-not, forgetting a step after every half minute of sound
+the queue starts again once what it has lasts until the far end's next
+write as late as that one, with the period and the margin, rather than once
+it has its whole target (`pattern.sh`'s Windows PCM with a pair 60 ms late:
+a 55-60 ms gap and nothing dropped, where, taken for a stall, it had been a
+gap until the next pair, 255 ms or more of the tone, and 326 ms dropped), and the margin covers that from then on wherever the
+rhythm of late does not, forgetting a step after every half minute of sound
 that did not run dry (a gap, then none: under 64 busy loops a SPICE session
 ran dry twice in its first 40 s and not in the 50 s after, and
 `scripts/testaudio/pattern.sh`'s QEMU-like writes, held back 40 ms every 5 or

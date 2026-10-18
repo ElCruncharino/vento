@@ -24,6 +24,21 @@
 //! two at a time show up as their pair from the very first pair, before the
 //! rise between pairs has been seen.
 //!
+//! How **late** a write is, though, is a question about when the far end
+//! let go of it, and a write sent with the one before — arriving before
+//! half of that one's sound could have played, which no write at the far
+//! end's pace does — was let go of with it: it is as late as the first of
+//! them, its own `d` aside. The second of a pair has a `d` a wave lower
+//! than the first's (its sound starts a wave further on, and it arrived
+//! with it), and against that an on-time pair reads as a wave late:
+//! Windows' PCM, 186 ms, which is past [`MARGIN_MAX`](super::MARGIN_MAX)
+//! and would make every late pair a stall. (Not only writes that land
+//! together: a pair's second write can come a few milliseconds after the
+//! first, as the sender gets to it, 11 ms in `audio_pattern`'s debug build.)
+//! The hold keeps every write's `d`, which is what a queue has to have kept
+//! from whichever write it started on; lateness, and what a write that ran
+//! a queue dry is late by, are the first's.
+//!
 //! **Of late** is the last [`WINDOW`], in [`BUCKETS`] buckets of a second:
 //! long enough to have seen any rhythm a protocol keeps (a Windows PCM pair
 //! is 372 ms) many times over and an occasional late write more than once,
@@ -63,19 +78,43 @@ pub const MOST: Duration = Duration::from_millis(500);
 /// sooner than a few milliseconds after the last.
 const TOGETHER: Duration = Duration::from_millis(2);
 
-/// What one bucket's writes showed. Times are microseconds, signed: `d` is
-/// arrival less position, either way round.
+/// The least and the most of a bucket's `d`s, and the largest rise from an
+/// earlier one in the bucket to a later one in it; across buckets is worked
+/// out when asked. Microseconds, signed: `d` is arrival less position,
+/// either way round.
+#[derive(Clone, Copy, Default)]
+struct Spread {
+    lo: i64,
+    hi: i64,
+    rise: i64,
+}
+
+impl Spread {
+    /// A bucket's first `d` of a run, keeping the rise it had measured of
+    /// the run before (see [`Rhythm::restart`]).
+    fn from(d: i64, rise: i64) -> Spread {
+        Spread { lo: d, hi: d, rise }
+    }
+
+    fn add(&mut self, d: i64) {
+        self.rise = self.rise.max(d - self.lo);
+        self.lo = self.lo.min(d);
+        self.hi = self.hi.max(d);
+    }
+}
+
+/// What one bucket's writes showed.
 #[derive(Clone, Copy, Default)]
 struct Bucket {
     /// Which run of writes (see [`Rhythm::restart`]) the `d`s are from: two
     /// runs' are not comparable.
     run: u32,
     used: bool,
-    lo: i64,
-    hi: i64,
-    /// The largest rise in `d` from an earlier write in this bucket to a
-    /// later one in it; across buckets is worked out when asked.
-    rise: i64,
+    /// Every write's `d`, for the hold, and for lateness each write's
+    /// first's: its own, or that of the write it was sent with (see the
+    /// module's words).
+    each: Spread,
+    first: Spread,
     /// The largest write, and the most that landed at once, in frames.
     write: usize,
     group: usize,
@@ -93,9 +132,12 @@ pub struct Rhythm {
     /// run before the write being measured.
     origin: Option<Duration>,
     frames: u64,
-    /// When the last write arrived, and how much has landed at once with it.
+    /// When the last write arrived, its frames, how much has landed at once
+    /// with it, and the `d` of the first of the writes it was sent with.
     last: Option<Duration>,
+    size: usize,
     group: usize,
+    first: i64,
 }
 
 impl Rhythm {
@@ -109,7 +151,9 @@ impl Rhythm {
             origin: None,
             frames: 0,
             last: None,
+            size: 0,
             group: 0,
+            first: 0,
         }
     }
 
@@ -126,7 +170,12 @@ impl Rhythm {
         let run = self.run;
         self.frames += frames as u64;
         let together = self.last.is_some_and(|last| at.saturating_sub(last) <= TOGETHER);
+        if !self.sent_with_last(at) {
+            self.first = d;
+        }
+        let first = self.first;
         self.last = Some(at);
+        self.size = frames;
         let size = if burst { 0 } else { frames };
         self.group = if together { self.group + size } else { size };
         let b = &mut self.buckets[self.current];
@@ -136,53 +185,84 @@ impl Rhythm {
             *b = Bucket {
                 run,
                 used: true,
-                lo: d,
-                hi: d,
+                each: Spread::from(d, b.each.rise),
+                first: Spread::from(first, b.first.rise),
                 ..*b
             };
         }
-        b.rise = b.rise.max(d - b.lo);
-        b.lo = b.lo.min(d);
-        b.hi = b.hi.max(d);
+        b.each.add(d);
+        b.first.add(first);
         b.write = b.write.max(size);
         b.group = b.group.max(self.group);
     }
 
     /// How much later than its sound a write that arrives at `at` is, in
-    /// frames of the stream, against the earliest of the run's writes in
+    /// frames of the stream, against the earliest of the run's groups in
     /// the window: what [`lateness`](Rhythm::lateness) would be for it alone,
     /// without measuring it (a queue that ran dry asks before it decides
-    /// whether the write is late or a stall).
+    /// whether the write is late or a stall). A write sent with the one
+    /// before is as late as the first of them.
     pub fn late_by(&mut self, at: Duration) -> usize {
         self.advance(at);
         let Some(origin) = self.origin else { return 0 };
         let position = self.format.duration(self.frames.min(usize::MAX as u64) as usize);
         let d = micros(at.saturating_sub(origin)) - micros(position);
+        let d = if self.sent_with_last(at) { self.first } else { d };
         let run = self.run;
-        let least = self.buckets.iter().filter(|b| b.used && b.run == run).map(|b| b.lo).min();
+        let least = self.buckets.iter().filter(|b| b.used && b.run == run).map(|b| b.first.lo).min();
         let late = least.map_or(0, |least| (d - least).max(0));
         self.format.frames(Duration::from_micros(late as u64))
     }
 
+    /// How much of what has arrived by `at` a queue that starts playing then
+    /// has to have, in frames of the stream, for the run's writes still to
+    /// come not to run it dry if none is let go of later against its sound
+    /// than the latest of the window was: that one's `d` (its first's, as
+    /// lateness is measured) less where the stream's end is now against
+    /// `at`. Just after a pair lands, the pair and how much later than it
+    /// the latest of the window was; less for every moment waited since. A queue that ran dry and starts again
+    /// on a late write starts from here, rather than from the earliest write
+    /// of the window the hold is measured against.
+    pub fn keep(&self, at: Duration) -> usize {
+        let Some(origin) = self.origin else { return 0 };
+        let position = self.format.duration(self.frames.min(usize::MAX as u64) as usize);
+        let end = micros(at.saturating_sub(origin)) - micros(position);
+        let run = self.run;
+        let latest = self.buckets.iter().filter(|b| b.used && b.run == run).map(|b| b.first.hi).max();
+        let keep = latest.map_or(0, |latest| (latest - end).max(0));
+        self.format.frames(Duration::from_micros(keep as u64)).min(self.format.frames(MOST))
+    }
+
+    /// Whether a write arriving at `at` was sent with the last: before half
+    /// of the last one's sound could have played.
+    fn sent_with_last(&self, at: Duration) -> bool {
+        self.last.is_some_and(|last| at.saturating_sub(last) < self.format.duration(self.size) / 2)
+    }
+
     /// The far end paused: the next write starts a new run of `d`s.
     pub fn restart(&mut self) {
-        // The run's rise across buckets, kept as the current bucket's own,
-        // since the next run's `d`s are not measured against it.
-        let rise = self.rise(Some(self.run));
+        // The run's rises across buckets, kept as the current bucket's own,
+        // since the next run's `d`s are not measured against them.
+        let each = self.rise(Some(self.run), |b| b.each);
+        let first = self.rise(Some(self.run), |b| b.first);
         let b = &mut self.buckets[self.current];
         if b.used {
-            b.rise = b.rise.max(rise);
+            b.each.rise = b.each.rise.max(each);
+            b.first.rise = b.first.rise.max(first);
         }
         self.run = self.run.wrapping_add(1);
         self.origin = None;
         self.frames = 0;
         self.last = None;
+        self.size = 0;
         self.group = 0;
     }
 
     /// How much the queue has to hold, in frames of the stream, for the far
     /// end's writes of late not to run it dry: the largest write and the
-    /// largest rise in lateness after one, or the most that has landed at
+    /// largest rise in `d` after one — every write's, the second of a pair
+    /// too, which is how a queue that started on a pair keeps the pair as
+    /// well as the lateness between pairs — or the most that has landed at
     /// once, whichever is more, and never more than [`MOST`]. Nothing before
     /// the first write.
     pub fn hold(&self) -> usize {
@@ -191,19 +271,22 @@ impl Rhythm {
             write = write.max(b.write);
             group = group.max(b.group);
         }
-        group.max(write + self.lateness()).min(self.format.frames(MOST))
+        let most = self.format.frames(MOST);
+        let rise = self.format.frames(Duration::from_micros(self.rise(None, |b| b.each) as u64)).min(most);
+        group.max(write + rise).min(most)
     }
 
     /// The largest rise in lateness of the window, in frames of the stream:
-    /// how much later than its sound a write has been, against one before
-    /// it. Never more than [`MOST`].
+    /// how much later than its sound a group of writes has been handed over,
+    /// against one before it. Never more than [`MOST`].
     pub fn lateness(&self) -> usize {
-        self.format.frames(Duration::from_micros(self.rise(None) as u64)).min(self.format.frames(MOST))
+        self.format.frames(Duration::from_micros(self.rise(None, |b| b.first) as u64)).min(self.format.frames(MOST))
     }
 
-    /// The largest rise in `d` of the window, in microseconds, from an
+    /// The largest rise in `d` of the window — `spread`'s of each bucket:
+    /// every write's or each group's first — in microseconds, from an
     /// earlier write to a later one of the same run (of `only`, if given).
-    fn rise(&self, only: Option<u32>) -> i64 {
+    fn rise(&self, only: Option<u32>, spread: impl Fn(&Bucket) -> Spread) -> i64 {
         let mut rise = 0i64;
         // Oldest first, so that each bucket's writes are measured against
         // the least `d` before them in the same run.
@@ -213,13 +296,14 @@ impl Rhythm {
             if !b.used || only.is_some_and(|run| run != b.run) {
                 continue;
             }
-            rise = rise.max(b.rise);
+            let s = spread(b);
+            rise = rise.max(s.rise);
             match lo {
                 Some((run, least)) if run == b.run => {
-                    rise = rise.max(b.hi - least);
-                    lo = Some((run, least.min(b.lo)));
+                    rise = rise.max(s.hi - least);
+                    lo = Some((run, least.min(s.lo)));
                 }
-                _ => lo = Some((b.run, b.lo)),
+                _ => lo = Some((b.run, s.lo)),
             }
         }
         rise.max(0)
@@ -451,5 +535,55 @@ pub(super) mod tests {
         assert_eq!(r.lateness(), f.frames(ms(250.0)));
         assert_eq!(r.late_by(ms(2000.0)), 0);
         assert_eq!(r.late_by(ms(2030.0)), f.frames(ms(30.0)));
+    }
+
+    #[test]
+    fn a_pair_is_as_late_as_its_first_write() {
+        // Windows' PCM, 186 ms waves two at once every 372 ms, up to 2 ms
+        // late, the second of a pair now and then 11 ms after the first: it
+        // is a wave further on and was sent with the first, which is no
+        // lateness. An on-time pair is late by the pairs' spread only, not
+        // by a wave, and one 60 ms late by 60 ms; the window's lateness is
+        // the spread, while the hold is the pair.
+        let f = Format::new(44_100, 2).unwrap();
+        let mut r = rhythm(44_100);
+        let wave = 8192.0 / 44.1;
+        let mut late = Lcg(5);
+        for k in 0..20 {
+            let at = k as f64 * 2.0 * wave + 2.0 * late.next();
+            r.wrote(ms(at), 8192, false);
+            r.wrote(ms(at + if k % 4 == 1 { 11.0 } else { 0.05 }), 8192, false);
+        }
+        let next = 20.0 * 2.0 * wave;
+        assert!(f.duration(r.late_by(ms(next))) <= ms(2.0), "{:?}", f.duration(r.late_by(ms(next))));
+        let by = f.duration(r.late_by(ms(next + 60.0)));
+        assert!(by >= ms(58.0) && by <= ms(60.1), "{by:?}");
+        assert!(f.duration(r.lateness()) <= ms(2.0), "{:?}", f.duration(r.lateness()));
+        assert!((held_ms(&r) - 2.0 * wave).abs() < 2.1, "{}", held_ms(&r));
+        // A write sent with the one before is as late as that one.
+        r.wrote(ms(next + 60.0), 8192, false);
+        assert_eq!(r.late_by(ms(next + 60.05)), r.late_by(ms(next + 60.0)));
+    }
+
+    #[test]
+    fn what_to_keep_counts_from_the_latest_write() {
+        // 10 ms writes on time, then one 15 ms late with nothing before it
+        // since: a queue starting just after it has to have the write, the
+        // latest of the window; 5 ms later, 5 ms less. After a pair, the
+        // pair.
+        let f = Format::new(RATE, 2).unwrap();
+        let mut r = rhythm(RATE);
+        for k in 0..10 {
+            r.wrote(ms(k as f64 * 10.0), 480, false);
+        }
+        r.wrote(ms(115.0), 480, false);
+        assert_eq!(r.keep(ms(115.0)), f.frames(ms(10.0)));
+        assert_eq!(r.keep(ms(120.0)), f.frames(ms(5.0)));
+        assert_eq!(r.keep(ms(130.0)), 0);
+        let mut r = rhythm(44_100);
+        r.wrote(ms(0.0), 8192, false);
+        r.wrote(ms(0.05), 8192, false);
+        let pair = 2 * 8192 - Format::new(44_100, 2).unwrap().frames(ms(0.05));
+        assert!(r.keep(ms(0.05)).abs_diff(pair) <= 1, "{} frames, not {pair}", r.keep(ms(0.05)));
     }
 }
