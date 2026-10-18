@@ -40,6 +40,12 @@ const PROTOCOL: u32 = 1;
 const MAX_PIECE: usize = 2048;
 /// `VDAgentMessage`: protocol, type, opaque, size.
 const HEADER: usize = 20;
+/// The biggest message this end reads whole: a clipboard of
+/// [`runtime::MAX_CLIPBOARD`] bytes behind its selection and type words.
+/// Every other message it reads is a few words. The size is a 32-bit field
+/// of the guest's and a message is kept until it is whole, so this is what
+/// the guest can make this end hold; one past it is dropped as it arrives.
+const MAX_MESSAGE: usize = runtime::MAX_CLIPBOARD + 8;
 
 /// What a message is. The ones this client neither sends nor reads — the file
 /// transfer, the audio volume, the display config — are not here.
@@ -96,7 +102,12 @@ pub struct Agent {
     /// resize or a clipboard at all.
     caps: u32,
     /// Bytes of agent message that have arrived and not yet made a whole one.
+    /// At most a header and [`MAX_MESSAGE`] once a piece has been read.
     inbound: Vec<u8>,
+    /// Bytes still to come of a message past [`MAX_MESSAGE`], which are
+    /// dropped as they arrive rather than kept, so the message after it is
+    /// read in step.
+    skipping: usize,
     /// Pieces waiting for a token.
     outbound: VecDeque<Vec<u8>>,
     /// The text this end has offered the guest, kept because a grab says only
@@ -116,6 +127,7 @@ impl Agent {
             tokens: 0,
             caps: 0,
             inbound: Vec::new(),
+            skipping: 0,
             outbound: VecDeque::new(),
             ours: None,
             offered: false,
@@ -129,6 +141,7 @@ impl Agent {
         self.tokens = tokens;
         self.caps = 0;
         self.inbound.clear();
+        self.skipping = 0;
         self.outbound.clear();
         self.announce(true);
     }
@@ -140,6 +153,7 @@ impl Agent {
         self.connected = false;
         self.caps = 0;
         self.inbound.clear();
+        self.skipping = 0;
         self.outbound.clear();
         self.ours = None;
         self.offered = false;
@@ -221,21 +235,38 @@ impl Agent {
     /// and not a message: what this returns is whatever whole ones completed.
     pub fn receive(&mut self, body: &[u8]) -> Vec<Event> {
         let mut events = Vec::new();
-        self.inbound.extend_from_slice(body);
+        // The rest of a message too big to keep, which comes before anything
+        // else in the piece. Nothing is in `inbound` while there is some.
+        let skipped = self.skipping.min(body.len());
+        self.skipping -= skipped;
+        self.inbound.extend_from_slice(&body[skipped..]);
 
         while self.inbound.len() >= HEADER {
             let protocol = u32::from_le_bytes(self.inbound[0..4].try_into().unwrap());
             let message_type = u32::from_le_bytes(self.inbound[4..8].try_into().unwrap());
             let size = u32::from_le_bytes(self.inbound[16..20].try_into().unwrap()) as usize;
-            if self.inbound.len() < HEADER + size {
-                break;
-            }
             if protocol != PROTOCOL {
                 // Nothing can be done with a stream whose framing is not
                 // understood: the length that would skip this message is inside
-                // the part that is not understood.
+                // the part that is not understood. Said as soon as the header
+                // is here, rather than after waiting for that length.
                 log::warn!("agent: protocol {protocol} is not this one");
                 self.inbound.clear();
+                break;
+            }
+            if size > MAX_MESSAGE {
+                // Dropped, not kept until it is whole, and not the end of the
+                // agent: the size says where the next message starts. Before
+                // the sum below, which on a 32-bit phone could wrap.
+                log::warn!(
+                    "agent: message {message_type} of {size} bytes is over the {MAX_MESSAGE} this end reads; skipped"
+                );
+                let here = (self.inbound.len() - HEADER).min(size);
+                self.inbound.drain(..HEADER + here);
+                self.skipping = size - here;
+                continue;
+            }
+            if self.inbound.len() < HEADER + size {
                 break;
             }
             let payload: Vec<u8> = self.inbound[HEADER..HEADER + size].to_vec();
@@ -510,6 +541,58 @@ mod tests {
             Event::Clipboard(got) => assert_eq!(got.len(), text.len()),
             _ => panic!("not the clipboard"),
         }
+    }
+
+    /// A clipboard of `text` from the guest, as the wire carries it.
+    fn guest_clipboard(text: &[u8]) -> Vec<u8> {
+        let mut body = vec![SELECTION_CLIPBOARD, 0, 0, 0];
+        body.extend_from_slice(&UTF8_TEXT.to_le_bytes());
+        body.extend_from_slice(text);
+        agent_message(message::CLIPBOARD, &body)
+    }
+
+    fn texts(events: &[Event]) -> Vec<usize> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Clipboard(text) => Some(text.len()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A message's size is a 32-bit field of the guest's, and the pieces it
+    /// arrives in were kept until it was whole: four gigabytes claimed were
+    /// four gigabytes kept. One past the bound is now dropped as it arrives,
+    /// and the message after it is read in step.
+    #[test]
+    fn a_message_past_the_bound_is_dropped_and_the_next_one_read() {
+        let mut agent = connected();
+        let mut header = agent_message(message::CLIPBOARD, &[]);
+        header[16..20].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(agent.receive(&header).is_empty());
+        let piece = vec![b'x'; 1 << 16];
+        let mut left = u32::MAX as usize;
+        while left > 0 {
+            let n = left.min(piece.len());
+            assert!(agent.receive(&piece[..n]).is_empty());
+            left -= n;
+        }
+        let events = agent.receive(&guest_clipboard(b"after"));
+        assert_eq!(texts(&events), [5], "the next message, read in step");
+
+        // Just past the bound, in one piece with the message after it, and
+        // the bound itself, which is a clipboard.
+        let over = guest_clipboard(&vec![b'x'; runtime::MAX_CLIPBOARD + 1]);
+        let mut both = over.clone();
+        both.extend_from_slice(&guest_clipboard(b"after"));
+        assert_eq!(texts(&agent.receive(&both)), [5]);
+        let at = guest_clipboard(&vec![b'x'; runtime::MAX_CLIPBOARD]);
+        let mut events = Vec::new();
+        for piece in at.chunks(MAX_PIECE) {
+            events.extend(agent.receive(piece));
+        }
+        assert_eq!(texts(&events), [runtime::MAX_CLIPBOARD]);
     }
 
     #[test]
