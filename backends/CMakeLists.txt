@@ -58,6 +58,17 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "" FORCE)
 endif()
 
+# Besides its link-time optimisation, which its module turns off, one
+# setting of FreeRDP's reaches past its own tree: its C standard, which its
+# cmake/ProjectCStandard.cmake caches. On a first configure everything
+# made before it — vento_linux.cmake's logger, libvncserver, TigerVNC — is
+# past before the entry exists, and on every later one reads it, so their C
+# was the compiler's default or gnu11 by the tree's history. Cached here,
+# ahead of all of them, it is gnu11 from the first configure: what a tree
+# that had ever been reconfigured was built as already.
+set(CMAKE_C_STANDARD 11 CACHE STRING "")
+set(CMAKE_C_STANDARD_REQUIRED ON CACHE BOOL "")
+
 include(cmake/warnings.cmake)
 include(platform/linux/cmake/vento_linux.cmake)
 

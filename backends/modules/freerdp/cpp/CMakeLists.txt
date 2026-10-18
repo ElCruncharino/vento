@@ -84,6 +84,13 @@ foreach(off WITHOUT_FREERDP_3x_DEPRECATED WITHOUT_WINPR_3x_DEPRECATED WITH_INTER
         WITH_INTERNAL_MD4 WITH_INTERNAL_MD5 WITH_SMARTCARD_EMULATE WITH_JSON_DISABLED)
     set(${off} ON CACHE BOOL "" FORCE)
 endforeach()
+# Which the first of those implies: their include/CMakeLists.txt caches it
+# when it sees WITHOUT_FREERDP_3x_DEPRECATED, but only after their root has
+# written every WITH_* variable it can see into the build-configuration
+# string the library carries (`freerdp_get_build_config`), so the string — and
+# with it the library's bytes — gained it on the second configure. Cached
+# here, it is in the string from the first.
+set(WITH_OPAQUE_SETTINGS ON CACHE INTERNAL "")
 # Opus and uriparser each fall back to pkg-config when the package search comes
 # up empty, and that can find the host's copy; off by name is the only answer
 # that does not depend on what the build machine has installed.
@@ -208,6 +215,21 @@ endif()
 foreach(pkg Opus uriparser)
     set(CMAKE_DISABLE_FIND_PACKAGE_${pkg} ON)
 endforeach()
+
+# No link-time optimisation, so that the library is the same however many
+# times its tree has been configured. Their cmake/CommonConfigOptions.cmake
+# makes CMAKE_INTERPROCEDURAL_OPTIMIZATION an option() defaulting to whether
+# the compiler can do it, and an option() is a cache entry: on a tree's first
+# configure it does not yet exist when the targets made before theirs read it
+# (the OpenSSL port here, libvncserver's and TigerVNC's under the host root),
+# on every later one it does, so which targets were built with -flto=thin —
+# and the bytes of the library they make — came down to the tree's history. A
+# forced cache entry answers it before their option() is reached, which then
+# does nothing; and the answer is off, which is also what a target made
+# before this line sees on a first configure, so every target in every tree
+# is built the same way whatever the cache held — the four trees under the
+# host root, which share this one cache, included.
+set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF CACHE BOOL "" FORCE)
 
 add_subdirectory("${THIRD_PARTY}/freerdp" freerdp EXCLUDE_FROM_ALL)
 remotedesktop_vendored_warnings("${THIRD_PARTY}/freerdp")
