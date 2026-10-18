@@ -481,10 +481,14 @@ public:
         // started blocks inside their stream until the rest of the message
         // arrives — so a server that accepts the connection and then stalls
         // would hold whoever called destroy(), which on the phone is the main
-        // thread. The descriptor stays TcpSocket's; only the shutdown is ours.
-        const int fd = fd_.load();
-        if (fd >= 0) {
-            ::shutdown(fd, SHUT_RDWR);
+        // thread. The descriptor stays TcpSocket's; only the shutdown is ours,
+        // and it is made under the lock the protocol thread closes the socket
+        // under, so it is never made on a descriptor that is closed by then —
+        // a number the next socket or pipe opened anywhere in the process may
+        // already have been handed.
+        const std::lock_guard<std::mutex> guard(fdLock_);
+        if (fd_ >= 0) {
+            ::shutdown(fd_, SHUT_RDWR);
         }
     }
 
@@ -823,7 +827,10 @@ private:
 
     std::thread thread_;
     int wake_[2] = {-1, -1};
-    std::atomic<int> fd_{-1}; // the socket's, for disconnect(); owned by TcpSocket
+    // The socket's, for disconnect(), and owned by TcpSocket: -1 before it is
+    // open and again from just before it is closed, both under fdLock_.
+    std::mutex fdLock_;
+    int fd_ = -1;
 
     std::mutex lock_;
     std::condition_variable answered_;
@@ -1606,7 +1613,10 @@ void Session::run() {
         return;
     }
 
-    fd_.store(fd);
+    {
+        const std::lock_guard<std::mutex> guard(fdLock_);
+        fd_ = fd;
+    }
     std::unique_ptr<network::TcpSocket> sock;
     std::unique_ptr<Conn> conn;
     std::string detail;
@@ -1750,7 +1760,11 @@ void Session::run() {
         // the connection, so the copy it reads must stop existing first.
         const std::unique_lock<std::shared_mutex> guard(fbLock_);
         conn.reset();
-        sock.reset();
+        {
+            const std::lock_guard<std::mutex> guard(fdLock_);
+            fd_ = -1;
+            sock.reset();
+        }
         shadow_.clear();
         shadowW_ = shadowH_ = 0;
     }
