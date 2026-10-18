@@ -68,7 +68,7 @@ use super::desktop::Desktop;
 use super::follow::{Ask, Follower, Shown, Takes};
 use super::hud::Hud;
 
-use super::keys::{self, KeyIds};
+use super::keys::{Chord, Keyboard, Stroke};
 use super::panel::{Action, Controls, Panel, Snapshot, printable};
 use super::display_server::{self, DisplayServer};
 use super::prompts::{self, Answer, Form, Prompt};
@@ -85,14 +85,12 @@ use media::audio::{Outputs, Playback, Sound, Switch};
 use crate::options::Options;
 use egui::{CursorIcon, TextureHandle, TextureOptions, Vec2, ViewportId, vec2};
 use pane::{MonitorKey, Pane, PaneId, Rebound};
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta};
-use winit::keyboard::{Key as LogicalKey, PhysicalKey};
 use winit::window::{CursorGrabMode, Window};
-use xkeysym::Keysym;
 
 /// RFB's button bits, which every backend takes.
 const LEFT: i32 = 1;
@@ -255,14 +253,8 @@ pub struct Session {
     motion_sent: (i64, i64),
     /// The escape chord was used; a click on the desktop ends it.
     escaped: bool,
-    key_ids: KeyIds,
-    /// The physical keys this session has down at the far end, and the
-    /// keysym each went down as.
-    held: HashMap<PhysicalKey, u32>,
-    /// Every physical key seen down and not yet up, whether or not it was
-    /// sent: what a local chord is read from, since a chord's keys are
-    /// let go of at the far end as soon as the chord is seen.
-    down: HashMap<PhysicalKey, u32>,
+    /// The keys down at the far end, and here.
+    keyboard: Keyboard,
     /// The last pointer event sent, so the same one is not sent twice.
     last_pointer: (i32, i32, i32),
     /// The pane a button was pressed in, while any is held: the far end's
@@ -386,9 +378,7 @@ impl Session {
             fence: None,
             motion_sent: (0, 0),
             escaped: false,
-            key_ids: KeyIds::default(),
-            held: HashMap::new(),
-            down: HashMap::new(),
+            keyboard: Keyboard::default(),
             last_pointer: (-1, -1, 0),
             pointer_owner: None,
             wheel: Vec2::ZERO,
@@ -838,8 +828,7 @@ impl Session {
 
     /// The focus left the process, or went with a window that closed.
     pub fn focus_lost(&mut self) {
-        self.release_keys();
-        self.down.clear();
+        self.keyboard.focus_lost(&*self.backend);
     }
 
     /// What was copied here while the window was away, read when it got the
@@ -865,10 +854,7 @@ impl Session {
     }
 
     fn release_keys(&mut self) {
-        if !self.held.is_empty() {
-            self.held.clear();
-            self.backend.release_all_keys();
-        }
+        self.keyboard.release_all(&*self.backend);
     }
 
     /// Capture or free the pointer to match what the mode, the focus and
@@ -1022,68 +1008,21 @@ impl Session {
     /// A key from winit, already known to be ours (see `takes_keys`),
     /// handed over at `since`.
     pub fn key(&mut self, event: &KeyEvent, since: Instant) {
-        let physical = event.physical_key;
-        match event.state {
-            ElementState::Pressed => {
-                let keysym = keys::keysym(event);
-                if let Some(keysym) = keysym {
-                    self.down.insert(physical, keysym);
-                }
-                // The one chord with a key in it: Ctrl+Alt+D is the overlay,
-                // and the D stays here. The chord's keys are let go of at
-                // the far end, as the escape does, so they do not stay down
-                // there under a key it never saw.
-                if chord(&self.down) && is_d(event) {
-                    self.toggle_hud();
-                    self.release_keys();
-                    return;
-                }
-                if let Some(keysym) = keysym {
-                    let id = self.key_ids.id(physical);
-                    self.held.insert(physical, keysym);
-                    log::debug!("key down {keysym:#x} ({:?}) as {id}", event.logical_key);
-                    self.backend.key_down(keysym, id);
-                    self.hud.keys.record(since.elapsed());
-                }
-                if self.captured() && chord(&self.held) {
-                    // Let go of the lock, and of the chord's keys at the far
-                    // end, which otherwise stay down there.
-                    self.escaped = true;
-                    self.release_keys();
-                }
-            }
-            ElementState::Released => {
-                self.down.remove(&physical);
-                if self.held.remove(&physical).is_some() {
-                    self.backend.key_up(self.key_ids.id(physical));
-                }
-            }
+        let taken = self.keyboard.key(Stroke::of(event), self.captured(), &*self.backend);
+        if taken.sent {
+            self.hud.keys.record(since.elapsed());
+        }
+        match taken.chord {
+            Some(Chord::Overlay) => self.toggle_hud(),
+            Some(Chord::Escape) => self.escaped = true,
+            None => {}
         }
     }
 
     /// A key from winit that is egui's rather than the far end's: view only,
-    /// a prompt, a text field. It goes no further, but `down` is kept true
-    /// to it. Only the far end's keys were counted, so a modifier let go of
-    /// while input was blocked stayed down for the chord: Ctrl held, View
-    /// only on, Ctrl let go, View only off, and the next Alt+D was the
-    /// overlay. And a key that went down at the far end before its release
-    /// came here (a text field taking the keyboard mid-press) is released
-    /// there, which nothing else would do until the focus left.
+    /// a prompt, a text field (see `Keyboard::elsewhere`).
     pub fn key_elsewhere(&mut self, event: &KeyEvent) {
-        let physical = event.physical_key;
-        match event.state {
-            ElementState::Pressed => {
-                if let Some(keysym) = keys::keysym(event) {
-                    self.down.insert(physical, keysym);
-                }
-            }
-            ElementState::Released => {
-                self.down.remove(&physical);
-                if self.held.remove(&physical).is_some() {
-                    self.backend.key_up(self.key_ids.id(physical));
-                }
-            }
-        }
+        self.keyboard.elsewhere(Stroke::of(event), &*self.backend);
     }
 
     /// Raw motion while the pointer is locked.
@@ -1651,20 +1590,6 @@ impl Teardown {
         true
     }
 }
-
-/// Ctrl and Alt, either side, among `keys` together. By keysym rather than
-/// by key code, so that a keyboard whose codes are not the usual ones (a
-/// virtual one, say) still has the chord.
-fn chord(keys: &HashMap<PhysicalKey, u32>) -> bool {
-    let down = |a: Keysym, b: Keysym| keys.values().any(|&k| k == a.raw() || k == b.raw());
-    down(Keysym::Control_L, Keysym::Control_R) && down(Keysym::Alt_L, Keysym::Alt_R)
-}
-
-/// The D of Ctrl+Alt+D: the layout's, as every key is.
-fn is_d(event: &KeyEvent) -> bool {
-    matches!(&event.logical_key, LogicalKey::Character(c) if c.eq_ignore_ascii_case("d"))
-}
-
 
 fn on_off(on: bool) -> &'static str {
     if on { "on" } else { "off" }

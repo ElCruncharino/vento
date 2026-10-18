@@ -972,7 +972,12 @@ physical key gets a stable id so a release finds its press whatever the
 modifiers did meanwhile; every key still down is released when the window
 loses focus. There is one local chord, **Ctrl+Alt+D** for the debug overlay
 (and Ctrl+Alt on its own in relative mode, below): the D stays here, and the
-chord's keys are let go of at the far end, as the escape does. Every other
+chord's keys are let go of at the far end, as the escape does. A key held
+down repeats at the far end as its own autorepeat would, but a repeat is
+never a chord — a held Ctrl+Alt+D is one toggle — and a key the far end no
+longer has down (a chord's, or one let go of when input went elsewhere) is
+sent again only once it is pressed again, so the Alt of the escape held on
+is no lone Alt press there. Every other
 key is the far end's while a session has focus and takes input (not in view
 only, nor under a prompt) — including the compositor's or window manager's own
 chords (unless **Grab keyboard** is off), see below — except while the pointer

@@ -885,7 +885,7 @@ impl Pane {
         let third = format!(
             "mouse {mouse}{sent}  btn {}  keys {} held{}",
             hud::buttons_name(if s.captured() { s.captured_mask } else { mask }),
-            s.held.len(),
+            s.keyboard.held(),
             if s.view_only { "   VIEW ONLY" } else { "" }
         );
 
