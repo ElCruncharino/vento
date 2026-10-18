@@ -70,7 +70,7 @@ use super::hud::Hud;
 
 use super::keys::{self, KeyIds};
 use super::panel::{Action, Controls, Panel, Snapshot};
-use super::platform::{self, Platform};
+use super::display_server::{self, DisplayServer};
 use super::prompts::{self, Answer, Form, Prompt};
 use super::settings::Settings;
 use super::toolbar::Placement;
@@ -876,7 +876,7 @@ impl Session {
         let holder = self.capture.map(|(pane, _)| pane);
         if want {
             if holder.is_none() {
-                self.take_capture(host.window, host.viewport, host.platform, host.pointer);
+                self.take_capture(host.window, host.viewport, host.display_server, host.pointer);
             }
         } else if holder == Some(host.viewport) {
             self.let_go(host.window);
@@ -891,9 +891,9 @@ impl Session {
     }
 
     /// The pointer captured in `window`, `pane`'s, where it is at `pointer`.
-    fn take_capture(&mut self, window: &Window, pane: PaneId, platform: Platform, pointer: Option<PhysicalPosition<f64>>) {
-        match platform {
-            Platform::X11 => {
+    fn take_capture(&mut self, window: &Window, pane: PaneId, display_server: DisplayServer, pointer: Option<PhysicalPosition<f64>>) {
+        match display_server {
+            DisplayServer::X11 => {
                 // winit's X11 `Locked` is unsupported, and `Confined` (an
                 // active pointer grab) makes the X server deliver every
                 // raw motion twice, once for the grab and once for the
@@ -905,7 +905,7 @@ impl Session {
                 // anywhere else before the warp (see `x11::Fence`).
                 self.restore = pointer;
                 window.set_cursor_visible(false);
-                let _ = window.set_cursor_position(platform::centre(window));
+                let _ = window.set_cursor_position(display_server::centre(window));
                 match &mut self.fence {
                     None => self.fence = Fence::new(window),
                     Some(fence) => fence.retarget(window),
@@ -949,7 +949,7 @@ impl Session {
         &mut self,
         (from, from_pane): (&Window, PaneId),
         (to, to_pane): (&Window, PaneId),
-        platform: Platform,
+        display_server: DisplayServer,
         pointer: Option<PhysicalPosition<f64>>,
     ) {
         let step = handover(self.capture.map(|(pane, _)| pane), from_pane, self.wants_capture());
@@ -959,7 +959,7 @@ impl Session {
         self.restore = None;
         self.let_go(from);
         if step == Handover::Move {
-            self.take_capture(to, to_pane, platform, pointer);
+            self.take_capture(to, to_pane, display_server, pointer);
         }
         if self.captured() {
             log::info!("pointer capture handed to another window");
@@ -1435,7 +1435,7 @@ impl Session {
             (Some(key), Some(shape)) => Some((key, &shape.source)),
             _ => None,
         };
-        let alpha = native::Alpha::for_platform(host.platform);
+        let alpha = native::Alpha::for_display_server(host.display_server);
         pane.native
             .after(&mut self.cursors, host.window, host.event_loop, wanted, icon, alpha);
     }

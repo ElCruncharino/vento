@@ -17,27 +17,27 @@ use winit::dpi::PhysicalPosition;
 use winit::window::Window;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Platform {
+pub enum DisplayServer {
     Wayland,
     X11,
     Other,
 }
 
-impl Platform {
+impl DisplayServer {
     /// From the window's raw display handle.
-    pub fn of(window: &Window) -> Platform {
+    pub fn of(window: &Window) -> DisplayServer {
         match window.display_handle().map(|h| h.as_raw()) {
-            Ok(RawDisplayHandle::Wayland(_)) => Platform::Wayland,
-            Ok(RawDisplayHandle::Xlib(_) | RawDisplayHandle::Xcb(_)) => Platform::X11,
-            _ => Platform::Other,
+            Ok(RawDisplayHandle::Wayland(_)) => DisplayServer::Wayland,
+            Ok(RawDisplayHandle::Xlib(_) | RawDisplayHandle::Xcb(_)) => DisplayServer::X11,
+            _ => DisplayServer::Other,
         }
     }
 
     pub fn name(self) -> &'static str {
         match self {
-            Platform::Wayland => "Wayland",
-            Platform::X11 => "X11",
-            Platform::Other => "other",
+            DisplayServer::Wayland => "Wayland",
+            DisplayServer::X11 => "X11",
+            DisplayServer::Other => "other",
         }
     }
 }

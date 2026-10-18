@@ -44,7 +44,7 @@ mod text;
 mod wayland;
 mod x11;
 
-use super::Platform;
+use super::DisplayServer;
 use std::os::unix::net::UnixStream;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
@@ -176,7 +176,7 @@ impl Clipboard {
     /// The clipboard for the display server `window` is on, or `None` where
     /// there is none to be had (the log says why). `wake` is called from the
     /// clipboard's thread whenever an answer is ready.
-    pub fn new(window: &Window, platform: Platform, wake: Box<dyn Fn() + Send + Sync>) -> Option<Clipboard> {
+    pub fn new(window: &Window, display_server: DisplayServer, wake: Box<dyn Fn() + Send + Sync>) -> Option<Clipboard> {
         let (tx, rx) = channel();
         let (ours, theirs) = match UnixStream::pair() {
             Ok(pair) => pair,
@@ -200,17 +200,17 @@ impl Clipboard {
         // Set up on its own thread too, so that not even the first round
         // trips are the window's; a setup that fails says so in the log,
         // and reads then go unanswered, leaving egui's own clipboard.
-        let body: Box<dyn FnOnce() + Send> = match platform {
-            Platform::X11 => Box::new(move || {
+        let body: Box<dyn FnOnce() + Send> = match display_server {
+            DisplayServer::X11 => Box::new(move || {
                 if let Some(worker) = x11::Worker::new(link) {
                     worker.run();
                 }
             }),
-            Platform::Wayland => {
+            DisplayServer::Wayland => {
                 let worker = wayland::Worker::new(window, link)?;
                 Box::new(move || worker.run())
             }
-            Platform::Other => return None,
+            DisplayServer::Other => return None,
         };
         let thread = std::thread::Builder::new()
             .name("vento-clipboard".into())

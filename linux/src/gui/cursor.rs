@@ -37,7 +37,7 @@
 //! When the shape is no longer wanted the default is put back *before*
 //! egui-winit's turn, so that whatever icon egui then asks for lands on top.
 
-use super::platform::Platform;
+use super::display_server::DisplayServer;
 use crate::events::Cursor;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -95,8 +95,8 @@ pub enum Alpha {
 }
 
 impl Alpha {
-    pub fn for_platform(platform: Platform) -> Alpha {
-        if platform == Platform::X11 {
+    pub fn for_display_server(display_server: DisplayServer) -> Alpha {
+        if display_server == DisplayServer::X11 {
             Alpha::Premultiplied
         } else {
             Alpha::Straight
@@ -295,7 +295,7 @@ mod tests {
         for i in [0..4, 4..8, 12..16] {
             assert_eq!(straight[i.clone()], premultiplied[i]);
         }
-        assert_eq!(Alpha::for_platform(Platform::X11), Alpha::Premultiplied);
-        assert_eq!(Alpha::for_platform(Platform::Wayland), Alpha::Straight);
+        assert_eq!(Alpha::for_display_server(DisplayServer::X11), Alpha::Premultiplied);
+        assert_eq!(Alpha::for_display_server(DisplayServer::Wayland), Alpha::Straight);
     }
 }

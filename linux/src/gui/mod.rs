@@ -45,12 +45,12 @@ mod clipboard;
 mod cursor;
 mod desktop;
 mod dialog;
+mod display_server;
 mod follow;
 mod hud;
 mod icons;
 mod keys;
 mod panel;
-mod platform;
 mod prompts;
 mod session;
 mod settings;
@@ -64,8 +64,8 @@ use crate::backends::{Dirs, Kind};
 use crate::options::Options;
 use clipboard::{Clipboard, Why};
 use dialog::Dialog;
+pub use display_server::DisplayServer;
 use egui::ViewportId;
-pub use platform::Platform;
 use session::{Session, Teardown, WindowOp};
 pub use settings::Settings;
 use std::collections::HashMap;
@@ -100,7 +100,7 @@ pub struct Launch {
     pub settings: Settings,
     /// The display server to open the window on, where the command line
     /// named one; `None` is winit's choice.
-    pub platform: Option<Platform>,
+    pub display_server: Option<DisplayServer>,
 }
 
 /// Why the loop was woken from another thread or from egui.
@@ -125,7 +125,7 @@ pub struct Host<'a> {
     /// Where the keyboard shortcuts inhibitor is, for the debug overlay.
     pub inhibitor: &'static str,
     /// Which display server the window is on.
-    pub platform: Platform,
+    pub display_server: DisplayServer,
     /// Where the pointer last was in the window, as the window saw it
     /// (not while the session holds it at the centre).
     pub pointer: Option<PhysicalPosition<f64>>,
@@ -142,11 +142,11 @@ pub struct Host<'a> {
 pub fn run(launch: Launch) -> i32 {
     let mut builder = EventLoop::<Wake>::with_user_event();
     // Fully qualified: both traits have a `with_any_thread` too.
-    match launch.platform {
-        Some(Platform::X11) => {
+    match launch.display_server {
+        Some(DisplayServer::X11) => {
             winit::platform::x11::EventLoopBuilderExtX11::with_x11(&mut builder);
         }
-        Some(Platform::Wayland) => {
+        Some(DisplayServer::Wayland) => {
             winit::platform::wayland::EventLoopBuilderExtWayland::with_wayland(&mut builder);
         }
         _ => {}
@@ -173,7 +173,7 @@ pub fn run(launch: Launch) -> i32 {
         screen: Screen::Dialog(Dialog::new()),
         keyboard: None,
         clipboard: None,
-        platform: Platform::Other,
+        display_server: DisplayServer::Other,
         focused: None,
         focus_events: Vec::new(),
         modifiers: Default::default(),
@@ -387,7 +387,7 @@ struct App {
     /// `clipboard/`).
     clipboard: Option<Clipboard>,
     /// Which display server the window is on, once it is open.
-    platform: Platform,
+    display_server: DisplayServer,
     /// Which of our windows has the keyboard focus, if any does.
     focused: Option<WindowId>,
     /// The focus events of this turn of the loop, resolved in
@@ -473,9 +473,9 @@ impl App {
             });
         }
         let window = Arc::clone(&self.windows[&id].window);
-        self.platform = Platform::of(&window);
-        log::info!("display server: {}", self.platform.name());
-        if self.platform == Platform::X11 {
+        self.display_server = DisplayServer::of(&window);
+        log::info!("display server: {}", self.display_server.name());
+        if self.display_server == DisplayServer::X11 {
             // winit turns XI2's raw events off on every focus-out, and that
             // includes the ones our own keyboard grab causes, which are
             // filtered out below as not a focus change at all; relative
@@ -487,7 +487,7 @@ impl App {
         let wake: Box<dyn Fn() + Send + Sync> = Box::new(move || {
             let _ = proxy.send_event(Wake::Now(None));
         });
-        self.clipboard = Clipboard::new(&window, self.platform, wake);
+        self.clipboard = Clipboard::new(&window, self.display_server, wake);
         self.keyboard = x11::Keyboard::new(&window);
         if self.keyboard.is_some() {
             log::info!(
@@ -795,7 +795,7 @@ impl App {
             event_loop,
             focused,
             inhibitor,
-            platform: self.platform,
+            display_server: self.display_server,
             pointer: surface.pointer,
             output: surface.output.clone(),
             clipboard: self.clipboard.as_ref(),
@@ -1016,7 +1016,7 @@ impl App {
             event_loop,
             focused,
             inhibitor,
-            platform: self.platform,
+            display_server: self.display_server,
             pointer: surface.pointer,
             output: surface.output.clone(),
             clipboard: self.clipboard.as_ref(),
@@ -1051,7 +1051,7 @@ impl App {
                 event_loop,
                 focused,
                 inhibitor,
-                platform: self.platform,
+                display_server: self.display_server,
                 pointer: surface.pointer,
                 output: surface.output.clone(),
                 clipboard: self.clipboard.as_ref(),
@@ -1085,7 +1085,7 @@ impl App {
                         event_loop,
                         focused,
                         inhibitor,
-                        platform: self.platform,
+                        display_server: self.display_server,
                         pointer: surface.pointer,
                         output: surface.output.clone(),
                         clipboard: self.clipboard.as_ref(),
@@ -1144,7 +1144,7 @@ impl App {
                 if let (Screen::Session(session), Some(f), Some(t)) =
                     (&mut self.screen, self.windows.get(&from), self.windows.get(&to))
                 {
-                    session.hand_over_capture((&f.window, f.viewport), (&t.window, t.viewport), self.platform, t.pointer);
+                    session.hand_over_capture((&f.window, f.viewport), (&t.window, t.viewport), self.display_server, t.pointer);
                 }
                 (Some(from), Some(to), None)
             }
@@ -1167,7 +1167,7 @@ impl App {
                     event_loop,
                     focused,
                     inhibitor,
-                    platform: self.platform,
+                    display_server: self.display_server,
                     pointer: surface.pointer,
                     output: surface.output.clone(),
                     clipboard: self.clipboard.as_ref(),
@@ -1362,7 +1362,7 @@ impl ApplicationHandler<Wake> for App {
                 if let Screen::Session(s) = &self.screen
                     && s.centred(viewport)
                 {
-                    let c = platform::centre(&window);
+                    let c = display_server::centre(&window);
                     if position.x.round() as i32 != c.x || position.y.round() as i32 != c.y {
                         let _ = window.set_cursor_position(c);
                     }
@@ -1378,7 +1378,7 @@ impl ApplicationHandler<Wake> for App {
             WindowEvent::CursorLeft { .. } | WindowEvent::CursorEntered { .. }
                 if matches!(&self.screen, Screen::Session(s) if s.centred(viewport)) =>
             {
-                let _ = window.set_cursor_position(platform::centre(&window));
+                let _ = window.set_cursor_position(display_server::centre(&window));
                 return;
             }
             WindowEvent::MouseInput { state: pressed, button, .. } => {

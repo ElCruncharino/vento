@@ -912,7 +912,7 @@ impl Pane {
         };
         let fourth = format!(
             "{}  follow {follow}  shape {shape}  clipboard out {} in {}",
-            host.platform.name(),
+            host.display_server.name(),
             on_off(s.settings.clipboard_out),
             on_off(s.settings.clipboard_in)
         );

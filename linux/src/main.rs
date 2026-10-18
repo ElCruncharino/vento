@@ -244,7 +244,7 @@ headless, any of which selects the probe instead of the window:
         let mut connect = false;
         // The window's display server, if named; the probe has no window and
         // takes either without a word.
-        let mut platform = None;
+        let mut display_server = None;
 
         let mut it = args.into_iter().peekable();
         let value = |it: &mut std::iter::Peekable<std::vec::IntoIter<String>>, flag: &str| {
@@ -266,11 +266,11 @@ headless, any of which selects the probe instead of the window:
                 _ if arg.starts_with("--hw-decode=") => settings.hw_decode = hw_decode(&arg)?,
                 _ if arg.starts_with("--audio-output=") => settings.audio_output = audio_output(&arg)?,
                 "--x11" | "--wayland" => {
-                    let named = if arg == "--x11" { gui::Platform::X11 } else { gui::Platform::Wayland };
-                    if platform.is_some_and(|p| p != named) {
+                    let named = if arg == "--x11" { gui::DisplayServer::X11 } else { gui::DisplayServer::Wayland };
+                    if display_server.is_some_and(|p| p != named) {
                         return Err("--x11 and --wayland are each other's opposite".into());
                     }
-                    platform = Some(named);
+                    display_server = Some(named);
                 }
                 "--probe" => {
                     headless = true;
@@ -343,7 +343,7 @@ headless, any of which selects the probe instead of the window:
                 connect: false,
                 dirs,
                 settings,
-                platform,
+                display_server,
             })));
         }
         // The dialog can be filled in from a backend alone; a session needs
@@ -376,7 +376,7 @@ headless, any of which selects the probe instead of the window:
                 connect,
                 dirs,
                 settings,
-                platform,
+                display_server,
             })));
         }
 

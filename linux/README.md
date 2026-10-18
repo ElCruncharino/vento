@@ -66,7 +66,7 @@ clients, and what differs between them is each client's own code.
   `icons.rs` (the toolbar's font and the symbols it draws, tested against
   the font and its codepoints file), `follow.rs` (the desktop
   following the windows' sizes, a monitor per window where the far end takes
-  a layout: the phone's `WindowFollower`, pure logic with tests), `keys.rs` (winit keys to X11 keysyms), `platform.rs` (which display
+  a layout: the phone's `WindowFollower`, pure logic with tests), `keys.rs` (winit keys to X11 keysyms), `display_server.rs` (which display
   server the window is on),
   `wayland.rs` (the Wayland keyboard shortcuts inhibitor), `x11.rs` (the X11
   keyboard grab that stands in for it), `cursor.rs` (the far end's cursor as
