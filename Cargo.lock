@@ -2553,6 +2553,8 @@ version = "0.0.1"
 dependencies = [
  "libc",
  "log",
+ "rustls",
+ "sha2 0.11.0",
  "socket2",
 ]
 
@@ -2587,7 +2589,6 @@ dependencies = [
  "remotedesktop-common",
  "remotedesktop-platform-android",
  "remotedesktop-session",
- "remotedesktop-tls",
  "rustls",
  "x509-cert 0.2.5",
 ]
@@ -2633,7 +2634,6 @@ dependencies = [
  "remotedesktop-common",
  "remotedesktop-platform-android",
  "remotedesktop-session",
- "remotedesktop-tls",
  "rustls",
  "sha2 0.11.0",
 ]
@@ -2674,7 +2674,6 @@ dependencies = [
  "remotedesktop-common",
  "remotedesktop-platform-android",
  "remotedesktop-session",
- "remotedesktop-tls",
  "rustls",
  "shakenfist-spice-compression",
  "shakenfist-spice-protocol",
@@ -2690,15 +2689,6 @@ dependencies = [
  "log",
  "remotedesktop-platform-android",
  "remotedesktop-session",
-]
-
-[[package]]
-name = "remotedesktop-tls"
-version = "0.0.1"
-dependencies = [
- "log",
- "rustls",
- "sha2 0.11.0",
 ]
 
 [[package]]

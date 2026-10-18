@@ -20,13 +20,12 @@
 //! finding what moved, and converting only that — is [`video`]'s and the same
 //! for both.
 //!
+//! A protocol that reaches TLS reaches it through [`tls`]: the certificate
+//! pinned rather than verified, and one connection read and written by two
+//! threads.
+//!
 //! What is not here: anything with `jni` in it, which is
-//! `remotedesktop-platform-android`; and the TLS half, which was here until a
-//! protocol arrived that reaches no TLS at all. What decided that split was
-//! neither taste nor compile time: cargo resolves a workspace's features as a
-//! union, so a crate that depends on this one is a crate whose dependency
-//! graph names rustls whether it uses it or not — and an artefact's licence
-//! page is generated from that graph.
+//! `remotedesktop-platform-android`.
 
 pub mod address;
 pub mod audio;
@@ -37,6 +36,7 @@ pub mod handler;
 pub mod hangup;
 pub mod session;
 pub mod slot;
+pub mod tls;
 pub mod video;
 
 pub use client::Client;

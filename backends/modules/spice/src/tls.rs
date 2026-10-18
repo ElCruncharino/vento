@@ -3,12 +3,12 @@
 
 //! The TLS port, pinned rather than verified.
 //!
-//! `remotedesktop-tls`'s verifier, which is the same one the RFB and RDP
+//! `common::tls::pinning`'s verifier, which is the same one the RFB and RDP
 //! clients use and the whole of what "trusted" means in this app: nothing
 //! vouches for a hypervisor's certificate, so the identity is the key and the
 //! app remembers it per address. What is different here is only that the
 //! handshake is async, so it is `tokio-rustls` rather than the blocking
-//! connection that crate's `stream` module wraps.
+//! connection `common::tls::stream` wraps.
 //!
 //! **A plain SPICE port and a TLS SPICE port are different ports**, not a
 //! negotiation, so whether a session is encrypted is a fact about what somebody
@@ -19,7 +19,7 @@
 
 use crate::error::{Error, Result};
 use std::sync::{Arc, Mutex};
-use tls::pinning::{self, Pinning};
+use common::tls::pinning::{self, Pinning};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 use tokio_rustls::client::TlsStream;
