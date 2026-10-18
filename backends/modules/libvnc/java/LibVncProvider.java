@@ -18,7 +18,7 @@ import java.util.Map;
  * This module's entry in a build's list of backends. What the libvncclient
  * backend is called and what it can be told are the catalog's, which the Linux
  * client reads too: {@link LibVncCatalog}, generated from {@code
- * backends/session} at build time, holds the words and the option keys.
+ * backends/api} at build time, holds the words and the option keys.
  *
  * <p>A session is a {@link NativeBackend} on {@link LibVncNatives}, generated
  * too: the shim over libvncclient in {@code cpp/}, with the module's crate

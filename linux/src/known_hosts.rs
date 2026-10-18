@@ -21,7 +21,7 @@
 //!
 //! What a pin means — the key an address is filed under, how two
 //! fingerprints compare, what is asked when they do not, and when an answer
-//! is pinned — is `session::trust`, the phone's rule as well as this
+//! is pinned — is `api::trust`, the phone's rule as well as this
 //! client's; what is here is where this client keeps them, as a
 //! `trust::Store`.
 //!
@@ -33,7 +33,7 @@
 //! beside itself and renamed over — so a crash leaves the old one or the new
 //! one, never half of either, and it is private to this user.
 
-use session::trust;
+use api::trust;
 use std::fs::{DirBuilder, OpenOptions};
 use std::io::{self, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
@@ -244,7 +244,7 @@ impl Store {
     }
 }
 
-/// The pin store: `session::trust`'s [`Store`](trust::Store) over a
+/// The pin store: `api::trust`'s [`Store`](trust::Store) over a
 /// [`Store`] file, which is what the window and the probe decide against.
 #[derive(Clone, Debug)]
 pub struct KnownHosts {
@@ -290,8 +290,8 @@ pub fn realvnc_identities(config: &Path) -> Store {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use session::events::Identity;
-    use session::trust::{Decision, Pinned, Store as _, answered, decide};
+    use api::events::Identity;
+    use api::trust::{Decision, Pinned, Store as _, answered, decide};
 
     const FP: &str = "66:cc:ed:01:02:03:04:05:06:07:08:09:0a:0b:0c:0d";
 

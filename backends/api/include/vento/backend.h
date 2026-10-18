@@ -9,12 +9,12 @@
 // C++ libraries with a shim of ours around each, and those shims were three
 // copies of one JNI binding. What differed between them was the protocol's;
 // what was the same is written once against this header, in Rust:
-// `session::c` in `backends/session` is every C backend as a
-// `session::Backend`, and each client holds that — the Linux one directly,
+// `api::c` in `backends/api` is every C backend as an
+// `api::Backend`, and each client holds that — the Linux one directly,
 // the phone through the one JNI layer in `backends/platform/android`, linked
 // into each C backend's own library. So this header is that crate's, in
-// `backends/session/include/vento/` with the other neutral headers: the
-// session crate reads them into Rust, and each C backend's crate reads its
+// `backends/api/include/vento/` with the other neutral headers: the
+// `api` crate reads them into Rust, and each C backend's crate reads its
 // own header over them. A platform's C is `vento_log` and nothing else:
 // logcat on the phone, stderr on a desktop.
 //
@@ -120,7 +120,7 @@ enum {
    demands, and the session files call through these without a NULL check —
    which is the cheapest thing a callback can be, and `damaged` runs hundreds
    of times a frame. A platform that is not interested in one writes a
-   function that returns. `session::c` fills every member, into the mailbox
+   function that returns. `api::c` fills every member, into the mailbox
    both clients drain. */
 typedef struct vento_callbacks {
     void *user;
@@ -202,7 +202,7 @@ typedef struct vento_callbacks {
 /* The strings `info` returns: a row per fact, in the order that backend's
    Rust adapter labels them. Owned by whoever asked, and freed with
    `vento_strings_free`. Chosen over an emit callback because the caller —
-   `session::c`, turning them into a panel's rows for either client — wants
+   `api::c`, turning them into a panel's rows for either client — wants
    the whole list at once, and over a fixed array because the
    backends disagree about how many facts there are. */
 typedef struct vento_strings {

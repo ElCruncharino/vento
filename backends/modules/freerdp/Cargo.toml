@@ -1,5 +1,5 @@
 # The FreeRDP backend as the clients hold it: its `Kind`, over the one
-# adapter for the C backends (`remotedesktop-session`'s `c` feature), with
+# adapter for the C backends (`remotedesktop-api`'s `c` feature), with
 # this backend's own config, live options and info rows. The library is the
 # shim in `cpp/` over libfreerdp, built by CMake, and whatever links
 # this crate links that library too: nothing here links on its own, which is
@@ -18,7 +18,7 @@ doctest = false
 
 [dependencies]
 log.workspace = true
-remotedesktop-session = { workspace = true, features = ["c"] }
+remotedesktop-api = { workspace = true, features = ["c"] }
 
 # The phone's half: the one JNI layer, registered on this module's generated
 # natives class from the `JNI_OnLoad` in `src/lib.rs`. The library the app
@@ -28,6 +28,6 @@ remotedesktop-session = { workspace = true, features = ["c"] }
 remotedesktop-platform-android.workspace = true
 
 [build-dependencies]
-# `vento/freerdp.h`, read rather than retyped (build.rs), as the session crate
+# `vento/freerdp.h`, read rather than retyped (build.rs), as the `api` crate
 # reads the shared headers.
 bindgen.workspace = true

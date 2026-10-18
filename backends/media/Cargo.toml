@@ -8,7 +8,7 @@
 #
 # Beside `remotedesktop-runtime` rather than in it or over it: nothing here
 # needs a handler, a session or an event, and nothing there needs a frame or
-# a sample, so neither crate depends on the other. `remotedesktop-session`
+# a sample, so neither crate depends on the other. `remotedesktop-api`
 # holds both. The Linux platform crate depends on this one alone.
 [package]
 name = "remotedesktop-media"

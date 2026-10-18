@@ -2,7 +2,7 @@
 # backends, written against the neutral layer and nothing of a phone's.
 #
 # Every backend comes in as a crate holding its adapter to the one `Backend`
-# trait of `remotedesktop-session`, which the phone shares: the four Rust
+# trait of `remotedesktop-api`, which the phone shares: the four Rust
 # protocols' own crates, and the three C libraries' small crates over the
 # vtable in `vento/backend.h`, whose shared libraries `build.rs` has CMake
 # make out of `backends/`. RealVNC's adapter is the one still here, its
@@ -37,7 +37,7 @@ log = "0.4"
 remotedesktop-media = { path = "../backends/media" }
 # The seam every backend is held by, and the one adapter over the C vtable
 # (the `c` feature), which RealVNC's adapter here fills in.
-remotedesktop-session = { path = "../backends/session", features = ["c"] }
+remotedesktop-api = { path = "../backends/api", features = ["c"] }
 # libavcodec, for RustDesk's picture: the one protocol here whose frames are
 # video. Its build script builds FFmpeg and dav1d from `third_party/`
 # statically, and says where (`links`), so that `build.rs` hands the same
@@ -94,8 +94,8 @@ bytemuck = "1"
 # how the C backends get here; `build.rs` says where the libraries land.
 cmake = "0.1"
 # `vento/realvnc.h`, for the RealVNC adapter here, read rather than retyped as
-# the session crate reads the shared headers and each C backend's crate its
-# own. Already in the graph through `remotedesktop-session`'s `c` feature.
+# the `api` crate reads the shared headers and each C backend's crate its
+# own. Already in the graph through `remotedesktop-api`'s `c` feature.
 bindgen = "0.73"
 
 [dev-dependencies]

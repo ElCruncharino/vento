@@ -3,7 +3,7 @@
 
 // The platform's sound output, as a C backend is handed it: a table of calls
 // over `media::audio::Outputs` (AAudio on the phone, ALSA on the Linux
-// client), filled in by `session::c::audio` and passed in a backend's config.
+// client), filled in by `api::c::audio` and passed in a backend's config.
 // Function pointers rather than symbols, for the reason `vento/video.h` gives:
 // a backend library links nothing of the process it is loaded into.
 //

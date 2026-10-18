@@ -1,5 +1,5 @@
 # What a backend's native half needs of Android and no protocol owns: the one
-# JNI layer every backend but RealVNC is reached through (any `session::Backend`,
+# JNI layer every backend but RealVNC is reached through (any `api::Backend`,
 # registered on its module's natives class), the locked bitmap, the logger —
 # and MediaCodec, which is the phone's video decoder and is reached through
 # the NDK rather than through Java.
@@ -9,8 +9,8 @@
 # build — tests, examples, `remotedesktop-platform-linux` — free of anything
 # that knows a phone exists; and neither `remotedesktop-runtime` nor
 # `remotedesktop-media` depends on it at all, because the layering runs the
-# other way: this crate holds a `session::Backend` for Java and implements
-# `media::video::Decoders` for MediaCodec, and neither `media` nor `session`
+# other way: this crate holds an `api::Backend` for Java and implements
+# `media::video::Decoders` for MediaCodec, and neither `media` nor `api`
 # hears about either.
 #
 # On a host target the crate is the JNI table and nothing else: plain data,
@@ -36,6 +36,6 @@ name = "platform_android"
 log.workspace = true
 remotedesktop-runtime.workspace = true
 remotedesktop-media.workspace = true
-remotedesktop-session.workspace = true
+remotedesktop-api.workspace = true
 jni.workspace = true
 android_logger.workspace = true

@@ -1,28 +1,28 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! libvncclient's `vento_libvnc` as a [`Backend`](session::backend::Backend):
+//! libvncclient's `vento_libvnc` as a [`Backend`](api::backend::Backend):
 //! its config from the options, its live options and its rows — what the
 //! Linux client holds, and on the phone what the one JNI layer stands in front
 //! of, linked into the library CMake makes of the C.
 
-use session::c::{Behaviour, CSession, start};
-use session::backend::{Backend, ConnectionFact, Field, Traffic};
-use session::kind::{CONNECT_TIMEOUT_MS, Connect, Kind};
-use session::options::Options;
+use api::c::{Behaviour, CSession, start};
+use api::backend::{Backend, ConnectionFact, Field, Traffic};
+use api::kind::{CONNECT_TIMEOUT_MS, Connect, Kind};
+use api::options::Options;
 use std::ffi::CString;
 
 /// `vento/libvnc.h`, as `build.rs` generated it, over the shared declarations
 /// it is written against.
 mod ffi {
     #![allow(non_camel_case_types, dead_code)]
-    pub use session::c::ffi::*;
+    pub use api::c::ffi::*;
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 }
 
 pub static KIND: Kind = Kind {
-    about: &session::catalog::LIBVNC,
-    version: || unsafe { session::c::string(ffi::vento_libvnc_version()) },
+    about: &api::catalog::LIBVNC,
+    version: || unsafe { api::c::string(ffi::vento_libvnc_version()) },
     create,
 };
 

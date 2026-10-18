@@ -1,25 +1,25 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The IronRDP client as a [`Backend`](session::backend::Backend), with this
+//! The IronRDP client as a [`Backend`](api::backend::Backend), with this
 //! backend's option handling and its rows: what the Linux client holds, and
 //! what the phone reaches through `platform_android`'s JNI layer.
 
 use crate::{Client, Config, Nla, Platform};
 use runtime::{Bridge, Session};
-use session::backend::{
+use api::backend::{
     Backend, ConnectionFact, Credentials, Facts, Field, Monitor, Picture, Traffic,
 };
-use session::credentials::rdp_identity;
-use session::events::{Feed, Mailbox};
-use session::kind::{self, CONNECT_TIMEOUT_MS, Connect, Kind};
-use session::options::Options;
-use session::rdp::{KEYBOARD_LAYOUT, desktop_size, monitor_count};
+use api::credentials::rdp_identity;
+use api::events::{Feed, Mailbox};
+use api::kind::{self, CONNECT_TIMEOUT_MS, Connect, Kind};
+use api::options::Options;
+use api::rdp::{KEYBOARD_LAYOUT, desktop_size, monitor_count};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 pub static KIND: Kind = Kind {
-    about: &session::catalog::IRONRDP,
+    about: &api::catalog::IRONRDP,
     version: || crate::PROTOCOL_VERSION.to_string(),
     create,
 };

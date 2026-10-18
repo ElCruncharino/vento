@@ -12,11 +12,11 @@
 
 use serde_json::Value;
 use std::path::PathBuf;
-use session::Credentials;
-use session::credentials::{fill_user, rdp_identity, split_domain};
-use session::events::Identity;
-use session::options::{Choice, Kind, Options, Scope, Spec};
-use session::trust::{self, Verdict};
+use api::Credentials;
+use api::credentials::{fill_user, rdp_identity, split_domain};
+use api::events::Identity;
+use api::options::{Choice, Kind, Options, Scope, Spec};
+use api::trust::{self, Verdict};
 
 // What a credentials prompt's answer comes to, for every client that has
 // one. A name is read trimmed everywhere, so one that is only spaces is an

@@ -536,7 +536,7 @@ public:
     }
 
     /* For any number of screens, since this session sends layouts: a single
-       size over several, which would merge them, is what session::c declines
+       size over several, which would merge them, is what api::c declines
        to offer, as the header has it. */
     bool canResize() const {
         return canResize_ && !viewOnly_;

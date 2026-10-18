@@ -116,7 +116,7 @@ impl Hardware {
 /// that moves one anyway is TigerVNC's, whose library decodes each rectangle
 /// on whichever of its worker threads is free: one call at a time, never two
 /// at once, and that promise is written down where it is made
-/// (`session::c::video`).
+/// (`api::c::video`).
 pub trait Decoder {
     /// True when a frame arrived, with the rows and columns it changed added to
     /// `changed`. `out` is `width * height` words, row-major, `R, G, B, A` in

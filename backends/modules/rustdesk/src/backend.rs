@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The RustDesk client as a [`Backend`](session::backend::Backend), with this
+//! The RustDesk client as a [`Backend`](api::backend::Backend), with this
 //! backend's option handling and its rows: what the Linux client holds, and
 //! what the phone reaches through `platform_android`'s JNI layer. The picture is decoded by whatever the client
 //! hands over in [`Connect::decoders`]: libavcodec on Linux, MediaCodec on
@@ -9,12 +9,12 @@
 
 use crate::{Client, Config, Platform, PreferredCodec, Quality, Reach};
 use runtime::{Bridge, Session};
-use session::backend::{
+use api::backend::{
     Backend, ConnectionFact, Credentials, Facts, Field, Monitor, Picture, Traffic,
 };
-use session::events::{Feed, Mailbox};
-use session::kind::{self, CONNECT_TIMEOUT_MS, Connect, Kind};
-use session::options::Options;
+use api::events::{Feed, Mailbox};
+use api::kind::{self, CONNECT_TIMEOUT_MS, Connect, Kind};
+use api::options::Options;
 use media::video::GpuPicture;
 use std::sync::{Arc, Mutex, RwLockReadGuard};
 use std::time::Duration;
@@ -22,7 +22,7 @@ use std::time::Duration;
 use crate::framebuffer::Framebuffer;
 
 pub static KIND: Kind = Kind {
-    about: &session::catalog::RUSTDESK,
+    about: &api::catalog::RUSTDESK,
     version: || crate::VERSION.to_string(),
     create,
 };

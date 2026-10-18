@@ -34,7 +34,7 @@ mod host {
     use vento::backends::{self, Connect, Dirs, Kind, Platform};
     use vento::events::{Event, Mailbox, State};
     use vento::gui;
-    use session::trust::{self, Decision};
+    use api::trust::{self, Decision};
     use vento::known_hosts::KnownHosts;
     use vento::options::{self, Options};
     use vento::ppm;

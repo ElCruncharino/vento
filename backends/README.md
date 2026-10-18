@@ -4,7 +4,7 @@ The eight remote desktop backends, what they share, and how they are built
 for the phone and for the Linux client.
 
 **The rule:** a thing that only one backend needs lives under that backend's
-module, `modules/<name>/`; `runtime/`, `media/` and `session/` hold only
+module, `modules/<name>/`; `runtime/`, `media/` and `api/` hold only
 what two or more backends, or both clients, share; and what one platform
 needs of all of them lives under that platform, `platform/<os>/` — its crate, its C,
 its CMake half and, for the phone, its Java and its ports. Inside a module,
@@ -19,7 +19,7 @@ the CMake both builds include.
       buildSrc/         the Gradle tasks its helpers use
       CMakeLists.txt    the host build of the C backends
       cmake/            warnings.cmake, reproducible.cmake
-      runtime/  media/  session/  codegen/  vectors/
+      runtime/  media/  api/  codegen/  vectors/
       modules/<name>/   one per backend (eight)
       platform/
         android/        crate, java/, javatest/, cpp/, cmake/, ports/
@@ -35,8 +35,8 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
 - `catalog.rs` — the backend's entry in the catalog: its `About` (name,
   description, place in a picker, how its identities are pinned, whether its
   user name carries a domain) and its options table, with their tests.
-  Compiled by `session` by path (`session/src/catalog.rs`), so that
-  `vento-codegen` builds from `session` alone; Gradle's `codegenSources`
+  Compiled by `api` by path (`api/src/catalog.rs`), so that
+  `vento-codegen` builds from `api` alone; Gradle's `codegenSources`
   lists every one.
 - `build.gradle` — the Android module, its source sets and its CMake
   pointed at the directories below rather than at AGP's `src/main/`.
@@ -71,20 +71,20 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
   sound to: video (the decoders a platform supplies, and what is done with
   their planes) and audio (the outputs a platform supplies, their decoders,
   and the queue a device drains). It needs nothing of `runtime/`, nor
-  `runtime/` of it; `session/` holds both, and the Linux platform crate
+  `runtime/` of it; `api/` holds both, and the Linux platform crate
   depends on this one alone.
-- `session/` (`remotedesktop-session`) — what a client holds a session by:
+- `api/` (`remotedesktop-api`) — what a client holds a session by:
   the `Backend` trait, events, the catalog registry and the shape of an
   option, `Kind`/`Connect`, and the rules both clients keep alike
   (credentials, trust), held to their cases (`tests/vectors.rs`). With the
   `c` feature, the one adapter over the C vtable and the shared headers'
-  declarations (`session::c::ffi`), which each C backend's own declarations
-  are written over. The neutral C API it adapts is in `session/include/vento/`
+  declarations (`api::c::ffi`), which each C backend's own declarations
+  are written over. The neutral C API it adapts is in `api/include/vento/`
   (`backend.h`, `video.h`, `audio.h`, `log.h`, `text.h`; each C backend's
   own header is in its module): with the crate that reads them into Rust,
   as each backend's header is with its own.
 - `codegen/` (`vento-codegen`) — the phone's Java catalogs and natives
-  classes, generated from `session` at build time on the host.
+  classes, generated from `api` at build time on the host.
 - `vectors/` — `options.json`, the cases of the one rule with a Java copy
   (`settle`), which both the Rust and the Java tests read. Cases only the
   Rust tests read are written in them.

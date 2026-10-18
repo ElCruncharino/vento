@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! TigerVNC's `vento_tigervnc` as a [`Backend`](session::backend::Backend):
+//! TigerVNC's `vento_tigervnc` as a [`Backend`](api::backend::Backend):
 //! its config from the options, its live options and its rows — what the
 //! Linux client holds, and on the phone what the one JNI layer stands in front
 //! of, linked into the library CMake makes of the C. Its certificates are the client's to judge: the session
@@ -9,29 +9,29 @@
 //! backend's do, and TigerVNC's own known-hosts file is never read or written
 //! — which is why no state directory is given it. Its H.264 is decoded by
 //! the platform's decoders, handed to the C as `vento/video.h`'s table
-//! (`session::c::video`): the Linux client's FFmpeg, with the person's
+//! (`api::c::video`): the Linux client's FFmpeg, with the person's
 //! hardware choice, and the phone's MediaCodec. Its sound — QEMU's audio
 //! extension — is played on the platform's output the same way, handed to
-//! the C as `vento/audio.h`'s table (`session::c::audio`): a PipeWire stream
+//! the C as `vento/audio.h`'s table (`api::c::audio`): a PipeWire stream
 //! (or ALSA's default device) on the Linux client, AAudio on the phone.
 
-use session::c::{Behaviour, CSession, start};
-use session::backend::{Backend, ConnectionFact, Field, Traffic};
-use session::kind::{CONNECT_TIMEOUT_MS, Connect, Kind};
-use session::options::Options;
+use api::c::{Behaviour, CSession, start};
+use api::backend::{Backend, ConnectionFact, Field, Traffic};
+use api::kind::{CONNECT_TIMEOUT_MS, Connect, Kind};
+use api::options::Options;
 use std::ffi::CString;
 
 /// `vento/tigervnc.h`, as `build.rs` generated it, over the shared declarations
 /// it is written against.
 mod ffi {
     #![allow(non_camel_case_types, dead_code)]
-    pub use session::c::ffi::*;
+    pub use api::c::ffi::*;
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 }
 
 pub static KIND: Kind = Kind {
-    about: &session::catalog::TIGERVNC,
-    version: || unsafe { session::c::string(ffi::vento_tigervnc_version()) },
+    about: &api::catalog::TIGERVNC,
+    version: || unsafe { api::c::string(ffi::vento_tigervnc_version()) },
     create,
 };
 
@@ -128,13 +128,13 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
             // ends (or at once, where it does not start). Made here rather
             // than above so that it is handed over on every path that makes
             // it. No decoders, and the session never offers H.264.
-            let video = c.decoders.clone().map(session::c::video::table);
+            let video = c.decoders.clone().map(api::c::video::table);
             if let Some(video) = &video {
                 config.video = video;
             }
             // The sound output, the same way: the session's from here, and
             // without one the server is never asked for its sound.
-            let audio = c.audio.clone().map(session::c::audio::table);
+            let audio = c.audio.clone().map(api::c::audio::table);
             if let Some(audio) = &audio {
                 config.audio_output = audio;
             }

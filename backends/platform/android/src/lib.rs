@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The parts of a backend's native half that are about Android rather than
-//! about a protocol: [`backend`], which is any `session::Backend` as the
+//! about a protocol: [`backend`], which is any `api::Backend` as the
 //! natives `NativeBackend.java` calls, [`bitmap`], which writes pixels
 //! straight into a Java `Bitmap`, [`log`], which points the `log` crate at
 //! logcat, [`mediacodec`], which is the phone's video decoder speaking
@@ -14,7 +14,7 @@
 //!
 //! It was one crate with the RFB bindings in it, then one crate with every
 //! protocol's bindings beside it, and is now the one JNI layer: what a Rust
-//! backend's library adds to its protocol is its `session::Backend` adapter,
+//! backend's library adds to its protocol is its `api::Backend` adapter,
 //! which the Linux client holds too, and one [`natives!`] line.
 //!
 //! Two threads reach a session, as they do in the RealVNC backend and for the

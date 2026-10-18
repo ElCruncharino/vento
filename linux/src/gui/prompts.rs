@@ -9,7 +9,7 @@
 //! queues what arrives while one is already up. Nothing is written from here:
 //! a certificate is put as the phone's `NativeBackend.onTrustNeeded` puts it,
 //! with why it is being asked about and a *remember server* box, and the
-//! session hands the answer to `session::trust::answered`, which pins what was
+//! session hands the answer to `api::trust::answered`, which pins what was
 //! accepted with the box ticked; RealVNC's own *remember* goes to its core.
 
 use crate::backend::Credentials;

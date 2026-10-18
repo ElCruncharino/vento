@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # The Android half of a C backend, linked into the module's own shared
-# library: the module's Rust crate — the backend as a `session::Backend` over
+# library: the module's Rust crate — the backend as an `api::Backend` over
 # the vtable in `vento/backend.h`, and the one JNI layer in
 # `backends/platform/android`, whose `JNI_OnLoad` registers the natives on the
 # module's generated natives class — and `vento_log` onto logcat, the one C
@@ -34,7 +34,7 @@ function(vento_android_library target crate)
     # The neutral headers, and the module's own `include/`, where its
     # `vento/<name>.h` is: called from the module's CMakeLists, this is that
     # module's directory.
-    target_include_directories(${target} PRIVATE "${_VENTO_BACKENDS}/session/include"
+    target_include_directories(${target} PRIVATE "${_VENTO_BACKENDS}/api/include"
             "${CMAKE_CURRENT_SOURCE_DIR}/include")
     target_link_options(${target} PRIVATE "LINKER:--undefined=JNI_OnLoad"
             "LINKER:--version-script=${_VENTO_ANDROID}/cpp/exports.map")

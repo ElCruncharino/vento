@@ -18,7 +18,7 @@ use crate::backend::{Backend, ConnectionFact, Field, Traffic};
 use crate::backends::{Connect, Kind};
 use crate::known_hosts;
 use crate::options::Options;
-use session::c::{Behaviour, CSession, Security, start};
+use api::c::{Behaviour, CSession, Security, start};
 use std::ffi::CString;
 use std::os::raw::c_void;
 
@@ -26,13 +26,13 @@ use std::os::raw::c_void;
 /// declarations it is written against.
 mod ffi {
     #![allow(non_camel_case_types, dead_code)]
-    pub use session::c::ffi::*;
+    pub use api::c::ffi::*;
     include!(concat!(env!("OUT_DIR"), "/realvnc.rs"));
 }
 
 pub static KIND: Kind = Kind {
-    about: &session::catalog::REALVNC,
-    version: || unsafe { session::c::string(ffi::vento_realvnc_version()) },
+    about: &api::catalog::REALVNC,
+    version: || unsafe { api::c::string(ffi::vento_realvnc_version()) },
     create,
 };
 
@@ -122,14 +122,14 @@ fn saved_identity(s: &CSession) -> Option<String> {
     if raw.is_null() {
         return None;
     }
-    let identity = unsafe { session::c::string(raw) };
+    let identity = unsafe { api::c::string(raw) };
     unsafe { ffi::free(raw as *mut c_void) };
     (!identity.is_empty()).then_some(identity)
 }
 
 /// Every key goes through the core's own live set, which carries the quality
 /// group together and re-reads the encoder. View-only is already sent through
-/// the vtable by [`CBackend`](session::c::CBackend), so it is not sent again here.
+/// the vtable by [`CBackend`](api::c::CBackend), so it is not sent again here.
 fn set_option(session: &CSession, o: &Options, key: &str) {
     if key == "ViewOnly" {
         return;

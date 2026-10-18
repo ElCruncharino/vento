@@ -8,15 +8,15 @@
 //! carry their adapter in their own crate (`backend.rs` beside the
 //! protocol), the three open C libraries in a small crate beside their C
 //! sources, over the one adapter for `vento/backend.h` in
-//! `remotedesktop-session`; what is left here is RealVNC's, whose library is
+//! `remotedesktop-api`; what is left here is RealVNC's, whose library is
 //! the viewer's own and is hosted for this client alone. The order is the
 //! catalog's, which is the picker's on the phone too.
 
 #[cfg(realvnc)]
 pub mod realvnc;
 
-pub use session::kind::{CONNECT_TIMEOUT_MS, Connect, Dirs, Kind, Platform};
-pub use session::trust::{Pinned, pinned_as};
+pub use api::kind::{CONNECT_TIMEOUT_MS, Connect, Dirs, Kind, Platform};
+pub use api::trust::{Pinned, pinned_as};
 
 pub use platform_linux::audio::{Audio, Output as AudioOutput};
 pub use platform_linux::ffmpeg::{FFmpeg, Hardware};
@@ -88,7 +88,7 @@ mod tests {
         let orders: Vec<i32> = all().iter().map(|k| k.order).collect();
         assert!(orders.windows(2).all(|w| w[0] < w[1]), "{orders:?}");
         for kind in all() {
-            assert!(session::catalog::ALL.iter().any(|a| std::ptr::eq(*a, kind.about)));
+            assert!(api::catalog::ALL.iter().any(|a| std::ptr::eq(*a, kind.about)));
         }
     }
 }

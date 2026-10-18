@@ -558,7 +558,7 @@ impl Controls {
     }
 
     /// What the far end's sound arrives as, said by whoever decodes it
-    /// (`session`'s table for a C backend, at a decoder's opening and
+    /// (`api`'s table for a C backend, at a decoder's opening and
     /// closing): for [`playback`](Controls::playback)'s words, since the
     /// stream it plays on is handed samples and never sees the codec.
     pub fn set_codec(&self, codec: Option<Codec>) {

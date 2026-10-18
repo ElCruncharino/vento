@@ -1578,7 +1578,7 @@ static void op_view_only(vento_session *base, bool viewOnly) {
 }
 
 /* For any number of screens, since this session sends layouts: a single size
-   over several, which would merge them, is what session::c declines to offer,
+   over several, which would merge them, is what api::c declines to offer,
    as the header has it. */
 static bool op_can_resize(vento_session *base) {
     Session *s = sessionOfBase(base);

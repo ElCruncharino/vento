@@ -7,7 +7,7 @@ plugins {
 
 // The three parts of the FreeRDP backend: `cpp/`, a shim over FreeRDP's own
 // client that names no platform; the crate at this directory's root
-// (`Cargo.toml`, `src/`), the backend as a `session::Backend` over it — the one
+// (`Cargo.toml`, `src/`), the backend as an `api::Backend` over it — the one
 // the Linux client holds — and the JNI layer every backend shares, registered
 // on the generated natives class; and `java/`'s provider, which holds a session
 // as a `NativeBackend` with the RDP hooks. The AAR carries the one library

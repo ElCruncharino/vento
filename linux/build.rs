@@ -3,7 +3,7 @@
 
 //! The C backends, for the Rust binary: `backends/CMakeLists.txt` run with
 //! `VENTO_SHARED` on. (The declarations of `vento/backend.h` are read into
-//! Rust by `remotedesktop-session`'s own build script, under its `c`
+//! Rust by `remotedesktop-api`'s own build script, under its `c`
 //! feature, and each backend's own header by its crate's; the backends'
 //! crates link nothing, so the libraries are linked here, into the binary.)
 //! RealVNC's adapter is this crate's, so its header, `vento/realvnc.h` in
@@ -57,7 +57,7 @@ fn main() {
     for path in [
         "CMakeLists.txt",
         "cmake",
-        "session/include",
+        "api/include",
         "platform/linux/cpp",
         "platform/linux/cmake",
         "modules/libvnc/cpp",
@@ -105,13 +105,13 @@ fn main() {
 
 /// `vento/realvnc.h` as Rust, for `src/backends/realvnc.rs`: its own items
 /// only, the `vento_realvnc_` ones, over the shared declarations
-/// `session::c::ffi` has, as each C backend's crate reads its header.
+/// `api::c::ffi` has, as each C backend's crate reads its header.
 /// Generated whether or not the library is built — bindgen's libclang is
-/// needed by the session crate either way, clang on the path or not — and
+/// needed by the `api` crate either way, clang on the path or not — and
 /// used only under the `realvnc` cfg.
 fn realvnc_bindings(backends: &Path, out: &Path) {
     let own = backends.join("modules/realvnc/cpp/include");
-    let shared = backends.join("session/include");
+    let shared = backends.join("api/include");
     bindgen::Builder::default()
         .header_contents("realvnc.h", "#include <vento/realvnc.h>\n")
         .clang_arg(format!("-I{}", own.display()))

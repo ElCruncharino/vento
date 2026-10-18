@@ -42,7 +42,7 @@ if(NOT TARGET vento_linux)
     # Its object goes into a shared library under VENTO_SHARED, and it is
     # compiled before any module has asked for position-independent code.
     set_target_properties(vento_linux PROPERTIES POSITION_INDEPENDENT_CODE ON)
-    target_include_directories(vento_linux PUBLIC "${_VENTO_BACKENDS}/session/include")
+    target_include_directories(vento_linux PUBLIC "${_VENTO_BACKENDS}/api/include")
 
     if(VENTO_PROBES)
         add_library(vento_probe OBJECT "${_VENTO_LINUX}/probe/probe.c")
@@ -119,7 +119,7 @@ function(vento_backend_library name)
         add_library(${name} STATIC ${ARGN})
     endif()
     remotedesktop_warnings(${name})
-    target_include_directories(${name} PUBLIC "${_VENTO_BACKENDS}/session/include"
+    target_include_directories(${name} PUBLIC "${_VENTO_BACKENDS}/api/include"
             "${CMAKE_CURRENT_SOURCE_DIR}/include")
 endfunction()
 

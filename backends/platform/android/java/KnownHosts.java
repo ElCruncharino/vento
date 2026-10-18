@@ -20,7 +20,7 @@ import java.util.Map;
  * somebody accepts it, and after that a connection is silent while it matches
  * and loud when it does not. That rule — the key an address is filed under,
  * how two fingerprints compare, what is asked when they do not, and when an
- * answer is pinned — is {@code session::trust} in {@code backends/session},
+ * answer is pinned — is {@code api::trust} in {@code backends/api},
  * which the Linux client decides by too; {@link NativeBackend}'s JNI layer
  * applies it, and reads and writes this store to do so.
  *

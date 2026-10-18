@@ -3809,13 +3809,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
+name = "remotedesktop-api"
+version = "0.0.1"
+dependencies = [
+ "bindgen",
+ "log",
+ "remotedesktop-media",
+ "remotedesktop-runtime",
+]
+
+[[package]]
 name = "remotedesktop-freerdp"
 version = "0.0.1"
 dependencies = [
  "bindgen",
  "log",
+ "remotedesktop-api",
  "remotedesktop-platform-android",
- "remotedesktop-session",
 ]
 
 [[package]]
@@ -3836,10 +3846,10 @@ dependencies = [
  "ironrdp-session",
  "ironrdp-svc",
  "log",
+ "remotedesktop-api",
  "remotedesktop-media",
  "remotedesktop-platform-android",
  "remotedesktop-runtime",
- "remotedesktop-session",
  "rustls",
  "x509-cert 0.2.5",
 ]
@@ -3850,8 +3860,8 @@ version = "0.0.1"
 dependencies = [
  "bindgen",
  "log",
+ "remotedesktop-api",
  "remotedesktop-platform-android",
- "remotedesktop-session",
 ]
 
 [[package]]
@@ -3868,9 +3878,9 @@ dependencies = [
  "android_logger",
  "jni",
  "log",
+ "remotedesktop-api",
  "remotedesktop-media",
  "remotedesktop-runtime",
- "remotedesktop-session",
 ]
 
 [[package]]
@@ -3890,9 +3900,9 @@ dependencies = [
  "des",
  "flate2",
  "log",
+ "remotedesktop-api",
  "remotedesktop-platform-android",
  "remotedesktop-runtime",
- "remotedesktop-session",
  "rustls",
  "sha2 0.11.0",
 ]
@@ -3916,23 +3926,13 @@ dependencies = [
  "log",
  "protobuf",
  "protobuf-codegen",
+ "remotedesktop-api",
  "remotedesktop-media",
  "remotedesktop-platform-android",
  "remotedesktop-runtime",
- "remotedesktop-session",
  "sha2 0.11.0",
  "socket2",
  "zstd",
-]
-
-[[package]]
-name = "remotedesktop-session"
-version = "0.0.1"
-dependencies = [
- "bindgen",
- "log",
- "remotedesktop-media",
- "remotedesktop-runtime",
 ]
 
 [[package]]
@@ -3941,10 +3941,10 @@ version = "0.0.1"
 dependencies = [
  "flate2",
  "log",
+ "remotedesktop-api",
  "remotedesktop-media",
  "remotedesktop-platform-android",
  "remotedesktop-runtime",
- "remotedesktop-session",
  "rustls",
  "shakenfist-spice-compression",
  "shakenfist-spice-protocol",
@@ -3958,8 +3958,8 @@ version = "0.0.1"
 dependencies = [
  "bindgen",
  "log",
+ "remotedesktop-api",
  "remotedesktop-platform-android",
- "remotedesktop-session",
 ]
 
 [[package]]
@@ -5109,6 +5109,7 @@ dependencies = [
  "log",
  "pollster",
  "raw-window-handle",
+ "remotedesktop-api",
  "remotedesktop-freerdp",
  "remotedesktop-ironrdp",
  "remotedesktop-libvnc",
@@ -5116,7 +5117,6 @@ dependencies = [
  "remotedesktop-platform-linux",
  "remotedesktop-rfb",
  "remotedesktop-rustdesk",
- "remotedesktop-session",
  "remotedesktop-spice",
  "remotedesktop-tigervnc",
  "ttf-parser",

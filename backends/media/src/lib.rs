@@ -14,7 +14,7 @@
 //!
 //! Nothing here is about a session's conversation — the handler, the events,
 //! the thread a protocol runs on — which is `remotedesktop-runtime`'s; the
-//! two meet in `remotedesktop-session`, and in the protocols that use both.
+//! two meet in `remotedesktop-api`, and in the protocols that use both.
 
 pub mod audio;
 pub mod video;

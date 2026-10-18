@@ -13,14 +13,14 @@ over that seam, and a headless probe for proving a backend without one.
 
 ## What is here
 
-The seam itself is not this crate's: it is `backends/session`
-(`remotedesktop-session`), which the phone holds every session but RealVNC's
+The seam itself is not this crate's: it is `backends/api`
+(`remotedesktop-api`), which the phone holds every session but RealVNC's
 through too, and every backend's adapter to it is in that backend's own
 crate. On the phone the same adapters sit behind one JNI layer
 (`backends/platform/android`), so a backend is written once for both
 clients, and what differs between them is each client's own code.
 
-- **`backends/session`** — the `Backend` trait and the value types around it
+- **`backends/api`** — the `Backend` trait and the value types around it
   (`Facts`, `ConnectionFact`, `Monitor`, `Traffic`, `Picture`); the `Event`
   enum (`runtime::Events` plus the C API's `question`, `security_needed`,
   `message`) and the `Mailbox` a session pushes them onto, with a wake hook
@@ -40,7 +40,7 @@ clients, and what differs between them is each client's own code.
 - **The adapters** — `src/backend.rs` in each Rust protocol crate
   (`backends/modules/{rfb,ironrdp,rustdesk,spice}`), and a small crate
   beside each open C library (`backends/modules/{libvnc,tigervnc,freerdp}`,
-  the C in its `cpp/`) over the session crate's C adapter, linked on the
+  the C in its `cpp/`) over the `api` crate's C adapter, linked on the
   phone into the library CMake makes of the C. RealVNC's is the one still
   here, **`src/backends/realvnc.rs`**, since its library is the viewer's own
   and hosted for this client alone (the phone's RealVNC backend is its own
@@ -74,8 +74,8 @@ clients, and what differs between them is each client's own code.
   with tests), `settings.rs` (the client's own settings and their rows),
   `dialog.rs` (the connection dialog), `panel.rs` (the connection-info panel,
   with the live controls), `prompts.rs` (the modal prompts).
-- **`src/known_hosts.rs`** — this client's `session::trust::Store`: where
-  it keeps its pins (what they mean, and what is asked, is `session::trust`)
+- **`src/known_hosts.rs`** — this client's `api::trust::Store`: where
+  it keeps its pins (what they mean, and what is asked, is `api::trust`)
   and RealVNC's identities, as files under `$XDG_CONFIG_HOME/vento`, with
   tests.
 - **`src/main.rs`** — the `vento` binary: the window, `--list`, and the
@@ -889,7 +889,7 @@ its monitors; and, while the far end's sound plays, **Sound** before the
 diagnostic ones — what arrives, `AAC 44.1 kHz stereo` or `PCM 48 kHz
 stereo`, with the output it plays on (`(PipeWire)` or `(ALSA)`), and `,
 muted` while it is (the row is the client's, worded in
-`session::backend::ConnectionFact::sound` for the phone's panel too). Everything is refreshed once a second while the panel is open,
+`api::backend::ConnectionFact::sound` for the phone's panel too). Everything is refreshed once a second while the panel is open,
 without disturbing a control being used: an open dropdown stays open, and a
 field being typed in keeps its text until it is left, which is when its value
 is sent.

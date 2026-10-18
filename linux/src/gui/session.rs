@@ -80,7 +80,7 @@ use crate::backend::Backend;
 use crate::backends::{self, Connect, Dirs, Hardware, Pinned};
 use crate::events::{Cursor, Event, Mailbox, State};
 use crate::known_hosts::{self, KnownHosts, Store};
-use ::session::trust::{self, Decision};
+use api::trust::{self, Decision};
 use media::audio::{Outputs, Playback, Sound, Switch};
 use crate::options::Options;
 use egui::{CursorIcon, TextureHandle, TextureOptions, Vec2, ViewportId, vec2};
@@ -636,7 +636,7 @@ impl Session {
         // video, where TigerVNC's and FreeRDP's H.264 is rectangles composed
         // with the rest of their picture in memory.
         if self.settings.hw_decode == Hardware::Off
-            || self.request.kind.id != ::session::catalog::RUSTDESK.id
+            || self.request.kind.id != api::catalog::RUSTDESK.id
         {
             return None;
         }
@@ -679,7 +679,7 @@ impl Session {
         }
         self.last_poll = Some(Instant::now());
         let mut info = self.backend.info();
-        ::session::backend::with_sound(&mut info, self.audio.controls());
+        api::backend::with_sound(&mut info, self.audio.controls());
         self.snapshot = Snapshot {
             facts: self.backend.facts(),
             info,
@@ -1511,7 +1511,7 @@ impl Session {
     // ---- the prompts -------------------------------------------------------
 
     /// A certificate, against what this address was accepted with before,
-    /// as `session::trust` decides on the phone too: a match is silent, a
+    /// as `api::trust` decides on the phone too: a match is silent, a
     /// RustDesk key never seen is pinned without asking, and anything else
     /// is put to the person with why.
     fn trust_needed(&mut self, fingerprint: String) {

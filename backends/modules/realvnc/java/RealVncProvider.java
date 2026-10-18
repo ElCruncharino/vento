@@ -18,7 +18,7 @@ import java.util.Map;
 /**
  * This module's entry in a build's list of backends. What the RealVNC backend
  * is called and what it can be told are the catalog's, which the Linux client
- * reads too: {@link RealVncCatalog}, generated from {@code backends/session} at
+ * reads too: {@link RealVncCatalog}, generated from {@code backends/api} at
  * build time, holds the words and the option keys.
  *
  * <p>On the phone the backend is this module's Java over RealVNC's own core,

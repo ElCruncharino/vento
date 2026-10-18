@@ -1,5 +1,5 @@
 # What the phone's Java is generated from: a host tool that writes the
-# sources a build's modules compile, out of `remotedesktop-session`, so that
+# sources a build's modules compile, out of `remotedesktop-api`, so that
 # what Rust says a backend is — its name, its options, the shape of its JNI
 # surface — is said once. Gradle runs it as a generated-source task
 # (`GenerateJavaTask` in `backends/buildSrc`); nothing it writes is kept in
@@ -16,7 +16,7 @@ name = "vento-codegen"
 path = "src/main.rs"
 
 [dependencies]
-remotedesktop-session.workspace = true
+remotedesktop-api.workspace = true
 # Only its `surface` table, which is all of it that builds on a host: the
 # natives each module's class declares.
 remotedesktop-platform-android.workspace = true
