@@ -1,0 +1,66 @@
+From 060ad97baeeddd07f1541acd12f108937e0999be Mon Sep 17 00:00:00 2001
+From: "Claude Opus 5.5" <noreply@anthropic.com>
+Date: Sun, 18 Oct 2026 15:55:53 -0400
+Subject: [PATCH 7/7] libvncclient: a verified certificate for another name is
+ asked about too
+
+A certificate that verified against the system CA (or the CA file
+given) but is not for the server's hostname was refused outright,
+before GetX509CertFingerprintMismatchDecision could hear of it, while
+one that did not verify reaches the hook whatever name it is for: its
+hostname is never looked at. So a client that decides about
+certificates itself was stricter with the certificate an authority
+vouches for than with any self-signed one, and could not offer the
+choice it offers for every other certificate, as TigerVNC's viewer
+does for a name it did not expect.
+
+With the hook installed, such a certificate now goes to the same
+decision as the rest after the mismatch is logged: accepted at once
+if its fingerprint is x509ExpectedFingerprint, and otherwise put to
+the hook. Without the hook it is refused as before, now freeing the
+certificate it parsed.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/include/rfb/rfbclient.h b/include/rfb/rfbclient.h
+index 1b22f3b..87027ad 100644
+--- a/include/rfb/rfbclient.h
++++ b/include/rfb/rfbclient.h
+@@ -223,10 +223,11 @@ typedef rfbCredential* (*GetCredentialProc)(struct _rfbClient* client, int crede
+    fingerprint matches the one indicated in rfbCredential.x509Credential.x509ExpectedFingerprint,
+    and whose answer decides whether the cert is accepted. That is every cert
+    that could not be validated against the system CA (or the CA file given),
+-   and, when this is set, every one that could and is for the server's
+-   hostname as well: an authority vouching for a cert says who the server
+-   claims to be, not that it is the one reached last time, so a client that
+-   pins certificates has to see every one. Unset, a validated cert is accepted.
++   and, when this is set, every one that could as well, whether or not it is
++   for the server's hostname: an authority vouching for a cert says who the
++   server claims to be, not that it is the one reached last time, so a client
++   that pins certificates has to see every one. Unset, a validated cert is
++   accepted if it is for the hostname and refused if it is not.
+  */
+ typedef rfbBool (*GetX509CertFingerprintMismatchDecisionProc)(struct _rfbClient* client,
+                                                               const char *remote_cert_subject,
+diff --git a/src/libvncclient/tls_gnutls.c b/src/libvncclient/tls_gnutls.c
+index fbd96f1..0d4cc77 100644
+--- a/src/libvncclient/tls_gnutls.c
++++ b/src/libvncclient/tls_gnutls.c
+@@ -229,7 +229,16 @@ verify_certificate_callback (gnutls_session_t session)
+     {
+       rfbClientLog("The certificate's owner does not match hostname '%s'\n",
+               hostname);
+-      return GNUTLS_E_CERTIFICATE_ERROR;
++      /* A client that decides about certificates itself is asked about this
++         one as well, as it is about a certificate that did not verify, whose
++         name was never looked at: refusing outright the one an authority
++         vouches for would be stricter with it than with any self-signed
++         certificate, whatever name that is for. */
++      if (!sptr->GetX509CertFingerprintMismatchDecision)
++        {
++          gnutls_x509_crt_deinit (cert);
++          return GNUTLS_E_CERTIFICATE_ERROR;
++        }
+     }
+ 
+   /* A client that decides about certificates itself hears of one that
