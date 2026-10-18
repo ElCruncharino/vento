@@ -1169,7 +1169,22 @@ directory (`--state-dir`, by default `$XDG_STATE_HOME/vento`):
 RealVNC's identity is the core's opaque blob rather than a fingerprint, and
 only the core can compare one, so it is not a pin and the phone does not make
 it one: the core asks its own security question, and the phone and this client
-both leave the core's store where it is. TigerVNC's library used to accept a
+both leave the core's store where it is while they use it.
+
+Forgetting a RealVNC server takes both stores, since the core recognises a
+server in its own whatever it is handed. The core writes its `identities`
+itself, by address (`<address>=<identity>` for a server with a key,
+`<address>/extra=<flags>` for what was accepted of it, such as an unencrypted
+connection), whether or not *Remember server* was ticked; with it ticked, the
+next connection to that address asks nothing even where this client has no
+`realvnc_identities` line for it (a VNC server that is not RealVNC's has no
+identity to hand over). So to forget one, delete its line in
+`realvnc_identities` and its lines in the core's `identities` (or that whole
+file, which forgets every server the core remembers) — what the phone's
+Settings → *Clear known hosts* does to both, for every server. This client has
+no command for it yet.
+
+TigerVNC's library used to accept a
 certificate that verified against the system's certificate authorities (or
 TigerVNC's own `~/.config/tigervnc/x509_ca.pem`) and matched the name without
 handing it over; a patch in `patches/tigervnc` hands it over too, so it is
