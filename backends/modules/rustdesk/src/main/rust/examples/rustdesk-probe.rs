@@ -10,9 +10,9 @@
 //!
 //! ```sh
 //! scripts/testrustdesk/run.sh
-//! cargo run --example rustdesk-probe -- direct 10.33.0.208 --password PASSword1 --out /tmp/rig.ivf
-//! cargo run --example rustdesk-probe -- id 3936346 --password PASSword1 --seconds 30
-//! cargo run --example rustdesk-probe -- direct 10.33.0.208 --password PASSword1 --ppm /tmp/rig.ppm
+//! cargo run --features probe --example rustdesk-probe -- direct 10.33.0.208 --password PASSword1 --out /tmp/rig.ivf
+//! cargo run --features probe --example rustdesk-probe -- id 3936346 --password PASSword1 --seconds 30
+//! cargo run --features probe --example rustdesk-probe -- direct 10.33.0.208 --password PASSword1 --ppm /tmp/rig.ppm
 //! ffprobe /tmp/rig.ivf                       # that it is VP9 of the right size
 //! ffmpeg -i /tmp/rig.ivf -frames:v 1 f.png   # that it is the far end's screen
 //! ```

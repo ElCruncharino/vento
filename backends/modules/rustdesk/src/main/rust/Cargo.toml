@@ -1,9 +1,10 @@
 # The RustDesk backend's native half. The protocol is plain Rust, and on
 # Android the library is that client as a `session::Backend` (`src/backend.rs`)
 # registered through the platform crate's one JNI layer, so `cargo test` and
-# `cargo run --example rustdesk-probe` exercise it on the host. The picture is
-# decoded by whatever `common::video::Decoders` the client is handed: the
-# phone's MediaCodec, named in `src/lib.rs`, libavcodec in the probe.
+# `cargo run --features probe --example rustdesk-probe` exercise it on the
+# host. The picture is decoded by whatever `common::video::Decoders` the
+# client is handed: the phone's MediaCodec, named in `src/lib.rs`, libavcodec
+# in the probe.
 [package]
 name = "remotedesktop-rustdesk"
 version.workspace = true
@@ -48,11 +49,24 @@ remotedesktop-session.workspace = true
 [target.'cfg(target_os = "android")'.dependencies]
 remotedesktop-platform-android.workspace = true
 
-# The probe decodes what it receives, and on a host that is libavcodec. A
-# dev-dependency under the opposite cfg, so neither the library the app loads
-# nor its licence page has FFmpeg anywhere in its graph.
-[target.'cfg(not(target_os = "android"))'.dev-dependencies]
-remotedesktop-platform-desktop.workspace = true
+# The probe decodes what it receives, and on a host that is libavcodec. Under
+# the opposite cfg, so neither the library the app loads nor its licence page
+# has FFmpeg anywhere in its graph, and optional, so that only the probe
+# feature builds it: `cargo test` of this crate builds no FFmpeg. (Optional
+# rather than a dev-dependency, since a dev-dependency cannot be optional;
+# nothing but the example names it.)
+[target.'cfg(not(target_os = "android"))'.dependencies]
+remotedesktop-platform-desktop = { workspace = true, optional = true }
+
+# The probe is a development tool, built only when asked for: `cargo run
+# --features probe --example rustdesk-probe`. Without the feature `cargo test`
+# and `clippy --all-targets` leave it alone.
+[features]
+probe = ["dep:remotedesktop-platform-desktop"]
+
+[[example]]
+name = "rustdesk-probe"
+required-features = ["probe"]
 
 [build-dependencies]
 protobuf-codegen = "3.7"

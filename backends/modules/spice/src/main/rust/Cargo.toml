@@ -1,9 +1,9 @@
 # The SPICE backend's native half: their protocol and their decoders under a
 # session of ours. The session layer is plain Rust, and on Android the library
 # is that session as a `session::Backend` (`src/backend.rs`) registered through
-# the platform crate's one JNI layer, so `cargo test` and
-# `cargo run --example spice-probe` exercise it on the host against a real
-# server.
+# the platform crate's one JNI layer, so `cargo test` and `cargo run
+# --features probe --example spice-probe` exercise it on the host against a
+# real server.
 [package]
 name = "remotedesktop-spice"
 version.workspace = true
@@ -72,6 +72,16 @@ flate2 = { version = "1", default-features = false, features = ["rust_backend"] 
 # The example's own logger, which is where the client's warnings go when there
 # is no logcat to put them in.
 log.workspace = true
+
+# The probe is a development tool, built only when asked for: `cargo run
+# --features probe --example spice-probe`. Without the feature `cargo test` and
+# `clippy --all-targets` leave it alone.
+[features]
+probe = []
+
+[[example]]
+name = "spice-probe"
+required-features = ["probe"]
 
 # The only part of this crate that knows a phone exists: the one line in
 # `src/lib.rs` that hands the backend to the platform crate's JNI layer.

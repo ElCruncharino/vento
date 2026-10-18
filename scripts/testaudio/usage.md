@@ -52,7 +52,8 @@ follows:
 
 ## The output's rig
 
-`backends/platform/desktop/examples/audio_rig.rs` opens a 48 kHz stereo
+`backends/platform/desktop/examples/audio_rig/` (built by `rig.sh` with
+the desktop crate's `probe` feature, which it needs) opens a 48 kHz stereo
 stream on the desktop's output (PipeWire's, or ALSA's with
 `VENTO_AUDIO_OUTPUT=alsa`) and, once `rig.sh` says `go`, records the
 monitor with `parec` and plays a script, timing everything on its own clock:
@@ -110,8 +111,8 @@ nodes of the one client.
 ./pattern.sh OUT_DIR PATTERN SECONDS [--stall-every S] [--stall-at S] [--stall MS] [--seed N]
 ```
 
-`backends/platform/desktop/examples/audio_pattern.rs` writes into the
-desktop's output the way a protocol's sound arrives — `qemu` (10 ms every
+`backends/platform/desktop/examples/audio_pattern.rs` (built by
+`pattern.sh` with the same `probe` feature) writes into the desktop's output the way a protocol's sound arrives — `qemu` (10 ms every
 10 ms), `opus` (20 ms every 20 ms), `rdp` (Windows' 23 ms AAC waves, up to
 18 ms late), `rdp-pairs` (two at a time, 10 ms either side), `winpcm`
 (Windows' 186 ms PCM waves two at a time), `bursty` (20 ms frames let go in

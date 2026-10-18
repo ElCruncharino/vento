@@ -51,9 +51,11 @@ if [ -z "$sdk" ] || [ ! -d "$sdk/ndk/$ndk" ]; then
     exit 1
 fi
 
-RUSTFLAGS=-Dwarnings cargo check --workspace --all-targets
+# `--all-features` for the probes: the examples are behind each crate's `probe`
+# feature, and a warning in one is still a warning.
+RUSTFLAGS=-Dwarnings cargo check --workspace --all-targets --all-features
 ANDROID_NDK_HOME="$sdk/ndk/$ndk" RUSTFLAGS=-Dwarnings \
-    cargo ndk -t arm64-v8a -t x86_64 --platform 34 check --workspace --all-targets
+    cargo ndk -t arm64-v8a -t x86_64 --platform 34 check --workspace --all-targets --all-features
 
 # `check` for the lint and the unit tests, `assemble` for the native halves and
 # the dexer, and both under the property the build files read.

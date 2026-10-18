@@ -9,8 +9,8 @@
 //!
 //! ```sh
 //! scripts/testvnc/run.sh
-//! cargo run --example rfb-probe -- 127.0.0.1:5901 vncpass /tmp/frame.ppm
-//! cargo run --example rfb-probe -- 127.0.0.1:5901 vncpass /tmp/frame.ppm hextile
+//! cargo run --features probe --example rfb-probe -- 127.0.0.1:5901 vncpass /tmp/frame.ppm
+//! cargo run --features probe --example rfb-probe -- 127.0.0.1:5901 vncpass /tmp/frame.ppm hextile
 //! ```
 //!
 //! The name carries the protocol because the workspace has one of these per

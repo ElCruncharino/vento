@@ -10,6 +10,13 @@
 # `main` of its own in front of. Object libraries do not pass their objects on
 # through one another, so a probe links both by name.
 #
+# The probes are a development tool, built only when asked for with
+# `-DVENTO_PROBES=ON`: off, `vento_backend_probe` does nothing and the probe
+# body is never compiled, which is what the Linux client's build (`linux/
+# build.rs`, target `all`) wants of the same tree — four executables nobody
+# runs from there, rebuilt whenever a session file changes. The client's own
+# `vento <backend> <address> --probe N` goes through the same session files.
+#
 # Guarded, because the host root includes it once and each module includes it
 # again for the case where a module is configured on its own; the TigerVNC
 # audio sink is not here but under `platform/desktop/tigervnc`, compiled by
@@ -27,6 +34,7 @@
 get_filename_component(_VENTO_BACKENDS "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
 
 option(VENTO_SHARED "Build each host backend as a shared library carrying its dependencies and the logger" OFF)
+option(VENTO_PROBES "Build a probe in front of each host backend" OFF)
 
 if(NOT TARGET vento_desktop)
     add_library(vento_desktop OBJECT "${_VENTO_BACKENDS}/platform/desktop/c/vento_log.c")
@@ -38,9 +46,11 @@ if(NOT TARGET vento_desktop)
             "${_VENTO_BACKENDS}/common/include"
             "${_VENTO_BACKENDS}/platform/desktop/c")
 
-    add_library(vento_probe OBJECT "${_VENTO_BACKENDS}/platform/desktop/c/probe.c")
-    remotedesktop_warnings(vento_probe)
-    target_link_libraries(vento_probe PUBLIC vento_desktop)
+    if(VENTO_PROBES)
+        add_library(vento_probe OBJECT "${_VENTO_BACKENDS}/platform/desktop/c/probe.c")
+        remotedesktop_warnings(vento_probe)
+        target_link_libraries(vento_probe PUBLIC vento_desktop)
+    endif()
 endif()
 
 # A backend's host library: `vento_<name>` from the session file and whatever
@@ -113,8 +123,11 @@ function(vento_backend_library name)
 endfunction()
 
 # The probe in front of it: the body from `vento_probe` and, for a static
-# library, the logger it does not carry.
+# library, the logger it does not carry. Nothing without VENTO_PROBES.
 function(vento_backend_probe name source)
+    if(NOT VENTO_PROBES)
+        return()
+    endif()
     add_executable(${name}_probe ${source})
     remotedesktop_warnings(${name}_probe)
     target_link_libraries(${name}_probe PRIVATE ${name} vento_probe)

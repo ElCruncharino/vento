@@ -3,8 +3,9 @@
 #
 # The host build of the C backends: the session files under
 # `modules/*/src/main/cpp`, against the libraries a Linux desktop has instead
-# of the ports and vendored trees the phone needs, with a probe in front of
-# each that connects, prints every callback and writes the framebuffer out.
+# of the ports and vendored trees the phone needs, and, with `-DVENTO_PROBES=ON`,
+# a probe in front of each that connects, prints every callback and writes the
+# framebuffer out.
 # Three of them are open clients; the fourth, RealVNC, is their proprietary
 # Android core run in this process by the hosting layer under
 # `platform/desktop/realvnc`, from two libraries the user takes out of the
@@ -16,11 +17,13 @@
 # neutral C API alone, and a desktop client of these backends would start
 # from the same three targets.
 #
-#   cmake -S backends -B build/scratch/host -G Ninja
+#   cmake -S backends -B build/scratch/host -G Ninja -DVENTO_PROBES=ON
 #   cmake --build build/scratch/host
 #   build/scratch/host/libvnc/vento_libvnc_probe HOST:1 --password ... --out shot.ppm
 #
-# Options: -DSTRICT_WARNINGS=ON makes a warning in our own sources an error,
+# Options: -DVENTO_PROBES=ON builds the four probes, which are off by default
+# so that the Linux client's build of this tree compiles none of them;
+# -DSTRICT_WARNINGS=ON makes a warning in our own sources an error,
 # as `scripts/check-warnings.sh` does for the phone's build; CMAKE_BUILD_TYPE
 # defaults to RelWithDebInfo, since the decoders at -O0 are not what anybody
 # wants to watch and a probe with no line numbers is not either;

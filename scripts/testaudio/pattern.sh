@@ -24,7 +24,7 @@ rm -f "$out/ctl" "$out/rec.raw"
 # change, to compare), as it is.
 bin="$AUDIO_PATTERN"
 if [ -z "$bin" ]; then
-    (cd "$repo" && cargo build --offline -q -p remotedesktop-platform-desktop --example audio_pattern)
+    (cd "$repo" && cargo build --offline -q -p remotedesktop-platform-desktop --features probe --example audio_pattern)
     bin="$repo/target/debug/examples/audio_pattern"
 fi
 

@@ -35,6 +35,20 @@ members = [
     "backends/platform/*",
     "backends/modules/*/src/main/rust",
 ]
+# Every member but the desktop platform crate, which is the one whose build
+# script builds dav1d and FFmpeg (minutes, once per target directory): a bare
+# `cargo build`, `test` or `clippy` here is the phone's crates and the
+# backends, and none of those needs it without its `probe` feature. The
+# Linux client builds it through its own workspace; `--workspace` or `-p
+# remotedesktop-platform-desktop` for its own tests.
+default-members = [
+    "backends/common",
+    "backends/session",
+    "backends/codegen",
+    "backends/tls",
+    "backends/platform/android",
+    "backends/modules/*/src/main/rust",
+]
 exclude = ["third_party", "linux"]
 
 [workspace.package]

@@ -333,8 +333,10 @@ cargo run -- rdp 127.0.0.1:3389 --user proto --password protopass \
 each backend a `libvento_<name>.so` under the build tree carrying its vendored
 static dependencies and the stderr logger; the binary links those four by name
 with an rpath into the build directory, so `cargo run` works from the target
-directory without anything on `LD_LIBRARY_PATH`. The existing static path and
-the C probes are unaffected (`cmake -S backends -B … ` without the option).
+directory without anything on `LD_LIBRARY_PATH`. The C probes are not built
+here: they are a plain `cmake -S backends -B … -DVENTO_PROBES=ON` of their own
+(the root README), static, as before; the option is off by default, so this
+build compiles none of them.
 
 The probe answers the first credentials prompt with `--password` and a second
 with a cancel, since a second prompt is the far end refusing the first answer

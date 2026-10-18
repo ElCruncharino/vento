@@ -1,7 +1,8 @@
 # The RFB backend's native half. The client is plain Rust, and on Android the
 # library is that client as a `session::Backend` (`src/backend.rs`) registered
-# through the platform crate's one JNI layer, so `cargo test` and
-# `cargo run --example rfb-probe` exercise everything but that line on the host.
+# through the platform crate's one JNI layer, so `cargo test` and `cargo run
+# --features probe --example rfb-probe` exercise everything but that line on
+# the host.
 [package]
 name = "remotedesktop-rfb"
 version.workspace = true
@@ -41,6 +42,16 @@ rustls = { version = "0.23", default-features = false, features = [
 # `src/backend.rs`, the protocol as a `session::Backend`: what the Linux
 # client holds, and what the phone's JNI layer stands in front of.
 remotedesktop-session.workspace = true
+
+# The probe is a development tool, built only when asked for: `cargo run
+# --features probe --example rfb-probe`. Without the feature `cargo test` and
+# `clippy --all-targets` leave it alone.
+[features]
+probe = []
+
+[[example]]
+name = "rfb-probe"
+required-features = ["probe"]
 
 # The only part of this crate that knows a phone exists: the one line in
 # `src/lib.rs` that hands the backend to the platform crate's JNI layer.

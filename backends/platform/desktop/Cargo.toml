@@ -11,8 +11,8 @@
 # The mirror of `remotedesktop-platform-android`, cfg for cfg: on Android the
 # crate is empty and has no dependencies, which is what keeps FFmpeg out of
 # every APK and out of the licence page generated from the Android graph. A
-# protocol crate reaches it only as a dev-dependency under
-# `cfg(not(target_os = "android"))`, for its probe.
+# protocol crate reaches it only as an optional dependency under
+# `cfg(not(target_os = "android"))`, behind its `probe` feature.
 #
 # FFmpeg is the build's own: `build.rs` builds dav1d and a minimal FFmpeg from
 # `third_party/` into OUT_DIR, statically, and the Linux client's C backends
@@ -39,6 +39,21 @@ remotedesktop-common.workspace = true
 # hand, and only those C files include FFmpeg's headers. No bindgen, no
 # generated bindings, and nothing on the Rust side that changes with an
 # FFmpeg release.
+
+# The two sound rigs under `examples/` (`scripts/testaudio/`), development
+# tools built only when asked for: `cargo build --features probe --example
+# audio_rig`. Without the feature `cargo test` and `clippy --all-targets`
+# leave them alone.
+[features]
+probe = []
+
+[[example]]
+name = "audio_rig"
+required-features = ["probe"]
+
+[[example]]
+name = "audio_pattern"
+required-features = ["probe"]
 
 [build-dependencies]
 # For the wrapper. Unconditional, since a build script is one program for

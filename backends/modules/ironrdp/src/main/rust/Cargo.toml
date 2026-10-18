@@ -61,6 +61,16 @@ x509-cert = { version = "0.2", default-features = false, features = ["pem"] }
 # client holds, and what the phone's JNI layer stands in front of.
 remotedesktop-session.workspace = true
 
+# The probe is a development tool, built only when asked for: `cargo run
+# --features probe --example ironrdp-probe`. Without the feature `cargo test` and
+# `clippy --all-targets` leave it alone.
+[features]
+probe = []
+
+[[example]]
+name = "ironrdp-probe"
+required-features = ["probe"]
+
 # The only part of this crate that knows a phone exists: the one line in
 # `src/lib.rs` that hands the backend to the platform crate's JNI layer.
 [target.'cfg(target_os = "android")'.dependencies]

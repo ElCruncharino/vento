@@ -7,11 +7,12 @@
 //! feature; the backends' crates link nothing, so the libraries are linked
 //! here, into the binary.)
 //!
-//! The host build already existed — it is what the C probes are built on —
-//! and this runs the same file through the `cmake` crate rather than
-//! describing it again, with the one switch that makes each `vento_<name>` a
-//! shared library carrying its vendored static dependencies and the stderr
-//! `vento_log`. The four `.so` files land under `lib/` in the build tree, the
+//! The host build already existed — it is what the C probes are built on,
+//! with `-DVENTO_PROBES=ON` — and this runs the same file through the `cmake`
+//! crate rather than describing it again, with the one switch that makes each
+//! `vento_<name>` a shared library carrying its vendored static dependencies
+//! and the stderr `vento_log`. The probes are left at their default, off:
+//! nothing here runs them. The four `.so` files land under `lib/` in the build tree, the
 //! binary links them by name and nothing else of theirs, and an rpath to that
 //! directory is baked in so that `cargo run` finds them from the target
 //! directory without being told.

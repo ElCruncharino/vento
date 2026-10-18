@@ -311,7 +311,8 @@ the viewer APK, so a change to `realvnc/.../Library.java`'s pins, to
 `realvnc_traffic.h`'s walk or to the four host-only submodules is proven
 here and nowhere else:
 
-    CC=clang CXX=clang++ cmake -S backends -B build/scratch/host -G Ninja -DSTRICT_WARNINGS=ON
+    CC=clang CXX=clang++ cmake -S backends -B build/scratch/host -G Ninja \
+        -DSTRICT_WARNINGS=ON -DVENTO_PROBES=ON
     cmake --build build/scratch/host
 
 Rust modules:

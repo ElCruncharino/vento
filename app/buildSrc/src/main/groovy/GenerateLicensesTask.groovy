@@ -161,7 +161,10 @@ abstract class GenerateLicensesTask extends DefaultTask {
         def roots = root != null ? [root] : (metadata.workspace_default_members ?: members).toList()
         final wanted = cargoPackages.getOrElse([] as Set)
         if (!wanted.isEmpty()) {
-            final byName = roots.collectEntries { [(packages.get(it).name.toString()): it] }
+            // Looked up among every member, not the default ones the roots
+            // otherwise are: a crate left out of `default-members` (the root
+            // manifest's) is still one an APK can ship.
+            final byName = members.collectEntries { [(packages.get(it).name.toString()): it] }
             final missing = wanted - byName.keySet()
             if (!missing.isEmpty()) {
                 throw new GradleException("${missing} is not a member of the cargo workspace")
