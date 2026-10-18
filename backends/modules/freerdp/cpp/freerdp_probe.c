@@ -34,7 +34,7 @@ static void usage(void) {
             "  --monitors N         how many (1)\n"
             "  --layout N           the keyboard layout id, or 0 for the library's (0)\n"
             "  --config-dir DIR     a writable directory the library wants (nothing\n"
-            "                       is kept there), which becomes $HOME\n"
+            "                       is kept there), and $HOME where none is set\n"
             "                       (vento-probe-freerdp, here)\n"
             "  --timeout MS         connect timeout, or 0 for the library's (0)\n"
             "%s",

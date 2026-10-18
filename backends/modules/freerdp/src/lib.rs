@@ -5,8 +5,9 @@
 //! its config from the options, its live options and its rows — what the
 //! Linux client holds, and on the phone what the one JNI layer stands in front
 //! of, linked into the library CMake makes of the C. The library's config path is a directory of ours, which
-//! also becomes the process's HOME; its certificate store there is never read
-//! or written, since every certificate is the trust prompt's to decide. Its
+//! also becomes the process's HOME where it has none (the phone's); its
+//! certificate store there is never read or written, since every certificate
+//! is the trust prompt's to decide. Its
 //! H.264 is decoded by the platform's decoders and its sound (rdpsnd, with
 //! Sound = local) played on the platform's output, handed to the C as
 //! `vento/video.h`'s and `vento/audio.h`'s tables as TigerVNC's are.
