@@ -50,8 +50,9 @@
 //! of silence). A daemon that is not back by then is played around: the
 //! streams it had go to ALSA (or, where PipeWire was asked for by name, to
 //! silence), and each looks for the daemon again every few seconds and
-//! comes back to it when it is there. A stream that fails on its own is made
-//! again the same way, alone, and stays ALSA's after its third failure. A
+//! comes back to it when it is there. A stream that fails on its own, whether
+//! refused as it is made or failed by the daemon later, is made again the
+//! same way, alone, and stays ALSA's after its third failure in a row. A
 //! new stream tries the daemon whenever there is no connection, so a
 //! PipeWire that starts later is used from the next stream on.
 //!
@@ -610,16 +611,8 @@ impl Supervisor {
                 let Some(at) = self.live.iter().position(|l| l.bound.as_ref().is_some_and(|b| b.id == id)) else {
                     return;
                 };
-                let mut live = self.live.remove(at);
-                self.unbind(&mut live);
-                live.failures += 1;
-                if live.failures >= ATTEMPTS {
-                    self.give_up(&live.slot, &format!("the PipeWire stream stopped working ({why})"));
-                } else {
-                    log::warn!("audio: the PipeWire stream stopped working ({why}); trying again in a second");
-                    live.retry = Some(Instant::now() + RETRY);
-                    self.live.push(live);
-                }
+                let live = self.live.remove(at);
+                self.failed(live, &format!("the PipeWire stream stopped working ({why})"));
             }
             Msg::Lost(id, why) => {
                 if self.core.as_ref().is_some_and(|c| c.id == id) {
@@ -714,7 +707,7 @@ impl Supervisor {
                     }
                     if let Err(why) = self.bind(i) {
                         let live = self.live.remove(i);
-                        self.give_up(&live.slot, &why);
+                        self.failed(live, &format!("the PipeWire stream could not be made ({why})"));
                         // The rest are looked at in the next tick, which
                         // comes at once where one of them is due.
                         break;
@@ -756,7 +749,7 @@ impl Supervisor {
         let i = self.live.len() - 1;
         if let Err(why) = self.bind(i) {
             live = self.live.remove(i);
-            self.give_up(&live.slot, &why);
+            self.failed(live, &format!("the PipeWire stream could not be made ({why})"));
         }
     }
 
@@ -875,6 +868,24 @@ impl Supervisor {
         slot.queue.set_output(NAME);
         live.bound = Some(bound);
         Ok(())
+    }
+
+    /// `live`'s stream stopped working, or could not be made (`why` says
+    /// which): made again a second later, alone, and handed to ALSA (or to
+    /// silence) at its third failure in a row. Both ways alike: a stream
+    /// that `pw_stream_new` or `pw_stream_connect` refused at once had gone
+    /// to ALSA for good at the first, where one the daemon failed a moment
+    /// later was tried again.
+    fn failed(&mut self, mut live: Live, why: &str) {
+        self.unbind(&mut live);
+        live.failures += 1;
+        if live.failures >= ATTEMPTS {
+            self.give_up(&live.slot, why);
+        } else {
+            log::warn!("audio: {why}; trying again in a second");
+            live.retry = Some(Instant::now() + RETRY);
+            self.live.push(live);
+        }
     }
 
     /// Lets go of `live`'s stream, if it has one.

@@ -92,6 +92,9 @@ const DEVICE_LATENCY: Duration = Duration::from_millis(50);
 /// or stopped working, a second apart, before the stream goes without sound
 /// for the rest of its life. A sound server restarting is back well within
 /// that; one that is not coming back is not worth a thread that never ends.
+/// Failures count in a row: a device that played in between starts the
+/// count again, or the fourth restart of the sound server in a session left
+/// it silent.
 const ATTEMPTS: u32 = 3;
 
 fn error(err: c_int) -> String {
@@ -206,7 +209,15 @@ fn run(queue: &Queue, shared: &Shared) {
         let why = match open(queue.format()) {
             Ok((pcm, device)) => match play(&pcm, device, queue, shared) {
                 Ok(()) => return,
-                Err(why) => why,
+                Err((why, played)) => {
+                    // A device that played was a working one: the count
+                    // starts over with its failure, which is the first of
+                    // a new run.
+                    if played {
+                        attempts = 1;
+                    }
+                    why
+                }
             },
             Err(why) => why,
         };
@@ -225,8 +236,9 @@ fn run(queue: &Queue, shared: &Shared) {
 }
 
 /// Feeds the device from the queue, a period at a time, until the stream
-/// says stop (`Ok`) or the device stops working (`Err`).
-fn play(pcm: &Pcm, device: Format, queue: &Queue, shared: &Shared) -> Result<(), String> {
+/// says stop (`Ok`) or the device stops working (`Err`, with whether it had
+/// taken a period first).
+fn play(pcm: &Pcm, device: Format, queue: &Queue, shared: &Shared) -> Result<(), (String, bool)> {
     let (mut buffer, mut period) = (0, 0);
     let err = unsafe { snd_pcm_get_params(pcm.0, &mut buffer, &mut period) };
     if err < 0 || period == 0 {
@@ -248,6 +260,7 @@ fn play(pcm: &Pcm, device: Format, queue: &Queue, shared: &Shared) -> Result<(),
     );
     let period = period as usize;
     let mut samples = vec![0i16; period * device.channels];
+    let mut played = false;
     while !shared.stop.load(Ordering::Relaxed) {
         queue.pull(&mut samples, device);
         let mut written = 0;
@@ -260,12 +273,13 @@ fn play(pcm: &Pcm, device: Format, queue: &Queue, shared: &Shared) -> Result<(),
                 // wait for it, and the period written again.
                 let err = unsafe { snd_pcm_recover(pcm.0, result as c_int, 1) };
                 if err < 0 {
-                    return Err(format!("the output device stopped working: {}", error(err)));
+                    return Err((format!("the output device stopped working: {}", error(err)), played));
                 }
                 continue;
             }
             written += result as usize;
         }
+        played = true;
         let mut delay: c_long = 0;
         if unsafe { snd_pcm_delay(pcm.0, &mut delay) } == 0 {
             let latency = device.duration(delay.max(0) as usize);

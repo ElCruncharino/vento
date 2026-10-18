@@ -469,7 +469,10 @@ and RDP's wave confirms count. libpipewire honours `PIPEWIRE_REMOTE`,
 `PIPEWIRE_PROPS` as it does for any client. A daemon that restarts is
 connected to again within a second or so and the streams made again on it;
 one that is not back after three tries a second apart leaves its streams to
-ALSA until it is, which they look for every five seconds. `--audio-output=`
+ALSA until it is, which they look for every five seconds. A stream that
+fails on its own — refused as it is made, or failed by the daemon later — is
+made again a second later, and goes to ALSA at its third failure in a row.
+`--audio-output=`
 `pipewire`, `alsa` or `auto` (the default; also `VENTO_AUDIO_OUTPUT`) picks
 one for tests: `pipewire` plays nothing without a daemon rather than going
 to ALSA. Which one plays is in the panel's Sound row (`Opus 48 kHz stereo
