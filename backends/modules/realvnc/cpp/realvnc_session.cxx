@@ -491,15 +491,19 @@ public:
         bridge_ = std::make_shared<Bridge>(this);
     }
 
-    /* `RealVncBackend.connect`, on the core thread. */
+    /* `RealVncBackend.connect`, from the thread that created the session: the
+       work, the connect timeout included, is posted to the core thread. */
     void start() {
         CoreThread &core = CoreThread::instance();
         graveyard().push_back(bridge_);
-        connectTimeout_ = core.postDelayed([this] { onConnectTimeout(); }, connectTimeoutMs_);
         core.post([this] {
             if (dead_.load()) {
                 return;
             }
+            // Armed here rather than by the caller, so that the clock is only
+            // ever touched on the core thread.
+            connectTimeout_ = CoreThread::instance().postDelayed([this] { onConnectTimeout(); },
+                                                                 connectTimeoutMs_);
             const auto t0 = std::chrono::steady_clock::now();
             HostedSession *hs = CoreThread::instance().core()->createSession(
                     bridge_.get(), address_, password_.empty() ? nullptr : password_.c_str(),
@@ -834,6 +838,10 @@ public:
         CoreThread::instance().runBlocking([this] {
             closed("");
             bridge_->retire();
+            // Last, where nothing can arm it again: a prompt answered while
+            // this was on its way could have, and a clock left running would
+            // fire into a session that is gone.
+            CoreThread::instance().cancel(connectTimeout_);
         });
     }
 
@@ -918,7 +926,9 @@ public:
 
     void onSessionClosed() {
         LOGI("sessionClosed");
-        // Already closed by definition, so do not close it again.
+        // Already closed by definition, so do not close it again — nor let a
+        // close that is still queued do so.
+        coreClosed_ = true;
         reap(false);
         closed(lastError_);
     }
@@ -1070,35 +1080,48 @@ private:
         }
     }
 
+    /* A task of the core thread's, and not a callback of the core's, so the
+       handle is retired and the close made here rather than queued: queued,
+       it would wait out another turn of the core's loop, whose callbacks
+       would reach the platform after `closed`. `closed` goes first, so that
+       a `sessionClosed` the close brings about finds it already said. */
     void onConnectTimeout() {
         if (state() == State::Connecting) {
             LOGW("no connSuccess within %d ms", connectTimeoutMs_);
-            reap(true);
             closed("Could not connect to " + address_);
+            if (HostedSession *hs = hs_.exchange(nullptr)) {
+                drop(hs, true);
+            }
         }
     }
 
     /* Retire the handle: nothing new can be posted for it, and what is
-       already queued is skipped by `onSession`'s identity check. The pixel
-       lock as well as the core thread: a fetch in flight on the drawing
-       thread must not be looking at the buffer this drops. */
+       already queued is skipped by `onSession`'s identity check. From any
+       thread; the rest is done on the core thread. */
     void reap(bool close) {
-        CoreThread::instance().cancel(connectTimeout_);
         HostedSession *hs = hs_.exchange(nullptr);
         if (!hs) {
             return;
         }
-        CoreThread::instance().post([this, hs, close] {
-            const std::lock_guard<std::mutex> guard(pixels_);
-            buffer_ = nullptr;
-            bufferW_ = bufferH_ = 0;
-            // Not once the core has said it is closed: it tears the session
-            // down in `sessionClosed`, and a close after that faults in the
-            // same place a second one does.
-            if (close && state() != State::Closed) {
-                hs->closeSession();
-            }
-        });
+        CoreThread::instance().post([this, hs, close] { drop(hs, close); });
+    }
+
+    /* The core thread's half of retiring a handle: the clock stopped, the
+       buffer dropped, and the close sent if asked for. The pixel lock as
+       well as the core thread: a fetch in flight on the drawing thread must
+       not be looking at the buffer this drops. */
+    void drop(HostedSession *hs, bool close) {
+        CoreThread::instance().cancel(connectTimeout_);
+        const std::lock_guard<std::mutex> guard(pixels_);
+        buffer_ = nullptr;
+        bufferW_ = bufferH_ = 0;
+        // Not once the core has said it is closed: it tears the session down
+        // in `sessionClosed`, and a close after that faults in the same place
+        // a second one does. Asked of the core's own word and not of `state_`,
+        // which `closed` sets before the core has been told anything.
+        if (close && !coreClosed_) {
+            hs->closeSession();
+        }
     }
 
     /* Once, and on the core thread. */
@@ -1275,6 +1298,7 @@ private:
 
     // Core thread only.
     uint64_t connectTimeout_ = 0;
+    bool coreClosed_ = false;      // the core has said `sessionClosed`
     int outstandingPrompts_ = 0;
     int64_t passwdCookie_ = 0;
     std::string proposedUser_;
