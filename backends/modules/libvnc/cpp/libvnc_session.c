@@ -558,10 +558,15 @@ static int askIdentity(Session *s, void (*ask)(void *, const char *), const char
     return accepted;
 }
 
-/* Reached once the certificate has failed to verify against anything, which
-   here is every certificate: there is no trust store in this build, because no
-   authority signs a VNC server's own. So the identity is the fingerprint, and
-   the answer comes from the pin store or from a person.
+/* Reached for every certificate. One that fails to verify against the system's
+   authorities (the phone's own store, or the host's) comes here as upstream
+   always sent it, which is nearly every one, since no authority signs a VNC
+   server's own; one that verifies and is for the name dialled comes here too,
+   by the patch on the library's verify_certificate_callback, since an
+   authority's word is who the server says it is and not that it is the one
+   reached last time. Either way the identity is the fingerprint, and the
+   answer comes from the pin store or from a person — as for the TigerVNC
+   backend, whose library is patched the same way.
 
    Printed the way `openssl x509 -fingerprint -sha256` prints it, which is what
    the other two backends pin, so one host reached through two of them is one
@@ -630,9 +635,10 @@ static char *onGetPassword(rfbClient *cl) {
 static rfbCredential *onGetCredential(rfbClient *cl, int type) {
     Session *s = sessionOf(cl);
     if (type == rfbCredentialTypeX509) {
-        /* Every field left null: no CA to check against and no fingerprint
-           given ahead of time, so verification fails and the decision arrives
-           at onCertMismatch, which is the one place this backend answers it. */
+        /* Every field left null: no CA file, so the library checks against
+           the system's authorities, and no fingerprint given ahead of time, so
+           every certificate — verified or not — arrives at onCertMismatch,
+           which is the one place this backend answers it. */
         return calloc(1, sizeof(rfbCredential));
     }
     if (type != rfbCredentialTypeUser) {
