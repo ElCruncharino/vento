@@ -15,6 +15,12 @@
 # On a host target the crate is the JNI table and nothing else: plain data,
 # no dependencies to fetch, read by `vento-codegen` to write each module's
 # natives class.
+#
+# The directory is the whole of the phone's platform, not only this crate:
+# `java/` beside it is the seam every backend's provider is written against
+# (`Backend`, `NativeBackend` and the rest, the `:backends` Gradle module's
+# Java, whose natives this crate implements), and `javatest/` is its tests;
+# `backends/build.gradle` points AGP at both.
 [package]
 name = "remotedesktop-platform-android"
 version.workspace = true

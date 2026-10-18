@@ -60,19 +60,21 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
 - `tls/` — rustls pinning, for the Rust backends that speak TLS.
 - `codegen/` (`vento-codegen`) — the phone's Java catalogs and natives
   classes, generated from `session` at build time on the host.
-- `platform/android/` — the one JNI layer, MediaCodec and AAudio.
+- `platform/android/` — the phone's platform: the one JNI layer, MediaCodec
+  and AAudio (the crate), and, in `java/`, the `:backends` module's Java —
+  the seam every backend's provider is written against, the files with no
+  package directories over them — with its tests in `javatest/`.
 - `platform/desktop/` — FFmpeg (built statically from `third_party/`), the
   ALSA/PipeWire outputs and the desktop C platform (`c/`, with the C probes'
   shared body).
-- `src/main/java/` — the `:backends` module's Java: the seam every backend's
-  provider is written against.
 - `vectors/` — test cases both the Rust and the Java tests read.
 
 ## Building them
 
-- `build.gradle` — the `:backends` Gradle module and the helpers every
-  backend module calls (`generateCatalog`, `generateNatives`,
-  `rustStaticLibrary`, `codegenSources`).
+- `build.gradle` — the `:backends` Gradle module, whose sources it points
+  at `platform/android/java/` and `javatest/`, and the helpers every backend
+  module calls (`generateCatalog`, `generateNatives`, `rustStaticLibrary`,
+  `codegenSources`).
 - `buildSrc/` — the Gradle tasks those helpers use (cargo, codegen, tarballs,
   patch check), pulled in by the root `buildSrc`.
 - `CMakeLists.txt`, `cmake/` — the host CMake build of the C backends, which

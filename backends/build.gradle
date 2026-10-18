@@ -5,7 +5,7 @@ plugins {
     id 'com.android.library'
 }
 
-// The seam and nothing else: five files, no androidx, no app class, no
+// The seam and nothing else: no androidx, no app class, no
 // protocol. A protocol is a module under this one, depending on this and on
 // nothing else of the app's — so the compiler is what says the seam survived
 // another implementation unchanged.
@@ -20,6 +20,18 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_21
         targetCompatibility JavaVersion.VERSION_21
+    }
+
+    // Not AGP's `src/main/`: this project is `backends/` itself, the parent
+    // of every module and of the crates, and its Java is the phone's half of
+    // the platform, so it lives with the rest of that in `platform/android/`
+    // — the files themselves in `java/`, with no package directories over
+    // them (javac goes by the `package` line), and their tests beside it in
+    // `javatest/` rather than under it, since a source directory takes in
+    // everything below it.
+    sourceSets {
+        main.java.srcDirs = ['platform/android/java']
+        test.java.srcDirs = ['platform/android/javatest']
     }
 
     // The rules this module keeps that the Linux client keeps too, held to one

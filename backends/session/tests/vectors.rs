@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The shared test vectors in `backends/vectors/`. `options.json` is read
-//! by the Java tests in `backends/src/test` too, for the one rule with a Java
-//! copy (`BackendOption.settle`, which the option screens run as somebody
-//! edits), so that the copy cannot drift from this one without one of these
-//! failing; the credentials and known-hosts cases are this side's alone,
-//! since both clients apply those rules from here.
+//! by the Java tests in `backends/platform/android/javatest` too, for the one
+//! rule with a Java copy (`BackendOption.settle`, which the option screens
+//! run as somebody edits), so that the copy cannot drift from this one
+//! without one of these failing; the credentials and known-hosts cases are
+//! this side's alone, since both clients apply those rules from here.
 
 use serde_json::Value;
 use std::path::PathBuf;
