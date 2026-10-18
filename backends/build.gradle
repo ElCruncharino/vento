@@ -34,8 +34,9 @@ android {
         test.java.srcDirs = ['platform/android/javatest']
     }
 
-    // The rules this module keeps that the Linux client keeps too, held to one
-    // set of cases: `vectors/`, which `cargo test` reads from the other side.
+    // The one rule this module keeps that the Linux client keeps too
+    // (`BackendOption.settle`), held to one set of cases: `vectors/`, which
+    // `cargo test` reads from the other side.
     // Read at run time from the module's directory, which is where a test
     // runs, so they are declared as an input of the task, or a changed case
     // would not make it out of date.

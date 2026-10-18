@@ -3,7 +3,7 @@
 
 //! How a far end's identity meets the pins, the same for every client: the
 //! phone and the Linux client both decide here, each over a [`Store`] of its
-//! own, and `backends/vectors/known_hosts.json` holds the rule to its cases.
+//! own, and `tests/vectors.rs` holds the rule to its cases.
 //!
 //! A remote desktop server's certificate is one it made for itself on first
 //! start, and no authority vouches for it — so, as over SSH, the identity is

@@ -29,8 +29,9 @@ clients, and what differs between them is each client's own code.
   generic; `Kind` and `Connect`; the credentials and trust rules — how a
   prompt's answer is read, and `trust::decide`, which meets a far end's
   identity with the pins in whatever `trust::Store` the client keeps — which
-  the phone's JNI layer applies too, held to `backends/vectors/`; and, under
-  its `c` feature, the one adapter over the vtable in `vento/backend.h`.
+  the phone's JNI layer applies too, held to their cases
+  (`tests/vectors.rs`); and, under its `c` feature, the one adapter over the
+  vtable in `vento/backend.h`.
   Damage is coalesced into a dirty-rect list behind a mutex and delivered one
   `Event::Frame` per update, never a message per rectangle; a window that
   falls behind finds one unread `Frame` per desktop size and the latest

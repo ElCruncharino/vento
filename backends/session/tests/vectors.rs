@@ -1,12 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The shared test vectors in `backends/vectors/`. `options.json` is read
-//! by the Java tests in `backends/platform/android/javatest` too, for the one
-//! rule with a Java copy (`BackendOption.settle`, which the option screens
-//! run as somebody edits), so that the copy cannot drift from this one
-//! without one of these failing; the credentials and known-hosts cases are
-//! this side's alone, since both clients apply those rules from here.
+//! The rules every client keeps alike, held to their cases. The credentials
+//! and known-hosts cases are written out here, since both clients apply
+//! those rules from this crate and nothing else reads them. The options
+//! cases are in `backends/vectors/options.json`, which the Java tests in
+//! `backends/platform/android/javatest` read too, for the one rule with a
+//! Java copy (`BackendOption.settle`, which the option screens run as
+//! somebody edits), so that the copy cannot drift from this one without one
+//! of these failing.
 
 use serde_json::Value;
 use std::path::PathBuf;
@@ -15,6 +17,162 @@ use session::credentials::{fill_user, rdp_identity, split_domain};
 use session::events::Identity;
 use session::options::{Choice, Kind, Options, Scope, Spec};
 use session::trust::{self, Verdict};
+
+// What a credentials prompt's answer comes to, for every client that has
+// one. A name is read trimmed everywhere, so one that is only spaces is an
+// empty one.
+
+/// A typed user name, and the `(domain, user)` it is read as.
+const SPLIT_DOMAIN: &[(&str, &str, &str)] = &[
+    ("CORP\\alice", "CORP", "alice"),
+    ("alice@corp.example", "corp.example", "alice"),
+    (" alice ", "", "alice"),
+    ("", "", ""),
+    ("@odd", "", "@odd"),
+    ("alice@", "", "alice"),
+    ("x@y@z", "y@z", "x"),
+    ("a\\b\\c", "a", "b\\c"),
+    ("CORP\\alice@x", "CORP", "alice@x"),
+    (".\\alice", ".", "alice"),
+    ("\\alice", "", "alice"),
+    ("DOM\\", "DOM", ""),
+];
+
+/// An RDP prompt's answer against the session's own domain and user
+/// (already split): `(session domain, session user, answer user, answer
+/// domain, domain, user)`. The answer's domain is one given beside the name,
+/// which only the Linux client's `--domain` has; empty where none is.
+const RDP_IDENTITY: &[(&str, &str, &str, &str, &str, &str)] = &[
+    ("CORP", "proto", "", "", "CORP", "proto"),
+    ("CORP", "proto", "   ", "", "CORP", "proto"),
+    ("CORP", "proto", "proto", "", "CORP", "proto"),
+    ("CORP", "proto", "alice", "", "CORP", "alice"),
+    ("CORP", "proto", " alice ", "", "CORP", "alice"),
+    ("CORP", "proto", "LAB\\alice", "", "LAB", "alice"),
+    ("CORP", "proto", "alice@lab.example", "", "lab.example", "alice"),
+    ("CORP", "proto", ".\\alice", "", ".", "alice"),
+    ("", "proto", "alice", "", "", "alice"),
+    ("", "", "", "", "", ""),
+    ("CORP", "proto", "alice", "LAB", "LAB", "alice"),
+    ("CORP", "proto", "", "LAB", "CORP", "proto"),
+];
+
+/// Any other backend's answer, where an empty user name is the session's:
+/// `(session user, answer user, user)`.
+const FILL_USER: &[(&str, &str, &str)] = &[
+    ("proto", "", "proto"),
+    ("proto", "alice", "alice"),
+    ("", "", ""),
+    ("proto", " ", "proto"),
+    ("proto", " alice ", "alice"),
+];
+
+// The known-hosts rule, for every client that pins a far end's identity.
+
+/// The address a pin is filed under, folded for case and trimmed of what
+/// Java's `trim()` takes (ASCII controls and the space, nothing wider),
+/// since the phone's pins are already filed that way.
+const KEY: &[(&str, &str)] = &[
+    ("Host.Example", "host.example"),
+    ("  [FE80::1]:5900 ", "[fe80::1]:5900"),
+    ("\tHOST:3389\n", "host:3389"),
+    // No-break spaces, which are wider than what is trimmed.
+    ("\u{a0}host\u{a0}", "\u{a0}host\u{a0}"),
+    ("", ""),
+    ("123456789@hbbs.Example", "123456789@hbbs.example"),
+];
+
+/// A fingerprint as it is compared: its ASCII hex digits alone, and upper
+/// case.
+const CANONICAL: &[(&str, &str)] = &[
+    ("66:cc:ED", "66CCED"),
+    ("66 CC-ed", "66CCED"),
+    ("", ""),
+    ("SHA256:ab:cd", "A256ABCD"),
+    // Fullwidth digits, which are not ASCII ones.
+    ("\u{ff10}\u{ff11}:ab", "AB"),
+];
+
+/// A store of pins: `(key, fingerprint)`.
+type Pins = &'static [(&'static str, &'static str)];
+
+/// What a verdict comes to: `None` where it matches, or why it asks — the
+/// identity, and the key a fingerprint is pinned under when it matches another.
+type Asks = Option<(Identity, &'static str)>;
+
+/// A fingerprint against a store of pins (keys as filed): `(pins, address,
+/// fingerprint, verdict)`, where an ask carries why — new, matches another
+/// (with the key it is pinned under; no case has two, since which of several
+/// a store finds first is its own order), or changed.
+const VERDICT: &[(Pins, &str, &str, Asks)] = &[
+    (&[("host:3389", "AB:CD:EF")], "HOST:3389", "ab:cd:ef", None),
+    (&[("host:3389", "abcdef")], " host:3389", "AB CD EF", None),
+    (&[("host:3389", "AB:CD:EF")], "host:3389", "00:11", Some((Identity::Changed, ""))),
+    (&[("host:3389", "AB:CD:EF")], "10.0.0.5:3389", "AB:CD:EF", Some((Identity::MatchesAnother, "host:3389"))),
+    (&[("host:3389", "AB:CD:EF")], "10.0.0.5:3389", "00:11", Some((Identity::New, ""))),
+    (&[], "host:3389", "AB:CD:EF", Some((Identity::New, ""))),
+    (&[("a", "")], "b", "", Some((Identity::New, ""))),
+    (&[("host:3389", "AB:CD:EF"), ("10.0.0.5:3389", "00:11")], "10.0.0.5:3389", "AB:CD:EF", Some((Identity::Changed, ""))),
+];
+
+#[test]
+fn split_domain_agrees_with_the_vectors() {
+    for case @ &(typed, domain, user) in SPLIT_DOMAIN {
+        let (got_domain, got_user) = split_domain(typed);
+        assert_eq!((got_domain.as_str(), got_user.as_str()), (domain, user), "{case:?}");
+    }
+}
+
+#[test]
+fn rdp_identity_agrees_with_the_vectors() {
+    for case @ &(session_domain, session_user, answer_user, answer_domain, domain, user) in RDP_IDENTITY {
+        let answer = Credentials {
+            user: answer_user.into(),
+            domain: answer_domain.into(),
+            password: "pw".into(),
+        };
+        let (got_domain, got_user) = rdp_identity(&answer, session_domain, session_user);
+        assert_eq!((got_domain.as_str(), got_user.as_str()), (domain, user), "{case:?}");
+    }
+}
+
+#[test]
+fn fill_user_agrees_with_the_vectors() {
+    for case @ &(session_user, answer_user, user) in FILL_USER {
+        let answer = Credentials {
+            user: answer_user.into(),
+            domain: String::new(),
+            password: "pw".into(),
+        };
+        let filled = fill_user(answer, session_user);
+        assert_eq!(filled.user, user, "{case:?}");
+        assert_eq!(filled.password, "pw");
+    }
+}
+
+#[test]
+fn known_hosts_keys_and_fingerprints_agree_with_the_vectors() {
+    for case @ &(address, key) in KEY {
+        assert_eq!(trust::key(address), key, "{case:?}");
+    }
+    for case @ &(fingerprint, canonical) in CANONICAL {
+        assert_eq!(trust::canonical(fingerprint), canonical, "{case:?}");
+    }
+}
+
+#[test]
+fn known_hosts_verdicts_agree_with_the_vectors() {
+    for case @ &(pins, address, fingerprint, ask) in VERDICT {
+        let want = match ask {
+            None => Verdict::Matches,
+            Some((identity, matching_address)) => Verdict::Ask {
+                identity,
+                matching_address: matching_address.into(),
+            },
+        };
+        assert_eq!(trust::verdict(pins, address, fingerprint), want, "{case:?}");
+    }
+}
 
 fn vectors(name: &str) -> Value {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -30,83 +188,6 @@ fn str<'a>(case: &'a Value, key: &str) -> &'a str {
 
 fn cases<'a>(file: &'a Value, section: &str) -> &'a Vec<Value> {
     file[section].as_array().unwrap_or_else(|| panic!("no {section}"))
-}
-
-#[test]
-fn split_domain_agrees_with_the_vectors() {
-    let file = vectors("credentials.json");
-    for case in cases(&file, "split_domain") {
-        let (domain, user) = split_domain(str(case, "typed"));
-        assert_eq!((domain.as_str(), user.as_str()), (str(case, "domain"), str(case, "user")), "{case}");
-    }
-}
-
-#[test]
-fn rdp_identity_agrees_with_the_vectors() {
-    let file = vectors("credentials.json");
-    for case in cases(&file, "rdp_identity") {
-        let answer = Credentials {
-            user: str(case, "answer_user").into(),
-            domain: case["answer_domain"].as_str().unwrap_or("").into(),
-            password: "pw".into(),
-        };
-        let (domain, user) = rdp_identity(&answer, str(case, "session_domain"), str(case, "session_user"));
-        assert_eq!((domain.as_str(), user.as_str()), (str(case, "domain"), str(case, "user")), "{case}");
-    }
-}
-
-#[test]
-fn fill_user_agrees_with_the_vectors() {
-    let file = vectors("credentials.json");
-    for case in cases(&file, "fill_user") {
-        let answer = Credentials {
-            user: str(case, "answer_user").into(),
-            domain: String::new(),
-            password: "pw".into(),
-        };
-        let filled = fill_user(answer, str(case, "session_user"));
-        assert_eq!(filled.user, str(case, "user"), "{case}");
-        assert_eq!(filled.password, "pw");
-    }
-}
-
-#[test]
-fn known_hosts_keys_and_fingerprints_agree_with_the_vectors() {
-    let file = vectors("known_hosts.json");
-    for case in cases(&file, "key") {
-        assert_eq!(trust::key(str(case, "address")), str(case, "key"), "{case}");
-    }
-    for case in cases(&file, "canonical") {
-        assert_eq!(trust::canonical(str(case, "fingerprint")), str(case, "canonical"), "{case}");
-    }
-}
-
-#[test]
-fn known_hosts_verdicts_agree_with_the_vectors() {
-    let file = vectors("known_hosts.json");
-    for case in cases(&file, "verdict") {
-        let pins: Vec<(&str, &str)> = case["pins"]
-            .as_object()
-            .unwrap()
-            .iter()
-            .map(|(key, pin)| (key.as_str(), pin.as_str().unwrap()))
-            .collect();
-        let want = match str(case, "verdict") {
-            "matches" => Verdict::Matches,
-            "ask" => Verdict::Ask {
-                identity: match str(case, "identity") {
-                    "new" => Identity::New,
-                    "matches_another" => Identity::MatchesAnother,
-                    "changed" => Identity::Changed,
-                    other => panic!("identity {other}"),
-                },
-                matching_address: str(case, "matching_address").into(),
-            },
-            other => panic!("verdict {other}"),
-        };
-        let got = trust::verdict(&pins, str(case, "address"), str(case, "fingerprint"));
-        assert_eq!(got, want, "{case}");
-    }
 }
 
 /// A spec from the vectors' own description of one. Leaked, since a spec

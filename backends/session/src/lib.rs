@@ -13,7 +13,7 @@
 //! [`credentials`] and [`trust`] are the rules every client keeps alike —
 //! how a prompt's answer is read, and how a far end's identity meets the
 //! pins — applied here for the phone and the Linux client both, and held to
-//! their cases by `backends/vectors/`.
+//! their cases by `tests/vectors.rs`.
 //!
 //! The adapters themselves are each in its backend's own crate: the protocol
 //! crate for RFB, IronRDP, RustDesk and SPICE, and a small crate beside the C

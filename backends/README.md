@@ -76,16 +76,18 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
 - `session/` (`remotedesktop-session`) — what a client holds a session by:
   the `Backend` trait, events, the catalog registry and the shape of an
   option, `Kind`/`Connect`, and the rules both clients keep alike
-  (credentials, trust), held to `vectors/`. With the `c` feature, the one
-  adapter over the C vtable and the shared headers' declarations
-  (`session::c::ffi`), which each C backend's own declarations are written
-  over. The neutral C API it adapts is in `session/include/vento/`
+  (credentials, trust), held to their cases (`tests/vectors.rs`). With the
+  `c` feature, the one adapter over the C vtable and the shared headers'
+  declarations (`session::c::ffi`), which each C backend's own declarations
+  are written over. The neutral C API it adapts is in `session/include/vento/`
   (`backend.h`, `video.h`, `audio.h`, `log.h`, `text.h`; each C backend's
   own header is in its module): with the crate that reads them into Rust,
   as each backend's header is with its own.
 - `codegen/` (`vento-codegen`) — the phone's Java catalogs and natives
   classes, generated from `session` at build time on the host.
-- `vectors/` — test cases both the Rust and the Java tests read.
+- `vectors/` — `options.json`, the cases of the one rule with a Java copy
+  (`settle`), which both the Rust and the Java tests read. Cases only the
+  Rust tests read are written in them.
 
 ## The platforms: `platform/<os>/`
 
