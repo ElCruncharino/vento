@@ -34,7 +34,7 @@ use std::ffi::{CStr, CString, c_char, c_void};
 use std::sync::OnceLock;
 
 use media::video::convert::{Frame, Plane};
-use media::video::{Changes, Codec, Decoders, Output};
+use media::video::{Changes, Codec, Decoders, Output, bitstream};
 
 #[repr(C)]
 pub(crate) struct AMediaCodec {
@@ -99,6 +99,7 @@ unsafe extern "C" {
     ) -> i32;
     pub(crate) fn AMediaCodec_start(codec: *mut AMediaCodec) -> i32;
     pub(crate) fn AMediaCodec_stop(codec: *mut AMediaCodec) -> i32;
+    pub(crate) fn AMediaCodec_flush(codec: *mut AMediaCodec) -> i32;
     pub(crate) fn AMediaCodec_delete(codec: *mut AMediaCodec) -> i32;
     pub(crate) fn AMediaCodec_dequeueInputBuffer(codec: *mut AMediaCodec, timeout_us: i64) -> isize;
     pub(crate) fn AMediaCodec_getInputBuffer(
@@ -135,7 +136,7 @@ unsafe extern "C" {
     pub(crate) fn AMediaCodec_releaseName(codec: *mut AMediaCodec, name: *mut c_char);
 }
 
-// For the two calls Android 16 added (API 36), looked up rather than linked:
+// For the calls Android 16 added (API 36), looked up rather than linked:
 // the app runs from API 34, where linking them would fail to load.
 unsafe extern "C" {
     fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
@@ -157,6 +158,10 @@ const COLOR_FORMAT_YUV420_FLEXIBLE: i32 = 0x7F42_0888;
 const COLOR_STANDARD_BT709: i32 = 1;
 const COLOR_RANGE_FULL: i32 = 1;
 
+/// `MediaCodec.BUFFER_FLAG_PARTIAL_FRAME`: this buffer holds part of a
+/// frame, and the rest follows in the buffers up to one without the flag.
+const BUFFER_FLAG_PARTIAL_FRAME: u32 = 8;
+
 /// `image-data` is a `MediaImage2`, the same descriptor Java's `Image` is built
 /// from: where each component starts, and what a row and a column of it cost.
 const MEDIA_IMAGE2_HEADER: usize = 24; // type, planes, width, height, 2 × depth
@@ -176,6 +181,19 @@ const FRAME_TIMEOUT_US: i64 = 30_000;
 /// one drawn late, and upstream's own MediaCodec decoder for it waits for as
 /// long as it takes.
 const PICTURE_TIMEOUT_US: i64 = 500_000;
+
+/// How much of a frame one input buffer is asked to hold: the picture
+/// uncompressed, at 4:2:0, which a frame of video does not reach in
+/// practice — a key frame of a 3840x2160 desktop of random colours was 10 MB
+/// of the 12.4 this asks for. Asked for rather than left to the decoder,
+/// whose own choice need not grow with the picture: the Pixel 8's H.264
+/// decoder gives 7 MiB at any size (and keeps to it when asked for less),
+/// which a key frame of a busy 4K desktop does not fit. A frame larger still
+/// starts the decoder over with room for it ([`Decoder::feed`]). Never less
+/// than a megabyte, for a small picture's headers.
+fn input_size(width: usize, height: usize) -> usize {
+    (width * height * 3 / 2).max(1 << 20)
+}
 
 /// The phone's decoders, as a session is handed them.
 pub struct MediaCodec;
@@ -233,9 +251,20 @@ pub struct Decoder {
     /// when the decoder is made, since a codec does not change its nature.
     name: String,
     hardware: Option<bool>,
+    /// What one input buffer was asked to hold, and whether the codec takes
+    /// a frame in parts where one does not hold it.
+    max_input: usize,
+    partial_frames: bool,
     pts: u64,
     saw_frame: bool,
+    /// Whether the next picture is waited for as the first is: true from
+    /// when the decoder starts, and again after it starts over.
+    fresh: bool,
     failed: bool,
+    /// A frame was dropped or the decoder started over without its key
+    /// frame, so the stream refers back to pictures it no longer has: for
+    /// [`take_key_frame_request`](media::video::Decoder::take_key_frame_request).
+    key_frame_wanted: bool,
     planes: [Plane; 3],
     have_layout: bool,
     frame_width: i32,
@@ -260,30 +289,15 @@ impl Decoder {
             log::warn!("no {} decoder on this device", codec.name());
             return None;
         }
-        let started = unsafe {
-            let format = AMediaFormat_new();
-            AMediaFormat_setString(format, c"mime".as_ptr(), mime.as_ptr());
-            AMediaFormat_setInt32(format, c"width".as_ptr(), width as i32);
-            AMediaFormat_setInt32(format, c"height".as_ptr(), height as i32);
-            AMediaFormat_setInt32(format, c"color-format".as_ptr(), COLOR_FORMAT_YUV420_FLEXIBLE);
-            AMediaFormat_setInt32(format, c"low-latency".as_ptr(), 1);
-            let configured = AMediaCodec_configure(
-                handle,
-                format,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                0,
-            );
-            AMediaFormat_delete(format);
-            configured == AMEDIA_OK && AMediaCodec_start(handle) == AMEDIA_OK
-        };
-        if !started {
+        let max_input = input_size(width, height);
+        if !start(handle, codec, width, height, max_input) {
             log::warn!("could not start a {} decoder for {width}x{height}", codec.name());
             unsafe { AMediaCodec_delete(handle) };
             return None;
         }
         let name = codec_name(handle);
         let hardware = name.as_deref().and_then(is_hardware);
+        let partial_frames = name.as_deref().is_some_and(takes_partial_frames);
         log::info!(
             "{} decoder started for {width}x{height}: {}, {}",
             codec.name(),
@@ -299,9 +313,13 @@ impl Decoder {
             kind: codec,
             name: name.unwrap_or_default(),
             hardware,
+            max_input,
+            partial_frames,
             pts: 0,
             saw_frame: false,
+            fresh: true,
             failed: false,
+            key_frame_wanted: false,
             planes: [Plane::default(); 3],
             have_layout: false,
             frame_width: width as i32,
@@ -314,9 +332,20 @@ impl Decoder {
         })
     }
 
-    /// The frame into the decoder's input, in as many buffers as it takes.
-    fn feed(&mut self, mut data: &[u8]) -> bool {
-        while !data.is_empty() {
+    /// The frame into the decoder's input: one buffer for one frame, which is
+    /// what a decoder takes a buffer to be.
+    ///
+    /// A frame larger than an input buffer — a key frame of a large, busy
+    /// desktop — starts the decoder over with buffers large enough, and is
+    /// fed to it if it is one a fresh decoder can start from; otherwise it is
+    /// dropped and a key frame asked for. Where the codec will not give
+    /// buffers that large, a codec that takes a frame in parts is given it in
+    /// parts, and any other drops it (and asks for a key frame, unless it was
+    /// one). A frame is never cut into several buffers queued as frames: a
+    /// decoder takes each for a whole one, and decodes the parts of a key
+    /// frame as two broken pictures, or none.
+    fn feed(&mut self, data: &[u8]) -> bool {
+        loop {
             let index = unsafe { AMediaCodec_dequeueInputBuffer(self.codec, FRAME_TIMEOUT_US) };
             if index < 0 {
                 log::warn!("no input buffer, dropping {} bytes", data.len());
@@ -328,32 +357,109 @@ impl Decoder {
             if buffer.is_null() || capacity == 0 {
                 return false;
             }
-            let take = if data.len() <= capacity {
-                data.len()
-            } else if matches!(self.kind, Codec::H264 | Codec::H265) {
-                // A TigerVNC key frame at a desktop's size can be more than
-                // one input buffer holds. An H.264 or H.265 access unit is
-                // split at a NAL boundary rather than anywhere, since a
-                // decoder reassembles by start code and a buffer cut through
-                // the middle of a NAL unit is a corrupt frame.
-                match nal_boundary(data, capacity) {
-                    Some(at) => at,
-                    None => {
-                        log::warn!("{} bytes with no NAL boundary under {capacity}", data.len());
-                        return false;
-                    }
+            if data.len() <= capacity {
+                unsafe {
+                    std::ptr::copy_nonoverlapping(data.as_ptr(), buffer, data.len());
+                    AMediaCodec_queueInputBuffer(self.codec, index as usize, 0, data.len(), self.pts, 0);
                 }
-            } else {
-                // A VP9 frame is one unit and half of one is not a picture.
-                log::warn!("a {} byte frame does not fit {capacity} bytes", data.len());
-                return false;
-            };
-            unsafe {
-                std::ptr::copy_nonoverlapping(data.as_ptr(), buffer, take);
-                AMediaCodec_queueInputBuffer(self.codec, index as usize, 0, take, self.pts, 0);
+                self.pts += 1000;
+                return true;
             }
-            data = &data[take..];
-            self.pts += 1000;
+            if data.len() > self.max_input {
+                // A quarter more than this frame, since the next key frame of
+                // the same desktop is no smaller. The buffer just taken goes
+                // back with the stop.
+                let wanted = data.len() + data.len() / 4;
+                log::info!(
+                    "a {}-byte {} frame does not fit the decoder's {capacity}-byte input buffers, \
+                     starting it over with room for {wanted}",
+                    data.len(),
+                    self.kind.name()
+                );
+                if !self.restart(wanted) {
+                    return false;
+                }
+                if bitstream::starts_stream(self.kind, data) {
+                    continue;
+                }
+                log::warn!("the frame was not a key frame, so it is dropped and one asked for");
+                self.key_frame_wanted = true;
+                return false;
+            }
+            // As large as was asked for, and still the codec gave less.
+            if self.partial_frames {
+                return self.feed_parts(index as usize, buffer, capacity, data);
+            }
+            // Dropped, and a key frame asked for — unless this was one, since
+            // the next would be as large, and asking would only have the far
+            // end send that again and again. The picture then waits for a key
+            // frame that fits.
+            let key = bitstream::starts_stream(self.kind, data);
+            log::warn!(
+                "a {}-byte{} frame does not fit the decoder's {capacity}-byte input buffers, dropped{}",
+                data.len(),
+                if key { " key" } else { "" },
+                if key { "" } else { "; asking for a key frame" }
+            );
+            // Given back empty, which a decoder takes as no frame at all.
+            unsafe { AMediaCodec_queueInputBuffer(self.codec, index as usize, 0, 0, self.pts, 0) };
+            self.key_frame_wanted = !key;
+            return false;
+        }
+    }
+
+    /// A frame in as many buffers as it takes, the first already taken, each
+    /// but the last flagged as part of a frame and all with the frame's one
+    /// timestamp: for a codec that says it reassembles them.
+    fn feed_parts(&mut self, mut index: usize, mut buffer: *mut u8, mut capacity: usize, data: &[u8]) -> bool {
+        let mut rest = data;
+        loop {
+            let take = rest.len().min(capacity);
+            let last = take == rest.len();
+            let flags = if last { 0 } else { BUFFER_FLAG_PARTIAL_FRAME };
+            unsafe {
+                std::ptr::copy_nonoverlapping(rest.as_ptr(), buffer, take);
+                AMediaCodec_queueInputBuffer(self.codec, index, 0, take, self.pts, flags);
+            }
+            rest = &rest[take..];
+            if last {
+                self.pts += 1000;
+                return true;
+            }
+            let next = unsafe { AMediaCodec_dequeueInputBuffer(self.codec, FRAME_TIMEOUT_US) };
+            buffer = if next >= 0 {
+                unsafe { AMediaCodec_getInputBuffer(self.codec, next as usize, &mut capacity) }
+            } else {
+                std::ptr::null_mut()
+            };
+            if buffer.is_null() || capacity == 0 {
+                // Part of a frame is queued, and the next frame would be taken
+                // for its rest: the input is flushed instead, which loses the
+                // pictures the stream refers back to.
+                log::warn!("no input buffer for the rest of a {}-byte frame, dropped", data.len());
+                unsafe { AMediaCodec_flush(self.codec) };
+                self.owed = 0;
+                self.key_frame_wanted = true;
+                return false;
+            }
+            index = next as usize;
+        }
+    }
+
+    /// The decoder stopped and configured again for the same picture with
+    /// input buffers of `max_input` bytes. What it held is gone: the pictures
+    /// it was still working on and the ones the stream refers back to.
+    fn restart(&mut self, max_input: usize) -> bool {
+        unsafe { AMediaCodec_stop(self.codec) };
+        self.max_input = max_input;
+        self.owed = 0;
+        self.fresh = true;
+        self.have_layout = false;
+        let (width, height) = (self.frame_width.max(1) as usize, self.frame_height.max(1) as usize);
+        if !start(self.codec, self.kind, width, height, max_input) {
+            log::warn!("the {} decoder would not start again", self.kind.name());
+            self.failed = true;
+            return false;
         }
         true
     }
@@ -484,12 +590,17 @@ impl Decoder {
             AMediaFormat_getInt32(format, c"width".as_ptr(), &mut self.frame_width);
             AMediaFormat_getInt32(format, c"height".as_ptr(), &mut self.frame_height);
             // The visible rectangle, where the coded one is padded up to a
-            // macroblock.
+            // macroblock. The planes' offsets are the coded picture's, so
+            // where the rectangle does not start at its corner they are
+            // moved to where it does, as Java's `Image` moves them.
             let (mut l, mut t, mut r, mut b) = (0, 0, 0, 0);
             if AMediaFormat_getRect(format, c"crop".as_ptr(), &mut l, &mut t, &mut r, &mut b) {
                 self.frame_width = r - l + 1;
                 self.frame_height = b - t + 1;
+            } else {
+                (l, t) = (0, 0);
             }
+            let (left, top) = (l.max(0) as usize, t.max(0) as usize);
 
             // Both out of the bitstream's own description of itself. A stream
             // that says nothing is taken for BT.601, which is what the encoders
@@ -526,7 +637,7 @@ impl Decoder {
             }
             for i in 0..3 {
                 let at = MEDIA_IMAGE2_HEADER + i * MEDIA_IMAGE2_PLANE;
-                let plane = Plane {
+                let mut plane = Plane {
                     offset: read_i32(described, at).max(0) as usize,
                     col_inc: read_i32(described, at + 4).max(0) as usize,
                     row_inc: read_i32(described, at + 8).max(0) as usize,
@@ -542,6 +653,8 @@ impl Decoder {
                     self.failed = true;
                     return;
                 }
+                plane.offset += top / plane.vert_subsampling * plane.row_inc
+                    + left / plane.horiz_subsampling * plane.col_inc;
                 self.planes[i] = plane;
             }
             self.have_layout = true;
@@ -564,15 +677,16 @@ impl media::video::Decoder for Decoder {
         if !self.feed(data) {
             return false;
         }
-        let timeout = if self.saw_frame {
-            FRAME_TIMEOUT_US
-        } else {
+        let timeout = if self.fresh {
             FIRST_FRAME_TIMEOUT_US
+        } else {
+            FRAME_TIMEOUT_US
         };
         if !self.draw_next(out, width, height, timeout, changed) {
             return false;
         }
         self.saw_frame = true;
+        self.fresh = false;
         true
     }
 
@@ -585,6 +699,7 @@ impl media::video::Decoder for Decoder {
             return false;
         }
         self.saw_frame = true;
+        self.fresh = false;
         true
     }
 
@@ -597,6 +712,36 @@ impl media::video::Decoder for Decoder {
 
     fn status(&self) -> Option<String> {
         (!self.name.is_empty()).then(|| format!("{} {}", self.kind.name(), self.name))
+    }
+
+    fn take_key_frame_request(&mut self) -> bool {
+        std::mem::take(&mut self.key_frame_wanted)
+    }
+}
+
+/// `handle` configured for a picture of this size, with input buffers of
+/// `max_input` bytes, and started.
+fn start(handle: *mut AMediaCodec, codec: Codec, width: usize, height: usize, max_input: usize) -> bool {
+    let Ok(mime) = CString::new(mime(codec)) else {
+        return false;
+    };
+    unsafe {
+        let format = AMediaFormat_new();
+        AMediaFormat_setString(format, c"mime".as_ptr(), mime.as_ptr());
+        AMediaFormat_setInt32(format, c"width".as_ptr(), width as i32);
+        AMediaFormat_setInt32(format, c"height".as_ptr(), height as i32);
+        AMediaFormat_setInt32(format, c"color-format".as_ptr(), COLOR_FORMAT_YUV420_FLEXIBLE);
+        AMediaFormat_setInt32(format, c"low-latency".as_ptr(), 1);
+        AMediaFormat_setInt32(format, c"max-input-size".as_ptr(), max_input.min(i32::MAX as usize) as i32);
+        let configured = AMediaCodec_configure(
+            handle,
+            format,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            0,
+        );
+        AMediaFormat_delete(format);
+        configured == AMEDIA_OK && AMediaCodec_start(handle) == AMEDIA_OK
     }
 }
 
@@ -649,6 +794,36 @@ pub(crate) fn is_hardware(name: &str) -> Option<bool> {
     Some(!software_by_name(name))
 }
 
+/// Whether the codec of this name takes a frame in several input buffers
+/// (`FEATURE_PartialFrame`, `BUFFER_FLAG_PARTIAL_FRAME` on all but the last),
+/// which native code can ask only of Android 16's codec store: before it, and
+/// for a codec the store does not know, the answer is no. The Pixel 8's
+/// H.264 decoder lists no such feature.
+fn takes_partial_frames(name: &str) -> bool {
+    type GetCodecInfo = unsafe extern "C" fn(*const c_char, *mut *const c_void) -> i32;
+    type IsFeatureSupported = unsafe extern "C" fn(*const c_void, *const c_char) -> i32;
+    static STORE: OnceLock<Option<(GetCodecInfo, IsFeatureSupported)>> = OnceLock::new();
+    let store = STORE.get_or_init(|| unsafe {
+        let info = dlsym(RTLD_DEFAULT, c"AMediaCodecStore_getCodecInfo".as_ptr());
+        let feature = dlsym(RTLD_DEFAULT, c"AMediaCodecInfo_isFeatureSupported".as_ptr());
+        (!info.is_null() && !feature.is_null()).then(|| {
+            (
+                std::mem::transmute::<*mut c_void, GetCodecInfo>(info),
+                std::mem::transmute::<*mut c_void, IsFeatureSupported>(feature),
+            )
+        })
+    });
+    let (Some((get_info, supported)), Ok(c_name)) = (store, CString::new(name)) else {
+        return false;
+    };
+    let mut info: *const c_void = std::ptr::null();
+    unsafe {
+        get_info(c_name.as_ptr(), &mut info) == AMEDIA_OK
+            && !info.is_null()
+            && supported(info, c"partial-frame".as_ptr()) == 1
+    }
+}
+
 /// Whether a codec's name marks it as software, as ExoPlayer and the
 /// platform's own tests decided it before there was an API for it.
 fn software_by_name(name: &str) -> bool {
@@ -664,23 +839,6 @@ fn software_by_name(name: &str) -> bool {
         || name.starts_with("c2.android.")
         || name.starts_with("c2.google.")
         || (!name.starts_with("omx.") && !name.starts_with("c2."))
-}
-
-/// Where to cut an Annex B stream that is longer than `capacity`: the last
-/// start code that begins inside the first `capacity` bytes (its leading
-/// zero included, where it is the four-byte form), or `None` where there is
-/// none past the first.
-fn nal_boundary(data: &[u8], capacity: usize) -> Option<usize> {
-    let mut at = None;
-    let end = capacity.min(data.len());
-    let mut i = 3;
-    while i + 3 <= end {
-        if data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1 {
-            at = Some(if data[i - 1] == 0 { i - 1 } else { i });
-        }
-        i += 1;
-    }
-    at.filter(|&at| at > 0)
 }
 
 impl Drop for Decoder {
