@@ -1,8 +1,10 @@
 # One session on any backend, as every client holds one: the `Backend` trait a
 # window or a phone is written against, the `Event`s a session says through a
-# `Mailbox`, what each backend can be told (`options`) and is called
-# (`catalog`), and the rules every client keeps the same — how a credentials
-# prompt's answer is read, and how a far end's identity meets the pins.
+# `Mailbox`, what each backend is called and can be told (`catalog`, each
+# entry its backend's own `backends/modules/<name>/catalog.rs`, compiled here
+# by path; `options`, the shape of a row), and the rules every client keeps
+# the same — how a credentials prompt's answer is read, and how a far end's
+# identity meets the pins.
 #
 # It sits between `remotedesktop-common`, which a protocol is written against,
 # and the clients: each backend's adapter is in that backend's own crate — the
