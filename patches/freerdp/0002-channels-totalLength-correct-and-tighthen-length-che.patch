@@ -1,0 +1,384 @@
+From 2f5aec6894ff63ac0ad032c84ea2c68052929cdf Mon Sep 17 00:00:00 2001
+From: Armin Novak <armin.novak@thincast.com>
+Date: Thu, 24 Sep 2026 09:09:45 +0200
+Subject: [PATCH 2/2] [channels,totalLength] correct and tighthen length checks
+
+(cherry picked from commit 190167212b9af27d375b09e75a8e3e41aa7d0284)
+
+diff --git a/channels/client/addin.c b/channels/client/addin.c
+index 9b3d040f2..6212c367b 100644
+--- a/channels/client/addin.c
++++ b/channels/client/addin.c
+@@ -515,6 +515,7 @@ typedef struct
+ 	LPVOID userdata;
+ 	MsgHandler msg_handler;
+ 	BOOL firstFlagReceived;
++	UINT32 totalLength;
+ } msg_proc_internals;
+ 
+ static DWORD WINAPI channel_client_thread_proc(LPVOID userdata)
+@@ -669,6 +670,7 @@ UINT channel_client_post_message(void* MsgsHandle, LPVOID pData, UINT32 dataLeng
+ 		}
+ 		else
+ 			internals->data_in = Stream_New(nullptr, dataLength);
++		internals->totalLength = totalLength;
+ 	}
+ 
+ 	if (!(data_in = internals->data_in))
+@@ -686,7 +688,7 @@ UINT channel_client_post_message(void* MsgsHandle, LPVOID pData, UINT32 dataLeng
+ 
+ 	Stream_Write(data_in, pData, dataLength);
+ 
+-	if (Stream_GetPosition(data_in) > totalLength)
++	if ((Stream_GetPosition(data_in) > totalLength) || (internals->totalLength != totalLength))
+ 	{
+ 		Stream_Free(internals->data_in, TRUE);
+ 		internals->data_in = nullptr;
+@@ -702,12 +704,13 @@ UINT channel_client_post_message(void* MsgsHandle, LPVOID pData, UINT32 dataLeng
+ 		if (!data_in)
+ 			return ERROR_INVALID_DATA;
+ 
+-		if (Stream_Capacity(data_in) != Stream_GetPosition(data_in))
++		if (internals->totalLength != Stream_GetPosition(data_in))
+ 		{
+ 			WLog_ERR(TAG, "%s_plugin_process_received: read error", internals->channel_name);
+ 			return ERROR_INTERNAL_ERROR;
+ 		}
+ 
++		internals->totalLength = 0;
+ 		internals->data_in = nullptr;
+ 		Stream_SealLength(data_in);
+ 		Stream_ResetPosition(data_in);
+diff --git a/channels/drdynvc/client/drdynvc_main.c b/channels/drdynvc/client/drdynvc_main.c
+index 816b0f4fc..934d0023e 100644
+--- a/channels/drdynvc/client/drdynvc_main.c
++++ b/channels/drdynvc/client/drdynvc_main.c
+@@ -1707,6 +1707,7 @@ static UINT drdynvc_virtual_channel_event_data_received(drdynvcPlugin* drdynvc,
+ 			Stream_Release(drdynvc->data_in);
+ 
+ 		drdynvc->data_in = StreamPool_Take(mgr->pool, dataLength);
++		drdynvc->totalLength = totalLength;
+ 	}
+ 
+ 	if (!(data_in = drdynvc->data_in))
+@@ -1725,7 +1726,7 @@ static UINT drdynvc_virtual_channel_event_data_received(drdynvcPlugin* drdynvc,
+ 
+ 	Stream_Write(data_in, pData, dataLength);
+ 
+-	if (Stream_GetPosition(data_in) > totalLength)
++	if ((Stream_GetPosition(data_in) > totalLength) || (drdynvc->totalLength != totalLength))
+ 	{
+ 		Stream_Free(drdynvc->data_in, TRUE);
+ 		drdynvc->data_in = nullptr;
+@@ -1738,14 +1739,14 @@ static UINT drdynvc_virtual_channel_event_data_received(drdynvcPlugin* drdynvc,
+ 			return ERROR_INVALID_DATA;
+ 		drdynvc->firstFlagReceived = FALSE;
+ 
+-		const size_t cap = Stream_Capacity(data_in);
+ 		const size_t pos = Stream_GetPosition(data_in);
+-		if (cap < pos)
++		if (drdynvc->totalLength != pos)
+ 		{
+ 			WLog_Print(drdynvc->log, WLOG_ERROR, "drdynvc_plugin_process_received: read error");
+ 			return ERROR_INVALID_DATA;
+ 		}
+ 
++		drdynvc->totalLength = 0;
+ 		drdynvc->data_in = nullptr;
+ 		Stream_SealLength(data_in);
+ 		Stream_ResetPosition(data_in);
+diff --git a/channels/drdynvc/client/drdynvc_main.h b/channels/drdynvc/client/drdynvc_main.h
+index 95be95a21..e5d953686 100644
+--- a/channels/drdynvc/client/drdynvc_main.h
++++ b/channels/drdynvc/client/drdynvc_main.h
+@@ -142,6 +142,7 @@ struct drdynvc_plugin
+ 
+ 	IWTSVirtualChannelManager* channel_mgr;
+ 	BOOL firstFlagReceived;
++	UINT32 totalLength;
+ };
+ 
+ #endif /* FREERDP_CHANNEL_DRDYNVC_CLIENT_MAIN_H */
+diff --git a/channels/encomsp/client/encomsp_main.c b/channels/encomsp/client/encomsp_main.c
+index 222a00c5b..acd0fd8d6 100644
+--- a/channels/encomsp/client/encomsp_main.c
++++ b/channels/encomsp/client/encomsp_main.c
+@@ -45,6 +45,7 @@ struct encomsp_plugin
+ 	wMessageQueue* queue;
+ 	rdpContext* rdpcontext;
+ 	BOOL firstFlagReceived;
++	UINT32 totalLength;
+ };
+ 
+ /**
+@@ -968,6 +969,7 @@ static UINT encomsp_virtual_channel_event_data_received(encomspPlugin* encomsp,
+ 			WLog_ERR(TAG, "Stream_New failed!");
+ 			return CHANNEL_RC_NO_MEMORY;
+ 		}
++		encomsp->totalLength = totalLength;
+ 	}
+ 
+ 	wStream* data_in = encomsp->data_in;
+@@ -982,7 +984,7 @@ static UINT encomsp_virtual_channel_event_data_received(encomspPlugin* encomsp,
+ 
+ 	Stream_Write(data_in, pData, dataLength);
+ 
+-	if (Stream_GetPosition(data_in) > totalLength)
++	if ((Stream_GetPosition(data_in) > totalLength) || (encomsp->totalLength != totalLength))
+ 		return ERROR_INVALID_DATA;
+ 
+ 	if (dataFlags & CHANNEL_FLAG_LAST)
+@@ -997,6 +999,7 @@ static UINT encomsp_virtual_channel_event_data_received(encomspPlugin* encomsp,
+ 			return ERROR_INVALID_DATA;
+ 		}
+ 
++		encomsp->totalLength = 0;
+ 		encomsp->data_in = nullptr;
+ 		Stream_SealLength(data_in);
+ 		Stream_ResetPosition(data_in);
+diff --git a/channels/rdp2tcp/client/rdp2tcp_main.c b/channels/rdp2tcp/client/rdp2tcp_main.c
+index 7f5306bd9..62dd111d7 100644
+--- a/channels/rdp2tcp/client/rdp2tcp_main.c
++++ b/channels/rdp2tcp/client/rdp2tcp_main.c
+@@ -45,6 +45,7 @@ typedef struct
+ 	CHANNEL_ENTRY_POINTS_FREERDP_EX channelEntryPoints;
+ 	char buffer[16 * 1024];
+ 	char* commandline;
++	UINT32 totalLength;
+ } Plugin;
+ 
+ static int init_external_addin(Plugin* plugin)
+@@ -192,6 +193,7 @@ static void dataReceived(Plugin* plugin, void* pData, UINT32 dataLength, UINT32
+ 
+ 	if (dataFlags & CHANNEL_FLAG_FIRST)
+ 	{
++		plugin->totalLength = totalLength;
+ 		if (!WriteFile(plugin->hStdInputWrite, &totalLength, sizeof(totalLength), &dwWritten,
+ 		               nullptr))
+ 			closeChannel(plugin);
+diff --git a/channels/rdpdr/client/rdpdr_main.c b/channels/rdpdr/client/rdpdr_main.c
+index 9a01e27c1..1443cebe0 100644
+--- a/channels/rdpdr/client/rdpdr_main.c
++++ b/channels/rdpdr/client/rdpdr_main.c
+@@ -2054,6 +2054,7 @@ static UINT rdpdr_virtual_channel_event_data_received(rdpdrPlugin* rdpdr, void*
+ 			WLog_Print(rdpdr->log, WLOG_ERROR, "Stream_New failed!");
+ 			return CHANNEL_RC_NO_MEMORY;
+ 		}
++		rdpdr->totalLength = totalLength;
+ 	}
+ 
+ 	if (!rdpdr->data_in)
+@@ -2072,7 +2073,7 @@ static UINT rdpdr_virtual_channel_event_data_received(rdpdrPlugin* rdpdr, void*
+ 
+ 	Stream_Write(data_in, pData, dataLength);
+ 
+-	if (Stream_GetPosition(data_in) > totalLength)
++	if ((Stream_GetPosition(data_in) > totalLength) || (rdpdr->totalLength != totalLength))
+ 		return ERROR_INVALID_DATA;
+ 
+ 	if (dataFlags & CHANNEL_FLAG_LAST)
+@@ -2082,8 +2083,7 @@ static UINT rdpdr_virtual_channel_event_data_received(rdpdrPlugin* rdpdr, void*
+ 		rdpdr->firstFlagReceived = FALSE;
+ 
+ 		const size_t pos = Stream_GetPosition(data_in);
+-		const size_t cap = Stream_Capacity(data_in);
+-		if (cap < pos)
++		if (pos != totalLength)
+ 		{
+ 			WLog_Print(rdpdr->log, WLOG_ERROR,
+ 			           "rdpdr_virtual_channel_event_data_received: read error");
+@@ -2092,6 +2092,7 @@ static UINT rdpdr_virtual_channel_event_data_received(rdpdrPlugin* rdpdr, void*
+ 
+ 		Stream_SealLength(data_in);
+ 		Stream_ResetPosition(data_in);
++		rdpdr->totalLength = 0;
+ 
+ 		if (rdpdr->async)
+ 		{
+diff --git a/channels/rdpdr/client/rdpdr_main.h b/channels/rdpdr/client/rdpdr_main.h
+index c36987dc9..eebaf8009 100644
+--- a/channels/rdpdr/client/rdpdr_main.h
++++ b/channels/rdpdr/client/rdpdr_main.h
+@@ -118,6 +118,7 @@ typedef struct
+ 	RdpdrClientContext context;
+ 	BOOL clearing;
+ 	BOOL firstFlagReceived;
++	UINT32 totalLength;
+ } rdpdrPlugin;
+ 
+ WINPR_ATTR_NODISCARD
+diff --git a/channels/rdpsnd/client/rdpsnd_main.c b/channels/rdpsnd/client/rdpsnd_main.c
+index fa6bbf7a2..d8aa3b2de 100644
+--- a/channels/rdpsnd/client/rdpsnd_main.c
++++ b/channels/rdpsnd/client/rdpsnd_main.c
+@@ -116,6 +116,7 @@ struct rdpsnd_plugin
+ 	BOOL OnOpenCalled;
+ 	BOOL async;
+ 	BOOL firstFlagReceived;
++	UINT32 totalLength;
+ };
+ 
+ WINPR_ATTR_NODISCARD
+@@ -1201,6 +1202,7 @@ static UINT rdpsnd_virtual_channel_event_data_received(rdpsndPlugin* plugin, voi
+ 			plugin->data_in = StreamPool_Take(plugin->pool, dataLength);
+ 
+ 		Stream_ResetPosition(plugin->data_in);
++		plugin->totalLength = totalLength;
+ 	}
+ 
+ 	if (!plugin->data_in)
+@@ -1211,17 +1213,20 @@ static UINT rdpsnd_virtual_channel_event_data_received(rdpsndPlugin* plugin, voi
+ 
+ 	Stream_Write(plugin->data_in, pData, dataLength);
+ 
+-	if (Stream_GetPosition(plugin->data_in) > totalLength)
++	if ((Stream_GetPosition(plugin->data_in) > totalLength) || (totalLength != plugin->totalLength))
+ 		return ERROR_INVALID_DATA;
+ 
+ 	if (dataFlags & CHANNEL_FLAG_LAST)
+ 	{
+ 		if (!plugin->firstFlagReceived)
+ 			return ERROR_INVALID_DATA;
++		if (Stream_GetPosition(plugin->data_in) != totalLength)
++			return ERROR_INVALID_DATA;
+ 		plugin->firstFlagReceived = FALSE;
+ 
+ 		Stream_SealLength(plugin->data_in);
+ 		Stream_ResetPosition(plugin->data_in);
++		plugin->totalLength = 0;
+ 
+ 		if (plugin->async)
+ 		{
+diff --git a/channels/remdesk/client/remdesk_main.c b/channels/remdesk/client/remdesk_main.c
+index 73c882ee1..ed00e7107 100644
+--- a/channels/remdesk/client/remdesk_main.c
++++ b/channels/remdesk/client/remdesk_main.c
+@@ -705,6 +705,7 @@ static UINT remdesk_virtual_channel_event_data_received(remdeskPlugin* remdesk,
+ 			return CHANNEL_RC_NO_MEMORY;
+ 		}
+ 		remdesk->firstFlagReceived = TRUE;
++		remdesk->totalLength = totalLength;
+ 	}
+ 
+ 	wStream* data_in = remdesk->data_in;
+@@ -718,7 +719,7 @@ static UINT remdesk_virtual_channel_event_data_received(remdeskPlugin* remdesk,
+ 	}
+ 
+ 	Stream_Write(data_in, pData, dataLength);
+-	if (Stream_GetPosition(data_in) > totalLength)
++	if ((Stream_GetPosition(data_in) > totalLength) || (remdesk->totalLength != totalLength))
+ 		return ERROR_INVALID_DATA;
+ 
+ 	if (dataFlags & CHANNEL_FLAG_LAST)
+@@ -727,12 +728,13 @@ static UINT remdesk_virtual_channel_event_data_received(remdeskPlugin* remdesk,
+ 			return ERROR_INVALID_DATA;
+ 		remdesk->firstFlagReceived = FALSE;
+ 
+-		if (Stream_Capacity(data_in) != Stream_GetPosition(data_in))
++		if (remdesk->totalLength != Stream_GetPosition(data_in))
+ 		{
+ 			WLog_ERR(TAG, "read error");
+ 			return ERROR_INTERNAL_ERROR;
+ 		}
+ 
++		remdesk->totalLength = 0;
+ 		remdesk->data_in = nullptr;
+ 		Stream_SealLength(data_in);
+ 		Stream_ResetPosition(data_in);
+diff --git a/channels/remdesk/client/remdesk_main.h b/channels/remdesk/client/remdesk_main.h
+index a2a20f423..db4b36c57 100644
+--- a/channels/remdesk/client/remdesk_main.h
++++ b/channels/remdesk/client/remdesk_main.h
+@@ -57,6 +57,7 @@ typedef struct
+ 	size_t EncryptedPassStubSize;
+ 	rdpContext* rdpcontext;
+ 	BOOL firstFlagReceived;
++	UINT32 totalLength;
+ } remdeskPlugin;
+ 
+ #endif /* FREERDP_CHANNEL_REMDESK_CLIENT_MAIN_H */
+diff --git a/server/proxy/channels/pf_channel_rdpdr.c b/server/proxy/channels/pf_channel_rdpdr.c
+index f4ffcb043..11bfd62a4 100644
+--- a/server/proxy/channels/pf_channel_rdpdr.c
++++ b/server/proxy/channels/pf_channel_rdpdr.c
+@@ -57,6 +57,7 @@ typedef struct
+ 	} computerName;
+ 	UINT32 SpecialDeviceCount;
+ 	UINT32 capabilityVersions[6];
++	size_t totalLength;
+ } pf_channel_common_context;
+ 
+ typedef enum
+@@ -1397,7 +1398,11 @@ BOOL pf_channel_rdpdr_client_handle(pClientContext* pc, UINT16 channelId, const
+ 
+ 	wStream* s = rdpdr->common.buffer;
+ 	if (flags & CHANNEL_FLAG_FIRST)
++	{
+ 		Stream_ResetPosition(s);
++		rdpdr->common.totalLength = totalSize;
++	}
++
+ 	if (!Stream_EnsureRemainingCapacity(s, xsize))
+ 	{
+ 		CLIENT_RX_LOG(rdpdr->log, WLOG_ERROR,
+@@ -1406,11 +1411,22 @@ BOOL pf_channel_rdpdr_client_handle(pClientContext* pc, UINT16 channelId, const
+ 		return FALSE;
+ 	}
+ 	Stream_Write(s, xdata, xsize);
++
++	if ((Stream_GetPosition(s) > totalSize) || (totalSize != rdpdr->common.totalLength))
++	{
++		CLIENT_RX_LOG(rdpdr->log, WLOG_ERROR,
++		              "Channel %s [0x%04" PRIx16 "] total size mismatch [got %" PRIuz
++		              ", expected %" PRIuz "]",
++		              channel_name, channelId, totalSize, rdpdr->common.totalLength);
++		return FALSE;
++	}
++
+ 	if ((flags & CHANNEL_FLAG_LAST) == 0)
+ 		return TRUE;
+ 
+ 	Stream_SealLength(s);
+ 	Stream_ResetPosition(s);
++	rdpdr->common.totalLength = 0;
+ 	if (Stream_Length(s) != totalSize)
+ 	{
+ 		CLIENT_RX_LOG(rdpdr->log, WLOG_WARN,
+@@ -1948,17 +1964,24 @@ BOOL pf_channel_rdpdr_server_handle(pServerContext* ps, UINT16 channelId, const
+ 	wStream* s = rdpdr->common.buffer;
+ 
+ 	if (flags & CHANNEL_FLAG_FIRST)
++	{
++		rdpdr->common.totalLength = totalSize;
+ 		Stream_ResetPosition(s);
++	}
+ 
+ 	if (!Stream_EnsureRemainingCapacity(s, xsize))
+ 		return FALSE;
+ 	Stream_Write(s, xdata, xsize);
+ 
++	if ((Stream_GetPosition(s) > totalSize) || (totalSize != rdpdr->common.totalLength))
++		return FALSE;
++
+ 	if ((flags & CHANNEL_FLAG_LAST) == 0)
+ 		return TRUE;
+ 
+ 	Stream_SealLength(s);
+ 	Stream_ResetPosition(s);
++	rdpdr->common.totalLength = 0;
+ 
+ 	if (Stream_Length(s) != totalSize)
+ 	{
+diff --git a/server/proxy/pf_channel.c b/server/proxy/pf_channel.c
+index d061bbf4c..429a95eb4 100644
+--- a/server/proxy/pf_channel.c
++++ b/server/proxy/pf_channel.c
+@@ -116,7 +116,7 @@ PfChannelResult channelTracker_update(ChannelStateTracker* tracker, const BYTE*
+ 
+ 	{
+ 		const size_t currentPacketSize = channelTracker_getCurrentPacketSize(tracker);
+-		if (xsize > currentPacketSize)
++		if ((xsize > currentPacketSize) || (currentPacketSize != totalSize))
+ 		{
+ 			WLog_WARN(TAG,
+ 			          "current fragment size is bigger (%" PRIuz ") than total size (%" PRIuz ")",
