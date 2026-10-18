@@ -66,7 +66,11 @@ pub struct Stats {
 /// sound arriving again within `RESUME` — the sound was later than
 /// anything the rhythm had shown — the session remembers that lateness, so
 /// that the next time it is not too late, and forgets it again slowly after
-/// a long while of sound that did not run dry. Where the queue has kept more
+/// a long while of sound that did not run dry; unless it was later than
+/// [`MARGIN_MAX`](super::MARGIN_MAX), a stall, after which the rhythm starts
+/// a new run, what the far end sends to catch up counts as a burst, and the
+/// queue starts again only once it has caught up, at its target, the rest
+/// of the backlog dropped while the device was still playing silence. Where the queue has kept more
 /// than its margin beyond what it needed for a whole `WINDOW` — it
 /// started on a write that arrived late, the lateness remembered was
 /// forgotten, a late write the rhythm remembered has been, the far end's
@@ -132,6 +136,9 @@ struct Inner {
     /// last ran dry.
     start: Duration,
     fresh: usize,
+    /// When the last write of the far end's catching up after a stall
+    /// arrived, while it is: see `wrote`.
+    catching: Option<Duration>,
     resampler: Resampler,
     stats: Stats,
 }
@@ -159,6 +166,7 @@ impl Queue {
                 clean: 0,
                 start: MARGIN_START.saturating_sub(MARGIN),
                 fresh: 0,
+                catching: None,
                 resampler: Resampler::new(),
                 stats: Stats::default(),
             }),
@@ -300,30 +308,42 @@ impl Queue {
         let frames = samples / self.format.channels;
         inner.stats.written += frames as u64;
         // One past the limit is a burst (a stall's backlog, all at once), no
-        // rhythm the queue could keep up with.
-        let burst = frames > self.format.frames(LIMIT);
+        // rhythm the queue could keep up with; and so is a write that comes
+        // faster than the far end sends while it catches up after a stall.
+        let mut burst = frames > self.format.frames(LIMIT);
+        if let Some(last) = inner.catching {
+            if at.saturating_sub(last) < self.format.duration(frames) / 2 {
+                burst = true;
+                inner.catching = Some(at);
+            } else {
+                inner.catching = None;
+            }
+        }
         match inner.dry.take() {
             Some(dry) if dry < RESUME => {
-                // The far end's sound was later than the queue kept for:
-                // measured as the late write it is, and remembered — unless
-                // it was later than any margin is for, a stall (a machine
-                // that lost the processor, a network that paused), which
-                // the session does not keep allowing for after it.
-                inner.rhythm.wrote(at, frames, burst);
                 inner.clean = 0;
                 inner.fresh = 0;
-                let this = self.format.duration(inner.rhythm.last());
-                if this > MARGIN_MAX {
+                let late = self.format.duration(inner.rhythm.late_by(at));
+                if late > MARGIN_MAX {
+                    // Later than any margin is for: a stall (a machine that
+                    // lost the processor, a network that paused), which is
+                    // neither remembered nor measured. The far end's sound
+                    // starts a new run of the rhythm here, what it sends to
+                    // catch up is a burst, and the queue starts again only
+                    // once it has, cut to its target in one skip.
+                    inner.rhythm.restart();
+                    inner.rhythm.wrote(at, frames, true);
+                    inner.catching = Some(at);
                     log::info!(
-                        "audio: the far end's sound arrived {} ms after the queue ran dry, {} ms late: a stall, not allowed for from now on",
+                        "audio: the far end's sound arrived {} ms after the queue ran dry, {} ms late: a stall, skipped",
                         dry.as_millis(),
-                        this.as_millis()
+                        late.as_millis()
                     );
                 } else {
-                    // What the window has shown, as before, unless what it
-                    // shows is an earlier stall's.
+                    // Later than the queue kept for: measured as the late
+                    // write it is, and remembered.
+                    inner.rhythm.wrote(at, frames, burst);
                     let seen = self.format.duration(inner.rhythm.lateness());
-                    let seen = if seen > MARGIN_MAX { this } else { seen };
                     let late = self.controls.ran_dry(seen);
                     log::info!(
                         "audio: the far end's sound arrived {} ms after the queue ran dry, {} ms late; the session allows for {} ms now",
@@ -444,7 +464,10 @@ impl Queue {
             if !inner.primed && !filling {
                 let queued = inner.samples.len() / self.format.channels;
                 let target = self.target(inner);
-                if queued >= target || (queued > 0 && inner.waited >= device.frames(self.format.duration(target))) {
+                let caught_up = inner.catching.is_none();
+                if (queued >= target && caught_up)
+                    || (queued > 0 && inner.waited >= device.frames(self.format.duration(target)))
+                {
                     // Whatever arrived while nothing was playing — a device
                     // that took a while to open, a burst after a stall —
                     // starts at the target and not behind it.
@@ -1173,25 +1196,66 @@ mod tests {
         assert!(least >= Duration::from_millis(40) + MARGIN, "{least:?}");
     }
 
+    /// A pull's time, the target then and what had been dropped so far.
+    type Seen = (f64, Duration, u64);
+
+    /// QEMU's 10 ms writes on time but for a stall of `ms` five seconds in,
+    /// what was due meanwhile arriving at once after it, in front of a
+    /// PipeWire-like device: the pulls, and at every pull from 4 s on its
+    /// time, the target and what had been dropped so far.
+    fn stalled(q: &Queue, ms: f64) -> (Vec<(f64, usize, Duration)>, Vec<Seen>) {
+        let n = (ms / 10.0) as usize;
+        let writes = rhythm(48_000, 480, 1, 30.0, |k| if (500..500 + n).contains(&k) { ms - 10.0 * (k - 500) as f64 } else { 0.0 });
+        let mut seen = Vec::new();
+        q.set_device(STEREO.duration(512), STEREO.duration(512));
+        let pulls = drive(q, &writes, 512, 1, 1, &mut |t, q| {
+            if t >= 4_000.0 {
+                seen.push((t, q.target_now(), q.stats().dropped));
+            }
+        });
+        (pulls, seen)
+    }
+
     #[test]
-    fn a_stall_past_the_most_lateness_is_not_remembered() {
-        // QEMU's 10 ms writes held back 250 ms half a second in, as a loaded
-        // machine starting a session did: the queue runs dry, but the
-        // session does not allow for a quarter of a second from then on,
-        // and once the window has forgotten the stall the queue keeps what
-        // it did before it.
+    fn a_stall_past_the_most_lateness_is_skipped_in_one_jump() {
+        // Held back 400 ms: the queue runs dry, and the far end's backlog
+        // arriving at once neither raises the target (the rhythm starts a new
+        // run, and the backlog is a burst to it) nor is kept: it is dropped
+        // while the device still plays the stall's silence, and the queue
+        // starts again the target behind, one jump from where it stopped;
+        // the session remembers nothing of it.
         let q = queue();
-        let writes = rhythm(48_000, 480, 1, 60.0, |k| if (50..75).contains(&k) { 250.0 - 10.0 * (k - 50) as f64 } else { 0.0 });
-        let pulls = play(&q, &writes, 512);
-        assert!(holes(&pulls, 512, &writes, 0.0) > 0);
+        let (pulls, seen) = stalled(&q, 400.0);
         assert_eq!(q.stats().underruns, 1 + 1, "{:?} (the stall, and the stream's end)", q.stats());
         assert_eq!(q.controls().late(), Duration::ZERO);
-        let level = level(&pulls, 52_000.0);
-        assert!(level < 10.7 + 10.0 + 10.0 + 1.0, "{level}");
-        // Up to the most, a stall is remembered as it was.
+        let before = seen.iter().filter(|s| s.0 < 5_000.0).map(|s| s.1).max().unwrap();
+        let after = seen.iter().filter(|s| s.0 >= 5_000.0).map(|s| s.1).max().unwrap();
+        assert!(after <= before, "the target {before:?} before the stall, {after:?} after");
+        let drops: Vec<_> = seen.windows(2).filter(|w| w[1].2 > w[0].2).map(|w| (w[1].0, w[1].2 - w[0].2)).collect();
+        let (jump, rest): (Vec<_>, Vec<_>) = drops.iter().copied().partition(|d| d.0 > 5_400.0 && d.0 < 5_450.0);
+        assert!(jump.iter().map(|d: &(f64, u64)| d.1).sum::<u64>() >= STEREO.frames(ms(300.0)) as u64, "{drops:?}");
+        assert!(rest.iter().all(|d| d.1 < STEREO.frames(ms(10.0)) as u64), "{drops:?}");
+        let again = pulls.iter().find(|p| p.0 > 5_000.0 && p.1 == 512 && pulls.iter().any(|q| q.0 > 5_000.0 && q.0 < p.0 && q.1 < 512)).unwrap();
+        assert!(again.0 < 5_450.0, "sound again at {} ms", again.0);
+        // What is queued from then on is what it was before, give or take a
+        // write.
+        let level = |from: f64, to: f64| level(&pulls.iter().filter(|p| p.0 >= from && p.0 < to).copied().collect::<Vec<_>>(), 0.0);
+        let (was, is) = (level(3_000.0, 5_000.0), level(5_500.0, 7_500.0));
+        assert!((is - was).abs() < 10.0, "{was} ms queued before the stall, {is} after");
+        assert_eq!(holes(&pulls, 512, &rhythm(48_000, 480, 1, 30.0, |_| 0.0), 5_500.0), 0);
+    }
+
+    #[test]
+    fn a_stall_up_to_the_most_is_remembered_and_kept_as_before() {
+        // Held back 90 ms: late, not a stall; the queue starts again with
+        // the backlog as before — cut only to the target, which has the
+        // lateness in it, 9 ms here — and the session remembers it and a
+        // step.
         let q = queue();
-        let writes = rhythm(48_000, 480, 1, 10.0, |k| if (50..60).contains(&k) { 90.0 - 10.0 * (k - 50) as f64 } else { 0.0 });
-        play(&q, &writes, 512);
+        let (_, seen) = stalled(&q, 90.0);
+        assert_eq!(q.stats().underruns, 1 + 1, "{:?}", q.stats());
         assert_eq!(q.controls().late(), Duration::from_millis(95));
+        let dropped = |t: f64| seen.iter().find(|s| s.0 >= t).unwrap().2;
+        assert!(dropped(6_000.0) - dropped(4_000.0) < STEREO.frames(ms(10.0)) as u64, "{seen:?}");
     }
 }

@@ -480,8 +480,10 @@ RustDesk's 10-20 ms of sound at a time, 55-65 ms for RDP's 23 ms waves, and 395 
 the queue runs dry anyway and the far end's sound comes within half a second
 — later than anything it had shown — the session remembers how late, a
 step of 5 ms more (to 100 ms; a write later than that was a stall, a gap
-whatever is kept, and is not remembered at all), and the margin covers that from then on wherever the
-rhythm of late does not, forgetting a step after every half minute of sound
+whatever is kept, and is not remembered at all, and what the far end sends
+to catch up after it is skipped in one jump rather than played behind),
+and the margin covers that from then on wherever the rhythm of late does
+not, forgetting a step after every half minute of sound
 that did not run dry (a gap, then none: under 64 busy loops a SPICE session
 ran dry twice in its first 40 s and not in the 50 s after, and
 `scripts/testaudio/pattern.sh`'s QEMU-like writes, held back 40 ms every 5 or

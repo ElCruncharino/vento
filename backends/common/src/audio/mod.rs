@@ -95,7 +95,9 @@ pub const CLEAN_START: Duration = Duration::from_secs(10);
 /// beyond a tenth of a second is a stall rather than a rhythm, and is a gap
 /// whatever is kept for it; keeping that much more for the rest of the
 /// session would be heard as sound behind the picture. So a queue that ran
-/// dry on a write later than this does not remember it at all: a SPICE
+/// dry on a write later than this does not remember it at all, nor measure
+/// it into the stream's rhythm, and skips what the far end sends to catch
+/// up in one jump rather than playing it behind (`Queue`): a SPICE
 /// session started under 64 busy loops ran dry 111-411 ms late as its sound
 /// began in four of seven tries, and remembering that as this much kept it
 /// 70 ms further behind for minutes. (What ran such sessions dry later on
