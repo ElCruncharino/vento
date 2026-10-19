@@ -12,6 +12,7 @@ use crate::proto::{Counter, MAX_CUT_TEXT, Reader, Writer, latin1, to_latin1};
 use crate::security::{self, Security};
 use crate::transport::{Wire, Writes};
 use crate::zlib::ZlibStream;
+use runtime::rate::Rate;
 use runtime::{Credentials, Handler, Hangup};
 
 use std::collections::HashMap;
@@ -20,7 +21,7 @@ use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// What a connection is told before it starts.
 pub struct Config {
@@ -1106,47 +1107,6 @@ impl security::Ask for FromConfigThenHandler<'_> {
 
     fn trust(&mut self, fingerprint: &str) -> bool {
         self.handler.trust(fingerprint)
-    }
-}
-
-/// A throughput estimate for the connection panel, smoothed so it reads as a
-/// speed rather than as whatever the last rectangle happened to cost.
-struct Rate {
-    last: Instant,
-    bytes_per_second: f64,
-}
-
-impl Rate {
-    fn new() -> Rate {
-        Rate {
-            last: Instant::now(),
-            bytes_per_second: 0.0,
-        }
-    }
-
-    fn sample(&mut self, bytes: u64) -> Option<String> {
-        let now = Instant::now();
-        let elapsed = now.duration_since(self.last).as_secs_f64();
-        self.last = now;
-        // An idle desktop produces one update every few seconds, and dividing
-        // by that gap would report a trickle as the line's speed. Only samples
-        // taken while something is actually arriving say anything about the
-        // line.
-        if elapsed <= 0.0 || elapsed > 1.0 || bytes < 1024 {
-            return None;
-        }
-        let instant = bytes as f64 / elapsed;
-        self.bytes_per_second = if self.bytes_per_second == 0.0 {
-            instant
-        } else {
-            self.bytes_per_second * 0.7 + instant * 0.3
-        };
-        let kbit = self.bytes_per_second * 8.0 / 1000.0;
-        Some(if kbit >= 1000.0 {
-            format!("{:.1} Mbit/s", kbit / 1000.0)
-        } else {
-            format!("{kbit:.0} kbit/s")
-        })
     }
 }
 

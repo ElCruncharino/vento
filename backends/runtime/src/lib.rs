@@ -29,6 +29,7 @@ pub mod client;
 pub mod cursor;
 pub mod handler;
 pub mod hangup;
+pub mod rate;
 pub mod runner;
 pub mod slot;
 pub mod text;
