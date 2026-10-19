@@ -149,7 +149,8 @@ usage: vento                                   the connection dialog
   --library-dir DIR      where RealVNC's two libraries are (XDG data dir)
   --state-dir DIR        where backends keep what they leave behind (XDG state
                          dir); the known hosts are in $XDG_CONFIG_HOME/vento
-  --verbose              let the backends' debug lines through
+  --verbose              let the backends' debug lines through (RUST_LOG=trace
+                         also each key typed, by keysym: for tests only)
   --forget ADDRESS       forget a server, connecting nowhere: its pins in the
                          known hosts, its RealVNC identity and RealVNC's own
                          record of it (under --state-dir), so that the next

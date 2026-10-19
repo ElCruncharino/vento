@@ -34,7 +34,8 @@ impl Log for Stderr {
         let level = match record.level() {
             Level::Error | Level::Warn => "W",
             Level::Info => "I",
-            Level::Debug | Level::Trace => "D",
+            Level::Debug => "D",
+            Level::Trace => "T",
         };
         // The crate's name is the tag, as the C side's is the backend's; the
         // module path after it says nothing a person reading a session wants.
@@ -50,12 +51,37 @@ impl Log for Stderr {
 }
 
 /// Installs the logger. `verbose` lets debug lines through; without it, what
-/// the backends say at `info` and above.
+/// the backends say at `info` and above. Trace lines, which name what is
+/// typed key by key, come through only where the environment asks for them
+/// by name ([`trace_asked`]), never with `--verbose` alone: a log that is
+/// sent with a report must not hold a password typed into the far end.
 pub fn init(verbose: bool) {
     let _ = log::set_logger(&Stderr);
-    log::set_max_level(if verbose {
+    log::set_max_level(if trace_asked(std::env::var("RUST_LOG").ok().as_deref()) {
+        LevelFilter::Trace
+    } else if verbose {
         LevelFilter::Debug
     } else {
         LevelFilter::Info
     });
+}
+
+/// Whether `RUST_LOG` is `trace`, which lets every line through, the trace
+/// ones too (and implies `--verbose`).
+fn trace_asked(rust_log: Option<&str>) -> bool {
+    rust_log.is_some_and(|v| v.trim().eq_ignore_ascii_case("trace"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trace_lines_are_only_for_rust_log_trace() {
+        assert!(trace_asked(Some("trace")));
+        assert!(trace_asked(Some(" TRACE ")));
+        assert!(!trace_asked(None));
+        assert!(!trace_asked(Some("debug")));
+        assert!(!trace_asked(Some("vento=trace")), "nothing finer than the whole");
+    }
 }

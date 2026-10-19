@@ -426,14 +426,16 @@ impl Keyboard {
     fn press(&mut self, physical: PhysicalKey, keysym: u32, backend: &dyn Backend) {
         let id = self.ids.id(physical);
         self.held.insert(physical, keysym);
-        log::debug!("key down {keysym:#x} as {id}");
+        // Trace, not debug: a line per key names everything typed, a
+        // password into the far end's prompt among it (see `log::init`).
+        log::trace!("key down {keysym:#x} as {id}");
         backend.key_down(keysym, id);
     }
 
     fn up(&mut self, physical: PhysicalKey, backend: &dyn Backend) {
         if self.held.remove(&physical).is_some() {
             let id = self.ids.id(physical);
-            log::debug!("key up as {id}");
+            log::trace!("key up as {id}");
             backend.key_up(id);
         }
     }
