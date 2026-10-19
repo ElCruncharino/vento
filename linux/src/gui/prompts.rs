@@ -173,12 +173,12 @@ pub fn show(ctx: &egui::Context, prompt: &Prompt, form: &mut Form, address: &str
                 ui.label("This server could not be verified.");
                 ui.add_space(6.0);
                 ui.label(why);
-                yes_no(ui, "Continue", "Cancel").map(Answer::Trust)
+                yes_no(ui, "Continue", "Cancel", true).map(Answer::Trust)
             }
             Prompt::Question { title, text } => {
                 heading(ui, if title.is_empty() { "Question" } else { title }, address);
                 ui.label(text);
-                yes_no(ui, "Continue", "Cancel").map(Answer::Trust)
+                yes_no(ui, "Continue", "Cancel", true).map(Answer::Trust)
             }
             Prompt::Security {
                 identity,
@@ -208,12 +208,12 @@ pub fn show(ctx: &egui::Context, prompt: &Prompt, form: &mut Form, address: &str
                     confirm_label
                 };
                 if *question {
-                    yes_no(ui, confirm, "Cancel").map(Answer::Trust)
+                    yes_no(ui, confirm, "Cancel", true).map(Answer::Trust)
                 } else {
                     ui.add_space(12.0);
                     let mut answer = None;
                     ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-                        if ui.button(confirm).clicked() || ui.input(|i| i.key_pressed(Key::Enter)) {
+                        if ui.button(confirm).clicked() || enter(ui) {
                             answer = Some(Answer::Trust(true));
                         }
                     });
@@ -306,7 +306,10 @@ fn identity_prompt(
     }
     ui.add_space(6.0);
     ui.checkbox(&mut form.remember, "Remember server");
-    yes_no(ui, "Continue", "Cancel").map(|accept| (accept, form.remember))
+    // Enter goes on, as in every other prompt, except past a changed
+    // identity: that is the one a key meant for the far end, pressed as
+    // the prompt came up, must not say yes to.
+    yes_no(ui, "Continue", "Cancel", identity != Identity::Changed).map(|accept| (accept, form.remember))
 }
 
 /// Only the fields the scheme actually has: a scheme with no user name gets
@@ -335,7 +338,8 @@ fn credentials(ui: &mut Ui, form: &mut Form, address: &str, needs_user: bool) ->
     if password.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
         submit = true;
     }
-    match yes_no(ui, "Connect", "Cancel") {
+    // Enter in a field is that field's (above), not the buttons'.
+    match yes_no(ui, "Connect", "Cancel", false) {
         Some(true) => submit = true,
         Some(false) => return Some(Answer::Credentials(None)),
         None => {}
@@ -350,8 +354,9 @@ fn credentials(ui: &mut Ui, form: &mut Form, address: &str, needs_user: bool) ->
 }
 
 /// Two buttons, right-aligned; what was pressed, if anything. Enter is the
-/// first and Escape is left to the modal.
-fn yes_no(ui: &mut Ui, yes: &str, no: &str) -> Option<bool> {
+/// first where `enter_says_yes`, and Escape is left to the modal, which
+/// makes it a no (`show`).
+fn yes_no(ui: &mut Ui, yes: &str, no: &str, enter_says_yes: bool) -> Option<bool> {
     ui.add_space(12.0);
     let mut answer = None;
     ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
@@ -362,5 +367,127 @@ fn yes_no(ui: &mut Ui, yes: &str, no: &str) -> Option<bool> {
             answer = Some(false);
         }
     });
+    if answer.is_none() && enter_says_yes && enter(ui) {
+        answer = Some(true);
+    }
     answer
+}
+
+/// Enter, pressed (not repeating: a held key that was on its way to the far
+/// end is not an answer to a prompt that came up under it) while no widget
+/// has the focus. A focused button takes Enter as its own click, and a
+/// field as its own.
+fn enter(ui: &Ui) -> bool {
+    ui.memory(|m| m.focused().is_none())
+        && ui.input(|i| {
+            i.events.iter().any(|e| {
+                matches!(
+                    e,
+                    egui::Event::Key {
+                        key: Key::Enter,
+                        pressed: true,
+                        repeat: false,
+                        ..
+                    }
+                )
+            })
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What `prompt` answers to `key`, pressed on its second frame (the
+    /// first lays it out and gives the first field the focus). With `held`
+    /// the key went down before the prompt came up, and what arrives with
+    /// the prompt up is its repeat.
+    fn answer(prompt: &Prompt, key: Key, held: bool) -> Option<Answer> {
+        let ctx = egui::Context::default();
+        let mut form = Form::default();
+        let press = |repeat| egui::RawInput {
+            events: vec![egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            ..Default::default()
+        };
+        let mut frame = |input, prompt: Option<&Prompt>| {
+            let mut answered = None;
+            let mut out = ctx.run_ui(input, |ui| {
+                answered = prompt.and_then(|p| show(ui.ctx(), p, &mut form, "far", ""));
+            });
+            out.textures_delta.clear();
+            answered
+        };
+        if held {
+            assert!(frame(press(false), None).is_none());
+        }
+        assert!(frame(egui::RawInput::default(), Some(prompt)).is_none());
+        frame(press(held), Some(prompt))
+    }
+
+    fn yes(answer: Option<Answer>) -> Option<bool> {
+        match answer? {
+            Answer::Trust(accept) | Answer::Pin { accept, .. } | Answer::Security { accept, .. } => Some(accept),
+            Answer::Credentials(given) => Some(given.is_some()),
+        }
+    }
+
+    fn trust(identity: Identity) -> Prompt {
+        Prompt::Trust {
+            fingerprint: "ab:cd".into(),
+            identity,
+            matching_address: String::new(),
+        }
+    }
+
+    #[test]
+    fn enter_says_yes_and_escape_no_to_every_prompt() {
+        let question = Prompt::Question {
+            title: String::new(),
+            text: "Go on?".into(),
+        };
+        let message = |question| Prompt::Message {
+            text: "Hello".into(),
+            severity: Severity::Information,
+            question,
+            confirm_label: String::new(),
+        };
+        let prompts = [
+            question,
+            Prompt::Unverified { why: "self-signed".into() },
+            message(true),
+            message(false),
+            trust(Identity::New),
+            Prompt::Security {
+                identity: Identity::New,
+                encryption: Encryption::Encrypted,
+                signature: "11-22".into(),
+                catchphrase: "a b c".into(),
+                matching_address: String::new(),
+            },
+            Prompt::Credentials { needs_user: false },
+            Prompt::Credentials { needs_user: true },
+        ];
+        for prompt in &prompts {
+            assert_eq!(yes(answer(prompt, Key::Enter, false)), Some(true), "{prompt:?}");
+            if !matches!(prompt, Prompt::Message { question: false, .. }) {
+                assert_eq!(yes(answer(prompt, Key::Escape, false)), Some(false), "{prompt:?}");
+            }
+            // A repeat of a key held from before is no answer.
+            if !matches!(prompt, Prompt::Credentials { .. }) {
+                assert_eq!(yes(answer(prompt, Key::Enter, true)), None, "{prompt:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn enter_does_not_accept_a_changed_identity() {
+        assert_eq!(yes(answer(&trust(Identity::Changed), Key::Enter, false)), None);
+        assert_eq!(yes(answer(&trust(Identity::Changed), Key::Escape, false)), Some(false));
+    }
 }

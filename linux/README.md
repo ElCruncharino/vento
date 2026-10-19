@@ -1142,7 +1142,12 @@ store into a ring — and the box is a few labels a frame while
 it is.
 
 **Prompts** are modal dialogs over the session, which is blocked until one is
-answered — so Escape, or clicking outside, is a no: credentials (the user name
+answered — so Escape, or clicking outside, is a no, and Enter is the first
+button (Continue, Connect, OK, or the far end's own confirm label), except on
+a certificate or identity that has *changed*, where it does nothing and the
+answer is a click (or Tab to a button, and Enter): a key on its way to the far
+end must not accept a changed server for you. Enter while held, its repeats,
+answers nothing, and Enter in a field submits the form. The prompts: credentials (the user name
 field only where the scheme has one; for RDP a name typed without a domain
 keeps the session's, and `.\user` is a local account), a certificate the
 [known hosts](#known-hosts) do not match, an unverifiable server (asked every
