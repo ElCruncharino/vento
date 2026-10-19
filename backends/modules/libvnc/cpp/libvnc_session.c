@@ -49,6 +49,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <gnutls/gnutls.h>
 #include <rfb/rfbclient.h>
 
 #include <vento/backend.h>
@@ -70,7 +71,6 @@ enum {
     CMD_CLIPBOARD,
     CMD_RESIZE,
     CMD_LAYOUT,
-    CMD_DISCONNECT,
 };
 
 typedef struct {
@@ -95,6 +95,15 @@ static char *dupOrNull(const char *s) {
 typedef struct {
     int x, y, w, h;
 } Rect;
+
+/* What op_info reports of a connection besides its encodings. */
+typedef struct {
+    bool known;
+    /* At most 255 of the server's bytes, as UTF-8: twice as many where they
+       were Latin-1. */
+    char desktop[512];
+    char protocol[64], security[96], serverPixels[64], viewerPixels[64];
+} Facts;
 
 typedef struct {
     vento_session base; /* first, so that a pointer to this is a pointer to that */
@@ -183,6 +192,11 @@ typedef struct {
     int colorLevel;
     int connectTimeoutMs;
 
+    /* The connection's facts for op_info, under the writer lock: published
+       by the protocol thread once the handshake is done (publishFacts), and
+       none before. */
+    Facts facts;
+
     /* Every value an 8-bit pixel can take, as the shadow buffer wants it. A
        reduced format is a table lookup per pixel in the copy that was already
        there, rather than arithmetic in it. Unused at 32 bits. */
@@ -190,9 +204,10 @@ typedef struct {
 } Session;
 
 static const vento_session_ops OPS;
+static void publishFacts(Session *s, rfbClient *cl);
 
-/* `s->cl` has two kinds of reader — `op_info` under the framebuffer lock, and
-   the two teardown calls under `s->lock` — so both are held to change it. What
+/* `s->cl` has two kinds of reader — `op_traffic` under the framebuffer lock,
+   and the two teardown calls under `s->lock` — so both are held to change it. What
    makes that necessary rather than tidy is that `rfbInitClient` frees the
    client itself when it fails: a reader that sees the old pointer afterwards
    shuts down a descriptor that is no longer anybody's. */
@@ -474,6 +489,9 @@ static void onFinishedUpdate(rfbClient *cl) {
     s->ndirty = 0;
 }
 
+/* A shape of 0x0 is the server hiding the pointer, which the library reports
+   only with patches/libvncserver's 0008; it goes on as no pixels, as the seam
+   has a hidden pointer. */
 static void onGotCursor(rfbClient *cl, int xhot, int yhot, int w, int h, int bpp) {
     Session *s = sessionOf(cl);
     uint32_t *rgba = NULL;
@@ -1014,9 +1032,6 @@ static void runCmd(Session *s, Cmd *c) {
                 }
             }
             break;
-        case CMD_DISCONNECT:
-            s->quit = 1;
-            break;
         default:
             break;
     }
@@ -1202,6 +1217,17 @@ static int initClient(Session *s, rfbClient *cl) {
     return 0;
 }
 
+/* Whether the TLS session holds bytes it has decrypted and the library has
+   not read: a record is read into the library's buffer only as far as the
+   message being read needs, so the rest of it — a whole message, the next
+   one, or the end of one — is in neither that buffer nor the socket, and
+   poll() would wait for the server to send something else before any of it
+   was handled. Upstream's own loop has the same gap. */
+static bool tlsPending(rfbClient *cl) {
+    return cl->tlsSession != NULL
+           && gnutls_record_check_pending((gnutls_session_t) cl->tlsSession) > 0;
+}
+
 static void *protocolThread(void *arg) {
     Session *s = (Session *) arg;
 
@@ -1283,6 +1309,8 @@ static void *protocolThread(void *arg) {
         return NULL;
     }
 
+    publishFacts(s, cl);
+
     /* Bracketed the way it would have to be typed, since a literal with a port
        after it is otherwise two colons in a row nobody can read. */
     if (strchr(cl->serverHost, ':')) {
@@ -1300,7 +1328,7 @@ static void *protocolThread(void *arg) {
         const int paused = s->paused;
         pthread_mutex_unlock(&s->lock);
 
-        if (!paused && cl->buffered > 0) {
+        if (!paused && (cl->buffered > 0 || tlsPending(cl))) {
             if (!HandleRFBServerMessage(cl)) {
                 break;
             }
@@ -1734,47 +1762,65 @@ static void describeVeNCrypt(char *out, size_t size, uint32_t subType) {
 
 /* Desktop name, protocol, connection, security, encoding, server and viewer
    pixels — the order the Rust adapter's `info` labels them in. */
-static bool op_info(vento_session *base, vento_strings *out) {
-    Session *s = sessionOfBase(base);
-    char desktop[256] = "", protocol[64] = "", security[96] = "", encoding[64] = "";
-    char serverPixels[64] = "", viewerPixels[64] = "";
-
-    pthread_rwlock_rdlock(&s->fbLock);
-    rfbClient *cl = s->cl;
-    if (cl) {
-        snprintf(desktop, sizeof(desktop), "%s", cl->desktopName ? cl->desktopName : "");
-        snprintf(protocol, sizeof(protocol), "RFB %d.%d", cl->major, cl->minor);
-        /* VeNCrypt leaves authScheme at 19 and puts the sub-type beside it, and
-           the sub-type is the whole of what the session is: which
-           authentication ran, and whether the tunnel it ran inside proved
-           anything about the server. */
-        switch (cl->authScheme) {
-            case rfbNoAuth: snprintf(security, sizeof(security), "None"); break;
-            case rfbVncAuth: snprintf(security, sizeof(security), "VNC password"); break;
-            case rfbVeNCrypt: describeVeNCrypt(security, sizeof(security), cl->subAuthScheme); break;
-            default: snprintf(security, sizeof(security), "Type %u", cl->authScheme); break;
-        }
-        /* What was asked for, not what arrived: libvncclient tells nobody which
-           encoding decoded a rectangle, so this row is the offer and its label
-           says so. Every other backend here reports the encoding in use. */
-        snprintf(encoding, sizeof(encoding), "%s", s->applied ? s->applied : "");
-        describeFormat(serverPixels, sizeof(serverPixels), &cl->si.format);
-        describeFormat(viewerPixels, sizeof(viewerPixels), &cl->format);
+/* The facts of a connection whose handshake is done, from the client on the
+   protocol thread, which is the only one that may read it: the handshake
+   writes the name, the version, the security and the formats as it goes,
+   and op_info, on whichever thread asks, read them there under a lock the
+   handshake never took. None of them changes afterwards. */
+static void publishFacts(Session *s, rfbClient *cl) {
+    char desktop[256], protocol[64], security[96], serverPixels[64], viewerPixels[64];
+    snprintf(desktop, sizeof(desktop), "%s", cl->desktopName ? cl->desktopName : "");
+    snprintf(protocol, sizeof(protocol), "RFB %d.%d", cl->major, cl->minor);
+    /* VeNCrypt leaves authScheme at 19 and puts the sub-type beside it, and
+       the sub-type is the whole of what the session is: which authentication
+       ran, and whether the tunnel it ran inside proved anything about the
+       server. */
+    switch (cl->authScheme) {
+        case rfbNoAuth: snprintf(security, sizeof(security), "None"); break;
+        case rfbVncAuth: snprintf(security, sizeof(security), "VNC password"); break;
+        case rfbVeNCrypt: describeVeNCrypt(security, sizeof(security), cl->subAuthScheme); break;
+        default: snprintf(security, sizeof(security), "Type %u", cl->authScheme); break;
     }
-    pthread_rwlock_unlock(&s->fbLock);
-
+    describeFormat(serverPixels, sizeof(serverPixels), &cl->si.format);
+    describeFormat(viewerPixels, sizeof(viewerPixels), &cl->format);
     /* The desktop name is the server's own bytes; the rest of these this file
        wrote. */
     char *name = vento_utf8_from_bytes(desktop);
-    const char *values[] = {name ? name : "", protocol, "TCP", security, encoding,
-                            serverPixels, viewerPixels};
-    const bool ok = vento_strings_set(out, values, sizeof(values) / sizeof(values[0]));
+
+    pthread_rwlock_wrlock(&s->fbLock);
+    snprintf(s->facts.desktop, sizeof(s->facts.desktop), "%s", name ? name : "");
+    memcpy(s->facts.protocol, protocol, sizeof(protocol));
+    memcpy(s->facts.security, security, sizeof(security));
+    memcpy(s->facts.serverPixels, serverPixels, sizeof(serverPixels));
+    memcpy(s->facts.viewerPixels, viewerPixels, sizeof(viewerPixels));
+    s->facts.known = true;
+    pthread_rwlock_unlock(&s->fbLock);
     free(name);
-    return ok;
 }
 
-/* The counters the patched sockets.c keeps, read under the same lock as
-   `op_info`: the client may be freed by a failed `rfbInitClient` under us. */
+static bool op_info(vento_session *base, vento_strings *out) {
+    Session *s = sessionOfBase(base);
+    char encoding[64] = "";
+
+    pthread_rwlock_rdlock(&s->fbLock);
+    if (!s->facts.known) {
+        pthread_rwlock_unlock(&s->fbLock);
+        return false;
+    }
+    const Facts facts = s->facts;
+    /* What was asked for, not what arrived: libvncclient tells nobody which
+       encoding decoded a rectangle, so this row is the offer and its label
+       says so. Every other backend here reports the encoding in use. */
+    snprintf(encoding, sizeof(encoding), "%s", s->applied ? s->applied : "");
+    pthread_rwlock_unlock(&s->fbLock);
+
+    const char *values[] = {facts.desktop, facts.protocol, "TCP", facts.security, encoding,
+                            facts.serverPixels, facts.viewerPixels};
+    return vento_strings_set(out, values, sizeof(values) / sizeof(values[0]));
+}
+
+/* The counters the patched sockets.c keeps, read under the framebuffer lock:
+   the client may be freed by a failed `rfbInitClient` under us. */
 static bool op_traffic(vento_session *base, uint64_t out[2]) {
     Session *s = sessionOfBase(base);
     bool have = false;

@@ -1,7 +1,7 @@
 From 7e89726d14c7fc339515d6ce485e162ed0fab67b Mon Sep 17 00:00:00 2001
 From: Claude Opus 5 <noreply@anthropic.com>
 Date: Wed, 12 Aug 2026 21:27:45 -0400
-Subject: [PATCH 3/7] libvncclient: no VeNCrypt Plain either
+Subject: [PATCH 3/8] libvncclient: no VeNCrypt Plain either
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit

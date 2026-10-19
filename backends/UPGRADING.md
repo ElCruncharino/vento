@@ -409,7 +409,7 @@ One commit per upstream, after review, by the lead:
   support; newest in the 3.8 line). nettle 4.1 warns of further API changes.
   `MINI_GMP_ENABLE_FLOAT=0` is an answer configure puts in CFLAGS, so the
   port sets it itself.
-- **libvncserver** at upstream master; seven patches. No releases since
+- **libvncserver** at upstream master; eight patches. No releases since
   0.9.15. `0006` (as TigerVNC's `0006`) hands a certificate that verified
   against the system's authorities, and is for the name dialled, to
   `GetX509CertFingerprintMismatchDecision` too when it is installed, and
@@ -418,6 +418,9 @@ One commit per upstream, after review, by the lead:
   `trust_needed` and the known hosts see every certificate. Should upstream
   ever take them or change `verify_certificate_callback`, check that a
   CA-signed certificate, for the name or not, still reaches the hook.
+  `0008` calls `GotCursorShape` with a 0x0 shape for a cursor update of no
+  pixels, the server hiding the pointer, which upstream returns from
+  before the callback.
 - **tigervnc** master dd416cbf, reporting 1.16.80; six patches (the PAM one
   dropped, and the libav context's pixel format fix with that context). The certificate check is the shim's now: what cannot be excused is
   refused and the rest goes to `trust_needed`, their viewer's known-hosts store
