@@ -25,6 +25,7 @@ pub static KIND: Kind = Kind {
     about: &api::catalog::RUSTDESK,
     version: || crate::VERSION.to_string(),
     create,
+    forget: None,
 };
 
 /// The `Codec` option's value, as `RustDeskProvider` writes it.

@@ -79,8 +79,8 @@ clients, and what differs between them is each client's own code.
   it keeps its pins (what they mean, and what is asked, is `api::trust`)
   and RealVNC's identities, as files under `$XDG_CONFIG_HOME/vento`, with
   tests.
-- **`src/main.rs`** — the `vento` binary: the window, `--list`, and the
-  headless probe.
+- **`src/main.rs`** — the `vento` binary: the window, `--list`,
+  `--forget`, and the headless probe.
 
 ## Building and running
 
@@ -324,6 +324,10 @@ cargo run -- --wayland
 
 # The backends and their options.
 cargo run -- --list
+
+# Forget a server: its pins, its RealVNC identity and RealVNC's own record of
+# it, for every backend; connects nowhere, prints what it removed.
+cargo run -- --forget 127.0.0.1:5901
 
 # A session, headless: connect, print every event, answer the prompts from the
 # flags, write the framebuffer and a thumbnail, print the facts, and leave.
@@ -1148,7 +1152,8 @@ takes a first one without asking, since the rendezvous server has signed it;
 only a changed one is a question. The file is replaced whole (written beside
 itself and renamed over) with mode 0600; a line that does not parse is ignored
 and kept, a missing file is an empty one, and one that cannot be read is
-treated as empty and left alone. To forget a server, delete its line.
+treated as empty and left alone. To forget a server, `vento --forget
+<address>` (below).
 
 Only the window writes it. The probe reads it — a pinned host connects
 headless without `--trust` — and never writes it: `--trust` says yes for that
@@ -1171,18 +1176,30 @@ only the core can compare one, so it is not a pin and the phone does not make
 it one: the core asks its own security question, and the phone and this client
 both leave the core's store where it is while they use it.
 
-Forgetting a RealVNC server takes both stores, since the core recognises a
-server in its own whatever it is handed. The core writes its `identities`
-itself, by address (`<address>=<identity>` for a server with a key,
+**Forgetting a server.** `vento --forget <address> [--state-dir DIR]`
+forgets a server everywhere it is remembered, connects nowhere, and prints
+each thing it removed: its pins in `known_hosts`, its line in
+`realvnc_identities`, and what a backend's library keeps of its own — each
+backend's `Kind::forget`, the Linux side of the phone's
+`BackendProvider.forgetHosts`, which only RealVNC's has: its core keeps its
+own record of the servers it accepted, `<state>/realvnc/net.pgaskin.remotedesktop/.vnc/identities`,
+written by the core itself (`<address>=<identity>` for a server with a key,
 `<address>/extra=<flags>` for what was accepted of it, such as an unencrypted
-connection), whether or not *Remember server* was ticked; with it ticked, the
-next connection to that address asks nothing even where this client has no
-`realvnc_identities` line for it (a VNC server that is not RealVNC's has no
-identity to hand over). So to forget one, delete its line in
-`realvnc_identities` and its lines in the core's `identities` (or that whole
-file, which forgets every server the core remembers) — what the phone's
-Settings → *Clear known hosts* does to both, for every server. This client has
-no command for it yet.
+connection) whether or not *Remember server* was ticked, and a server in it is
+not asked about whatever this client hands the core. The core's lines for the
+address go and the rest are kept (the phone's *Clear known hosts* deletes the
+file, since it forgets every server at once).
+
+The address matches as the stores key entries, which say nothing of a
+backend: every backend's entries for the server are forgotten, so the command
+takes no backend. Case is folded; `host:1`, `host:5901` and `host::5901` are
+one server (a number under 100 is a VNC display, `::` a port), and so are a
+RustDesk ID's pins under every rendezvous server (`<id>@<server>`; name one to
+forget that one alone). A bare host is only itself: its port was the
+backend's default, and the key does not say which backend's, so `host` and
+`host:5900` are forgotten by their own names — the command lists the entries
+it kept for the same host. Forget a server while no session to it is open: a
+session that ends afterwards keeps what it was told to remember.
 
 TigerVNC's library used to accept a
 certificate that verified against the system's certificate authorities (or

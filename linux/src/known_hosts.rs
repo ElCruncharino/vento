@@ -34,6 +34,7 @@
 //! one, never half of either, and it is private to this user.
 
 use api::catalog::About;
+use api::kind::{Dirs, Kind};
 use api::trust;
 use std::fs::{DirBuilder, OpenOptions};
 use std::io::{self, Write};
@@ -101,6 +102,20 @@ impl Table {
                 value: value.to_string(),
             });
         }
+    }
+
+    /// Takes out every entry whose key `forgets` says yes to, and hands them
+    /// back as `(key, value)`; every other line stays where it was.
+    pub fn remove_where(&mut self, mut forgets: impl FnMut(&str) -> bool) -> Vec<(String, String)> {
+        let mut removed = Vec::new();
+        self.lines.retain(|line| match line {
+            Line::Entry { key, value } if forgets(key) => {
+                removed.push((key.clone(), value.clone()));
+                false
+            }
+            _ => true,
+        });
+        removed
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
@@ -217,6 +232,18 @@ impl Store {
         self.write(&table)
     }
 
+    /// The entries whose key `forgets` says yes to, taken out on disk (the
+    /// file written only if there were any): read first, and a file that is
+    /// there and cannot be read is left alone, as for [`set`](Store::set).
+    pub fn remove_where(&self, forgets: impl FnMut(&str) -> bool) -> io::Result<Vec<(String, String)>> {
+        let mut table = self.read()?;
+        let removed = table.remove_where(forgets);
+        if !removed.is_empty() {
+            self.write(&table)?;
+        }
+        Ok(removed)
+    }
+
     /// Replaces the file with `table`: written beside it, flushed, and
     /// renamed over it, private to this user.
     fn write(&self, table: &Table) -> io::Result<()> {
@@ -300,6 +327,59 @@ pub fn saved_identity(config: &Path, about: &About, address: &str) -> Option<Str
     realvnc_identities(config).read_or_empty().get(address).map(str::to_owned)
 }
 
+/// What [`forget`] did, a line for the person each.
+#[derive(Debug, Default)]
+pub struct Forgotten {
+    pub removed: Vec<String>,
+    /// Entries for the same host that were kept, being another port or a
+    /// bare host, whose port was a backend's default: forgotten by that
+    /// name.
+    pub kept: Vec<String>,
+    pub failed: Vec<String>,
+}
+
+/// `vento --forget`: the server `address` names forgotten everywhere it is
+/// remembered, so that the next connection to it asks again — its pins in
+/// the known hosts, its RealVNC identity, and what each backend's library
+/// keeps of its own ([`Kind::forget`], RealVNC's core's record of the
+/// servers it accepted). An address matches as `api::trust::same_server`
+/// says: one key whatever its case, every network a RustDesk ID was pinned
+/// under, and one host and port however the port was written (`host:1`,
+/// `host:5901`, `host::5901`); a bare host only itself. Across every
+/// backend, since no store says which backend filed an entry. Nothing is
+/// connected to.
+pub fn forget(dirs: &Dirs, kinds: &[&Kind], address: &str) -> Forgotten {
+    let mut done = Forgotten::default();
+    let host = trust::host_of(address);
+    for store in [KnownHosts::in_dir(&dirs.config).store, realvnc_identities(&dirs.config)] {
+        let path = store.path().display().to_string();
+        match store.remove_where(|key| trust::same_server(key, address)) {
+            Ok(removed) => done.removed.extend(removed.into_iter().map(|(key, _)| format!("{path}: {key}"))),
+            Err(e) => {
+                done.failed.push(format!("{path}: {e}"));
+                continue;
+            }
+        }
+        if let (Some(host), Ok(table)) = (&host, store.read()) {
+            done.kept.extend(
+                table
+                    .entries()
+                    .filter(|(key, _)| trust::host_of(key).as_ref() == Some(host))
+                    .map(|(key, _)| format!("{path}: {key}")),
+            );
+        }
+    }
+    for kind in kinds {
+        if let Some(forget) = kind.forget {
+            match forget(dirs, address) {
+                Ok(removed) => done.removed.extend(removed),
+                Err(e) => done.failed.push(format!("{}: {e}", kind.id)),
+            }
+        }
+    }
+    done
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -362,6 +442,62 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("vento-known-hosts-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
+    }
+
+    #[test]
+    fn a_server_is_forgotten_in_every_store_by_any_spelling_and_nothing_else() {
+        let dir = scratch("forget");
+        let dirs = Dirs {
+            config: dir.join("config"),
+            state: dir.join("state"),
+            realvnc_libs: dir.join("libs"),
+        };
+        let hosts = KnownHosts::in_dir(&dirs.config);
+        for (key, fp) in [
+            ("127.0.0.1:5901", "AA"),
+            ("# a comment", ""),
+            ("127.0.0.1::5901", "BB"),
+            ("127.0.0.1:5902", "CC"),
+            ("127.0.0.1", "DD"),
+            ("other:5901", "EE"),
+        ] {
+            if fp.is_empty() {
+                let mut text = std::fs::read(hosts.path()).unwrap_or_default();
+                text.extend_from_slice(format!("{key}\n").as_bytes());
+                std::fs::write(hosts.path(), text).unwrap();
+            } else {
+                hosts.put(key, fp).unwrap();
+            }
+        }
+        realvnc_identities(&dirs.config).set("127.0.0.1::5901", "blob").unwrap();
+        // A backend that keeps something of its own is asked to forget it.
+        static KIND: Kind = Kind {
+            about: &api::catalog::REALVNC,
+            version: String::new,
+            create: |_| Err("not here".into()),
+            forget: Some(|_, address| Ok(vec![format!("its own: {address}")])),
+        };
+        let done = forget(&dirs, &[&KIND], "127.0.0.1:1");
+        let known = hosts.path().display().to_string();
+        let ids = realvnc_identities(&dirs.config).path().display().to_string();
+        assert_eq!(
+            done.removed,
+            [
+                format!("{known}: 127.0.0.1:5901"),
+                format!("{known}: 127.0.0.1::5901"),
+                format!("{ids}: 127.0.0.1::5901"),
+                "its own: 127.0.0.1:1".to_string(),
+            ]
+        );
+        // Another port and the bare host are kept, and said.
+        assert_eq!(done.kept, [format!("{known}: 127.0.0.1:5902"), format!("{known}: 127.0.0.1")]);
+        assert!(done.failed.is_empty());
+        let after = std::fs::read_to_string(hosts.path()).unwrap();
+        assert_eq!(after, "# a comment\n127.0.0.1:5902 CC\n127.0.0.1 DD\nother:5901 EE\n");
+        assert_eq!(std::fs::read_to_string(realvnc_identities(&dirs.config).path()).unwrap(), "");
+        // Again: nothing left to forget, and nothing written.
+        assert_eq!(forget(&dirs, &[], "127.0.0.1::5901").removed, Vec::<String>::new());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

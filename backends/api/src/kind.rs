@@ -137,7 +137,19 @@ pub struct Kind {
     /// The backend's own constructor; sessions are started with
     /// [`Kind::start`], which wraps it.
     pub create: fn(&Connect) -> Result<Arc<dyn Backend>, String>,
+    /// Forgets what the backend's library keeps of its own about the server
+    /// `address` names ([`trust::same_server`](crate::trust::same_server)),
+    /// under `dirs`, for a client forgetting it: a line for the person per
+    /// thing removed. Never connects anywhere. `None` for a backend whose
+    /// library keeps nothing of a server's, which is all but RealVNC's (whose
+    /// core remembers the servers it accepted). The phone's counterpart is
+    /// `BackendProvider.forgetHosts`.
+    pub forget: Option<Forget>,
 }
+
+/// [`Kind::forget`]: the client's directories and the address, to a line per
+/// thing removed, or why the backend's record could not be changed.
+pub type Forget = fn(&Dirs, &str) -> Result<Vec<String>, String>;
 
 impl std::ops::Deref for Kind {
     type Target = About;
@@ -205,6 +217,7 @@ mod tests {
             about: &crate::catalog::FIXTURE,
             version: String::new,
             create: |_| Err("not here".into()),
+            forget: None,
         };
         let audio = Arc::new(Fake(Arc::new(Controls::new())));
         let mailbox = Mailbox::new(None);

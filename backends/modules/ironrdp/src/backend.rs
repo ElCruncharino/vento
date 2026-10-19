@@ -22,6 +22,7 @@ pub static KIND: Kind = Kind {
     about: &api::catalog::IRONRDP,
     version: || crate::PROTOCOL_VERSION.to_string(),
     create,
+    forget: None,
 };
 
 struct IronRdp {

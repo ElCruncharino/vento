@@ -29,7 +29,7 @@
 
 use api::backend::{Backend, ConnectionFact, Field, Traffic};
 use api::c::{Behaviour, CSession, Security, start};
-use api::kind::{Connect, Kind};
+use api::kind::{Connect, Dirs, Kind};
 use api::options::Options;
 use std::ffi::CString;
 use std::os::raw::c_void;
@@ -82,6 +82,7 @@ pub static KIND: Kind = Kind {
         Err(why) => format!("not available: {why}"),
     },
     create,
+    forget: Some(forget),
 };
 
 static BEHAVIOUR: Behaviour = Behaviour {
@@ -101,7 +102,7 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
     let mut config = ffi::vento_realvnc_config::default();
     unsafe { library.vento_realvnc_config_init(&mut config) };
 
-    let state = c.dirs.state.join("realvnc");
+    let state = state_dir(c.dirs);
     std::fs::create_dir_all(&state).map_err(|e| format!("the state directory: {e}"))?;
 
     let address = CString::new(c.address).map_err(|_| "address has a NUL")?;
@@ -206,9 +207,123 @@ fn info(s: &[String], traffic: Option<Traffic>) -> Vec<ConnectionFact> {
     facts
 }
 
+/// Where the core keeps what it persists: handed to it as its state
+/// directory.
+fn state_dir(dirs: &Dirs) -> std::path::PathBuf {
+    dirs.state.join("realvnc")
+}
+
+/// The core's own record of the servers it accepted, which it writes itself
+/// under the state directory it was given, in the directory of the
+/// application name the session gives it (`appName` in
+/// `realvnc_session.cxx`): a line per thing it remembers of a server,
+/// `<address>=<identity>` for a server with a key and
+/// `<address>/extra=<flags>` for what was accepted of it (an unencrypted
+/// connection, say), whether or not *Remember server* was ticked. With a
+/// server in it, the core asks nothing of that server whatever it is handed.
+fn core_identities(dirs: &Dirs) -> std::path::PathBuf {
+    state_dir(dirs).join("net.pgaskin.remotedesktop/.vnc/identities")
+}
+
+/// [`Kind::forget`]: the core's lines for `address` out of its record, the
+/// rest kept as they were — what the phone's `forgetIdentities` deletes the
+/// whole file for, since it forgets every server at once. Nothing of the
+/// library is loaded; a session to the same server running meanwhile may
+/// write its line back when it ends.
+fn forget(dirs: &Dirs, address: &str) -> Result<Vec<String>, String> {
+    let path = core_identities(dirs);
+    let text = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(format!("{}: {e}", path.display())),
+    };
+    let (kept, removed) = forget_lines(&text, address);
+    if removed.is_empty() {
+        return Ok(Vec::new());
+    }
+    // Replaced whole, as the client's own stores are, with the mode the
+    // core gave it.
+    let temp = path.with_file_name(format!(".identities.{}.tmp", std::process::id()));
+    let written = (|| {
+        let mode = std::fs::metadata(&path)?.permissions();
+        std::fs::write(&temp, &kept)?;
+        std::fs::set_permissions(&temp, mode)?;
+        std::fs::rename(&temp, &path)
+    })();
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&temp);
+        return Err(format!("{}: {e}", path.display()));
+    }
+    Ok(removed
+        .into_iter()
+        .map(|key| format!("{}: {key}", path.display()))
+        .collect())
+}
+
+/// The core's record without the lines whose address (the key before any
+/// `/`) names the server `address` does, and the keys of those removed.
+/// Every other line is kept byte for byte, one the core may read and this
+/// does not included.
+fn forget_lines(text: &[u8], address: &str) -> (Vec<u8>, Vec<String>) {
+    let mut kept = Vec::with_capacity(text.len());
+    let mut removed = Vec::new();
+    for line in text.split_inclusive(|&b| b == b'\n') {
+        let key = std::str::from_utf8(line)
+            .ok()
+            .and_then(|l| l.split_once('='))
+            .map(|(key, _)| key.trim());
+        match key {
+            Some(key) if api::trust::same_server(key.split('/').next().unwrap_or(key), address) => {
+                removed.push(key.to_string());
+            }
+            _ => kept.extend_from_slice(line),
+        }
+    }
+    (kept, removed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_server_is_forgotten_from_the_cores_record_and_nothing_else() {
+        let record = b"127.0.0.1::5901/extra=0201\n10.0.0.2::5977=00000800dec7\n\
+                       10.0.0.2::5977/extra=0200\nnot a line\n127.0.0.1::59010=00ff";
+        // `:1` is display 1, port 5901: the same server as written by the
+        // core with `::`.
+        let (kept, removed) = forget_lines(record, "127.0.0.1:1");
+        assert_eq!(removed, ["127.0.0.1::5901/extra"]);
+        assert_eq!(
+            kept,
+            b"10.0.0.2::5977=00000800dec7\n10.0.0.2::5977/extra=0200\nnot a line\n127.0.0.1::59010=00ff"
+        );
+        let (kept, removed) = forget_lines(&kept, "10.0.0.2::5977");
+        assert_eq!(removed, ["10.0.0.2::5977", "10.0.0.2::5977/extra"]);
+        assert_eq!(kept, b"not a line\n127.0.0.1::59010=00ff");
+        assert_eq!(forget_lines(b"", "x").1, Vec::<String>::new());
+    }
+
+    #[test]
+    fn forgetting_rewrites_the_cores_file_and_a_missing_one_is_nothing() {
+        let root = std::env::temp_dir().join(format!("vento-realvnc-forget-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dirs = Dirs {
+            config: root.join("config"),
+            state: root.join("state"),
+            realvnc_libs: root.join("libs"),
+        };
+        assert_eq!(forget(&dirs, "127.0.0.1::5901"), Ok(Vec::new()));
+        let path = core_identities(&dirs);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "127.0.0.1::5901/extra=0201\nother::5900/extra=0201\n").unwrap();
+        let removed = forget(&dirs, "127.0.0.1:5901").unwrap();
+        assert_eq!(removed.len(), 1);
+        assert!(removed[0].ends_with(": 127.0.0.1::5901/extra"), "{removed:?}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "other::5900/extra=0201\n");
+        assert_eq!(forget(&dirs, "127.0.0.1:5901"), Ok(Vec::new()));
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     /// A library that is not there is a sentence about it, not a panic: what
     /// `--list` prints and a session's start reports where the client was

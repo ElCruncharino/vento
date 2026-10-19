@@ -31,6 +31,7 @@ pub static KIND: Kind = Kind {
     about: &api::catalog::FREERDP,
     version: || unsafe { api::c::string(ffi::vento_freerdp_version()) },
     create,
+    forget: None,
 };
 
 // The phone's library: this backend, registered on the module's generated

@@ -9,7 +9,8 @@
 //! somebody else's machine is a click, not a side effect of a typo — and
 //! `--connect` opens straight into the session, which quits the window
 //! when it is disconnected. `--list` prints the
-//! backends and their options. Any of the probe's flags
+//! backends and their options, and `--forget` forgets a server
+//! (`known_hosts::forget`) without connecting anywhere. Any of the probe's flags
 //! (`--probe`, `--out`, `--click`, …) selects the headless mode instead — the
 //! spirit of `backends/platform/linux/probe/probe.c`, which is what proved
 //! each C session through the neutral API — which connects, prints every
@@ -47,6 +48,8 @@ mod host {
         Probe(Box<Probe>),
         /// The window: a session, or the dialog to make one.
         Gui(Box<gui::Launch>),
+        /// A server forgotten: `known_hosts::forget`.
+        Forget { address: String, dirs: Dirs },
     }
 
     /// A probe's command line, parsed and checked.
@@ -105,6 +108,7 @@ usage: vento                                   the connection dialog
        vento <backend> <address> --connect ... a session in a window
        vento <backend> <address> --probe N ... a headless probe
        vento --list
+       vento --forget <address> [--state-dir DIR]
 
   <backend>              one of the ids --list prints
   <address>              host, host:port, host:display, [literal]:port — the
@@ -146,6 +150,12 @@ usage: vento                                   the connection dialog
   --state-dir DIR        where backends keep what they leave behind (XDG state
                          dir); the known hosts are in $XDG_CONFIG_HOME/vento
   --verbose              let the backends' debug lines through
+  --forget ADDRESS       forget a server, connecting nowhere: its pins in the
+                         known hosts, its RealVNC identity and RealVNC's own
+                         record of it (under --state-dir), so that the next
+                         connection asks again. Every backend's entries for
+                         it; host:1, host:5901 and host::5901 are one server,
+                         a bare host only itself; prints what it removed
 
 headless, any of which selects the probe instead of the window:
   --probe SECONDS        how long to watch after connecting (5)
@@ -175,11 +185,36 @@ headless, any of which selects the probe instead of the window:
             }
             Ok(Mode::Probe(probe)) => probe.run(),
             Ok(Mode::Gui(launch)) => gui::run(*launch),
+            Ok(Mode::Forget { address, dirs }) => forget(&address, &dirs),
             Err(message) => {
                 eprintln!("{message}\n\n{USAGE}");
                 2
             }
         }
+    }
+
+    /// `--forget`: what was removed, what was kept for the same host, and
+    /// what could not be changed, which is the only failure.
+    fn forget(address: &str, dirs: &Dirs) -> i32 {
+        let done = known_hosts::forget(dirs, &backends::all(), address);
+        if done.removed.is_empty() {
+            println!("nothing remembered for {address}");
+        } else {
+            println!("forgot {address}; the next connection to it asks again:");
+            for line in &done.removed {
+                println!("  {line}");
+            }
+        }
+        if !done.kept.is_empty() {
+            println!("kept, the same host by another name (forget each by its name):");
+            for line in &done.kept {
+                println!("  {line}");
+            }
+        }
+        for line in &done.failed {
+            eprintln!("could not forget: {line}");
+        }
+        i32::from(!done.failed.is_empty())
     }
 
     /// The backends and, under each, its options as `-o` takes them.
@@ -245,6 +280,7 @@ headless, any of which selects the probe instead of the window:
         // The window's display server, if named; the probe has no window and
         // takes either without a word.
         let mut display_server = None;
+        let mut forget = None;
 
         let mut it = args.into_iter().peekable();
         let value = |it: &mut std::iter::Peekable<std::vec::IntoIter<String>>, flag: &str| {
@@ -328,6 +364,7 @@ headless, any of which selects the probe instead of the window:
                             .collect::<Result<Vec<_>, _>>()?,
                     );
                 }
+                "--forget" => forget = Some(value(&mut it, "--forget")?),
                 "--library-dir" => dirs.realvnc_libs = PathBuf::from(value(&mut it, "--library-dir")?),
                 "--state-dir" => dirs.state = PathBuf::from(value(&mut it, "--state-dir")?),
                 other if other.starts_with('-') && other != "-" => {
@@ -337,6 +374,17 @@ headless, any of which selects the probe instead of the window:
             }
         }
 
+        if let Some(address) = forget {
+            if !positional.is_empty() || headless || connect || !assignments.is_empty() {
+                return Err("--forget takes an address and nothing to connect with: the known hosts \
+                            are kept by address, for every backend"
+                    .into());
+            }
+            if trust::key(&address).is_empty() {
+                return Err("--forget needs an address".into());
+            }
+            return Ok(Mode::Forget { address, dirs });
+        }
         if positional.is_empty() && !headless && !connect && assignments.is_empty() {
             return Ok(Mode::Gui(Box::new(gui::Launch {
                 request: None,
