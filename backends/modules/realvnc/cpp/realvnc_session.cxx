@@ -1543,8 +1543,24 @@ const vento_session_ops OPS = {
         nullptr, // decoder_status
 };
 
+/* The core's own `Log` parameter, `RealVncCore.CORE_LOG` word for word.
+   `LogMode.LOG_DEBUG` sets it to `*:android:110` — every category, to
+   liblog, down to the core's level 110, which it writes at VERBOSE — and
+   three categories write a line there per event: `CKeyboard` and `CConn`
+   one per key going down and up, naming the keysym (the typed key, which
+   no log should hold), and `LineSpeedEstimator` one per estimate, a run
+   of them with every burst of updates. Those three are held at level 100,
+   which drops their VERBOSE lines, and in a session those are the only
+   ones: what each says at DEBUG and up (`CConn`'s "sending client cut
+   text", any warning or error) still comes through, and every other
+   category is as it was. Parameters given to `initApp` are set after the
+   log mode's, at the same priority, so this one is what the core logs by.
+   Keyed on the category, not the text, so it survives a reworded line. */
+constexpr const char *CORE_LOG =
+        "*:android:110,CKeyboard:android:100,CConn:android:100,LineSpeedEstimator:android:100";
+
 /* `RealVncCore`'s bootstrap: our own namespace rather than theirs, which
-   would inherit any policy file already on the machine, and the three global
+   would inherit any policy file already on the machine, and the four global
    parameters that class sets and says why. */
 Bootstrap bootstrapFor(const std::string &stateDir) {
     Bootstrap b;
@@ -1558,7 +1574,8 @@ Bootstrap bootstrapFor(const std::string &stateDir) {
     // The cursor is ours to draw, at our own scale, over a desktop the
     // viewport may be magnifying — which is the whole premise of the control
     // stack, and so is not offered as a setting.
-    b.global = {{"UseLocalCursor", "true"}, {"Locale", "en_US"}, {"SctpMaxMtu", "1200"}};
+    b.global = {{"UseLocalCursor", "true"}, {"Locale", "en_US"}, {"SctpMaxMtu", "1200"},
+                {"Log", CORE_LOG}};
     return b;
 }
 

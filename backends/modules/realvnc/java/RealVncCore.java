@@ -37,6 +37,24 @@ public final class RealVncCore {
     /** Our own namespace, not theirs: theirs would inherit any policy file already on the device. */
     private static final String APP_NAME = "net.pgaskin.remotedesktop";
 
+    /**
+     * The core's own {@code Log} parameter. {@link Bindings.LogMode#LOG_DEBUG}
+     * sets it to {@code *:android:110}: every category, to logcat, down to the
+     * core's level 110, which it writes at VERBOSE. Three categories write a
+     * line there per event: {@code CKeyboard} and {@code CConn} one per key
+     * going down and up, naming the keysym (the typed key, which no log should
+     * hold), and {@code LineSpeedEstimator} one per estimate, a run of them
+     * with every burst of updates. Those three are held at level 100, which
+     * drops their VERBOSE lines: what each says at DEBUG and up ({@code
+     * CConn}'s "sending client cut text", any warning or error) still reaches
+     * logcat, and every other category is as it was. The parameters given to
+     * {@code initApp} are set after the log mode's, at the same priority, so
+     * this one is what the core logs by. The Linux session's {@code CORE_LOG}
+     * is the same string.
+     */
+    private static final String CORE_LOG =
+            "*:android:110,CKeyboard:android:100,CConn:android:100,LineSpeedEstimator:android:100";
+
     private static Handler handler;
     private static boolean initialised;
 
@@ -99,7 +117,8 @@ public final class RealVncCore {
                         // cursor rows are.
                         "UseLocalCursor", "true",
                         "Locale", "en_US",
-                        "SctpMaxMtu", "1200");
+                        "SctpMaxMtu", "1200",
+                        "Log", CORE_LOG);
 
                 Bindings.initApp(
                         APP_NAME,

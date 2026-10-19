@@ -1470,3 +1470,11 @@ cargo run -- realvnc 127.0.0.1::5901 --password vncpass
 (where the core keeps its key, identities and logs — as plain files where the
 phone has encrypted ones; see [Known hosts](#known-hosts)) to
 `$XDG_STATE_HOME/vento`.
+
+The core's own log comes out on stderr as `I RealVnc: <category>: …` (`W`
+for its warnings and errors) whatever `--verbose` says: everything the
+phone's core would send to logcat, less three categories' VERBOSE lines,
+which the core is told not to write, here or on the phone — `CKeyboard`'s
+and `CConn`'s for every key going down and up, which name the key, and
+`LineSpeedEstimator`'s for every estimate. What those three say at any other
+level still comes through.
