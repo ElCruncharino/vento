@@ -342,6 +342,11 @@ impl Mailbox {
     fn push(&self, event: Event) {
         {
             let mut inner = self.inner.lock().unwrap();
+            // Decided under the lock that queues the end, or a sound checked
+            // a moment before `Closed` arrived would land after it.
+            if matches!(event, Event::Sound(_)) && inner.state == State::Closed {
+                return;
+            }
             match &event {
                 Event::Connected { width, height } => {
                     inner.width = *width;
@@ -526,9 +531,6 @@ impl Mailbox {
     /// switch, while it tears down must not say anything after the event
     /// that is the last.
     pub fn on_sound(&self, sound: Sound) {
-        if self.state() == State::Closed {
-            return;
-        }
         self.push(Event::Sound(sound));
     }
 
@@ -822,6 +824,33 @@ mod tests {
         mailbox.on_sound(Sound::default());
         assert_eq!(mailbox.take(), Some(Event::Closed { detail: String::new() }));
         assert_eq!(mailbox.take(), None);
+    }
+
+    /// The same, with the sound coming from another thread as the session
+    /// closes: whatever the interleaving, nothing follows `Closed`.
+    #[test]
+    fn a_sound_racing_the_end_never_follows_it() {
+        for _ in 0..500 {
+            let mailbox = Mailbox::new(None);
+            let go = Arc::new(std::sync::Barrier::new(2));
+            let sounds = {
+                let (mailbox, go) = (Arc::clone(&mailbox), Arc::clone(&go));
+                std::thread::spawn(move || {
+                    go.wait();
+                    for _ in 0..200 {
+                        mailbox.on_sound(Sound::default());
+                    }
+                })
+            };
+            go.wait();
+            mailbox.on_closed("");
+            sounds.join().unwrap();
+            let mut last = None;
+            while let Some(event) = mailbox.take() {
+                last = Some(event);
+            }
+            assert_eq!(last, Some(Event::Closed { detail: String::new() }));
+        }
     }
 
     #[test]
