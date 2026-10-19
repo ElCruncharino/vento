@@ -57,8 +57,9 @@
 //! ([`FFmpeg::set_gpu_pictures`]): a caller that asks
 //! ([`decode_picture`](media::video::Decoder::decode_picture)) is handed a
 //! VAAPI picture in NV12 or P010 as it is, a [`GpuPicture`] holding the
-//! surface, which it exports as DMA-BUFs and converts on its GPU; nothing is
-//! mapped or converted here, which is most of what a hardware picture cost.
+//! surface, which it exports as DMA-BUFs ([`export`]) and converts on its
+//! GPU; nothing is mapped or converted here, which is most of what a
+//! hardware picture cost.
 //! Read back ([`GpuPicture::read`]), it is mapped and converted as a decode
 //! would have, the same picture to the bit.
 //!
@@ -75,15 +76,18 @@
 //! dependency would go: a second H.264 decoder would only have been more code,
 //! and from source it has no Cisco patent licence either.
 
+use std::any::Any;
 use std::ffi::{CStr, c_char, c_int};
 use std::os::fd::{FromRawFd, OwnedFd};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use media::video::convert::{Frame, Plane};
-use media::video::{Changes, Codec, Decoded, Decoders, Dmabuf, DmabufLayer, GpuPicture, Output};
+use media::video::{Changes, Codec, Decoded, Decoders, GpuPicture, Output};
 /// How a decoder may decode, which whoever starts a session asks for (a
 /// setting, `--hw-decode`): `media`'s, since it is handed to every backend.
+/// Here [`Hardware::On`] is VAAPI, and the modes are named as
+/// [`hardware_name`] says.
 pub use media::video::Hardware;
 
 /// `cpp/vento_video.h`, declared by hand: the whole of what this crate calls.
@@ -230,21 +234,37 @@ mod sys {
     }
 }
 
-/// How a decoder may decode, as `vento_video_hardware` numbers it.
+/// How a decoder may decode, as `vento_video_hardware` numbers it: `On`
+/// is VAAPI.
 fn hardware_number(hardware: Hardware) -> c_int {
     match hardware {
         Hardware::Off => 0,
-        Hardware::Vaapi => 1,
+        Hardware::On => 1,
         Hardware::Auto => 2,
     }
 }
 
 fn hardware_of(number: c_int) -> Hardware {
     match number {
-        1 => Hardware::Vaapi,
+        1 => Hardware::On,
         2 => Hardware::Auto,
         _ => Hardware::Off,
     }
+}
+
+/// The name a setting or a command line uses for a mode here: "off",
+/// "vaapi" (the one API [`Hardware::On`] decodes on) or "auto".
+pub fn hardware_name(hardware: Hardware) -> &'static str {
+    match hardware {
+        Hardware::Off => "off",
+        Hardware::On => "vaapi",
+        Hardware::Auto => "auto",
+    }
+}
+
+/// The mode [`hardware_name`] names.
+pub fn hardware_named(name: &str) -> Option<Hardware> {
+    Hardware::ALL.into_iter().find(|h| hardware_name(*h) == name)
 }
 
 /// Whether the device a [`Hardware`] decodes on has been opened in this
@@ -460,7 +480,7 @@ impl Decoder {
             None if method != Hardware::Off => log::info!(
                 "{} decoder ({name}, {}) started for {width}x{height}",
                 codec.name(),
-                method.name()
+                hardware_name(method)
             ),
             None => log::info!(
                 "{} decoder ({name}) started for {width}x{height}",
@@ -745,7 +765,7 @@ impl media::video::Decoder for Decoder {
             Some(how @ 1..) => {
                 line += &format!(
                     " {} {}",
-                    self.method().name(),
+                    hardware_name(self.method()),
                     match how {
                         sys::COPIED => "copy",
                         sys::HELD => "dmabuf",
@@ -754,7 +774,7 @@ impl media::video::Decoder for Decoder {
                 );
             }
             Some(_) => line += " sw",
-            None if self.method() != Hardware::Off => line += &format!(" {}", self.method().name()),
+            None if self.method() != Hardware::Off => line += &format!(" {}", hardware_name(self.method())),
             None => line += " sw",
         }
         if let Some(ms) = self.decode_ms {
@@ -822,36 +842,8 @@ impl GpuPicture for Held {
         self.colour
     }
 
-    fn export(&self) -> Result<Dmabuf, String> {
-        let frame = self.frame.lock().unwrap();
-        let mut export = sys::Export::default();
-        let mut error = [0 as c_char; 128];
-        let made = unsafe {
-            sys::vento_video_frame_export(frame.0, &mut export, error.as_mut_ptr(), error.len())
-        };
-        if made < 0 {
-            return Err(text(&error));
-        }
-        let count = usize::try_from(export.layers).unwrap_or(0).min(2);
-        let layers = export.layer[..count]
-            .iter()
-            .map(|l| DmabufLayer {
-                // SAFETY: a descriptor the export made for the caller, and
-                // nobody else's.
-                fd: unsafe { OwnedFd::from_raw_fd(l.fd) },
-                fourcc: l.fourcc,
-                modifier: l.modifier,
-                offset: l.offset,
-                pitch: l.pitch,
-                width: l.width,
-                height: l.height,
-            })
-            .collect();
-        Ok(Dmabuf {
-            layers,
-            bt709: export.bt709 != 0,
-            full_range: export.full_range != 0,
-        })
+    fn platform(&self) -> &dyn Any {
+        self
     }
 
     fn read(&self, out: &mut [u32], width: usize, height: usize) -> bool {
@@ -890,11 +882,96 @@ impl GpuPicture for Held {
     }
 }
 
+impl Held {
+    /// The surface as DMA-BUFs (see [`export`]).
+    fn export(&self) -> Result<Dmabuf, String> {
+        let frame = self.frame.lock().unwrap();
+        let mut export = sys::Export::default();
+        let mut error = [0 as c_char; 128];
+        let made = unsafe {
+            sys::vento_video_frame_export(frame.0, &mut export, error.as_mut_ptr(), error.len())
+        };
+        if made < 0 {
+            return Err(text(&error));
+        }
+        let count = usize::try_from(export.layers).unwrap_or(0).min(2);
+        let layers = export.layer[..count]
+            .iter()
+            .map(|l| DmabufLayer {
+                // SAFETY: a descriptor the export made for the caller, and
+                // nobody else's.
+                fd: unsafe { OwnedFd::from_raw_fd(l.fd) },
+                fourcc: l.fourcc,
+                modifier: l.modifier,
+                offset: l.offset,
+                pitch: l.pitch,
+                width: l.width,
+                height: l.height,
+            })
+            .collect();
+        Ok(Dmabuf {
+            layers,
+            bt709: export.bt709 != 0,
+            full_range: export.full_range != 0,
+        })
+    }
+}
+
 impl Drop for Held {
     fn drop(&mut self) {
         let frame = self.frame.get_mut().unwrap();
         unsafe { sys::vento_video_frame_free(frame.0) };
     }
+}
+
+/// A VAAPI picture's surface as DMA-BUFs, one a plane, each descriptor a new
+/// one of the caller's own: what the window imports into its Vulkan device
+/// to draw a picture without reading it back. An error for a picture that
+/// is not one of these decoders' (another platform's, a test's) or that
+/// VAAPI would not export.
+pub fn export(picture: &dyn GpuPicture) -> Result<Dmabuf, String> {
+    match picture.platform().downcast_ref::<Held>() {
+        Some(held) => held.export(),
+        None => Err("the picture is not a VAAPI picture of libavcodec's".into()),
+    }
+}
+
+/// A [`GpuPicture`]'s surface as DMA-BUFs, with what its numbers mean.
+pub struct Dmabuf {
+    /// Y, then U and V interleaved (NV12, P010): a single-plane buffer each,
+    /// in the order they are read.
+    pub layers: Vec<DmabufLayer>,
+    /// BT.709 rather than BT.601, and full range rather than limited, as
+    /// `convert::Frame` says them.
+    pub bt709: bool,
+    pub full_range: bool,
+}
+
+/// One plane of a [`Dmabuf`]: its descriptor, its DRM format and layout
+/// modifier, and where its samples are in it.
+pub struct DmabufLayer {
+    pub fd: OwnedFd,
+    /// A DRM fourcc: `R8  ` and `GR88` for NV12, `R16 ` and `GR32` (GR1616)
+    /// for P010.
+    pub fourcc: u32,
+    pub modifier: u64,
+    pub offset: u32,
+    pub pitch: u32,
+    /// The plane's size in samples, which is the surface's and not the
+    /// picture's.
+    pub width: u32,
+    pub height: u32,
+}
+
+/// The DRM fourccs a [`DmabufLayer`] can be in.
+pub mod fourcc {
+    const fn code(c: &[u8; 4]) -> u32 {
+        u32::from_le_bytes(*c)
+    }
+    pub const R8: u32 = code(b"R8  ");
+    pub const GR88: u32 = code(b"GR88");
+    pub const R16: u32 = code(b"R16 ");
+    pub const GR1616: u32 = code(b"GR32");
 }
 
 /// A picture's planes, as `convert` reads them: in place at eight bits, and

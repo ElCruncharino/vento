@@ -480,7 +480,7 @@ headless, any of which selects the probe instead of the window:
     /// `--hw-decode=HOW`'s answer.
     fn hw_decode(arg: &str) -> Result<backends::Hardware, String> {
         let how = arg.split_once('=').map_or("", |(_, how)| how);
-        backends::Hardware::from_name(how)
+        backends::hardware_named(how)
             .ok_or_else(|| format!("--hw-decode: {how:?} is not one of vaapi, auto or off"))
     }
 
@@ -1025,12 +1025,12 @@ headless, any of which selects the probe instead of the window:
             use backends::Hardware;
             assert_eq!(settings(&[]), Hardware::Off);
             assert_eq!(settings(&["--hw-decode"]), Hardware::Auto);
-            assert_eq!(settings(&["--hw-decode=vaapi"]), Hardware::Vaapi);
+            assert_eq!(settings(&["--hw-decode=vaapi"]), Hardware::On);
             assert_eq!(settings(&["--hw-decode=auto"]), Hardware::Auto);
             assert_eq!(settings(&["--hw-decode", "--hw-decode=off"]), Hardware::Off);
             assert_eq!(
                 settings(&["rustdesk", "127.0.0.1", "--probe", "1", "--hw-decode=vaapi"]),
-                Hardware::Vaapi
+                Hardware::On
             );
             for refused in ["--hw-decode=", "--hw-decode=VAAPI", "--hw-decode=nvdec", "--hw-decode=vulkan"] {
                 assert!(parse(vec![refused.to_string()]).is_err(), "{refused}");

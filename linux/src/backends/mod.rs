@@ -14,7 +14,7 @@ pub use api::kind::{CONNECT_TIMEOUT_MS, Connect, Dirs, Kind, Platform};
 pub use api::trust::{Pinned, pinned_as};
 
 pub use platform_linux::audio::{Audio, Output as AudioOutput};
-pub use platform_linux::ffmpeg::{FFmpeg, Hardware};
+pub use platform_linux::ffmpeg::{FFmpeg, Hardware, hardware_name, hardware_named};
 use std::sync::Arc;
 
 /// What the far end lists this machine as, where a phone says its model.
@@ -32,9 +32,9 @@ pub fn client_name() -> String {
 ///
 /// One a session, and held by it as well as handed to its backend in
 /// [`Connect::decoders`]: switching the way of decoding under a running
-/// session is [`FFmpeg::set_hardware`] on this, which a backend decoding
-/// through it takes at its next picture (RustDesk), and which every backend
-/// is handed at connect through [`Connect::hardware`], the same answer.
+/// session is [`FFmpeg::set_hardware`] on this, which every backend decoding
+/// through it takes at its next picture: RustDesk's video, and TigerVNC's
+/// and FreeRDP's H.264, which ask `api::c::video`'s table for the mode.
 ///
 /// [`FFmpeg::set_hardware`]: platform_linux::ffmpeg::FFmpeg::set_hardware
 pub fn decoders(hardware: Hardware) -> Arc<FFmpeg> {

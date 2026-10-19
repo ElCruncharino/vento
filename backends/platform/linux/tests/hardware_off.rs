@@ -43,7 +43,7 @@ fn off_opens_no_device_and_loads_no_library() {
         assert_eq!(decoder.hardware(), Some(false), "{name}");
         assert!(decoder.status().unwrap().contains(" sw "), "{name}");
     }
-    assert_eq!(device_opened(Hardware::Vaapi), None);
+    assert_eq!(device_opened(Hardware::On), None);
     let maps = std::fs::read_to_string("/proc/self/maps").unwrap();
     for library in ["libva.so", "libva-drm.so"] {
         assert!(!maps.contains(library), "{library} is loaded with hardware decoding off");

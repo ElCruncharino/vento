@@ -55,7 +55,8 @@
 //! its pictures read back, as without this.
 
 use media::video::convert::coefficients;
-use media::video::{Dmabuf, GpuPicture, fourcc};
+use media::video::GpuPicture;
+use platform_linux::ffmpeg::{Dmabuf, fourcc};
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::sync::Arc;
@@ -235,7 +236,7 @@ impl Zerocopy {
         let (device, deep_ok) = (&self.device, self.deep);
         let pass = self.pass.as_ref().expect("made above");
         let import = self.imports.get(picture.surface(), || {
-            let dmabuf = picture.export()?;
+            let dmabuf = platform_linux::ffmpeg::export(&**picture)?;
             scoped(device, "the import", || import(device, &pass.layout, &pass.params, dmabuf, deep_ok)).and_then(|r| r)
         })?;
         let (bt709, full_range) = picture.colour();
@@ -880,8 +881,8 @@ mod tests {
         };
         for name in ["h264.h264", "vp9.ivf", "av1.ivf", "h265-main10.h265"] {
             let (codec, frames) = fixture(name);
-            let mut decoder = platform_linux::ffmpeg::Decoder::with_hardware(codec, 128, 128, Hardware::Vaapi).unwrap();
-            if decoder.method() != Hardware::Vaapi {
+            let mut decoder = platform_linux::ffmpeg::Decoder::with_hardware(codec, 128, 128, Hardware::On).unwrap();
+            if decoder.method() != Hardware::On {
                 eprintln!("{test}: skipped, no VAAPI ({:?})", decoder.software_reason());
                 return;
             }

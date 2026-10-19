@@ -52,7 +52,7 @@ enum vento_video_hardware {
     // libavcodec's software decoders, and nothing else: the default.
     VENTO_VIDEO_HW_OFF = 0,
     // VAAPI, through libva (loaded then, if it is installed) on the first
-    // DRM render node.
+    // DRM render node: `Hardware::On`, the one hardware API here.
     VENTO_VIDEO_HW_VAAPI = 1,
     // VAAPI where it has a decoder for the stream, else software: the same
     // as VAAPI here, which is the one device there is; the person's "use the

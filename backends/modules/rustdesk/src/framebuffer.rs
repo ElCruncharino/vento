@@ -319,8 +319,8 @@ pub mod tests {
         fn colour(&self) -> (bool, bool) {
             (false, false)
         }
-        fn export(&self) -> std::result::Result<media::video::Dmabuf, String> {
-            Err("a test's".into())
+        fn platform(&self) -> &dyn std::any::Any {
+            self
         }
         fn read(&self, out: &mut [u32], width: usize, height: usize) -> bool {
             self.reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);

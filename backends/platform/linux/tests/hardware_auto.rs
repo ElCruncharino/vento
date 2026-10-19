@@ -44,7 +44,7 @@ fn auto_is_vaapi_then_software() {
     // 1. A stream VAAPI takes: decoded on it.
     let vaapi = {
         let hw = auto("h264.h264");
-        if hw.method() == Hardware::Vaapi {
+        if hw.method() == Hardware::On {
             assert_eq!(hw.hardware(), Some(true));
             assert_eq!(hw.software_reason(), None);
             true

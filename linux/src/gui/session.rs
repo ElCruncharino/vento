@@ -1124,12 +1124,12 @@ impl Session {
             on_off(settings.clipboard_in),
             on_off(settings.grab_keyboard),
             on_off(settings.software_cursor),
-            settings.hw_decode.name()
+            backends::hardware_name(settings.hw_decode)
         );
-        // Taken by a backend that decodes through these at its next picture
-        // (RustDesk, which asks for a key frame to start the new decoder
-        // on); one with decoders of its own was handed the setting at
-        // connect, and takes a change at the next.
+        // Taken by every backend that decodes through these at its next
+        // picture (RustDesk, which asks for a key frame to start the new
+        // decoder on, and TigerVNC's and FreeRDP's H.264, which ask the
+        // table's mode).
         if settings.hw_decode != self.settings.hw_decode {
             self.decoders.set_hardware(settings.hw_decode);
         }

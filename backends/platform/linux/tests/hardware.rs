@@ -19,8 +19,8 @@
 
 #![cfg(not(target_os = "android"))]
 
-use media::video::{Changes, Codec, Decoded, Decoder as _, fourcc};
-use platform_linux::ffmpeg::{Decoder, Hardware};
+use media::video::{Changes, Codec, Decoded, Decoder as _};
+use platform_linux::ffmpeg::{Decoder, Hardware, fourcc};
 
 mod clips;
 use clips::{H, W, annex_b, difference, frames, h264_aud, h265_aud, ivf, pictures, planes_pictures};
@@ -32,8 +32,8 @@ fn mode() -> String {
 /// Whether a VAAPI decoder can be had here; a note, or with `require` a
 /// failure, where not.
 fn vaapi(test: &str) -> bool {
-    let decoder = Decoder::with_hardware(Codec::H264, W, H, Hardware::Vaapi).expect("a decoder");
-    if decoder.method() == Hardware::Vaapi {
+    let decoder = Decoder::with_hardware(Codec::H264, W, H, Hardware::On).expect("a decoder");
+    if decoder.method() == Hardware::On {
         return true;
     }
     let why = decoder.software_reason().unwrap_or_default();
@@ -54,7 +54,7 @@ fn compare(name: &str, hardware: bool, reason: &str) {
     }
     let (codec, frames) = frames(name);
     let mut sw = Decoder::with_hardware(codec, W, H, Hardware::Off).expect("a software decoder");
-    let mut hw = Decoder::with_hardware(codec, W, H, Hardware::Vaapi).expect("a decoder");
+    let mut hw = Decoder::with_hardware(codec, W, H, Hardware::On).expect("a decoder");
     let want = pictures(&mut sw, &frames);
     let got = pictures(&mut hw, &frames);
     let status = hw.status().unwrap();
@@ -101,7 +101,7 @@ fn h264_planes() {
     }
     let (codec, frames) = frames("h264.h264");
     let mut sw = Decoder::with_hardware(codec, W, H, Hardware::Off).expect("a software decoder");
-    let mut hw = Decoder::with_hardware(codec, W, H, Hardware::Vaapi).expect("a decoder");
+    let mut hw = Decoder::with_hardware(codec, W, H, Hardware::On).expect("a decoder");
     let want = pictures(&mut sw, &frames);
     let got = planes_pictures(&mut hw, &frames);
     eprintln!("h264_planes: {}", hw.status().unwrap());
@@ -189,8 +189,8 @@ fn held(name: &str, layers: [u32; 2]) {
         return;
     }
     let (codec, frames) = frames(name);
-    let mut mapped = Decoder::with_hardware(codec, W, H, Hardware::Vaapi).unwrap();
-    let mut holding = Decoder::with_hardware(codec, W, H, Hardware::Vaapi).unwrap();
+    let mut mapped = Decoder::with_hardware(codec, W, H, Hardware::On).unwrap();
+    let mut holding = Decoder::with_hardware(codec, W, H, Hardware::On).unwrap();
     let want = pictures(&mut mapped, &frames);
     let mut pools = Vec::new();
     for (i, frame) in frames.iter().enumerate() {
@@ -204,7 +204,7 @@ fn held(name: &str, layers: [u32; 2]) {
         };
         assert_eq!(out, vec![0u32; W * H], "{name}: a held picture writes nothing");
         assert_eq!((picture.width(), picture.height()), (W, H));
-        let dmabuf = picture.export().unwrap_or_else(|e| panic!("{name}: {e}"));
+        let dmabuf = platform_linux::ffmpeg::export(&*picture).unwrap_or_else(|e| panic!("{name}: {e}"));
         assert_eq!(
             dmabuf.layers.iter().map(|l| l.fourcc).collect::<Vec<_>>(),
             layers,
@@ -227,7 +227,7 @@ fn held(name: &str, layers: [u32; 2]) {
     let status = holding.status().unwrap();
     assert!(status.starts_with(&format!("{} vaapi dmabuf ", codec.name())), "{status}");
 
-    let mut another = Decoder::with_hardware(codec, W, H, Hardware::Vaapi).unwrap();
+    let mut another = Decoder::with_hardware(codec, W, H, Hardware::On).unwrap();
     let mut out = vec![0u32; W * H];
     let mut changed = Changes::new();
     changed.reset(H);
@@ -276,7 +276,7 @@ fn what_cannot_be_held_is_converted() {
     };
     try_one("h264.h264", Hardware::Off);
     if vaapi("what_cannot_be_held_is_converted") {
-        try_one("h265-444-10bit.h265", Hardware::Vaapi);
+        try_one("h265-444-10bit.h265", Hardware::On);
     }
 }
 
@@ -288,7 +288,7 @@ fn a_held_picture_that_fails_falls_back_to_software() {
         return;
     }
     let (codec, frames) = frames("h264.h264");
-    let mut decoder = Decoder::with_hardware(codec, W, H, Hardware::Vaapi).unwrap();
+    let mut decoder = Decoder::with_hardware(codec, W, H, Hardware::On).unwrap();
     let mut out = vec![0u32; W * H];
     let mut decode = |decoder: &mut Decoder, frame: &[u8]| {
         let mut changed = Changes::new();
@@ -317,7 +317,7 @@ fn a_fallback_that_will_not_open_is_the_end_of_the_decoder() {
         return;
     }
     let (codec, frames) = frames("h264.h264");
-    let mut decoder = Decoder::with_hardware(codec, W, H, Hardware::Vaapi).unwrap();
+    let mut decoder = Decoder::with_hardware(codec, W, H, Hardware::On).unwrap();
     let mut out = vec![0u32; W * H];
     let mut decode = |decoder: &mut Decoder, frame: &[u8]| {
         let mut changed = Changes::new();
@@ -360,7 +360,7 @@ fn mapped_either_way_the_picture_is_the_same() {
     let (codec, frames) = frames("h264.h264");
     let frames: Vec<Vec<u8>> = frames.iter().cycle().take(19).cloned().collect();
     let mut sw = Decoder::with_hardware(codec, W, H, Hardware::Off).unwrap();
-    let mut hw = Decoder::with_hardware(codec, W, H, Hardware::Vaapi).unwrap();
+    let mut hw = Decoder::with_hardware(codec, W, H, Hardware::On).unwrap();
     let want = pictures(&mut sw, &frames);
     let got = pictures(&mut hw, &frames);
     assert_eq!(hw.hardware(), Some(true));
@@ -382,12 +382,12 @@ fn one_device_for_every_decoder() {
         return;
     }
     let (codec, frames) = frames("h264.h264");
-    let mut first = Decoder::with_hardware(codec, W, H, Hardware::Vaapi).unwrap();
+    let mut first = Decoder::with_hardware(codec, W, H, Hardware::On).unwrap();
     pictures(&mut first, &frames);
     let open = render_nodes();
     assert!(open >= 1, "no render node open with a VAAPI decoder");
     let mut more: Vec<Decoder> = (0..10)
-        .map(|_| Decoder::with_hardware(codec, W, H, Hardware::Vaapi).unwrap())
+        .map(|_| Decoder::with_hardware(codec, W, H, Hardware::On).unwrap())
         .collect();
     for decoder in &mut more {
         pictures(decoder, &frames);
@@ -396,7 +396,7 @@ fn one_device_for_every_decoder() {
     assert_eq!(render_nodes(), open, "a decoder opened a device of its own");
     drop(more);
     drop(first);
-    assert_eq!(platform_linux::ffmpeg::device_opened(Hardware::Vaapi), Some(true));
+    assert_eq!(platform_linux::ffmpeg::device_opened(Hardware::On), Some(true));
     // Auto's device is the same one, and says so.
     assert_eq!(platform_linux::ffmpeg::device_opened(Hardware::Auto), Some(true));
     assert_eq!(platform_linux::ffmpeg::device_opened(Hardware::Off), None);
@@ -414,7 +414,7 @@ fn a_failure_mid_stream_falls_back_to_software() {
     let (codec, frames) = frames("h264.h264");
     let mut sw = Decoder::with_hardware(codec, W, H, Hardware::Off).unwrap();
     let want = pictures(&mut sw, &frames[..1]);
-    let mut hw = Decoder::with_hardware(codec, W, H, Hardware::Vaapi).unwrap();
+    let mut hw = Decoder::with_hardware(codec, W, H, Hardware::On).unwrap();
     pictures(&mut hw, &frames[..1]);
     assert_eq!(hw.hardware(), Some(true));
 
@@ -452,7 +452,7 @@ fn without_a_device_it_is_software() {
         return;
     }
     let (codec, frames) = frames("h264.h264");
-    let mut hw = Decoder::with_hardware(codec, W, H, Hardware::Vaapi).unwrap();
+    let mut hw = Decoder::with_hardware(codec, W, H, Hardware::On).unwrap();
     assert_eq!(hw.method(), Hardware::Off);
     let why = hw.software_reason().unwrap_or_default();
     assert!(
@@ -464,7 +464,7 @@ fn without_a_device_it_is_software() {
     let status = hw.status().unwrap();
     eprintln!("without a device: {status}");
     assert!(status.starts_with("H.264 sw ") && status.contains(&why), "{status}");
-    assert_eq!(platform_linux::ffmpeg::device_opened(Hardware::Vaapi), Some(false));
+    assert_eq!(platform_linux::ffmpeg::device_opened(Hardware::On), Some(false));
     assert_eq!(platform_linux::ffmpeg::device_opened(Hardware::Auto), Some(false));
 }
 
@@ -495,7 +495,7 @@ fn bench() {
     let methods: Vec<Hardware> = std::env::var("VENTO_BENCH_HW")
         .unwrap_or("off,vaapi".into())
         .split(',')
-        .map(|name| Hardware::from_name(name).unwrap_or_else(|| panic!("{name}: which method?")))
+        .map(|name| platform_linux::ffmpeg::hardware_named(name).unwrap_or_else(|| panic!("{name}: which method?")))
         .collect();
     let number = |var: &str| std::env::var(var).ok().map(|v| v.parse::<u64>().unwrap());
     let gap = std::time::Duration::from_millis(number("VENTO_BENCH_GAP_MS").unwrap_or(0));
@@ -550,7 +550,7 @@ fn bench() {
             eprintln!(
                 "{path} {}: {pictures}/{} pictures; {} (of it map {}{in_place}); decode+convert \
                  {:.2} ms/frame (worst {worst:.2}); CPU {:.2} ms/frame",
-                method.name(),
+                platform_linux::ffmpeg::hardware_name(method),
                 frames.len(),
                 decoder.status().unwrap(),
                 map.map_or("-".into(), |m| format!("{m:.2} ms")),

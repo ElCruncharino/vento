@@ -316,7 +316,7 @@ mod tests {
 
         fn decoder(&self, codec: Codec, width: usize, height: usize) -> Option<Box<dyn Decoder>> {
             let hardware = if self.hardware.load(Ordering::Relaxed) {
-                Hardware::Vaapi
+                Hardware::On
             } else {
                 Hardware::Off
             };
@@ -339,7 +339,7 @@ mod tests {
 
         fn hardware(&self) -> Hardware {
             if self.hardware.load(Ordering::Relaxed) {
-                Hardware::Vaapi
+                Hardware::On
             } else {
                 Hardware::Off
             }
@@ -361,7 +361,7 @@ mod tests {
         });
         let t = table(Arc::clone(&fake) as Arc<dyn Decoders>);
         unsafe {
-            assert_eq!(t.mode.unwrap()(t.user), mode_number(Hardware::Vaapi));
+            assert_eq!(t.mode.unwrap()(t.user), mode_number(Hardware::On));
             assert!(t.open.unwrap()(t.user, ffi::VENTO_VIDEO_VP8 as c_int, 4, 3, true).is_null());
             let d = t.open.unwrap()(t.user, ffi::VENTO_VIDEO_H264 as c_int, 4, 3, true);
             assert!(!d.is_null());
