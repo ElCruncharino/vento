@@ -12,9 +12,10 @@
 //! functions under the same names on the phone, each through `jni`'s
 //! `native_method!`, which checks a function against its descriptor when it
 //! compiles. What ties the two lists together is
-//! `scripts/check-jni-symbols.sh`: every native the compiled class declares
-//! has to have its name and its descriptor in the library it loads, and every
-//! callback `NativeBackend` declares has to be one the library looks up.
+//! `scripts/check-jni-symbols.sh`: the table the library registers, read out
+//! of the library, has to be the compiled class's natives, name and
+//! descriptor, both ways; and the callbacks [`backend`](crate::backend) looks
+//! up have to be the ones `NativeBackend` declares, both ways.
 //!
 //! A table rather than a Java file per module because the declarations are
 //! the same for every backend — what differs is the class they are on, which
