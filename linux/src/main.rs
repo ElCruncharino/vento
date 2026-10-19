@@ -31,7 +31,7 @@ mod host {
     use std::path::PathBuf;
     use std::sync::Arc;
     use std::time::{Duration, Instant};
-    use vento::backend::{Backend, Credentials, Monitor, thumbnail_step};
+    use vento::backend::{Backend, Credentials, Monitor};
     use vento::backends::{self, Connect, Dirs, Kind, Platform};
     use vento::events::{Event, Mailbox, State};
     use vento::gui;
@@ -91,7 +91,6 @@ mod host {
         audio_output: backends::AudioOutput,
         out: Option<PathBuf>,
         thumb_step: usize,
-        verbose: bool,
         /// Whether `--password` has been given to a credentials prompt.
         /// It is given once: a second prompt is the far end saying it was
         /// wrong, and answering that with the same password again is a loop
@@ -468,7 +467,6 @@ headless, any of which selects the probe instead of the window:
             audio_output: settings.audio_output,
             out,
             thumb_step,
-            verbose: false,
             answered: Cell::new(false),
             refused: Cell::new(false),
         })))
@@ -543,7 +541,6 @@ headless, any of which selects the probe instead of the window:
 
     impl Probe {
         fn run(self: Box<Self>) -> i32 {
-            let _ = self.verbose;
             let start = Instant::now();
             let say = |event: &str| println!("[{:8.3}] {event}", start.elapsed().as_secs_f64());
 
@@ -993,7 +990,6 @@ headless, any of which selects the probe instead of the window:
                     ok = false;
                 }
             }
-            let _ = thumbnail_step;
             ok
         }
     }

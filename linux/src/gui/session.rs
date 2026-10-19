@@ -1110,7 +1110,7 @@ impl Session {
         out
     }
 
-    // ---- the frame ---------------------------------------------------------
+    // ---- the client's settings and the overlay -----------------------------
 
     /// One option of the client's own changed on the panel.
     fn set_settings(&mut self, settings: Settings) {
