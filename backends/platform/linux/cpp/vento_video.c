@@ -703,8 +703,6 @@ static int decode_packet(vento_video *video, const uint8_t *data, size_t len, in
                 out->error = received;
             break;
         }
-        if (got)
-            out->skipped++;
         av_frame_unref(video->frame);
         av_frame_move_ref(video->frame, video->newer);
         got = 1;

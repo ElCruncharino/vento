@@ -112,9 +112,6 @@ struct vento_video_picture {
     // The error of a receive that failed after the picture, or 0: a frame
     // lost behind the one returned, for the caller to log.
     int32_t error;
-    // Pictures that came out of this packet before the returned one and were
-    // dropped unread, each a whole picture the last overwrote.
-    uint32_t skipped;
     // How many bits up a sample's value is in its two bytes.
     int32_t shift;
     // A `vento_video_packing`.
