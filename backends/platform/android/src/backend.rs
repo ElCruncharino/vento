@@ -72,13 +72,22 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 /// named.
 pub struct Module {
     pub kind: &'static Kind,
-    /// What decodes the protocol's video, for the one whose picture is video:
-    /// the phone's MediaCodec for RustDesk, nothing for the others — so that
-    /// a library with no use for the NDK's media library does not link it.
+    /// What decodes the protocol's video, for the backends that have some:
+    /// the phone's MediaCodec for RustDesk, and for TigerVNC's and FreeRDP's
+    /// H.264; nothing for the others.
     pub decoders: fn() -> Option<Arc<dyn Decoders>>,
     /// Where the far end's sound goes, for the backends that have sound:
-    /// AAudio for TigerVNC and FreeRDP, nothing for the others. Called once
-    /// a session, since an output's controls are its session's.
+    /// AAudio for TigerVNC, FreeRDP, IronRDP, SPICE and RustDesk, whose
+    /// compressed sound MediaCodec's audio decoders decode; nothing for the
+    /// others. Called once a session, since an output's controls are its
+    /// session's.
+    ///
+    /// What a library links follows from these only for the Rust ones: a
+    /// cdylib that names neither (RFB's) has no `libmediandk.so` or
+    /// `libaaudio.so` among its NEEDED, and SPICE's and IronRDP's have both
+    /// for their sound alone. A C backend's library is linked by
+    /// `vento_android_library`, which names both for every one (libvnc's
+    /// included).
     pub audio: fn() -> Option<Arc<dyn Outputs>>,
 }
 

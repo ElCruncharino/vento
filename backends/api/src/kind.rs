@@ -105,10 +105,10 @@ pub struct Connect<'a> {
     pub decoders: Option<Arc<dyn Decoders>>,
     /// Where the far end's sound goes, for the backends that have sound
     /// (TigerVNC's QEMU audio and FreeRDP's rdpsnd through `vento/audio.h`,
-    /// SPICE's, IronRDP's and RustDesk's in Rust): the phone's AAudio, or
-    /// ALSA on a desktop, one per session so that its controls — the switch
-    /// and the mute a window sets — are this session's alone. `None` is a
-    /// session whose sound is dropped.
+    /// SPICE's, IronRDP's and RustDesk's in Rust): the phone's AAudio, or on
+    /// a desktop PipeWire (ALSA where no daemon answers), one per session so
+    /// that its controls — the switch and the mute a window sets — are this
+    /// session's alone. `None` is a session whose sound is dropped.
     pub audio: Option<Arc<dyn Outputs>>,
 }
 
