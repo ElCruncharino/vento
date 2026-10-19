@@ -103,6 +103,9 @@ impl Read for Handle {
             let mut conn = self.stream.conn.lock().unwrap();
             while self.at < self.filled {
                 let taken = conn.read_tls(&mut &self.ciphertext[self.at..self.filled])?;
+                // Once the far end's close_notify is in, rustls reads nothing
+                // more (`Ok(0)`), though the rest of this chunk is still here:
+                // stop rather than spin, and the reader says end of stream.
                 if taken == 0 {
                     break;
                 }
