@@ -113,11 +113,13 @@ impl Hardware {
 /// converted in place under a lock the drawing thread wants.
 ///
 /// Not `Send`: a decoder is made, fed and dropped on the protocol thread, and
-/// MediaCodec's is a raw handle nothing has promised may move. The one caller
-/// that moves one anyway is TigerVNC's, whose library decodes each rectangle
-/// on whichever of its worker threads is free: one call at a time, never two
-/// at once, and that promise is written down where it is made
-/// (`api::c::video`).
+/// the trait asks no more of a platform's decoder than that (MediaCodec's
+/// happens to be `Send`; libavcodec's is a raw context nothing here has
+/// declared so). The one caller that moves one anyway is TigerVNC's, whose
+/// library decodes each rectangle on whichever of its worker threads is
+/// free: one call at a time, never two at once, and that promise is written
+/// down where it is made (`api::c::video`), with why both platforms'
+/// decoders keep it.
 pub trait Decoder {
     /// True when a frame arrived, with the rows and columns it changed added to
     /// `changed`. `out` is `width * height` words, row-major, `R, G, B, A` in

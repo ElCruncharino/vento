@@ -182,6 +182,91 @@ const FRAME_TIMEOUT_US: i64 = 30_000;
 /// long as it takes.
 const PICTURE_TIMEOUT_US: i64 = 500_000;
 
+/// One MediaCodec codec, as the NDK hands it out: what the video's
+/// [`Decoder`] and the sound's (`mediacodec_audio`) are each made around,
+/// so that both make, configure, start, stop and delete one the same way.
+///
+/// `Send`: in synchronous mode a codec is used from one thread at a time,
+/// which is all either decoder trait promises, and the NDK's codec holds
+/// nothing tied to the thread that made it — each call is posted to the
+/// codec's own looper thread and waited for. TigerVNC's worker threads
+/// feed one decoder from several threads in turn (see `api::c::video`),
+/// as the C++ context before it did. Not `Sync`: two calls at once are
+/// nowhere promised to be safe.
+pub(crate) struct Handle {
+    raw: *mut AMediaCodec,
+    /// Whether it has ever been started, which is when dropping it stops it
+    /// before deleting it; one that never started is only deleted.
+    started: bool,
+}
+
+// SAFETY: see above.
+unsafe impl Send for Handle {}
+
+impl Handle {
+    /// A decoder of `mime`'s, not yet configured, or `None` where the
+    /// platform has none.
+    pub(crate) fn create(mime: &CStr) -> Option<Handle> {
+        let raw = unsafe { AMediaCodec_createDecoderByType(mime.as_ptr()) };
+        (!raw.is_null()).then_some(Handle { raw, started: false })
+    }
+
+    /// Configured with a format of `mime`, and of whatever else `keys` sets
+    /// on it, and started; false where either fails.
+    pub(crate) fn start(&mut self, mime: &CStr, keys: impl FnOnce(*mut AMediaFormat)) -> bool {
+        let started = unsafe {
+            let format = AMediaFormat_new();
+            AMediaFormat_setString(format, c"mime".as_ptr(), mime.as_ptr());
+            keys(format);
+            let configured =
+                AMediaCodec_configure(self.raw, format, std::ptr::null_mut(), std::ptr::null_mut(), 0);
+            AMediaFormat_delete(format);
+            configured == AMEDIA_OK && AMediaCodec_start(self.raw) == AMEDIA_OK
+        };
+        self.started |= started;
+        started
+    }
+
+    /// Stopped, to be configured and started again.
+    pub(crate) fn stop(&mut self) {
+        unsafe { AMediaCodec_stop(self.raw) };
+    }
+
+    /// The codec, for the calls that feed it and drain it.
+    pub(crate) fn raw(&self) -> *mut AMediaCodec {
+        self.raw
+    }
+
+    /// The name MediaCodec gave the codec it picked, or `None` where it says
+    /// nothing.
+    pub(crate) fn name(&self) -> Option<String> {
+        let mut name: *mut c_char = std::ptr::null_mut();
+        if unsafe { AMediaCodec_getName(self.raw, &mut name) } != AMEDIA_OK || name.is_null() {
+            return None;
+        }
+        let owned = unsafe { CStr::from_ptr(name) }.to_string_lossy().into_owned();
+        unsafe { AMediaCodec_releaseName(self.raw, name) };
+        Some(owned)
+    }
+}
+
+impl Drop for Handle {
+    fn drop(&mut self) {
+        unsafe {
+            if self.started {
+                AMediaCodec_stop(self.raw);
+            }
+            AMediaCodec_delete(self.raw);
+        }
+    }
+}
+
+/// Whether the platform has a decoder of `mime`'s at all, without
+/// configuring one: what both decoders' `decodable` asks once.
+pub(crate) fn exists(mime: &str) -> bool {
+    CString::new(mime).ok().and_then(|mime| Handle::create(&mime)).is_some()
+}
+
 /// How much of a frame one input buffer is asked to hold: the picture
 /// uncompressed, at 4:2:0, which a frame of video does not reach in
 /// practice — a key frame of a 3840x2160 desktop of random colours was 10 MB
@@ -232,19 +317,11 @@ fn mime(codec: Codec) -> &'static str {
 /// a codec that exists here may still refuse a particular size, which is
 /// [`Decoder::new`]'s answer rather than this one.
 fn can_decode(codec: Codec) -> bool {
-    let Ok(mime) = CString::new(mime(codec)) else {
-        return false;
-    };
-    let handle = unsafe { AMediaCodec_createDecoderByType(mime.as_ptr()) };
-    if handle.is_null() {
-        return false;
-    }
-    unsafe { AMediaCodec_delete(handle) };
-    true
+    exists(mime(codec))
 }
 
 pub struct Decoder {
-    codec: *mut AMediaCodec,
+    codec: Handle,
     kind: Codec,
     /// The codec's own name, `c2.qti.avc.decoder` or `c2.android.avc.decoder`,
     /// and what the platform says it is: hardware or software, decided once
@@ -284,18 +361,16 @@ pub struct Decoder {
 impl Decoder {
     pub fn new(codec: Codec, width: usize, height: usize) -> Option<Decoder> {
         let mime = CString::new(mime(codec)).ok()?;
-        let handle = unsafe { AMediaCodec_createDecoderByType(mime.as_ptr()) };
-        if handle.is_null() {
+        let Some(mut handle) = Handle::create(&mime) else {
             log::warn!("no {} decoder on this device", codec.name());
             return None;
-        }
+        };
         let max_input = input_size(width, height);
-        if !start(handle, codec, width, height, max_input) {
+        if !start(&mut handle, codec, width, height, max_input) {
             log::warn!("could not start a {} decoder for {width}x{height}", codec.name());
-            unsafe { AMediaCodec_delete(handle) };
             return None;
         }
-        let name = codec_name(handle);
+        let name = handle.name();
         let hardware = name.as_deref().and_then(is_hardware);
         let partial_frames = name.as_deref().is_some_and(takes_partial_frames);
         log::info!(
@@ -346,21 +421,21 @@ impl Decoder {
     /// frame as two broken pictures, or none.
     fn feed(&mut self, data: &[u8]) -> bool {
         loop {
-            let index = unsafe { AMediaCodec_dequeueInputBuffer(self.codec, FRAME_TIMEOUT_US) };
+            let index = unsafe { AMediaCodec_dequeueInputBuffer(self.codec.raw(), FRAME_TIMEOUT_US) };
             if index < 0 {
                 log::warn!("no input buffer, dropping {} bytes", data.len());
                 return false;
             }
             let mut capacity = 0usize;
             let buffer =
-                unsafe { AMediaCodec_getInputBuffer(self.codec, index as usize, &mut capacity) };
+                unsafe { AMediaCodec_getInputBuffer(self.codec.raw(), index as usize, &mut capacity) };
             if buffer.is_null() || capacity == 0 {
                 return false;
             }
             if data.len() <= capacity {
                 unsafe {
                     std::ptr::copy_nonoverlapping(data.as_ptr(), buffer, data.len());
-                    AMediaCodec_queueInputBuffer(self.codec, index as usize, 0, data.len(), self.pts, 0);
+                    AMediaCodec_queueInputBuffer(self.codec.raw(), index as usize, 0, data.len(), self.pts, 0);
                 }
                 self.pts += 1000;
                 return true;
@@ -402,7 +477,7 @@ impl Decoder {
                 if key { "" } else { "; asking for a key frame" }
             );
             // Given back empty, which a decoder takes as no frame at all.
-            unsafe { AMediaCodec_queueInputBuffer(self.codec, index as usize, 0, 0, self.pts, 0) };
+            unsafe { AMediaCodec_queueInputBuffer(self.codec.raw(), index as usize, 0, 0, self.pts, 0) };
             self.key_frame_wanted = !key;
             return false;
         }
@@ -419,16 +494,16 @@ impl Decoder {
             let flags = if last { 0 } else { BUFFER_FLAG_PARTIAL_FRAME };
             unsafe {
                 std::ptr::copy_nonoverlapping(rest.as_ptr(), buffer, take);
-                AMediaCodec_queueInputBuffer(self.codec, index, 0, take, self.pts, flags);
+                AMediaCodec_queueInputBuffer(self.codec.raw(), index, 0, take, self.pts, flags);
             }
             rest = &rest[take..];
             if last {
                 self.pts += 1000;
                 return true;
             }
-            let next = unsafe { AMediaCodec_dequeueInputBuffer(self.codec, FRAME_TIMEOUT_US) };
+            let next = unsafe { AMediaCodec_dequeueInputBuffer(self.codec.raw(), FRAME_TIMEOUT_US) };
             buffer = if next >= 0 {
-                unsafe { AMediaCodec_getInputBuffer(self.codec, next as usize, &mut capacity) }
+                unsafe { AMediaCodec_getInputBuffer(self.codec.raw(), next as usize, &mut capacity) }
             } else {
                 std::ptr::null_mut()
             };
@@ -437,7 +512,7 @@ impl Decoder {
                 // for its rest: the input is flushed instead, which loses the
                 // pictures the stream refers back to.
                 log::warn!("no input buffer for the rest of a {}-byte frame, dropped", data.len());
-                unsafe { AMediaCodec_flush(self.codec) };
+                unsafe { AMediaCodec_flush(self.codec.raw()) };
                 self.owed = 0;
                 self.key_frame_wanted = true;
                 return false;
@@ -450,13 +525,13 @@ impl Decoder {
     /// input buffers of `max_input` bytes. What it held is gone: the pictures
     /// it was still working on and the ones the stream refers back to.
     fn restart(&mut self, max_input: usize) -> bool {
-        unsafe { AMediaCodec_stop(self.codec) };
+        self.codec.stop();
         self.max_input = max_input;
         self.owed = 0;
         self.fresh = true;
         self.have_layout = false;
         let (width, height) = (self.frame_width.max(1) as usize, self.frame_height.max(1) as usize);
-        if !start(self.codec, self.kind, width, height, max_input) {
+        if !start(&mut self.codec, self.kind, width, height, max_input) {
             log::warn!("the {} decoder would not start again", self.kind.name());
             self.failed = true;
             return false;
@@ -468,7 +543,7 @@ impl Decoder {
     /// none waiting.
     fn next_buffer(&mut self, info: &mut BufferInfo, timeout: i64) -> isize {
         loop {
-            let index = unsafe { AMediaCodec_dequeueOutputBuffer(self.codec, info, timeout) };
+            let index = unsafe { AMediaCodec_dequeueOutputBuffer(self.codec.raw(), info, timeout) };
             if index == INFO_OUTPUT_FORMAT_CHANGED || index == INFO_OUTPUT_BUFFERS_CHANGED {
                 continue;
             }
@@ -504,7 +579,7 @@ impl Decoder {
             if next < 0 {
                 break;
             }
-            unsafe { AMediaCodec_releaseOutputBuffer(self.codec, index as usize, false) };
+            unsafe { AMediaCodec_releaseOutputBuffer(self.codec.raw(), index as usize, false) };
             index = next;
             info = newer;
             self.skipped += 1;
@@ -530,7 +605,7 @@ impl Decoder {
             }
             self.owed = self.owed.saturating_sub(1);
             if self.owed > 0 {
-                unsafe { AMediaCodec_releaseOutputBuffer(self.codec, index as usize, false) };
+                unsafe { AMediaCodec_releaseOutputBuffer(self.codec.raw(), index as usize, false) };
                 self.skipped += 1;
                 continue;
             }
@@ -547,7 +622,7 @@ impl Decoder {
         info: &BufferInfo,
         picture: &mut dyn FnMut(&Frame<'_>, &mut Output),
     ) -> bool {
-        let format = unsafe { AMediaCodec_getBufferFormat(self.codec, index) };
+        let format = unsafe { AMediaCodec_getBufferFormat(self.codec.raw(), index) };
         if !format.is_null() {
             self.read_format(format);
             unsafe { AMediaFormat_delete(format) };
@@ -560,7 +635,7 @@ impl Decoder {
         // back below wraps the codec's own memory and the conversion reads it
         // in place. Every no-surface `getOutputBuffer` user prints it.
         let mut size = 0usize;
-        let buffer = unsafe { AMediaCodec_getOutputBuffer(self.codec, index, &mut size) };
+        let buffer = unsafe { AMediaCodec_getOutputBuffer(self.codec.raw(), index, &mut size) };
         let readable = !buffer.is_null() && info.size > 0 && self.have_layout;
         if readable {
             let bytes = unsafe {
@@ -581,7 +656,7 @@ impl Decoder {
             );
             picture(&frame, &mut self.output);
         }
-        unsafe { AMediaCodec_releaseOutputBuffer(self.codec, index, false) };
+        unsafe { AMediaCodec_releaseOutputBuffer(self.codec.raw(), index, false) };
         readable
     }
 
@@ -721,40 +796,17 @@ impl media::video::Decoder for Decoder {
 
 /// `handle` configured for a picture of this size, with input buffers of
 /// `max_input` bytes, and started.
-fn start(handle: *mut AMediaCodec, codec: Codec, width: usize, height: usize, max_input: usize) -> bool {
+fn start(handle: &mut Handle, codec: Codec, width: usize, height: usize, max_input: usize) -> bool {
     let Ok(mime) = CString::new(mime(codec)) else {
         return false;
     };
-    unsafe {
-        let format = AMediaFormat_new();
-        AMediaFormat_setString(format, c"mime".as_ptr(), mime.as_ptr());
+    handle.start(&mime, |format| unsafe {
         AMediaFormat_setInt32(format, c"width".as_ptr(), width as i32);
         AMediaFormat_setInt32(format, c"height".as_ptr(), height as i32);
         AMediaFormat_setInt32(format, c"color-format".as_ptr(), COLOR_FORMAT_YUV420_FLEXIBLE);
         AMediaFormat_setInt32(format, c"low-latency".as_ptr(), 1);
         AMediaFormat_setInt32(format, c"max-input-size".as_ptr(), max_input.min(i32::MAX as usize) as i32);
-        let configured = AMediaCodec_configure(
-            handle,
-            format,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            0,
-        );
-        AMediaFormat_delete(format);
-        configured == AMEDIA_OK && AMediaCodec_start(handle) == AMEDIA_OK
-    }
-}
-
-/// The name MediaCodec gave the codec it picked, or `None` where it says
-/// nothing.
-pub(crate) fn codec_name(codec: *mut AMediaCodec) -> Option<String> {
-    let mut name: *mut c_char = std::ptr::null_mut();
-    if unsafe { AMediaCodec_getName(codec, &mut name) } != AMEDIA_OK || name.is_null() {
-        return None;
-    }
-    let owned = unsafe { CStr::from_ptr(name) }.to_string_lossy().into_owned();
-    unsafe { AMediaCodec_releaseName(codec, name) };
-    Some(owned)
+    })
 }
 
 /// Whether the codec of this name decodes in hardware.
@@ -839,15 +891,6 @@ fn software_by_name(name: &str) -> bool {
         || name.starts_with("c2.android.")
         || name.starts_with("c2.google.")
         || (!name.starts_with("omx.") && !name.starts_with("c2."))
-}
-
-impl Drop for Decoder {
-    fn drop(&mut self) {
-        unsafe {
-            AMediaCodec_stop(self.codec);
-            AMediaCodec_delete(self.codec);
-        }
-    }
 }
 
 fn read_i32(bytes: &[u8], at: usize) -> i32 {
