@@ -22,8 +22,9 @@
 //! **Built once.** The two builds take about a minute and a half together
 //! (dav1d with Meson and Ninja, FFmpeg with its configure and make), and are
 //! made again only when what they are made from changes — any of the three
-//! submodules' commits, the configure line, the compiler or whether NASM is
-//! there — which a stamp beside them records. Any other reason this script runs (a change to
+//! submodules' commits, the configure line, the compiler (as `CC` runs it,
+//! and its version, its file watched) or whether NASM is there — which a
+//! stamp beside them records. Any other reason this script runs (a change to
 //! the wrapper, a new `PATH`) finds the stamp the same and only recompiles the
 //! wrapper. A debug and a release build each have an `OUT_DIR` and so a copy
 //! of their own; FFmpeg is optimised in both, as its configure does by
@@ -134,6 +135,23 @@ fn main() {
     let build = cc::Build::new();
     let compiler = build.get_compiler();
     let cc = compiler.path().to_path_buf();
+    // What FFmpeg's configure and Meson are handed as the compiler: the path
+    // alone would drop a launcher (`CC="ccache gcc"`) and `CC`'s own
+    // arguments (`CC="gcc -m32"`).
+    let made = compiler.to_command();
+    let command = cross::compiler_command(
+        &std::iter::once(made.get_program())
+            .chain(made.get_args())
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect::<Vec<_>>(),
+        compiler.args().len(),
+    );
+    // The stamp holds the compiler's version, so that an upgrade builds
+    // FFmpeg again; but nothing ran this script when the compiler changed
+    // under the same name, so its file is watched as well.
+    if let Some(file) = executable(&cc) {
+        println!("cargo:rerun-if-changed={}", file.display());
+    }
     let var = |name: &str| env::var(name).unwrap_or_default();
     let (host, target) = (var("HOST"), var("TARGET"));
     let (arch, os, endian) = (
@@ -150,6 +168,7 @@ fn main() {
     };
     let tools = cross::Tools {
         cc: cc.clone(),
+        command: command.clone(),
         target_flags: cross::target_flags(
             &compiler
                 .args()
@@ -188,14 +207,14 @@ fn main() {
 
     let root = PathBuf::from(env::var("OUT_DIR").unwrap()).join("ffmpeg");
     let prefix = root.join("prefix");
-    let mut configure = configure_args(&prefix, &cc, asm);
+    let cc_line = command.join(" ");
+    let mut configure = configure_args(&prefix, &cc_line, asm);
     configure.extend(cross::ffmpeg_args(&target, &tools));
     let mut stamp = format!(
-        "dav1d {}\nffmpeg {}\nlibva {}\ncc {} {}\nasm {asm}\n{}\n",
+        "dav1d {}\nffmpeg {}\nlibva {}\ncc {cc_line} {}\nasm {asm}\n{}\n",
         revision(&dav1d),
         revision(&ffmpeg),
         revision(&libva),
-        cc.display(),
         version(&cc),
         configure.join(" ")
     );
@@ -209,7 +228,7 @@ fn main() {
             fs::remove_dir_all(&root).expect("deleting the stale FFmpeg build");
         }
         fs::create_dir_all(&root).unwrap();
-        build_dav1d(&dav1d, &root, &prefix, &cc, asm, cross_file.as_deref());
+        build_dav1d(&dav1d, &root, &prefix, &cc_line, asm, cross_file.as_deref());
         install_libva_headers(&libva, &prefix);
         write_pkg_config(&prefix);
         build_va_shim(&manifest, &root, &prefix);
@@ -246,8 +265,10 @@ fn main() {
     println!("cargo:prefix={}", prefix.display());
 }
 
-/// FFmpeg's configure line, which is also part of the stamp.
-fn configure_args(prefix: &Path, cc: &Path, asm: bool) -> Vec<String> {
+/// FFmpeg's configure line, which is also part of the stamp. `cc` is the
+/// compiler as `CC` runs it, words and all, which configure splits as a
+/// shell would.
+fn configure_args(prefix: &Path, cc: &str, asm: bool) -> Vec<String> {
     let mut args: Vec<String> = [
         "--disable-everything",
         "--disable-autodetect",
@@ -280,7 +301,7 @@ fn configure_args(prefix: &Path, cc: &Path, asm: bool) -> Vec<String> {
     .map(String::from)
     .into();
     args.push(format!("--prefix={}", prefix.display()));
-    args.push(format!("--cc={}", cc.display()));
+    args.push(format!("--cc={cc}"));
     args.push(format!("--enable-decoder={}", DECODERS.join(",")));
     args.push(format!("--enable-hwaccel={}", HWACCELS.join(",")));
     if !asm {
@@ -289,8 +310,9 @@ fn configure_args(prefix: &Path, cc: &Path, asm: bool) -> Vec<String> {
     args
 }
 
-/// dav1d, with `cc` (natively) or the cross file's compiler (`cross`).
-fn build_dav1d(source: &Path, root: &Path, prefix: &Path, cc: &Path, asm: bool, cross: Option<&str>) {
+/// dav1d, with `cc` (natively, as `CC`, which Meson splits into a launcher
+/// and a compiler) or the cross file's compiler (`cross`).
+fn build_dav1d(source: &Path, root: &Path, prefix: &Path, cc: &str, asm: bool, cross: Option<&str>) {
     let build = root.join("dav1d-build");
     let mut setup = Command::new("meson");
     setup
@@ -554,6 +576,17 @@ fn git_head(source: &Path) -> Option<PathBuf> {
         source.join(text.trim().strip_prefix("gitdir:")?.trim())
     };
     Some(dir.join("HEAD")).filter(|p| p.is_file())
+}
+
+/// The file `cc` runs, found on `PATH` as a shell would where it is a bare
+/// name, with its links followed: what a compiler upgrade replaces.
+fn executable(cc: &Path) -> Option<PathBuf> {
+    let found = if cc.components().count() > 1 {
+        Some(cc.to_path_buf())
+    } else {
+        env::split_paths(&env::var_os("PATH")?).map(|dir| dir.join(cc)).find(|p| p.is_file())
+    };
+    found?.canonicalize().ok()
 }
 
 /// The compiler's first line of `--version`, so that an upgrade rebuilds.

@@ -41,11 +41,28 @@ impl Target<'_> {
 /// The target's tools, as cc-rs found them (`CC_<target>`, `AR_<target>`
 /// and the rest of what it reads).
 pub struct Tools {
+    /// The compiler itself, whose name may carry its toolchain's prefix.
     pub cc: PathBuf,
+    /// How it is run, as `CC` said: a launcher such as ccache before it and
+    /// `CC`'s own arguments after it (see [`compiler_command`]), or the
+    /// compiler alone.
+    pub command: Vec<String>,
     /// The compiler's arguments that choose what it compiles for; not the
     /// optimisation and debug flags cc-rs adds, which FFmpeg chooses itself.
     pub target_flags: Vec<String>,
     pub ar: PathBuf,
+}
+
+/// The compiler as `CC` runs it, out of the command cc-rs makes for it
+/// (`Tool::to_command`, its program then its arguments): that command less
+/// the `own` flags cc-rs adds at its end (`Tool::args`, which are its
+/// optimisation and debug choices and the target's, passed on separately as
+/// [`target_flags`]). What is left is `[ccache, gcc]` for `CC="ccache gcc"`,
+/// `[gcc, -m32]` for `CC="gcc -m32"` and `[cc]` for no `CC` at all, where the
+/// compiler's path alone loses the launcher and the arguments.
+pub fn compiler_command(command: &[String], own: usize) -> Vec<String> {
+    let keep = command.len().saturating_sub(own).max(1);
+    command[..keep.min(command.len())].to_vec()
 }
 
 /// The `-m` flags that choose an ABI, an instruction set or a CPU, as cc-rs
@@ -141,8 +158,10 @@ pub fn meson_cross_file(target: &Target, tools: &Tools) -> Option<String> {
         return None;
     }
     let quote = |s: &str| format!("'{}'", s.replace('\\', "\\\\").replace('\'', "\\'"));
-    let c: Vec<String> = std::iter::once(tools.cc.display().to_string())
-        .chain(tools.target_flags.iter().cloned())
+    let c: Vec<String> = tools
+        .command
+        .iter()
+        .chain(tools.target_flags.iter())
         .map(|s| quote(&s))
         .collect();
     // The CPU is the triple's first part, which is more than the family
@@ -186,6 +205,7 @@ mod tests {
     fn a_native_build_is_told_nothing_more() {
         let tools = Tools {
             cc: "cc".into(),
+            command: strings(&["cc"]),
             target_flags: strings(&["-m64"]),
             ar: "ar".into(),
         };
@@ -197,6 +217,7 @@ mod tests {
     fn a_cross_gcc_gives_its_prefix_and_arch() {
         let tools = Tools {
             cc: "aarch64-linux-gnu-gcc".into(),
+            command: strings(&["aarch64-linux-gnu-gcc"]),
             target_flags: Vec::new(),
             ar: "aarch64-linux-gnu-ar".into(),
         };
@@ -229,6 +250,7 @@ mod tests {
         ]);
         let tools = Tools {
             cc: "/usr/bin/clang".into(),
+            command: strings(&["/usr/bin/clang"]),
             target_flags: target_flags(&args),
             ar: "llvm-ar".into(),
         };
@@ -244,6 +266,31 @@ mod tests {
         assert!(meson_cross_file(&ARM64, &tools).unwrap().starts_with(
             "[binaries]\nc = ['/usr/bin/clang', '--target=aarch64-unknown-linux-gnu', '--sysroot', '/sysroots/arm64']\n"
         ));
+    }
+
+    /// cc-rs's command for `CC="ccache aarch64-linux-gnu-gcc"`, for
+    /// `CC="gcc -m32"` and for no `CC`: the launcher and `CC`'s arguments
+    /// kept, cc-rs's own flags left off, and the launcher before the compiler
+    /// in the cross file.
+    #[test]
+    fn a_launcher_and_ccs_arguments_are_kept() {
+        let own = strings(&["-O0", "-ffunction-sections", "-fPIC", "-m64"]);
+        let made = |cc: &[&str]| [strings(cc), own.clone()].concat();
+        assert_eq!(
+            compiler_command(&made(&["ccache", "aarch64-linux-gnu-gcc"]), own.len()),
+            strings(&["ccache", "aarch64-linux-gnu-gcc"])
+        );
+        assert_eq!(compiler_command(&made(&["gcc", "-m32"]), own.len()), strings(&["gcc", "-m32"]));
+        assert_eq!(compiler_command(&made(&["cc"]), own.len()), strings(&["cc"]));
+        assert_eq!(compiler_command(&strings(&["cc"]), 3), strings(&["cc"]));
+        let tools = Tools {
+            cc: "aarch64-linux-gnu-gcc".into(),
+            command: strings(&["ccache", "aarch64-linux-gnu-gcc"]),
+            target_flags: Vec::new(),
+            ar: "aarch64-linux-gnu-ar".into(),
+        };
+        assert!(meson_cross_file(&ARM64, &tools).unwrap().starts_with("[binaries]\nc = ['ccache', 'aarch64-linux-gnu-gcc']\n"));
+        assert!(ffmpeg_args(&ARM64, &tools).contains(&"--cross-prefix=aarch64-linux-gnu-".to_string()));
     }
 
     #[test]
@@ -267,6 +314,7 @@ mod tests {
         };
         let tools = Tools {
             cc: "arm-linux-gnueabihf-gcc".into(),
+            command: strings(&["arm-linux-gnueabihf-gcc"]),
             target_flags: Vec::new(),
             ar: "arm-linux-gnueabihf-ar".into(),
         };

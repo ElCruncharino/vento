@@ -107,7 +107,9 @@ session.
 libraries: the client's FFmpeg is built from `third_party/ffmpeg` (n8.1.3) and
 `third_party/dav1d` (1.5.4) by `backends/platform/linux/build.rs`, once per
 target directory and profile (about a minute and a half; a stamp beside it
-says what it was built from, and it is built again only when that changes),
+says what it was built from, the compiler's version among it, and it is built
+again only when that changes), with the compiler as `CC` runs it, a launcher
+such as `CC="ccache gcc"` included,
 as static libraries that the Rust decoders (RustDesk's video, and TigerVNC's
 and FreeRDP's H.264; FreeRDP's AAC and Opus sound) and FreeRDP's scaling
 link — FreeRDP through `VENTO_FFMPEG_PREFIX`, which `build.rs` hands the
