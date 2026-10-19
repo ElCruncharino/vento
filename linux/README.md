@@ -532,7 +532,13 @@ with the device's buffer behind that (ALSA's is 50 ms; PipeWire's a cycle,
 oldest is dropped, so that a burst costs a skip rather than a delay that
 stays. On the rigs that is, from 40 s on, 32-50 ms for QEMU's, SPICE's and
 RustDesk's 10-20 ms of sound at a time, 55-65 ms for RDP's 23 ms waves, and 395 ms for Windows' PCM, which comes in
-186 ms waves two at a time (and twice that before anything is dropped). Where
+186 ms waves two at a time (and twice that before anything is dropped). A
+stream starts once it has that, and from a far end that sends its writes in
+groups only once the group has landed (up to 25 ms after its last write, the
+queue then as short as it would have been had it started on it): a start
+between the two writes of a pair kept the second on top, a wave further
+behind than needed until it was dropped eight seconds in, in one skip (one in
+three of `pattern.sh`'s Windows PCM runs on PipeWire; none in seven since). Where
 the queue runs dry anyway and the far end's sound comes within half a second
 — later than anything it had shown — the session remembers how late, a
 step of 5 ms more (to 100 ms; a write later than that was a stall, a gap

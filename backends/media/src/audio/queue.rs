@@ -25,6 +25,12 @@ const RESUME: Duration = Duration::from_millis(500);
 /// and faded one, so not for every millisecond.
 const SETTLE: Duration = Duration::from_millis(5);
 
+/// How long after a write of a group the queue waits for the rest of it
+/// before it starts (see `pull`): the writes of a group land within a few
+/// milliseconds of each other (microseconds from Windows; up to 11 ms from
+/// `audio_pattern`'s debug build), and the start is that much silence.
+const GATHER: Duration = Duration::from_millis(25);
+
 /// How long a skip is faded over, out of what would have played next and
 /// into what plays instead: long enough that it is no click, short enough to
 /// be one sound's step rather than two sounds over each other.
@@ -61,28 +67,28 @@ pub struct Stats {
 /// it: what is heard is the target and the device's buffer behind what
 /// arrived.
 ///
-/// The queue starts playing once it has the target, and plays silence when
-/// it runs dry until it has it again. Where it ran dry with the far end's
-/// sound arriving again within `RESUME` — the sound was later than
-/// anything the rhythm had shown — the session remembers that lateness, so
-/// that the next time it is not too late, and forgets it again slowly after
-/// a long while of sound that did not run dry; and the queue starts again
-/// as soon as what it has lasts, with the period and the margin, until the
-/// far end's next write if that is no later against its sound than this one
-/// was (`Rhythm::keep`), rather than once it has the whole target, which
-/// counts the lateness from the earliest write of the window on (for
-/// Windows' PCM, whose next pair is 372 ms away, the difference between a
-/// gap of the lateness and one of the pair); unless it was later than
-/// [`MARGIN_MAX`](super::MARGIN_MAX), a stall, after which the rhythm starts
-/// a new run, what the far end sends to catch up counts as a burst, and the
-/// queue starts again only once it has caught up, at its target, the rest
-/// of the backlog dropped while the device was still playing silence. Where the queue has kept more
-/// than its margin beyond what it needed for a whole `WINDOW` — it
-/// started on a write that arrived late, the lateness remembered was
-/// forgotten, a late write the rhythm remembered has been, the far end's
-/// clock runs faster than the device's — the excess is dropped at once,
-/// faded over `FADE`, so that the sound is no further behind than it has
-/// to be.
+/// The queue starts playing once it has the target — from a far end that sends
+/// its writes in groups, once the group has landed (`GATHER`) — and plays
+/// silence when it runs dry until it has it again. Where it ran dry with the
+/// far end's sound arriving again within `RESUME` — the sound was later than
+/// anything the rhythm had shown — the session remembers that lateness, so that
+/// the next time it is not too late, and forgets it again slowly after a long
+/// while of sound that did not run dry; and the queue starts again as soon as
+/// what it has lasts, with the period and the margin, until the far end's next
+/// write if that is no later against its sound than this one was
+/// (`Rhythm::keep`), rather than once it has the whole target, which counts the
+/// lateness from the earliest write of the window on (for Windows' PCM, whose
+/// next pair is 372 ms away, the difference between a gap of the lateness and
+/// one of the pair); unless it was later than
+/// [`MARGIN_MAX`](super::MARGIN_MAX), a stall, after which the rhythm starts a
+/// new run, what the far end sends to catch up counts as a burst, and the queue
+/// starts again only once it has caught up, at its target, the rest of the
+/// backlog dropped while the device was still playing silence. Where the queue
+/// has kept more than its margin beyond what it needed for a whole `WINDOW` —
+/// it started on a write that arrived late, the lateness remembered was
+/// forgotten, a late write the rhythm remembered has been, the far end's clock
+/// runs faster than the device's — the excess is dropped at once, faded over
+/// `FADE`, so that the sound is no further behind than it has to be.
 ///
 /// A lock rather than a lock-free ring, because what the policy needs —
 /// dropping the oldest when the writer has got too far ahead — is the writer
@@ -150,6 +156,9 @@ struct Inner {
     /// it has to have beyond the period and the margin as of the last write
     /// (`Rhythm::keep`), in frames of the stream: see `pull`.
     resume: Option<usize>,
+    /// The queue had its target while a group of the far end's writes was
+    /// still landing, and waits for the rest of it: see `pull`.
+    gathering: bool,
     resampler: Resampler,
     stats: Stats,
 }
@@ -179,6 +188,7 @@ impl Queue {
                 fresh: 0,
                 catching: None,
                 resume: None,
+                gathering: false,
                 resampler: Resampler::new(),
                 stats: Stats::default(),
             }),
@@ -429,7 +439,11 @@ impl Queue {
     /// that only ever grew would be heard further behind the picture for the
     /// rest of the session.
     fn trim(&self, inner: &mut Inner) {
-        let keep = self.target(inner);
+        self.trim_to(inner, self.target(inner));
+    }
+
+    /// Drops the oldest down to `keep` frames.
+    fn trim_to(&self, inner: &mut Inner, keep: usize) {
         let queued = inner.samples.len() / self.format.channels;
         if queued > keep {
             self.skip(inner, queued - keep);
@@ -467,6 +481,11 @@ impl Queue {
     /// queued, gained, or silence. The device's call, on its own thread;
     /// never waits on anything but the copy.
     pub fn pull(&self, out: &mut [i16], device: Format) {
+        self.pull_at(out, device, self.born.elapsed());
+    }
+
+    /// [`pull`](Queue::pull) at `now`, on the clock writes are timed on.
+    fn pull_at(&self, out: &mut [i16], device: Format, now: Duration) {
         let dch = device.channels;
         let frames = out.len() / dch;
         let out = &mut out[..frames * dch];
@@ -492,13 +511,34 @@ impl Queue {
                     target = target.min(self.period() + self.margin(inner) + keep.saturating_sub(waited));
                 }
                 let caught_up = inner.catching.is_none();
-                if (queued >= target && caught_up)
-                    || (queued > 0 && inner.waited >= device.frames(self.format.duration(target)))
-                {
+                let full = queued >= target && caught_up;
+                // The target reached on a write whose group is still
+                // landing — the first of Windows' PCM pair, the second a
+                // few milliseconds behind it — is waited on until the rest
+                // could no longer be part of it: started on the first, the
+                // queue had the second on top of its target, a pair's
+                // worth further behind than it needs to be until the
+                // window settled it, in one skip, eight seconds in. Not
+                // while starting again after a late write, which is to
+                // start as soon as it can.
+                let gathering = full && inner.resume.is_none() && inner.rhythm.gathering(now, GATHER);
+                if gathering {
+                    inner.gathering = true;
+                } else if full || (queued > 0 && inner.waited >= device.frames(self.format.duration(target))) {
                     // Whatever arrived while nothing was playing — a device
                     // that took a while to open, a burst after a stall —
-                    // starts at the target and not behind it.
-                    self.trim(inner);
+                    // starts at the target and not behind it; and after
+                    // waiting for a group, where it would have been had it
+                    // started on the group's last write, which the far
+                    // end's next one is that much nearer.
+                    let waited = if inner.gathering {
+                        self.format.frames(inner.rhythm.since_last(now))
+                    } else {
+                        0
+                    };
+                    let least = self.period() + self.margin(inner);
+                    self.trim_to(inner, self.target(inner).saturating_sub(waited).max(least));
+                    inner.gathering = false;
                     inner.primed = true;
                     inner.waited = 0;
                     inner.resume = None;
@@ -638,12 +678,15 @@ mod tests {
             .collect()
     }
 
-    /// One 10 ms device buffer.
+    /// One 10 ms device buffer, long after the writes (whose times these
+    /// tests make up), so that no group of them is still landing.
     fn pull(q: &Queue) -> Vec<i16> {
         let mut out = vec![-1i16; 480 * 2];
-        q.pull(&mut out, STEREO);
+        q.pull_at(&mut out, STEREO, LATER);
         out
     }
+
+    const LATER: Duration = Duration::from_secs(3600);
 
     fn target(q: &Queue) -> Duration {
         q.target_now()
@@ -875,7 +918,7 @@ mod tests {
             q.write_at(&[1000i16; 441], ms(10.0 * k as f64));
         }
         let mut out = vec![0i16; 480 * 2];
-        q.pull(&mut out, STEREO);
+        q.pull_at(&mut out, STEREO, LATER);
         assert!(out.iter().all(|&s| s == 1000));
         // Trimmed to its 20 ms; 480 frames at 48 kHz are 441 at 44.1, give
         // or take the one the conversion holds.
@@ -944,7 +987,7 @@ mod tests {
             watch(t, q);
             for _ in 0..if k == 0 { first } else { bunch } {
                 let queued = q.queued();
-                q.pull(&mut out, format);
+                q.pull_at(&mut out, format, ms(t));
                 let sound = out.chunks_exact(format.channels).filter(|f| f[0] != 0).count();
                 pulls.push((t, sound, queued));
             }
@@ -1043,7 +1086,10 @@ mod tests {
         let pulls = play(&q, &writes, 551);
         assert_eq!(holes(&pulls, 551, &writes, 0.0), 0);
         assert_eq!(q.stats().underruns, 1, "the stream's end only: {:?}", q.stats());
-        assert!(q.stats().dropped <= 2 * 8192, "{:?}", q.stats());
+        // Two waves at the start, and what played of the pair while the
+        // queue waited for the rest of it (GATHER and a period).
+        let waited = format.frames(GATHER) + 551;
+        assert!(q.stats().dropped <= (2 * 8192 + waited) as u64, "{:?}", q.stats());
         // And when the waves get smaller, so does the target, once the
         // window has forgotten them (and the start's margin has come down,
         // which it has while the waves played).
@@ -1053,6 +1099,53 @@ mod tests {
         }
         // (The period, 551 frames, is kept in microseconds: 550.98 of them.)
         assert_eq!(target(&q), format.duration(550 + 441 + 441));
+    }
+
+    #[test]
+    fn a_pair_split_by_the_start_is_not_kept_a_wave_further_behind() {
+        // Windows' PCM pairs with the second write 3 ms behind the first,
+        // as a sender gets to it, and a device that opened late, whose
+        // first pull after its buffer's, which finds the target, lands
+        // between the two writes of the third pair: a queue that started on the first had the
+        // second on top of its target, a wave further behind than it needed
+        // to be until the window settled it eight seconds in, with a 186 ms
+        // skip.
+        let format = Format::new(44_100, 2).unwrap();
+        let period = 551; // 12.49 ms
+        let mut writes = Vec::new();
+        for k in 0..60 {
+            let at = 372.0 * k as f64 + 2.0;
+            writes.push((at, 8192));
+            writes.push((at + 3.0, 8192));
+        }
+        let q = Queue::new(format, Arc::new(Controls::new()));
+        q.set_device(format.duration(period), format.duration(period));
+        let p = format.duration(period).as_secs_f64() * 1000.0;
+        let mut out = vec![0i16; period * 2];
+        let (mut next, mut pulls, mut at_start) = (0, Vec::new(), None);
+        for k in 0..2000 {
+            let t = 735.0 + k as f64 * p;
+            while next < writes.len() && writes[next].0 <= t {
+                q.write_at(&vec![1000i16; writes[next].1 * 2], ms(writes[next].0));
+                next += 1;
+            }
+            let queued = q.queued();
+            q.pull_at(&mut out, format, ms(t));
+            pulls.push((t, out.chunks_exact(2).filter(|f| f[0] != 0).count(), queued));
+            if t > 1_000.0 {
+                at_start.get_or_insert(q.stats().dropped);
+            }
+        }
+        assert_eq!(holes(&pulls, period, &writes, 0.0), 0);
+        // What it kept before a write, at its most, was no more before the
+        // window settled than after, and nothing was dropped past the start.
+        let most = |from: f64, to: f64| {
+            let d = pulls.iter().filter(|p| p.0 > from && p.0 < to).map(|p| p.2).max().unwrap();
+            d.as_secs_f64() * 1000.0
+        };
+        let (before, after) = (most(2_000.0, 7_000.0), most(10_000.0, 15_000.0));
+        assert!(before - after < 20.0, "kept {before} ms before the settle, {after} after");
+        assert_eq!(Some(q.stats().dropped), at_start, "{:?}", q.stats());
     }
 
     #[test]

@@ -118,6 +118,8 @@ struct Bucket {
     /// The largest write, and the most that landed at once, in frames.
     write: usize,
     group: usize,
+    /// A write was sent with the one before (see the module's words).
+    grouped: bool,
 }
 
 /// See the module's words.
@@ -170,7 +172,8 @@ impl Rhythm {
         let run = self.run;
         self.frames += frames as u64;
         let together = self.last.is_some_and(|last| at.saturating_sub(last) <= TOGETHER);
-        if !self.sent_with_last(at) {
+        let with_last = self.sent_with_last(at);
+        if !with_last {
             self.first = d;
         }
         let first = self.first;
@@ -194,6 +197,7 @@ impl Rhythm {
         b.first.add(first);
         b.write = b.write.max(size);
         b.group = b.group.max(self.group);
+        b.grouped |= with_last && !burst;
     }
 
     /// How much later than its sound a write that arrives at `at` is, in
@@ -231,6 +235,22 @@ impl Rhythm {
         let latest = self.buckets.iter().filter(|b| b.used && b.run == run).map(|b| b.first.hi).max();
         let keep = latest.map_or(0, |latest| (latest - end).max(0));
         self.format.frames(Duration::from_micros(keep as u64)).min(self.format.frames(MOST))
+    }
+
+    /// Whether the last write may still be followed by others sent with it,
+    /// at `at`: the far end has sent writes together of late (Windows' PCM
+    /// pairs, RDP's AAC two at a time, a network's bunches), and a write
+    /// arriving now, no later than `within` after the last, would be one of
+    /// them. A far end that sends one write at a time never is.
+    pub fn gathering(&self, at: Duration, within: Duration) -> bool {
+        self.buckets.iter().any(|b| b.used && b.grouped)
+            && self.sent_with_last(at)
+            && self.since_last(at) < within
+    }
+
+    /// How long before `at` the last write arrived; zero before any.
+    pub fn since_last(&self, at: Duration) -> Duration {
+        self.last.map_or(Duration::ZERO, |last| at.saturating_sub(last))
     }
 
     /// Whether a write arriving at `at` was sent with the last: before half
