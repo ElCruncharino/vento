@@ -961,14 +961,20 @@ impl Client {
                                 drew = true;
                             }
                             ActiveStageOutput::PointerBitmap(pointer) => {
-                                let pixels = words(&pointer.bitmap_data);
-                                handler.cursor(
-                                    &pixels,
-                                    usize::from(pointer.width),
-                                    usize::from(pointer.height),
-                                    i32::from(pointer.hotspot_x),
-                                    i32::from(pointer.hotspot_y),
-                                );
+                                let (w, h) = (usize::from(pointer.width), usize::from(pointer.height));
+                                match cursor_words(&pointer.bitmap_data, w, h) {
+                                    Some(pixels) => handler.cursor(
+                                        &pixels,
+                                        w,
+                                        h,
+                                        i32::from(pointer.hotspot_x),
+                                        i32::from(pointer.hotspot_y),
+                                    ),
+                                    None => log::warn!(
+                                        "a {w}x{h} cursor came with {} bytes; not drawn",
+                                        pointer.bitmap_data.len()
+                                    ),
+                                }
                             }
                             ActiveStageOutput::PointerHidden => {
                                 handler.cursor(&[], 0, 0, 0, 0);
@@ -1287,12 +1293,16 @@ fn release(held: &Held) -> Vec<Operation> {
 const SHIFT: Scancode = Scancode::from_u8(false, 0x2a);
 const RIGHT_SHIFT: Scancode = Scancode::from_u8(false, 0x36);
 
-/// `R, G, B, A` bytes as words, which is what the bindings hand to Java.
-fn words(bytes: &[u8]) -> Vec<u32> {
-    bytes
-        .chunks_exact(4)
-        .map(|px| u32::from_le_bytes([px[0], px[1], px[2], px[3]]))
-        .collect()
+/// A `w`x`h` cursor's `R, G, B, A` bytes as words, which is what the
+/// bindings hand to Java, or `None` when there are not exactly `w * h` of
+/// them: IronRDP's decoders size the buffer by the pointer's own dimensions
+/// today, but everything past `Handler::cursor` indexes by `w` and `h`, so a
+/// short buffer is refused here rather than trusted.
+fn cursor_words(bytes: &[u8], w: usize, h: usize) -> Option<Vec<u32>> {
+    if w.checked_mul(h)?.checked_mul(4)? != bytes.len() {
+        return None;
+    }
+    Some(bytes.chunks_exact(4).map(|px| u32::from_le_bytes([px[0], px[1], px[2], px[3]])).collect())
 }
 
 /// An RDP rectangle is inclusive at both ends; everything above `Backend` uses
@@ -1701,6 +1711,19 @@ impl Default for Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A cursor's bytes become one word per pixel only when there are
+    /// exactly `w * h` pixels of them.
+    #[test]
+    fn cursor_words_need_every_pixel() {
+        let px = [1, 2, 3, 4, 5, 6, 7, 8];
+        assert_eq!(cursor_words(&px, 2, 1), Some(vec![0x0403_0201, 0x0807_0605]));
+        assert_eq!(cursor_words(&px[..7], 2, 1), None);
+        assert_eq!(cursor_words(&px, 2, 2), None);
+        assert_eq!(cursor_words(&px, 1, 1), None);
+        assert_eq!(cursor_words(&[], 0, 0), Some(vec![]));
+        assert_eq!(cursor_words(&px, usize::MAX, 2), None);
+    }
 
     /// The forms are `runtime::address`'s; what is this client's own is the
     /// default port and the display rule being off.
