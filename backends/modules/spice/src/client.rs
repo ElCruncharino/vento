@@ -33,7 +33,7 @@ use shakenfist_spice_protocol::constants::{
     inputs_client, main_client, main_server,
 };
 use shakenfist_spice_protocol::messages::{
-    ChannelsList, DisplayInit, KeyEvent, MainInit, MouseButton, MouseMotion, MousePosition, Notify,
+    ChannelsList, DisplayInit, KeyEvent, MainInit, MouseMotion, MousePosition, Notify,
     Ping, SetAck,
 };
 use std::collections::HashMap;
@@ -1008,7 +1008,7 @@ impl Session<'_> {
     /// SPICE has a message per transition where the seam has a state.
     async fn mouse_buttons(&mut self, mask: i32) -> Result<()> {
         let wanted = buttons_of(mask);
-        for bit in 0..5u16 {
+        for bit in 0..BUTTONS {
             let button = 1u16 << bit;
             let was = self.buttons & button != 0;
             let is = wanted & button != 0;
@@ -1020,12 +1020,7 @@ impl Session<'_> {
             } else {
                 self.buttons & !button
             };
-            let mut payload = Vec::new();
-            MouseButton {
-                button: button as u8,
-                buttons_state: self.buttons,
-            }
-            .write(&mut payload)?;
+            let payload = press_of(bit, self.buttons);
             let message = if is {
                 inputs_client::MOUSE_PRESS
             } else {
@@ -1212,10 +1207,32 @@ const SHIFT: Key = Key::Scancode {
 
 /// The seam's button mask is RFB's, and SPICE's first five bits are the same
 /// five buttons in the same order — left, middle, right, wheel up, wheel down.
-/// The two beyond them, which RFB carries and this protocol's message cannot,
-/// are dropped rather than sent as something else.
+/// RFB's buttons 8 and 9, a mouse's side buttons (back and forward), are
+/// SPICE's next two, side and extra; RFB's horizontal wheel (bits 5 and 6)
+/// has no place in this protocol and is dropped rather than sent as them.
 fn buttons_of(mask: i32) -> u16 {
-    (mask & 0x1f) as u16
+    let mut buttons = (mask & 0x1f) as u16;
+    if mask & 0x80 != 0 {
+        buttons |= 1 << 5;
+    }
+    if mask & 0x100 != 0 {
+        buttons |= 1 << 6;
+    }
+    buttons
+}
+
+/// How many buttons SPICE's mask has: [`buttons_of`]'s seven bits.
+const BUTTONS: u16 = 7;
+
+/// A press or release of the button at `bit` of SPICE's mask: its
+/// `SpiceMouseButton` (the bit's place counted from one: left, middle,
+/// right, up, down, side, extra) and the mask after it. Written here rather
+/// than by ryll's `MouseButton`, whose id table stops at the wheel and makes
+/// side and extra the invalid button 0.
+fn press_of(bit: u16, buttons: u16) -> Vec<u8> {
+    let mut payload = vec![bit as u8 + 1];
+    payload.extend_from_slice(&buttons.to_le_bytes());
+    payload
 }
 
 fn ack_of(kind: Kind) -> u16 {
@@ -1324,11 +1341,20 @@ mod tests {
     }
 
     #[test]
-    fn the_button_mask_is_the_same_five_bits() {
+    fn the_button_mask_is_the_same_five_bits_and_the_side_buttons() {
         assert_eq!(buttons_of(0x01), 0x01, "left");
         assert_eq!(buttons_of(0x04), 0x04, "right");
         assert_eq!(buttons_of(0x08), 0x08, "wheel up");
-        assert_eq!(buttons_of(0x100), 0, "and the ninth button is not sent");
+        assert_eq!(buttons_of(0x80), 0x20, "back is side");
+        assert_eq!(buttons_of(0x100), 0x40, "forward is extra");
+        assert_eq!(buttons_of(0x20 | 0x40), 0, "the horizontal wheel is not sent");
+        // spice-protocol's SpiceMouseButton: the id is the bit's place
+        // from one, and the mask follows little-endian.
+        assert_eq!(press_of(0, 0x01), [1, 0x01, 0], "left");
+        assert_eq!(press_of(2, 0x04), [3, 0x04, 0], "right");
+        assert_eq!(press_of(4, 0x10), [5, 0x10, 0], "wheel down");
+        assert_eq!(press_of(5, 0x21), [6, 0x21, 0], "side, left still held");
+        assert_eq!(press_of(6, 0), [7, 0, 0], "extra, let go");
     }
 
     #[test]
