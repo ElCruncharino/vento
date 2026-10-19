@@ -17,7 +17,9 @@
 //! AAC and Opus to floating point, and the conversion is the platform's half
 //! rather than the protocol's.
 
-use super::Format;
+use std::sync::Arc;
+
+use super::{Controls, Format};
 
 /// Which codec a stream's packets are in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -74,6 +76,60 @@ pub trait Decoders: Send + Sync {
     /// alone: AAC LC, and Opus as RFC 7845 describes a stream with no
     /// pre-skip, which is what RDP's sound sends without either.
     fn decoder(&self, codec: Codec, format: Format, config: &[u8]) -> Result<Box<dyn Decoder>, String>;
+}
+
+/// A decoder opened for a session, which says its codec to the session's
+/// [`Controls`] for as long as it is open — for the facts row, since the
+/// stream its samples go to never sees it — and unsays it when dropped.
+/// What a protocol's [`Player`](super::Player) and a C backend's table
+/// (`api::c::audio`) both hold an open decoder as.
+pub struct Decoding {
+    codec: Codec,
+    decoder: Box<dyn Decoder>,
+    controls: Arc<Controls>,
+}
+
+impl Decoding {
+    /// `decoders`' decoder for `codec`, for a stream of `format` set up by
+    /// `config` (see [`Decoders::decoder`]), with its codec said to
+    /// `controls`; why not, where it has none.
+    pub fn open(
+        decoders: &dyn Decoders,
+        controls: &Arc<Controls>,
+        codec: Codec,
+        format: Format,
+        config: &[u8],
+    ) -> Result<Decoding, String> {
+        let decoder = decoders.decoder(codec, format, config)?;
+        log::info!(
+            "audio: decoding {} at {} Hz in {} channels with {}",
+            codec.name(),
+            format.rate,
+            format.channels,
+            decoder.name()
+        );
+        controls.set_codec(Some(codec));
+        Ok(Decoding {
+            codec,
+            decoder,
+            controls: Arc::clone(controls),
+        })
+    }
+
+    pub fn codec(&self) -> Codec {
+        self.codec
+    }
+
+    /// One packet, as [`Decoder::decode`] decodes it.
+    pub fn decode(&mut self, packet: &[u8], out: &mut Vec<i16>) -> Result<Option<Format>, String> {
+        self.decoder.decode(packet, out)
+    }
+}
+
+impl Drop for Decoding {
+    fn drop(&mut self) {
+        self.controls.set_codec(None);
+    }
 }
 
 /// The setup a decoder is given: `config` where the protocol had one, else

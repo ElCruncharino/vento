@@ -21,8 +21,8 @@
 use std::ffi::{c_int, c_void};
 use std::sync::Arc;
 
-use media::audio::decode::{Codec, Decoder};
-use media::audio::{Controls, Format, Outputs, Stream};
+use media::audio::decode::{Codec, Decoding};
+use media::audio::{Format, Outputs, Stream};
 
 use super::ffi;
 
@@ -66,18 +66,9 @@ unsafe extern "C" fn decodable(user: *mut c_void, number: c_int) -> bool {
 
 /// A decoder behind a handle, with the samples of its last packet: what
 /// `decode` lends the caller until its next call.
-struct Decoding {
-    decoder: Box<dyn Decoder>,
+struct Open {
+    decoding: Decoding,
     samples: Vec<i16>,
-    /// The session's, told the codec while this decodes, for the facts row
-    /// (the stream the samples go to never sees it).
-    controls: Arc<Controls>,
-}
-
-impl Drop for Decoding {
-    fn drop(&mut self) {
-        self.controls.set_codec(None);
-    }
 }
 
 unsafe extern "C" fn decoder_open(
@@ -107,17 +98,11 @@ unsafe extern "C" fn decoder_open(
     } else {
         unsafe { std::slice::from_raw_parts(config, config_len) }
     };
-    match decoders.decoder(codec, format, config) {
-        Ok(decoder) => {
-            log::info!("audio: decoding {} at {rate} Hz in {channels} channels with {}", codec.name(), decoder.name());
-            let controls = Arc::clone(outputs.controls());
-            controls.set_codec(Some(codec));
-            Box::into_raw(Box::new(Decoding {
-                decoder,
-                samples: Vec::new(),
-                controls,
-            })) as *mut ffi::vento_audio_decoder
-        }
+    match Decoding::open(decoders, outputs.controls(), codec, format, config) {
+        Ok(decoding) => Box::into_raw(Box::new(Open {
+            decoding,
+            samples: Vec::new(),
+        })) as *mut ffi::vento_audio_decoder,
         Err(why) => {
             log::warn!("audio: no {} decoder: {why}", codec.name());
             std::ptr::null_mut()
@@ -137,14 +122,14 @@ unsafe extern "C" fn decode(
         return -1;
     }
     // The handle is the caller's alone for the call, as the header says.
-    let d = unsafe { &mut *(d as *mut Decoding) };
+    let d = unsafe { &mut *(d as *mut Open) };
     d.samples.clear();
     unsafe { *samples = d.samples.as_ptr() };
     if data.is_null() || len == 0 {
         return 0;
     }
     let packet = unsafe { std::slice::from_raw_parts(data, len) };
-    match d.decoder.decode(packet, &mut d.samples) {
+    match d.decoding.decode(packet, &mut d.samples) {
         Ok(Some(format)) => {
             unsafe {
                 *samples = d.samples.as_ptr();
@@ -163,7 +148,7 @@ unsafe extern "C" fn decode(
 
 unsafe extern "C" fn decoder_close(d: *mut ffi::vento_audio_decoder) {
     if !d.is_null() {
-        drop(unsafe { Box::from_raw(d as *mut Decoding) });
+        drop(unsafe { Box::from_raw(d as *mut Open) });
     }
 }
 
@@ -272,7 +257,7 @@ unsafe extern "C" fn release(user: *mut c_void) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use media::audio::decode::Decoders;
+    use media::audio::decode::{Decoder, Decoders};
     use media::audio::{Controls, Device, Queue};
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, Ordering};

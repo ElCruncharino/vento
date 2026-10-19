@@ -18,7 +18,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use super::decode::{Codec, Decoder};
+use super::decode::{Codec, Decoding};
 use super::{Format, Outputs, Stream};
 
 /// One session's sound, as its protocol thread plays it. Every call returns
@@ -26,7 +26,7 @@ use super::{Format, Outputs, Stream};
 pub struct Player {
     outputs: Arc<dyn Outputs>,
     stream: Option<Stream>,
-    decoder: Option<Decoding>,
+    decoder: Option<Open>,
     /// The far end's own volume (RDP's Volume PDU, SPICE's), kept across the
     /// streams it outlives.
     gain: f32,
@@ -40,19 +40,12 @@ pub struct Player {
     refused: Option<(Codec, Format)>,
 }
 
-/// An open decoder, and what it was opened for.
-struct Decoding {
-    codec: Codec,
+/// An open decoder, and the format and setup it was opened for (its codec
+/// it knows).
+struct Open {
     format: Format,
     config: Vec<u8>,
-    decoder: Box<dyn Decoder>,
-    outputs: Arc<dyn Outputs>,
-}
-
-impl Drop for Decoding {
-    fn drop(&mut self) {
-        self.outputs.controls().set_codec(None);
-    }
+    decoding: Decoding,
 }
 
 impl Player {
@@ -97,7 +90,7 @@ impl Player {
         let same = self
             .decoder
             .as_ref()
-            .is_some_and(|d| d.codec == codec && d.format == format && d.config == config);
+            .is_some_and(|d| d.decoding.codec() == codec && d.format == format && d.config == config);
         if !same {
             self.decoder = None;
             if self.refused == Some((codec, format)) {
@@ -107,23 +100,13 @@ impl Player {
                 self.refuse(codec, format, "this platform decodes no sound");
                 return;
             };
-            match decoders.decoder(codec, format, config) {
-                Ok(decoder) => {
-                    log::info!(
-                        "audio: decoding {} at {} Hz in {} channels with {}",
-                        codec.name(),
-                        format.rate,
-                        format.channels,
-                        decoder.name()
-                    );
+            match Decoding::open(decoders, self.outputs.controls(), codec, format, config) {
+                Ok(decoding) => {
                     self.refused = None;
-                    self.outputs.controls().set_codec(Some(codec));
-                    self.decoder = Some(Decoding {
-                        codec,
+                    self.decoder = Some(Open {
                         format,
                         config: config.to_vec(),
-                        decoder,
-                        outputs: Arc::clone(&self.outputs),
+                        decoding,
                     });
                 }
                 Err(why) => {
@@ -132,11 +115,11 @@ impl Player {
                 }
             }
         }
-        let Some(decoding) = self.decoder.as_mut() else {
+        let Some(open) = self.decoder.as_mut() else {
             return;
         };
         self.samples.clear();
-        match decoding.decoder.decode(packet, &mut self.samples) {
+        match open.decoding.decode(packet, &mut self.samples) {
             Ok(Some(decoded)) => {
                 let samples = std::mem::take(&mut self.samples);
                 if let Some(stream) = self.stream_in(decoded) {
@@ -230,7 +213,7 @@ impl Player {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio::decode::Decoders;
+    use crate::audio::decode::{Decoder, Decoders};
     use crate::audio::{Controls, Device, Queue};
     use std::sync::Mutex;
 
