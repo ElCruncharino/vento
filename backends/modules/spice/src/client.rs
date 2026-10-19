@@ -1036,7 +1036,9 @@ impl Session<'_> {
             // There is no Unicode key event in this protocol, so a character
             // with no place on a US keyboard is not sent rather than sent
             // wrongly.
-            log::debug!("no scancode for keysym {keysym:#x}");
+            // At trace: a keysym is what was typed, and a log is no place
+            // for that.
+            log::trace!("no scancode for keysym {keysym:#x}");
             return Ok(());
         };
         // Auto-repeat is a second press of a key already down, which is what

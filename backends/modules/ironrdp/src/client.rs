@@ -435,7 +435,9 @@ impl Client {
             return;
         }
         let Some(key) = keymap::scancode(keysym) else {
-            log::debug!("no RDP key for keysym {keysym:#x}");
+            // At trace: a keysym is what was typed, and a log is no place
+            // for that.
+            log::trace!("no RDP key for keysym {keysym:#x}");
             return;
         };
         let mut held = self.shared.held.lock().unwrap();
