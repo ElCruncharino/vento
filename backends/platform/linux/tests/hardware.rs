@@ -297,7 +297,7 @@ fn a_held_picture_that_fails_falls_back_to_software() {
         decoder.decode_picture(frame, &mut out, W, H, &mut changed)
     };
     assert!(matches!(decode(&mut decoder, &frames[0]), Decoded::Gpu(_)));
-    decoder.fail_next();
+    decoder.fail_next(false);
     // A P-frame, with nothing before it in software to refer to: no picture
     // until the key frame that is asked for, and that one converted.
     assert!(!matches!(decode(&mut decoder, &frames[1]), Decoded::Gpu(_)));
@@ -305,6 +305,35 @@ fn a_held_picture_that_fails_falls_back_to_software() {
     assert!(matches!(decode(&mut decoder, &frames[0]), Decoded::Converted));
     assert_eq!(decoder.hardware(), Some(false));
     assert!(decoder.software_reason().unwrap().contains("vaapi: sync failed"));
+}
+
+/// A hardware failure mid-stream whose software decoder will not open
+/// either leaves no decoder: the frame and every one after it refused, said
+/// once, no key frame asked for (it would be refused too), and the device's
+/// context let go of rather than kept and tried again on every packet.
+#[test]
+fn a_fallback_that_will_not_open_is_the_end_of_the_decoder() {
+    if !vaapi("a_fallback_that_will_not_open_is_the_end_of_the_decoder") {
+        return;
+    }
+    let (codec, frames) = frames("h264.h264");
+    let mut decoder = Decoder::with_hardware(codec, W, H, Hardware::Vaapi).unwrap();
+    let mut out = vec![0u32; W * H];
+    let mut decode = |decoder: &mut Decoder, frame: &[u8]| {
+        let mut changed = Changes::new();
+        changed.reset(H);
+        changed.all(W, H);
+        decoder.decode_picture(frame, &mut out, W, H, &mut changed)
+    };
+    assert!(matches!(decode(&mut decoder, &frames[0]), Decoded::Gpu(_)));
+    decoder.fail_next(true);
+    assert!(matches!(decode(&mut decoder, &frames[1]), Decoded::Nothing));
+    assert!(!decoder.take_key_frame_request(), "a key frame asked of a decoder that has none");
+    // The key frame, which the device would still have decoded had its
+    // context been kept: nothing.
+    assert!(matches!(decode(&mut decoder, &frames[0]), Decoded::Nothing));
+    assert_eq!(decoder.method(), Hardware::Off);
+    assert_eq!(decoder.name(), "h264");
 }
 
 /// The render nodes this process has open: one per VAAPI device.
@@ -368,6 +397,9 @@ fn one_device_for_every_decoder() {
     drop(more);
     drop(first);
     assert_eq!(platform_linux::ffmpeg::device_opened(Hardware::Vaapi), Some(true));
+    // Auto's device is the same one, and says so.
+    assert_eq!(platform_linux::ffmpeg::device_opened(Hardware::Auto), Some(true));
+    assert_eq!(platform_linux::ffmpeg::device_opened(Hardware::Off), None);
     assert_eq!(render_nodes(), open, "the device closed with its decoders");
 }
 
@@ -386,7 +418,7 @@ fn a_failure_mid_stream_falls_back_to_software() {
     pictures(&mut hw, &frames[..1]);
     assert_eq!(hw.hardware(), Some(true));
 
-    hw.fail_next();
+    hw.fail_next(false);
     let mut out = vec![0u32; W * H];
     let mut changed = Changes::new();
     changed.reset(H);
@@ -433,6 +465,7 @@ fn without_a_device_it_is_software() {
     eprintln!("without a device: {status}");
     assert!(status.starts_with("H.264 sw ") && status.contains(&why), "{status}");
     assert_eq!(platform_linux::ffmpeg::device_opened(Hardware::Vaapi), Some(false));
+    assert_eq!(platform_linux::ffmpeg::device_opened(Hardware::Auto), Some(false));
 }
 
 /// What a frame costs, software against VAAPI (or the methods

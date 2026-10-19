@@ -127,7 +127,9 @@ struct vento_video_picture {
     // to the new decoder, but anything it refers to was decoded by the old
     // one, so until a key frame there may be no picture or a broken one.
     // The caller should ask the far end for one, unless no picture had come
-    // out before. Set on that one call, whatever its status.
+    // out before. Set on that one call, whatever its status. -1 where the
+    // hardware failed and no software decoder would open in its place: the
+    // status is VENTO_VIDEO_REFUSED, and so is every packet's from then on.
     int32_t fell_back;
     // The call's time, from the packet to the picture described (decode,
     // and on hardware the wait for it and the mapping), in microseconds.
@@ -212,8 +214,9 @@ const char *vento_video_method_name(int method);
 // has stood in the way. Valid until the next call on the decoder.
 const char *vento_video_software_reason(const vento_video *video);
 
-// Whether the shared device of a `vento_video_hardware` (VAAPI) has been
-// asked for in this process: 0 never, 1 open, -1 tried and failed. For
+// Whether the shared device of a `vento_video_hardware` (VAAPI, which AUTO
+// tries too, so both say the same) has been asked for in this process: 0
+// never, 1 open, -1 tried and failed; always 0 for OFF, which has none. For
 // tests, and for whoever wants to know that OFF opened nothing.
 int vento_video_device_state(int method);
 
@@ -225,8 +228,9 @@ int vento_video_maps_in_place(const vento_video *video);
 
 // For tests: the next hardware picture of this decoder fails as a device
 // that has gone away would, which is otherwise not something a test can
-// make happen.
-void vento_video_fail_next(vento_video *video);
+// make happen; with `software_too`, so does opening the software decoder
+// that would take its place, which leaves the decoder refusing every packet.
+void vento_video_fail_next(vento_video *video, int software_too);
 
 // One encoded frame in, which is copied and not kept, and every picture the
 // decoder then has ready read, of which the last is described in `out`.

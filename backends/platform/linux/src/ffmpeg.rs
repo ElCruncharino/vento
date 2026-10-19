@@ -11,7 +11,7 @@
 //! planes are got at:
 //!
 //! - **Through `vento_video.h`, not FFmpeg's API.** libavcodec is reached
-//!   through a dozen C calls of our own (`cpp/vento_video.c`), and this file
+//!   through seventeen C calls of our own (`cpp/vento_video.c`), and this file
 //!   declares those by hand: no generated bindings, no FFmpeg headers, and
 //!   nothing here that changes with an FFmpeg release. The choices that are
 //!   libavcodec's — low delay, slice threads, AV1 as dav1d, only the last of
@@ -208,7 +208,7 @@ mod sys {
         pub fn vento_video_software_reason(video: *const Video) -> *const c_char;
         pub fn vento_video_maps_in_place(video: *const Video) -> c_int;
         pub fn vento_video_device_state(method: c_int) -> c_int;
-        pub fn vento_video_fail_next(video: *mut Video);
+        pub fn vento_video_fail_next(video: *mut Video, software_too: c_int);
         pub fn vento_video_decode(
             video: *mut Video,
             data: *const u8,
@@ -357,8 +357,7 @@ fn number(codec: Codec) -> c_int {
 }
 
 /// One libavcodec decoder for one codec, which is what [`FFmpeg::decoder`]
-/// hands out boxed — and what a caller that wants [`skipped`](Self::skipped)
-/// can make directly.
+/// hands out boxed.
 pub struct Decoder {
     video: *mut sys::Video,
     codec: Codec,
@@ -387,9 +386,6 @@ pub struct Decoder {
     narrow: [Vec<u8>; 3],
     /// What a held picture is read back with, shared by them all.
     readback: Arc<Mutex<Readback>>,
-    /// Frames received and dropped unread, because a newer whole picture came
-    /// out of the same packet behind them.
-    pub skipped: u64,
 }
 
 impl Decoder {
@@ -452,7 +448,6 @@ impl Decoder {
             output: Output::new(),
             narrow: Default::default(),
             readback: Arc::default(),
-            skipped: 0,
         };
         let name = decoder.name();
         let method = decoder.method();
@@ -528,15 +523,17 @@ impl Decoder {
     }
 
     /// For tests: the next hardware picture fails as a device that went away
-    /// would, which is what a mid-stream fallback is made of.
-    pub fn fail_next(&mut self) {
-        unsafe { sys::vento_video_fail_next(self.video) };
+    /// would, which is what a mid-stream fallback is made of; with
+    /// `software_too`, so does the software decoder that would take its place.
+    pub fn fail_next(&mut self, software_too: bool) {
+        unsafe { sys::vento_video_fail_next(self.video, c_int::from(software_too)) };
     }
 
     /// What the call just made says about how the decoder decodes, logged
     /// where that changed.
     fn note(&mut self, picture: &sys::Picture, status: c_int) {
-        if picture.fell_back != 0 {
+        // Below zero is no decoder at all, which `decode_with` says.
+        if picture.fell_back > 0 {
             // Before the first picture the packet given again is the one the
             // stream started with, which the software decoder takes from the
             // start as the hardware's would have: nothing is missing.
@@ -636,11 +633,25 @@ impl Decoder {
             colour: (picture.bt709 != 0, picture.full_range != 0),
             readback: Arc::clone(&self.readback),
         });
-        self.skipped += u64::from(picture.skipped);
         self.note(&picture, status);
         match status {
             sys::PICTURE | sys::NONE if picture.error != 0 => {
                 log::warn!("the decoder failed a frame: {}", error(picture.error));
+            }
+            sys::REFUSED if picture.fell_back < 0 => {
+                // The device failed and the software decoder would not open
+                // in its place: the C side refuses everything from here on,
+                // so this is said once and nothing more is asked of it, a key
+                // frame included.
+                log::warn!(
+                    "the {} decoder failed on the device and no software decoder opened in its \
+                     place ({}); no more pictures",
+                    self.codec.name(),
+                    error(picture.error)
+                );
+                self.key_frame = false;
+                self.failed = true;
+                return Decoded::Nothing;
             }
             sys::REFUSED => {
                 // A frame the decoder refuses is one picture lost rather than

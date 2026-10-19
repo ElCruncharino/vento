@@ -142,7 +142,15 @@ struct vento_video {
     int trials;
     uint64_t trial_us[2][MAP_TRIALS];
     int held_trial;
+    // For tests (`vento_video_fail_next`): the next hardware picture fails,
+    // and with `fail_software` so does the software decoder that would take
+    // its place.
     int fail_next;
+    int fail_software;
+    // The decoder failed on the device mid-stream and no software decoder
+    // opened in its place: the libavcodec error that said so, which every
+    // packet from then on is refused with, untried. 0 while it decodes.
+    int dead;
     // Why the decoder is not on hardware, if anything stands in its way.
     char reason[256];
     // The surfaces the last held picture came from, referenced so that their
@@ -249,7 +257,8 @@ static struct {
 static pthread_mutex_t device_lock = PTHREAD_MUTEX_INITIALIZER;
 
 int vento_video_device_state(int method) {
-    if (method != VENTO_VIDEO_HW_VAAPI)
+    // AUTO's device is VAAPI's: the one there is to try.
+    if (method != VENTO_VIDEO_HW_VAAPI && method != VENTO_VIDEO_HW_AUTO)
         return 0;
     pthread_mutex_lock(&device_lock);
     int state = vaapi.state;
@@ -385,6 +394,10 @@ static int open_decoder(vento_video *video) {
         }
         say(video, "%s", why);
     }
+    if (video->fail_software) {
+        video->fail_software = 0;
+        return AVERROR(ENOMEM);
+    }
     return open_context(video, VENTO_VIDEO_HW_OFF, NULL);
 }
 
@@ -442,7 +455,9 @@ vento_video *vento_video_open(int codec, int width, int height, int hardware, ch
 }
 
 const char *vento_video_name(const vento_video *video) {
-    return video->context->codec->name;
+    // A dead decoder has no context: it is named for the software decoder
+    // that would not open.
+    return video->context ? video->context->codec->name : find(video->codec, 0)->name;
 }
 
 int vento_video_method(const vento_video *video) {
@@ -457,17 +472,11 @@ int vento_video_maps_in_place(const vento_video *video) {
     return video->map_verdict == MAP_UNKNOWN ? -1 : video->map_verdict == MAP_DIRECT;
 }
 
-void vento_video_fail_next(vento_video *video) {
+void vento_video_fail_next(vento_video *video, int software_too) {
     video->fail_next = 1;
+    video->fail_software = software_too != 0;
 }
 
-// The received frame described into `out`, or false for a format that is not
-// YUV of eight to sixteen bits a sample with Y in a plane of its own and U and
-// V in planes of their own or interleaved in one (or packed as XV30): RGB, a
-// palette, big-endian samples (which no decoder on a little-endian machine
-// hands back), hardware surfaces, packed formats but that one, or chroma
-// subsampled other than 4:2:0, 4:2:2, 4:4:0 or 4:4:4. An alpha plane after
-// the three is not read.
 // The frame's colour, as `describe` and an export say it.
 static void colour(const AVFrame *f, int32_t *bt709, int32_t *full_range) {
     // BT.601 for BT.601, and for a stream that says nothing — which is what
@@ -481,6 +490,13 @@ static void colour(const AVFrame *f, int32_t *bt709, int32_t *full_range) {
                   f->format == AV_PIX_FMT_YUVJ422P || f->format == AV_PIX_FMT_YUVJ444P;
 }
 
+// The received frame described into `out`, or false for a format that is not
+// YUV of eight to sixteen bits a sample with Y in a plane of its own and U and
+// V in planes of their own or interleaved in one (or packed as XV30): RGB, a
+// palette, big-endian samples (which no decoder on a little-endian machine
+// hands back), hardware surfaces, packed formats but that one, or chroma
+// subsampled other than 4:2:0, 4:2:2, 4:4:0 or 4:4:4. An alpha plane after
+// the three is not read.
 static int describe(const AVFrame *f, struct vento_video_picture *out) {
     const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get((enum AVPixelFormat)f->format);
     if (!desc || f->width <= 0 || f->height <= 0)
@@ -810,6 +826,10 @@ int vento_video_decode(vento_video *video, const uint8_t *data, size_t len, int 
         out->error = AVERROR(EINVAL);
         return VENTO_VIDEO_REFUSED;
     }
+    if (video->dead) {
+        out->error = video->dead;
+        return VENTO_VIDEO_REFUSED;
+    }
     int status = decode_packet(video, data, len, hold, out, format, format_len);
     if (status == HARDWARE_FAILED) {
         // The software decoder in the hardware one's place, given the same
@@ -819,10 +839,16 @@ int vento_video_decode(vento_video *video, const uint8_t *data, size_t len, int 
         // again.
         memset(out, 0, sizeof(*out));
         int opened = open_decoder(video);
-        out->fell_back = 1;
+        out->fell_back = opened < 0 ? -1 : 1;
         if (opened < 0) {
             // Not even software: the decoder is no decoder now, and every
-            // packet from here on is refused.
+            // packet from here on is refused. The context on the device goes
+            // with it, rather than staying to fail, and the software decoder
+            // to be tried again, on every packet after this one.
+            avcodec_free_context(&video->context);
+            video->method = VENTO_VIDEO_HW_OFF;
+            video->hw_format = AV_PIX_FMT_NONE;
+            video->dead = opened;
             out->error = opened;
             status = VENTO_VIDEO_REFUSED;
         } else {
