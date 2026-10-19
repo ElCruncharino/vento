@@ -21,7 +21,8 @@
 #   cmake --build build/scratch/host
 #   build/scratch/host/libvnc/vento_libvnc_probe HOST:1 --password ... --out shot.ppm
 #
-# Options: -DVENTO_PROBES=ON builds the four probes, which are off by default
+# Options: -DVENTO_PROBES=ON builds the four probes (and FreeRDP's tests,
+# which `ctest` runs), which are off by default
 # so that the Linux client's build of this tree compiles none of them;
 # -DSTRICT_WARNINGS=ON makes a warning in our own sources an error,
 # as `scripts/check-warnings.sh` does for the phone's build; CMAKE_BUILD_TYPE
@@ -76,6 +77,12 @@ include(platform/linux/cmake/vento_linux.cmake)
 # `ANDROID` and takes its host half. The vendored trees under them share
 # this one cache, which is why every option a tree reads is forced in its
 # module rather than left to a default.
+# With the probes, `ctest` in the build tree runs the tests a module has
+# beside its probe (so far FreeRDP's, freerdp_test.c).
+if(VENTO_PROBES)
+    enable_testing()
+endif()
+
 add_subdirectory(modules/libvnc/cpp libvnc)
 add_subdirectory(modules/tigervnc/cpp tigervnc)
 add_subdirectory(modules/freerdp/cpp freerdp)

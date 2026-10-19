@@ -102,8 +102,10 @@ int main(int argc, char **argv) {
     if (!config.address) {
         usage();
     }
-    /* The store has to exist: the library writes known hosts under it, and
-       a directory it cannot write is a connection that fails as a TLS error. */
+    /* The directory the session hands the library (vento/freerdp.h). Nothing
+       is written there — no known hosts, since every certificate goes to the
+       trust question and nowhere else — but it is made, as the app's is, so
+       that the probe's session is given what a real one is. */
     mkdir(config.config_path, 0700);
     /* The user name and the password are asked for rather than given, so
        that the probe exercises the question every real session asks. */

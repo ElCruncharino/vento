@@ -280,4 +280,21 @@ else()
     target_link_libraries(vento_freerdp ${VENTO_BACKEND_LINK} freerdp-client freerdp winpr)
 
     vento_backend_probe(vento_freerdp freerdp_probe.c)
+
+    # And beside the probe, the tests of the session file's pure parts
+    # (freerdp_test.c), which include the three sources rather than link the
+    # library, and wrap the two input calls the keys go through.
+    if(VENTO_PROBES)
+        add_executable(vento_freerdp_test freerdp_test.c)
+        remotedesktop_warnings(vento_freerdp_test)
+        target_include_directories(vento_freerdp_test PRIVATE "${_VENTO_BACKENDS}/api/include"
+                "${CMAKE_CURRENT_SOURCE_DIR}/include")
+        target_include_directories(vento_freerdp_test SYSTEM PRIVATE ${FREERDP_INCLUDES}
+                ${OPENSSL_INCLUDE_DIR} "${THIRD_PARTY}/freerdp/libfreerdp/codec")
+        target_link_libraries(vento_freerdp_test PRIVATE freerdp-client freerdp winpr vento_linux)
+        target_link_options(vento_freerdp_test PRIVATE
+                "LINKER:--wrap=freerdp_input_send_keyboard_event"
+                "LINKER:--wrap=freerdp_input_send_unicode_keyboard_event")
+        add_test(NAME vento_freerdp_test COMMAND vento_freerdp_test)
+    endif()
 endif()

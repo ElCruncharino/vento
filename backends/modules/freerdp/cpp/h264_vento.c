@@ -50,6 +50,7 @@ typedef struct {
     int mode;             /* the person's choice when it was */
     bool hardware;        /* whether it holds one of the hardware places */
     bool restartAsked;    /* for a change of mode, once */
+    bool refused;         /* no decoder would open at width x height */
     uint64_t lastStatus;
 } Context;
 
@@ -144,14 +145,26 @@ static bool openDecoder(Context *c, UINT32 width, UINT32 height) {
              VENTO_H264_MAX_HARDWARE, width, height);
     }
     c->decoder = t->open(t->user, VENTO_VIDEO_H264, (int) width, (int) height, c->hardware);
+    if (c->decoder == NULL && c->hardware) {
+        // At once, on the same frame: the stream is at its start, so a
+        // software decoder has every picture it will be asked for.
+        LOGW("H.264: no hardware decoder for %ux%u, trying software", width, height);
+        closeDecoder(c);
+        c->decoder = t->open(t->user, VENTO_VIDEO_H264, (int) width, (int) height, false);
+    }
     c->width = width;
     c->height = height;
     c->restartAsked = false;
     if (c->decoder == NULL) {
-        LOGW("H.264: no decoder for %ux%u", width, height);
+        // Said once and not asked again at this size: every frame would ask
+        // and be told the same, in the log at the frame rate. The surface
+        // keeps what it has until the server makes one of another size.
+        LOGW("H.264: no decoder for %ux%u; the surface is not drawn at that size", width, height);
         closeDecoder(c);
+        c->refused = true;
         return false;
     }
+    c->refused = false;
     return true;
 }
 
@@ -195,6 +208,9 @@ static int vento_h264_subsystem_decompress(H264_CONTEXT *WINPR_RESTRICT h264,
 
     // Opened at the first frame rather than at Init, which the library calls
     // once before it knows the surface's size and again after.
+    if (c->refused && c->width == h264->width && c->height == h264->height) {
+        return -1;
+    }
     if (c->decoder == NULL || c->width != h264->width || c->height != h264->height) {
         closeDecoder(c);
         if (!openDecoder(c, h264->width, h264->height)) {

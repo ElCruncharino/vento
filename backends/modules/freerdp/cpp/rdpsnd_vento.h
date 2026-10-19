@@ -21,6 +21,7 @@
 #ifndef VENTO_FREERDP_RDPSND_VENTO_H
 #define VENTO_FREERDP_RDPSND_VENTO_H
 
+#include <stdatomic.h>
 #include <stdbool.h>
 
 #include <freerdp/freerdp.h>
@@ -47,6 +48,9 @@ typedef struct VentoSound {
     bool available;
     /* What the platform's decoders take, which the server is offered. */
     bool aac, opus;
+    /* The devices whose server lists a format this end plays: the
+       session's sound switch is offered while there is one. */
+    atomic_int offering;
 } VentoSound;
 
 /* The library's own symbols, not the backend's: only vento/freerdp.h's are
