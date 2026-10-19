@@ -27,8 +27,8 @@ use crate::kind::Connect;
 use crate::options::Options;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_void};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
+use std::thread::{self, ThreadId};
 
 pub mod audio;
 pub mod ffi;
@@ -248,9 +248,8 @@ pub struct CSession {
     /// The `Arc<Mailbox>` the callbacks carry, as a raw pointer to reclaim
     /// once the session is destroyed.
     user: *const Mailbox,
-    /// Whether `destroy` has run: the session is freed and the mailbox
-    /// reclaimed once, however many times a shared handle is retired.
-    destroyed: AtomicBool,
+    /// The calls in flight and whether `destroy` has begun.
+    gate: Gate,
 }
 
 // SAFETY: the C session is documented as callable from any thread, and the
@@ -259,7 +258,76 @@ pub struct CSession {
 unsafe impl Send for CSession {}
 unsafe impl Sync for CSession {}
 
+/// What keeps a call from reaching a session `destroy` has freed.
+///
+/// A shared handle can be called from another thread as it is retired — a
+/// drawing thread reading pixels, or a thread holding the backend through a
+/// weak reference to answer a question — so a flag that only `destroy` read
+/// left that call to dereference a freed session. Every call goes through
+/// [`CSession::enter`]: none starts once `destroy` has, and the free waits
+/// for those already in.
+#[derive(Default)]
+struct Gate {
+    state: Mutex<GateState>,
+    idle: Condvar,
+}
+
+#[derive(Default)]
+struct GateState {
+    /// Whether `destroy` has begun: the session is freed and the mailbox
+    /// reclaimed once, however many times a shared handle is retired.
+    destroyed: bool,
+    /// The thread of each call in flight, once per call (a call can make
+    /// another of these on its way).
+    inside: Vec<ThreadId>,
+    /// `destroy` came from inside a call on its own thread — a callback
+    /// delivered inline that ended in it — which it cannot wait for, so the
+    /// last call out frees the session instead.
+    deferred: bool,
+}
+
+/// A call in flight; see [`Gate`].
+struct Entered<'a>(&'a CSession);
+
+impl Drop for Entered<'_> {
+    fn drop(&mut self) {
+        let mut state = self.0.gate.state.lock().unwrap();
+        let me = thread::current().id();
+        if let Some(i) = state.inside.iter().position(|t| *t == me) {
+            state.inside.swap_remove(i);
+        }
+        if !state.inside.is_empty() {
+            return;
+        }
+        if std::mem::take(&mut state.deferred) {
+            drop(state);
+            unsafe { self.0.free() };
+        } else {
+            self.0.gate.idle.notify_all();
+        }
+    }
+}
+
 impl CSession {
+    /// Admits a call, or `None` once `destroy` has begun, when the session
+    /// is not there to call.
+    fn enter(&self) -> Option<Entered<'_>> {
+        let mut state = self.gate.state.lock().unwrap();
+        if state.destroyed {
+            return None;
+        }
+        state.inside.push(thread::current().id());
+        Some(Entered(self))
+    }
+
+    /// `f`, made only while the session is there; `default` otherwise.
+    fn call<R>(&self, default: R, f: impl FnOnce() -> R) -> R {
+        match self.enter() {
+            Some(_entered) => f(),
+            None => default,
+        }
+    }
+
     /// The table, as a pointer rather than a reference: it may be shorter
     /// than this build's `vento_session_ops` (see [`table_size`]), so a
     /// member is read through it one at a time, and never the whole.
@@ -268,34 +336,37 @@ impl CSession {
     }
 
     fn pointer(&self, x: i32, y: i32, mask: i32) {
-        unsafe { ((*self.ops()).pointer.unwrap())(self.session, x, y, mask) }
+        self.call((), || unsafe { ((*self.ops()).pointer.unwrap())(self.session, x, y, mask) })
     }
 
     fn key_down(&self, keysym: u32, key_id: i64) {
-        unsafe { ((*self.ops()).key_down.unwrap())(self.session, keysym, key_id) }
+        self.call((), || unsafe { ((*self.ops()).key_down.unwrap())(self.session, keysym, key_id) })
     }
 
     fn key_up(&self, key_id: i64) {
-        unsafe { ((*self.ops()).key_up.unwrap())(self.session, key_id) }
+        self.call((), || unsafe { ((*self.ops()).key_up.unwrap())(self.session, key_id) })
     }
 
     fn release_all_keys(&self) {
-        unsafe { ((*self.ops()).release_all_keys.unwrap())(self.session) }
+        self.call((), || unsafe { ((*self.ops()).release_all_keys.unwrap())(self.session) })
     }
 
     fn focus(&self, focused: bool) {
-        unsafe { ((*self.ops()).focus.unwrap())(self.session, focused) }
+        self.call((), || unsafe { ((*self.ops()).focus.unwrap())(self.session, focused) })
     }
 
     fn view_only(&self, view_only: bool) {
-        unsafe { ((*self.ops()).view_only.unwrap())(self.session, view_only) }
+        self.call((), || unsafe { ((*self.ops()).view_only.unwrap())(self.session, view_only) })
     }
 
     fn can_resize(&self) -> bool {
-        unsafe { ((*self.ops()).can_resize.unwrap())(self.session) }
+        self.call(false, || unsafe { ((*self.ops()).can_resize.unwrap())(self.session) })
     }
 
     fn monitors(&self) -> Vec<i32> {
+        let Some(_entered) = self.enter() else {
+            return Vec::new();
+        };
         let mut flat = vec![0i32; 4 * ffi::VENTO_MAX_MONITORS as usize];
         let n = unsafe { ((*self.ops()).monitors.unwrap())(self.session, flat.as_mut_ptr()) };
         flat.truncate((n.max(0) as usize * 4).min(flat.len()));
@@ -303,13 +374,14 @@ impl CSession {
     }
 
     fn request_desktop_size(&self, width: i32, height: i32) {
-        unsafe { ((*self.ops()).request_desktop_size.unwrap())(self.session, width, height) }
+        self.call((), || unsafe { ((*self.ops()).request_desktop_size.unwrap())(self.session, width, height) })
     }
 
     /// The layout with the far end's own ids, or `None` where the backend
     /// has none and [`monitors`](CSession::monitors) numbered by index is the
     /// layout.
     fn screens(&self) -> Option<Vec<Monitor>> {
+        let _entered = self.enter()?;
         let screens = optional!(self.ops(), screens)?;
         let mut flat = vec![0i32; 5 * ffi::VENTO_MAX_MONITORS as usize];
         let n = unsafe { screens(self.session, flat.as_mut_ptr()) };
@@ -320,10 +392,13 @@ impl CSession {
     /// Whether the backend can send a layout at all, whatever the far end
     /// says to one.
     fn has_layout(&self) -> bool {
-        optional!(self.ops(), request_layout).is_some()
+        self.call(false, || optional!(self.ops(), request_layout).is_some())
     }
 
     fn request_layout(&self, width: i32, height: i32, screens: &[Monitor]) {
+        let Some(_entered) = self.enter() else {
+            return;
+        };
         if let Some(request_layout) = optional!(self.ops(), request_layout) {
             let flat = Monitor::flat5(screens);
             let n = screens.len().min(c_int::MAX as usize) as c_int;
@@ -333,7 +408,7 @@ impl CSession {
 
     fn clipboard(&self, text: &str) {
         if let Ok(c) = CString::new(text) {
-            unsafe { ((*self.ops()).clipboard.unwrap())(self.session, c.as_ptr()) }
+            self.call((), || unsafe { ((*self.ops()).clipboard.unwrap())(self.session, c.as_ptr()) })
         }
     }
 
@@ -341,6 +416,7 @@ impl CSession {
     /// none yet. Freed with the header's `vento_strings_free`, which is
     /// `free` on each item and the array.
     fn info(&self) -> Option<Vec<String>> {
+        let _entered = self.enter()?;
         let mut strings = ffi::vento_strings {
             items: std::ptr::null_mut(),
             count: 0,
@@ -363,6 +439,7 @@ impl CSession {
     /// The decoder's overlay line, or `None` where the backend has none —
     /// no video, no picture yet, or a table from before the member.
     fn decoder_status(&self) -> Option<String> {
+        let _entered = self.enter()?;
         let decoder_status = optional!(self.ops(), decoder_status)?;
         let mut line = [0 as c_char; 256];
         if !unsafe { decoder_status(self.session, line.as_mut_ptr(), line.len()) } {
@@ -376,7 +453,8 @@ impl CSession {
     /// Received and sent, or `None` while there is nothing to count.
     fn traffic(&self) -> Option<[u64; 2]> {
         let mut out = [0u64; 2];
-        unsafe { ((*self.ops()).traffic.unwrap())(self.session, out.as_mut_ptr()) }.then_some(out)
+        self.call(false, || unsafe { ((*self.ops()).traffic.unwrap())(self.session, out.as_mut_ptr()) })
+            .then_some(out)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -397,6 +475,9 @@ impl CSession {
         let Some([x, y, width, height, dst_x, dst_y]) =
             region_args(dst.len(), [x, y, width, height], dst_stride, dst_x, dst_y)
         else {
+            return false;
+        };
+        let Some(_entered) = self.enter() else {
             return false;
         };
         unsafe {
@@ -422,6 +503,7 @@ impl CSession {
         let tw = width.div_ceil(step);
         let th = height.div_ceil(step);
         let mut rgba = vec![0u8; tw * th * 4];
+        let _entered = self.enter()?;
         let ok = unsafe {
             ((*self.ops()).read_thumbnail.unwrap())(
                 self.session,
@@ -443,6 +525,9 @@ impl CSession {
         let user = CString::new(user).unwrap_or_default();
         let domain = CString::new(domain).unwrap_or_default();
         let password = password.and_then(|p| CString::new(p).ok());
+        let Some(_entered) = self.enter() else {
+            return;
+        };
         unsafe {
             ((*self.ops()).answer_credentials.unwrap())(
                 self.session,
@@ -454,11 +539,11 @@ impl CSession {
     }
 
     fn answer_trust(&self, accept: bool) {
-        unsafe { ((*self.ops()).answer_trust.unwrap())(self.session, accept) }
+        self.call((), || unsafe { ((*self.ops()).answer_trust.unwrap())(self.session, accept) })
     }
 
     fn disconnect(&self) {
-        unsafe { ((*self.ops()).disconnect.unwrap())(self.session) }
+        self.call((), || unsafe { ((*self.ops()).disconnect.unwrap())(self.session) })
     }
 
     /// Ends the session, waits for its thread, frees it, and then reclaims
@@ -466,10 +551,30 @@ impl CSession {
     /// callbacks are only provably finished once `destroy` has returned.
     /// Only the first call does anything, as [`Backend::destroy`] promises:
     /// a second would free the session and drop the mailbox's count twice.
+    /// No call starts once this has, and the free waits for the calls other
+    /// threads have in flight (see [`Gate`]).
     fn destroy(&self) {
-        if self.destroyed.swap(true, Ordering::AcqRel) {
+        let mut state = self.gate.state.lock().unwrap();
+        if std::mem::replace(&mut state.destroyed, true) {
             return;
         }
+        if state.inside.contains(&thread::current().id()) {
+            state.deferred = true;
+            return;
+        }
+        while !state.inside.is_empty() {
+            state = self.gate.idle.wait(state).unwrap();
+        }
+        drop(state);
+        unsafe { self.free() }
+    }
+
+    /// The C side's `destroy`, and the mailbox's count back.
+    ///
+    /// # Safety
+    ///
+    /// Once, after `destroy` has begun and no call is in flight.
+    unsafe fn free(&self) {
         unsafe {
             ((*self.ops()).destroy.unwrap())(self.session);
             drop(Arc::from_raw(self.user));
@@ -608,7 +713,8 @@ impl Backend for CBackend {
         if key == "ViewOnly" {
             self.session.view_only(options.bool(key));
         }
-        (self.behaviour.set_option)(&self.session, &options, key);
+        // The backend's own live call reaches the session itself.
+        self.session.call((), || (self.behaviour.set_option)(&self.session, &options, key));
     }
 
     fn facts(&self) -> Facts {
@@ -698,13 +804,14 @@ impl Backend for CBackend {
 
     fn answer_security(&self, accept: bool, remember: bool) {
         match self.security {
-            Some(security) => (security.answer)(&self.session, accept, remember),
+            Some(security) => self.session.call((), || (security.answer)(&self.session, accept, remember)),
             None => self.session.answer_trust(accept),
         }
     }
 
     fn saved_identity(&self) -> Option<String> {
-        (self.security?.saved_identity)(&self.session)
+        let security = self.security?;
+        self.session.call(None, || (security.saved_identity)(&self.session))
     }
 
     fn disconnect(&self) {
@@ -748,7 +855,7 @@ pub fn start(
         session: CSession {
             session,
             user,
-            destroyed: AtomicBool::new(false),
+            gate: Gate::default(),
         },
         mailbox,
         options: Mutex::new(c.options.clone()),
@@ -769,12 +876,135 @@ mod tests {
     /// read by what is tested.
     fn with_table<T>(ops: &ffi::vento_session_ops, f: impl FnOnce(&CSession) -> T) -> T {
         let mut raw = ffi::vento_session { ops };
+        // Never destroyed, so the null mailbox is never reclaimed.
         let session = CSession {
             session: &mut raw,
             user: std::ptr::null(),
-            destroyed: AtomicBool::new(true),
+            gate: Gate::default(),
         };
         f(&session)
+    }
+
+    /// A session whose table records what reached it: `entered` is set while
+    /// a pointer call is inside the backend, which waits there for `hold`.
+    #[repr(C)]
+    struct Recorder {
+        raw: ffi::vento_session,
+        log: Mutex<Vec<&'static str>>,
+        hold: Mutex<bool>,
+        released: Condvar,
+        entered: std::sync::Barrier,
+        /// Called from inside the pointer call, as a listener would that
+        /// destroys the session from a callback delivered inline.
+        inline: Mutex<Option<Box<dyn Fn() + Send>>>,
+    }
+
+    fn recorder(s: *mut ffi::vento_session) -> &'static Recorder {
+        unsafe { &*(s as *const Recorder) }
+    }
+
+    unsafe extern "C" fn rec_pointer(s: *mut ffi::vento_session, _: c_int, _: c_int, _: c_int) {
+        let r = recorder(s);
+        r.log.lock().unwrap().push("pointer in");
+        if let Some(inline) = r.inline.lock().unwrap().take() {
+            inline();
+        } else {
+            r.entered.wait();
+            let mut hold = r.hold.lock().unwrap();
+            while *hold {
+                hold = r.released.wait(hold).unwrap();
+            }
+        }
+        r.log.lock().unwrap().push("pointer out");
+    }
+
+    unsafe extern "C" fn rec_destroy(s: *mut ffi::vento_session) {
+        recorder(s).log.lock().unwrap().push("destroy");
+    }
+
+    unsafe extern "C" fn rec_key_up(s: *mut ffi::vento_session, _: i64) {
+        recorder(s).log.lock().unwrap().push("key_up");
+    }
+
+    static TABLE: ffi::vento_session_ops = ffi::vento_session_ops {
+        size: std::mem::size_of::<ffi::vento_session_ops>(),
+        pointer: Some(rec_pointer),
+        key_up: Some(rec_key_up),
+        destroy: Some(rec_destroy),
+        ..unsafe { std::mem::zeroed() }
+    };
+
+    /// A recorder, leaked (the test outlives nothing it points at), in a
+    /// session holding a real mailbox for `free` to reclaim.
+    fn recorded() -> (&'static Recorder, Arc<CSession>, Arc<Mailbox>) {
+        let r: &'static Recorder = Box::leak(Box::new(Recorder {
+            raw: ffi::vento_session { ops: &TABLE },
+            log: Mutex::new(Vec::new()),
+            hold: Mutex::new(true),
+            released: Condvar::new(),
+            entered: std::sync::Barrier::new(2),
+            inline: Mutex::new(None),
+        }));
+        let mailbox = Mailbox::new(None);
+        let session = Arc::new(CSession {
+            session: &r.raw as *const _ as *mut _,
+            user: Arc::into_raw(Arc::clone(&mailbox)),
+            gate: Gate::default(),
+        });
+        (r, session, mailbox)
+    }
+
+    /// Nothing reaches the backend once `destroy` has run, and a second
+    /// `destroy` is nothing: one free, one count back.
+    #[test]
+    fn nothing_reaches_a_destroyed_session() {
+        let (r, session, mailbox) = recorded();
+        session.key_up(1);
+        session.destroy();
+        session.key_up(2);
+        session.destroy();
+        assert!(!session.has_layout());
+        assert_eq!(*r.log.lock().unwrap(), ["key_up", "destroy"]);
+        assert_eq!(Arc::strong_count(&mailbox), 1);
+    }
+
+    /// A call already inside the backend when another thread destroys the
+    /// session is waited for: the free comes after it, never under it.
+    #[test]
+    fn destroy_waits_for_a_call_in_flight() {
+        let (r, session, mailbox) = recorded();
+        let drawing = {
+            let session = Arc::clone(&session);
+            thread::spawn(move || session.pointer(1, 2, 0))
+        };
+        r.entered.wait();
+        let destroying = {
+            let session = Arc::clone(&session);
+            thread::spawn(move || session.destroy())
+        };
+        // Long enough for a destroy that did not wait to have freed.
+        thread::sleep(std::time::Duration::from_millis(50));
+        assert_eq!(*r.log.lock().unwrap(), ["pointer in"]);
+        *r.hold.lock().unwrap() = false;
+        r.released.notify_all();
+        drawing.join().unwrap();
+        destroying.join().unwrap();
+        assert_eq!(*r.log.lock().unwrap(), ["pointer in", "pointer out", "destroy"]);
+        assert_eq!(Arc::strong_count(&mailbox), 1);
+    }
+
+    /// `destroy` from inside a call on its own thread cannot wait for that
+    /// call, so the call frees the session on its way out.
+    #[test]
+    fn destroy_inside_a_call_frees_on_the_way_out() {
+        let (r, session, mailbox) = recorded();
+        let inner = Arc::clone(&session);
+        *r.inline.lock().unwrap() = Some(Box::new(move || inner.destroy()));
+        session.pointer(1, 2, 0);
+        assert_eq!(*r.log.lock().unwrap(), ["pointer in", "pointer out", "destroy"]);
+        session.key_up(1);
+        assert_eq!(r.log.lock().unwrap().len(), 3);
+        assert_eq!(Arc::strong_count(&mailbox), 1);
     }
 
     #[test]
