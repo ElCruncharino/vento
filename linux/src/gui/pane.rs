@@ -38,7 +38,7 @@ use super::super::icons;
 use super::super::toolbar::{self, Placement};
 use super::super::view::{Layout, ScaleMode, View};
 use super::super::Host;
-use super::{Capture, LEFT, MIDDLE, NOTCH_POINTS, RIGHT, Session, WindowOp, on_off};
+use super::{BACK, Capture, FORWARD, LEFT, MIDDLE, NOTCH_POINTS, RIGHT, Session, WindowOp, on_off};
 use crate::backend::Monitor;
 use media::audio::Switch;
 use egui::{
@@ -445,7 +445,8 @@ impl Pane {
                             PointerButton::Primary => LEFT,
                             PointerButton::Middle => MIDDLE,
                             PointerButton::Secondary => RIGHT,
-                            _ => continue,
+                            PointerButton::Extra1 => BACK,
+                            PointerButton::Extra2 => FORWARD,
                         };
                         at = at_point(*p, mask);
                         mask = if *pressed { mask | bit } else { mask & !bit };

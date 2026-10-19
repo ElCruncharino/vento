@@ -100,6 +100,12 @@ const WHEEL_UP: i32 = 8;
 const WHEEL_DOWN: i32 = 16;
 const WHEEL_LEFT: i32 = 32;
 const WHEEL_RIGHT: i32 = 64;
+/// Buttons 8 and 9, a mouse's side buttons, which browsers take as back and
+/// forward: RFB's ExtendedMouseButtons, RDP's X1 and X2, SPICE's side and
+/// extra, RustDesk's back and forward. A backend whose protocol has no
+/// room for one drops it (the README's list).
+const BACK: i32 = 128;
+const FORWARD: i32 = 256;
 
 /// How many points of smooth scrolling make one notch of the wheel; what
 /// egui-winit turns one line of a wheel into.
@@ -1053,7 +1059,9 @@ impl Session {
             MouseButton::Left => LEFT,
             MouseButton::Middle => MIDDLE,
             MouseButton::Right => RIGHT,
-            _ => return,
+            MouseButton::Back => BACK,
+            MouseButton::Forward => FORWARD,
+            MouseButton::Other(_) => return,
         };
         self.captured_mask = match state {
             ElementState::Pressed => self.captured_mask | bit,

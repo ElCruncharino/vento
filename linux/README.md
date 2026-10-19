@@ -1023,9 +1023,19 @@ is typed goes nowhere. Moving off the toolbar takes the keyboard back.
 **The mouse** sends absolute desktop coordinates, mapped through the view and
 clamped to it — the desktop pixel drawn under the pointer, by the centre of
 the device pixel it is in, so that a scaled desktop's last row and column can
-be pointed at — with an RFB button mask (left 1, middle 2, right 4) and the
+be pointed at — with an RFB button mask (left 1, middle 2, right 4, and a mouse's side
+buttons, back 128 and forward 256 — buttons 8 and 9) and the
 wheel as momentary presses of 8/16/32/64 (up, down, left, right); smooth
-scrolling is turned into notches of fifty points. The far end's cursor shape,
+scrolling is turned into notches of fifty points. The side buttons go as each
+protocol has them: RFB's ExtendedMouseButtons (`rfb`, `tigervnc`; without the
+server's say-so, and always in `libvnc`, whose library writes the one-byte
+mask, back goes and forward is dropped), RDP's X1 and X2 (`freerdp`, `rdp`,
+where the server takes extended mouse events), SPICE's side and extra, and
+RustDesk's back and forward; RealVNC's core is handed the mask as it is and
+sends back but not forward (to TigerVNC's Xvnc, which takes both from
+`tigervnc` and `rfb`). RFB's horizontal wheel has no place in SPICE and is
+dropped there. The far
+end's cursor shape,
 where the protocol sends one, is the window's own pointer, below, unless
 **Software cursor** is on.
 
