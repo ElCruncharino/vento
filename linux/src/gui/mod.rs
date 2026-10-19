@@ -297,10 +297,35 @@ impl Surface {
     fn ask_viewable(&mut self) {
         if let Some(viewable) = &self.viewable {
             let now = Instant::now();
-            if self.viewability.due(now) {
-                self.viewability.answered(viewable.ask(), now);
+            if self.viewability.due(now) && self.viewability.answered(viewable.ask(), now) {
+                log::debug!("X11 map state: window {:?} {}", self.window.id(), self.signals());
             }
         }
+    }
+
+    /// Ask winit whether the window manager says minimised (X11's
+    /// `_NET_WM_STATE_HIDDEN`), and log a change.
+    fn ask_minimized(&mut self) {
+        let minimized = self.window.is_minimized();
+        if minimized != self.minimized {
+            self.minimized = minimized;
+            log::debug!("_NET_WM_STATE: window {:?} {}", self.window.id(), self.signals());
+        }
+    }
+
+    /// The three signals `shown` is made of, for the log: which one said
+    /// hidden is what a report of a window paused on screen needs.
+    fn signals(&self) -> String {
+        format!(
+            "occluded {}, minimised {}, viewable {}",
+            if self.occluded { "yes" } else { "no" },
+            match self.minimized {
+                Some(true) => "yes",
+                Some(false) => "no",
+                None => "unknown",
+            },
+            if self.viewability.hidden() { "no" } else { "yes" }
+        )
     }
 }
 
@@ -741,6 +766,9 @@ impl App {
         let shown = self.windows.values().any(Surface::shown);
         if shown != self.shown {
             self.shown = shown;
+            for (id, surface) in &self.windows {
+                log::info!("window {id:?}: {}", surface.signals());
+            }
             if let Screen::Session(session) = &mut self.screen {
                 session.shown(shown);
             }
@@ -766,7 +794,7 @@ impl App {
         let Some(surface) = self.windows.get_mut(&id) else {
             return;
         };
-        surface.minimized = surface.window.is_minimized();
+        surface.ask_minimized();
         surface.ask_viewable();
         let viewport = surface.viewport;
         self.sync_shown();
@@ -1211,7 +1239,7 @@ impl App {
         // A minimise usually takes the focus with it: seen now rather than
         // at the next frame.
         for surface in self.windows.values_mut() {
-            surface.minimized = surface.window.is_minimized();
+            surface.ask_minimized();
         }
         self.sync_shown();
     }
@@ -1347,10 +1375,15 @@ impl ApplicationHandler<Wake> for App {
             WindowEvent::Occluded(occluded) => {
                 if let Some(surface) = self.windows.get_mut(&id) {
                     surface.occluded = *occluded;
-                    surface.minimized = window.is_minimized();
                     // X sends a visibility event only for a viewable window:
                     // a frame mapped again is seen now, not at the next ask.
                     surface.viewability.seen();
+                    surface.ask_minimized();
+                    log::debug!(
+                        "occluded: window {id:?} {} ({})",
+                        if *occluded { "wholly covered" } else { "visible" },
+                        surface.signals()
+                    );
                 }
                 self.sync_shown();
             }

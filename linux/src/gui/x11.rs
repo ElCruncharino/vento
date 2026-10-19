@@ -495,12 +495,15 @@ impl Viewability {
     }
 
     /// The server's answer to an ask made at `now`; `None` leaves what was
-    /// known (a window the server does not know is being closed).
-    pub fn answered(&mut self, viewable: Option<bool>, now: Instant) {
+    /// known (a window the server does not know is being closed). Whether
+    /// the answer changed anything.
+    pub fn answered(&mut self, viewable: Option<bool>, now: Instant) -> bool {
         self.asked = Some(now);
+        let was = self.unviewable;
         if let Some(viewable) = viewable {
             self.unviewable = !viewable;
         }
+        self.unviewable != was
     }
 
     /// A visibility event came for the window: it is viewable.
@@ -545,16 +548,16 @@ mod tests {
         // Nothing known yet: taken as viewable, and asked at once.
         assert!(!v.hidden());
         assert!(v.due(start));
-        v.answered(Some(true), start);
+        assert!(!v.answered(Some(true), start));
         assert!(!v.hidden());
         // Once a second, not every frame.
         assert!(!v.due(start + ASK / 2));
         assert!(v.due(start + ASK));
         // The frame was unmapped: hidden until the server says otherwise.
-        v.answered(Some(false), start + ASK);
+        assert!(v.answered(Some(false), start + ASK));
         assert!(v.hidden());
         // The server would not say (the window is going): what was known stays.
-        v.answered(None, start + 2 * ASK);
+        assert!(!v.answered(None, start + 2 * ASK));
         assert!(v.hidden());
         // A visibility event is the server's word that it is viewable again.
         v.seen();
