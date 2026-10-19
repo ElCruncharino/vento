@@ -831,7 +831,7 @@ impl Pane {
         let read_rate = s.hud.bytes.sample(bytes, now);
         let (width, height) = s.desktop.as_ref().map(Desktop::size).unwrap_or((0, 0));
         // `SessionClipboard.summary`: what the far end would be given.
-        let clip = match &s.clipboard_seen {
+        let clip = match s.clipboard.seen() {
             Some(text) if s.settings.clipboard_out => format!("{}c", text.chars().count()),
             _ => "-".to_string(),
         };

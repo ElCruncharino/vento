@@ -1058,7 +1058,9 @@ disconnecting also lets go.
 **The clipboard**: what the far end copies becomes the local clipboard
 (**Receive clipboard**); what was copied here while the window was away is
 offered to the far end when the window regains focus, once per change (**Send
-clipboard**). The rule is the phone's `SessionClipboard`: the last text seen
+clipboard**) — or, if it is read while input has nowhere to go (a prompt up,
+view only, the session still connecting), when it has, unless something newer
+was copied at either end meanwhile. The rule is the phone's `SessionClipboard`: the last text seen
 crossing either way is remembered and is never sent back where it came from,
 and what is read here is remembered whether or not it may be sent, so that
 turning sending on offers the next copy and not an old one. Proven against

@@ -271,9 +271,8 @@ pub struct Session {
     /// Whether the backend was last told the window is on screen; it starts
     /// out so.
     shown: bool,
-    /// The last clipboard text that crossed in either direction, so that it
-    /// is not sent back where it came from.
-    clipboard_seen: Option<String>,
+    /// What of the clipboard has crossed, and what waits to.
+    clipboard: Crossing,
     bell_until: Option<Instant>,
     title: String,
     disconnecting: Option<Instant>,
@@ -386,7 +385,7 @@ impl Session {
             captured_mask: 0,
             view_only,
             shown: true,
-            clipboard_seen: None,
+            clipboard: Crossing::default(),
             bell_until: None,
             title,
             disconnecting: None,
@@ -569,14 +568,13 @@ impl Session {
                     // offered straight back.
                     if !self.settings.clipboard_in {
                         log::debug!("clipboard from the far end: {} bytes, not taken", text.len());
-                    } else if !text.is_empty() && self.clipboard_seen.as_deref() != Some(text.as_str()) {
+                    } else if self.clipboard.far(&text) {
                         log::debug!("clipboard from the far end: {} bytes", text.len());
                         // egui's own as well, for a paste into a text field.
                         host.winit.set_clipboard_text(text.clone());
                         if let Some(clipboard) = host.clipboard {
-                            clipboard.set(text.clone());
+                            clipboard.set(text);
                         }
-                        self.clipboard_seen = Some(text);
                     }
                 }
                 Event::Closed { detail } => {
@@ -835,21 +833,26 @@ impl Session {
     /// focus back, offered once: `SessionClipboard.read`, which remembers
     /// what it saw whether or not the setting lets it be sent, so that
     /// turning sending on later offers the next copy and not an old one.
-    /// `None` is a clipboard with no text, or one that could not be read in
-    /// time (see `clipboard/`).
+    /// A read that comes while input has nowhere to go (a prompt up, view
+    /// only, not yet connected) is kept and offered when it has
+    /// (`frame_shared`); it was dropped, so a copy made before a trust
+    /// prompt never reached the far end. `None` is a clipboard with no
+    /// text, or one that could not be read in time (see `clipboard/`).
     pub fn local_clipboard(&mut self, text: Option<String>) {
         if let Some(text) = text
-            && self.accepts_input()
-            && !text.is_empty()
-            && self.clipboard_seen.as_deref() != Some(text.as_str())
+            && let Some(text) = self.clipboard.local(text, self.accepts_input())
         {
-            if self.settings.clipboard_out {
-                log::debug!("clipboard to the far end: {} bytes", text.len());
-                self.backend.clipboard(&text);
-            } else {
-                log::debug!("clipboard to the far end: {} bytes, not sent", text.len());
-            }
-            self.clipboard_seen = Some(text);
+            self.offer_clipboard(&text);
+        }
+    }
+
+    /// The far end is given what was read here, under the setting.
+    fn offer_clipboard(&mut self, text: &str) {
+        if self.settings.clipboard_out {
+            log::debug!("clipboard to the far end: {} bytes", text.len());
+            self.backend.clipboard(text);
+        } else {
+            log::debug!("clipboard to the far end: {} bytes, not sent", text.len());
         }
     }
 
@@ -1196,6 +1199,10 @@ impl Session {
         // the key down at the far end until the focus moved.
         if !self.accepts_input() {
             self.release_keys();
+        } else if let Some(text) = self.clipboard.allowed() {
+            // And when input goes there again, the local copy read while
+            // it could not.
+            self.offer_clipboard(&text);
         }
         // A prompt is answered in the main window, which may not be the one
         // in front: it is asked for once when one comes up.
@@ -1595,6 +1602,58 @@ fn on_off(on: bool) -> &'static str {
     if on { "on" } else { "off" }
 }
 
+/// The clipboard's memory, `SessionClipboard.lastSeen`'s rule: the last
+/// text seen crossing either way is not sent back where it came from.
+/// Beside it, the local read that came while input had nowhere to go,
+/// for when it has.
+#[derive(Default)]
+struct Crossing {
+    seen: Option<String>,
+    held: Option<String>,
+}
+
+impl Crossing {
+    /// A read of the local clipboard: what to offer the far end now.
+    /// Remembered as seen when it may be offered, and held until it may
+    /// otherwise; the latest read is what the clipboard holds, so it takes
+    /// the place of anything held before it, even when it is nothing new.
+    fn local(&mut self, text: String, may_offer: bool) -> Option<String> {
+        self.held = None;
+        if text.is_empty() || self.seen.as_deref() == Some(text.as_str()) {
+            None
+        } else if may_offer {
+            self.seen = Some(text.clone());
+            Some(text)
+        } else {
+            self.held = Some(text);
+            None
+        }
+    }
+
+    /// Input may go to the far end: the read held while it could not.
+    fn allowed(&mut self) -> Option<String> {
+        let text = self.held.take()?;
+        self.local(text, true)
+    }
+
+    /// What the far end copied, under the setting that takes it: whether
+    /// it is new, and so to be set here. Once set it is the local
+    /// clipboard, so a read held from before it is old.
+    fn far(&mut self, text: &str) -> bool {
+        if text.is_empty() || self.seen.as_deref() == Some(text) {
+            return false;
+        }
+        self.seen = Some(text.to_string());
+        self.held = None;
+        true
+    }
+
+    /// What the far end was last given or gave, for the overlay.
+    fn seen(&self) -> Option<&str> {
+        self.seen.as_deref()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::panel::NAME_MAX;
@@ -1643,6 +1702,36 @@ mod tests {
         assert_eq!(name.chars().count(), NAME_MAX);
         assert!(name.ends_with("é…"), "{name}");
         assert_eq!(printable(&"x".repeat(NAME_MAX)), "x".repeat(NAME_MAX), "up to the cap, kept whole");
+    }
+
+    #[test]
+    fn a_copy_read_while_input_goes_nowhere_is_offered_when_it_does() {
+        let mut clip = Crossing::default();
+        // Read while a prompt is up (or view only, or connecting): kept,
+        // not offered, and not yet seen.
+        assert_eq!(clip.local("one".into(), false), None);
+        assert_eq!(clip.seen(), None);
+        // Offered once input goes to the far end, and only once.
+        assert_eq!(clip.allowed().as_deref(), Some("one"));
+        assert_eq!(clip.allowed(), None);
+        assert_eq!(clip.seen(), Some("one"));
+        // The same text again is not new; another is offered at once.
+        assert_eq!(clip.local("one".into(), true), None);
+        assert_eq!(clip.local("two".into(), true).as_deref(), Some("two"));
+        // A later read takes the place of a held one, even one that is
+        // what the far end already has.
+        assert_eq!(clip.local("three".into(), false), None);
+        assert_eq!(clip.local("two".into(), false), None);
+        assert_eq!(clip.allowed(), None);
+        // The far end's copy is set here, so a read held from before it
+        // is old; and it is not offered back.
+        assert_eq!(clip.local("four".into(), false), None);
+        assert!(clip.far("theirs"));
+        assert_eq!(clip.allowed(), None);
+        assert_eq!(clip.local("theirs".into(), true), None);
+        assert!(!clip.far("theirs"), "the same copy twice is set once");
+        assert!(!clip.far(""), "nothing is not a copy");
+        assert_eq!(clip.local(String::new(), true), None);
     }
 
     #[test]
