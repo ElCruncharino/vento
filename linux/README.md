@@ -449,6 +449,19 @@ it keep the property until the window manager's `PropertyNotify` says it
 changed (counted with the RECORD extension on the rig: two `GetProperty` a
 second while a session drew, before; one at each minimise and restore and
 none otherwise, after).
+Neither says anything of a window whose frame the window manager unmapped
+to put its workspace away — i3's workspaces not on any output and its
+scratchpad, a monitor i3 lost, Openbox's other desktops: X sends no
+visibility event for a window that stops being viewable, and i3 sets
+`_NET_WM_STATE_HIDDEN` only on a tab that is not the active one. So the
+server is also asked whether the window is viewable at all
+(`GetWindowAttributes`, on winit's connection), once a second while frames
+run — one round trip a second, and a put-away window pauses within that;
+the visibility event its frame's remap brings makes it live at once. The X
+server's own screen saver and a lock screen cover the window with one of
+their own, which the visibility events report as covered, and the session
+pauses behind them as behind any window and resumes when they go; a
+monitor blanked by DPMS alone changes nothing, and the session stays live.
 Wayland has no minimised state, but xdg-shell v6 has `suspended`, which a
 compositor may send while the window cannot be seen at all (minimised, on a
 workspace not shown); `patches/winit/0002` makes winit report it as
@@ -456,7 +469,14 @@ workspace not shown); `patches/winit/0002` makes winit report it as
 sway 1.11 and niri do not — a session never pauses there; a hidden window's
 frames stop with its frame callbacks while the backend keeps receiving.
 Checked on `scripts/testx11` for tigervnc, libvnc, rfb and freerdp: live with
-another window focused, paused minimised or covered, live again restored; and
+another window focused, paused minimised or covered, live again restored;
+on Openbox, paused on another desktop and live again back on this one; on
+an Xvfb split into two monitors under i3 with tigervnc (the socket's receive
+queue filling to 15 KB within a second against an animated far end, 0 live):
+live on the other monitor's workspace with the focus elsewhere and with a
+fullscreen window on the focused monitor, paused with its workspace switched
+away, in the scratchpad, as an inactive tab, under the server's screen saver
+window and with its monitor gone, live again the moment each was undone; and
 on Wayland with tigervnc in a headless tinywl (wlroots 0.20) made to suspend
 its windows on a signal: paused (the socket's receive queue filled to 10 KB,
 no commits) while suspended, live again when it was not.
@@ -809,7 +829,7 @@ edge the pointer carries on at that window's scale onto the rest of the far
 end's desktop, as far as the desktop's own edges, so dragging a window of the
 far end's from one pop-out into the window showing the monitor beside it
 moves it there. The session pauses (see below) only while every window is
-minimised or covered. The texture is sampled nearest only while every
+minimised, put away or covered. The texture is sampled nearest only while every
 window draws the desktop one to one, and linear otherwise (at one to one, on
 whole device pixels, linear draws the same picture), so that two windows at
 different scales do not change the sampler back and forth every frame.

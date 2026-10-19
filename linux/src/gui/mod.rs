@@ -273,6 +273,11 @@ struct Surface {
     occluded: bool,
     /// winit's `is_minimized` when last asked: X11 says, elsewhere `None`.
     minimized: Option<bool>,
+    /// X11's `GetWindowAttributes`, asked whether the window is viewable at
+    /// all (see `App::sync_shown`); `None` elsewhere.
+    viewable: Option<x11::Viewable>,
+    /// What it last said, and when it is next due.
+    viewability: x11::Viewability,
     /// Wayland's keyboard shortcuts inhibitor, which is a surface's own;
     /// X11's grab is the client's, and the `App`'s.
     inhibitor: Option<wayland::Shortcuts>,
@@ -285,7 +290,17 @@ struct Surface {
 impl Surface {
     /// Whether the window can be seen (see `App::sync_shown`).
     fn shown(&self) -> bool {
-        !self.occluded && self.minimized != Some(true)
+        !self.occluded && self.minimized != Some(true) && !self.viewability.hidden()
+    }
+
+    /// Ask X whether the window is viewable, when an answer is due.
+    fn ask_viewable(&mut self) {
+        if let Some(viewable) = &self.viewable {
+            let now = Instant::now();
+            if self.viewability.due(now) {
+                self.viewability.answered(viewable.ask(), now);
+            }
+        }
     }
 }
 
@@ -556,6 +571,8 @@ impl App {
             Surface {
                 inhibitor: wayland::Shortcuts::new(&window),
                 output: window.current_monitor().and_then(|m| m.name()),
+                viewable: x11::Viewable::new(&window),
+                viewability: x11::Viewability::default(),
                 window,
                 surface: Some(surface),
                 config,
@@ -702,7 +719,14 @@ impl App {
     /// property from its change notifications (`patches/winit/0005`) — and
     /// the server's visibility events, which winit
     /// reports as `Occluded` — under a compositing manager the window is
-    /// never reported covered, and then only minimising pauses. Wayland
+    /// never reported covered, and then only minimising pauses. Neither
+    /// says anything of a window whose frame the window manager unmapped
+    /// (i3's workspaces not on any output and its scratchpad, Openbox's
+    /// other desktops): X sends no visibility event for a window that
+    /// stops being viewable, and i3 sets `_NET_WM_STATE_HIDDEN` only on an
+    /// inactive tab. So the server is asked whether the window is viewable
+    /// at all, once a second while frames run (`x11::Viewable`), and the
+    /// visibility event the frame's remap brings ends that at once. Wayland
     /// has no minimised state, but xdg-shell v6 has `suspended`, which a
     /// compositor may send while the window cannot be seen at all
     /// (minimised, on a workspace not shown), and which our winit patch
@@ -743,6 +767,7 @@ impl App {
             return;
         };
         surface.minimized = surface.window.is_minimized();
+        surface.ask_viewable();
         let viewport = surface.viewport;
         self.sync_shown();
         self.repaint_at.lock().unwrap().remove(&viewport);
@@ -1323,6 +1348,9 @@ impl ApplicationHandler<Wake> for App {
                 if let Some(surface) = self.windows.get_mut(&id) {
                     surface.occluded = *occluded;
                     surface.minimized = window.is_minimized();
+                    // X sends a visibility event only for a viewable window:
+                    // a frame mapped again is seen now, not at the next ask.
+                    surface.viewability.seen();
                 }
                 self.sync_shown();
             }

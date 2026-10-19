@@ -32,6 +32,15 @@
 //! And relative mode's [`Fence`]: four XFixes pointer barriers on the
 //! window's edges, so that a captured pointer cannot leave the window
 //! between a move and the warp back to the centre that undoes it.
+//!
+//! And whether the window is viewable at all ([`Viewable`]): a window
+//! manager that unmaps a window's frame to put its workspace away (i3's
+//! workspaces not on any output and its scratchpad, Openbox's other
+//! desktops) tells the window nothing — the unmap is the frame's, X sends
+//! no visibility event for a window that stops being viewable, and i3 sets
+//! `_NET_WM_STATE_HIDDEN` only on a tab that is not the active one. The
+//! server knows, though, and says so to a `GetWindowAttributes`, which
+//! [`Viewability`] asks for once a second while frames run.
 
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
 use std::time::{Duration, Instant};
@@ -39,7 +48,7 @@ use winit::dpi::PhysicalSize;
 use winit::window::Window;
 use x11rb::connection::Connection;
 use x11rb::protocol::xfixes::{BarrierDirections, ConnectionExt as _};
-use x11rb::protocol::xproto::{ConnectionExt as _, GrabMode, GrabStatus, InputFocus};
+use x11rb::protocol::xproto::{ConnectionExt as _, GrabMode, GrabStatus, InputFocus, MapState};
 use x11rb::xcb_ffi::XCBConnection;
 
 /// How long a refused grab waits before it is asked for again.
@@ -433,6 +442,73 @@ impl Drop for Fence {
     }
 }
 
+/// How often the server is asked whether the window is viewable, while
+/// frames run: a round trip, which once a second is nothing (once a frame
+/// is what `patches/winit/0005` took out of `is_minimized`).
+pub const ASK: Duration = Duration::from_secs(1);
+
+/// Asks the X server whether the window is viewable: mapped, and every
+/// window above it in the tree too. The window manager's frame unmapped —
+/// a workspace put away, i3's scratchpad, Openbox's other desktops — is
+/// what makes it not. Over winit's connection like the keyboard grab.
+pub struct Viewable {
+    conn: XCBConnection,
+    window: u32,
+}
+
+impl Viewable {
+    /// `None` on anything but an X11 window.
+    pub fn new(window: &Window) -> Option<Viewable> {
+        let (conn, raw_window) = winit_connection(window, "the map state")?;
+        Some(Viewable { conn, window: raw_window })
+    }
+
+    /// Whether the window is viewable now; `None` when the server would not
+    /// say (the window gone).
+    pub fn ask(&self) -> Option<bool> {
+        let reply = self.conn.get_window_attributes(self.window).ok()?.reply().ok()?;
+        Some(reply.map_state == MapState::VIEWABLE)
+    }
+}
+
+/// What the window's viewability is taken to be: the last answer, and when
+/// the next one is due. A visibility event is the server's word that the
+/// window is viewable (it sends none for one that is not), so one ends an
+/// "unviewable" at once, without waiting for the next ask — a workspace
+/// brought back is live the moment its frame is mapped.
+#[derive(Debug, Default)]
+pub struct Viewability {
+    /// The last answer was that the window is not viewable.
+    unviewable: bool,
+    asked: Option<Instant>,
+}
+
+impl Viewability {
+    /// Whether the window is not viewable, as far as is known.
+    pub fn hidden(&self) -> bool {
+        self.unviewable
+    }
+
+    /// Whether the server should be asked again now.
+    pub fn due(&self, now: Instant) -> bool {
+        self.asked.is_none_or(|at| now.saturating_duration_since(at) >= ASK)
+    }
+
+    /// The server's answer to an ask made at `now`; `None` leaves what was
+    /// known (a window the server does not know is being closed).
+    pub fn answered(&mut self, viewable: Option<bool>, now: Instant) {
+        self.asked = Some(now);
+        if let Some(viewable) = viewable {
+            self.unviewable = !viewable;
+        }
+    }
+
+    /// A visibility event came for the window: it is viewable.
+    pub fn seen(&mut self) {
+        self.unviewable = false;
+    }
+}
+
 fn refusal(status: GrabStatus) -> &'static str {
     match status {
         GrabStatus::ALREADY_GRABBED => "already grabbed",
@@ -460,5 +536,28 @@ mod tests {
         );
         // Wholly off it: nothing that is a point.
         assert!(edges((-500, -500, 100, 100)).is_empty());
+    }
+
+    #[test]
+    fn the_window_is_viewable_until_the_server_says_not_and_seen_ends_that() {
+        let start = Instant::now();
+        let mut v = Viewability::default();
+        // Nothing known yet: taken as viewable, and asked at once.
+        assert!(!v.hidden());
+        assert!(v.due(start));
+        v.answered(Some(true), start);
+        assert!(!v.hidden());
+        // Once a second, not every frame.
+        assert!(!v.due(start + ASK / 2));
+        assert!(v.due(start + ASK));
+        // The frame was unmapped: hidden until the server says otherwise.
+        v.answered(Some(false), start + ASK);
+        assert!(v.hidden());
+        // The server would not say (the window is going): what was known stays.
+        v.answered(None, start + 2 * ASK);
+        assert!(v.hidden());
+        // A visibility event is the server's word that it is viewable again.
+        v.seen();
+        assert!(!v.hidden());
     }
 }
