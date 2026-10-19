@@ -592,7 +592,8 @@ impl Session<'_> {
     ) -> Result<Channel> {
         let mut password = self.ticket.clone();
         // The certificate is asked about once, on the first channel: the other
-        // three reach the same server moments later and would present it again.
+        // three reach the same server moments later and must present it again
+        // (`tls::Connector::admit`), which they are held to without a question.
         let mut asked = false;
         loop {
             // The borrow of `handler` the trust question needs ends with this
