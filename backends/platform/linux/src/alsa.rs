@@ -8,7 +8,7 @@
 //! pulse socket).
 //!
 //! Declared here rather than taken from a crate, as `ffmpeg.rs` declares
-//! its C: a dozen functions of `libasound.so.2`, whose ABI has not changed
+//! its C: nine functions of `libasound.so.2`, whose ABI has not changed
 //! in twenty years, linked by name. It is the one sound library the Linux
 //! client links (PipeWire's is loaded at run time, where there is one):
 //! TigerVNC's QEMU audio and FreeRDP's rdpsnd play through `media::audio`

@@ -88,10 +88,6 @@ impl Audio {
     pub fn set_title(&self, title: &str) {
         self.title.set(title);
     }
-
-    pub fn output(&self) -> Output {
-        self.output
-    }
 }
 
 impl Outputs for Audio {

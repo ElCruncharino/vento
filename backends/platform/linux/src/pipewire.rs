@@ -7,7 +7,7 @@
 //!
 //! **Loaded, not linked.** libpipewire-0.3 is opened with `dlopen` when the
 //! first stream wants it (it needs nothing but libc, and loads its SPA
-//! plugins itself), and the twenty functions this uses are looked up by
+//! plugins itself), and the twenty-two functions this uses are looked up by
 //! hand, as `alsa.rs` declares libasound's: no headers, no bindgen, no
 //! link-time dependency, so the binary runs where PipeWire is not installed
 //! and plays through ALSA there. The ABI used is libpipewire's stable one
@@ -988,11 +988,11 @@ unsafe extern "C" fn on_process(data: *mut c_void) {
         // queue that filled while the stream connected is trimmed to its
         // target, and the cycle is part of the target.
         let mut t = PwTime::default();
-        let mut latency = format.duration(n);
-        if (api.stream_get_time_n)(bound.stream, &mut t, size_of::<PwTime>()) == 0 && t.rate_denom > 0 {
-            let downstream = t.delay.max(0) as f64 * t.rate_num as f64 / t.rate_denom as f64;
-            latency += Duration::from_secs_f64(downstream) + format.duration(t.buffered as usize);
-        }
+        let latency = if (api.stream_get_time_n)(bound.stream, &mut t, size_of::<PwTime>()) == 0 {
+            heard_in(format, n, &t)
+        } else {
+            format.duration(n)
+        };
         let micros = latency.as_micros() as u64;
         slot.latency_us.store(micros, Ordering::Relaxed);
         tell(bound, n, micros);
@@ -1049,6 +1049,21 @@ static CORE_EVENTS: PwProxyEvents = PwProxyEvents {
     bound_props: None,
 };
 
+/// How long until the first of a cycle's `n` frames is heard: the cycle,
+/// what the stream's converter holds, and what is downstream of the stream
+/// (the graph's delay, in its clock's ticks) where the time says its clock.
+/// Neither `Duration::from_secs_f64` nor `+`, which panic past what a
+/// `Duration` holds, on PipeWire's data thread: a delay no `Duration` holds
+/// (a nonsense delay or rate from the graph) counts as none.
+fn heard_in(format: Format, n: usize, t: &PwTime) -> Duration {
+    let mut latency = format.duration(n).saturating_add(format.duration(t.buffered as usize));
+    if t.rate_denom > 0 {
+        let downstream = t.delay.max(0) as f64 * t.rate_num as f64 / t.rate_denom as f64;
+        latency = latency.saturating_add(Duration::try_from_secs_f64(downstream).unwrap_or_default());
+    }
+    latency
+}
+
 /// SPA's channel positions for a stream in WAVEFORMATEXTENSIBLE's order,
 /// which is what RDP, QEMU, SPICE and the decoders hand over: FL FR FC LFE
 /// RL RR SL SR.
@@ -1058,10 +1073,27 @@ fn positions(channels: usize) -> Vec<u32> {
     if channels == 1 { vec![MONO] } else { ORDER[..channels.min(8)].to_vec() }
 }
 
+/// A pod as `pw_stream_connect` is handed it: in 64-bit words, since SPA
+/// reads a pod as `struct spa_pod` and its values in place, which wants it
+/// 8-byte aligned (a `Vec<u8>` is aligned as malloc happens to align it).
+/// Every pod is a whole number of words, padding included.
+struct Pod(Vec<u64>);
+
+impl Pod {
+    fn as_ptr(&self) -> *const u8 {
+        self.0.as_ptr().cast()
+    }
+
+    #[cfg(test)]
+    fn bytes(&self) -> Vec<u8> {
+        self.0.iter().flat_map(|w| w.to_ne_bytes()).collect()
+    }
+}
+
 /// The EnumFormat parameter for S16 interleaved at `format`: what SPA's
 /// `spa_format_audio_raw_build` makes, laid out by hand, since the builder
 /// is inline functions in SPA's headers, nothing a `dlopen` reaches.
-fn format_pod(format: Format) -> Vec<u8> {
+fn format_pod(format: Format) -> Pod {
     const SPA_TYPE_ID: u32 = 3;
     const SPA_TYPE_INT: u32 = 4;
     const SPA_TYPE_ARRAY: u32 = 13;
@@ -1124,7 +1156,7 @@ fn format_pod(format: Format) -> Vec<u8> {
     word(&mut pod, body.len() as u32);
     word(&mut pod, SPA_TYPE_OBJECT);
     pod.extend_from_slice(&body);
-    pod
+    Pod(pod.chunks_exact(8).map(|w| u64::from_ne_bytes(w.try_into().unwrap())).collect())
 }
 
 #[cfg(test)]
@@ -1140,15 +1172,36 @@ mod tests {
                       040000000300000001000000000000000100010000000000040000000300000003010000000000000300010000000000\
                       040000000400000044ac0000000000000400010000000000040000000400000002000000000000000500010000000000\
                       100000000d00000004000000030000000300000004000000";
-        let pod = format_pod(Format::new(44_100, 2).unwrap());
+        let pod = format_pod(Format::new(44_100, 2).unwrap()).bytes();
         let hex: String = pod.iter().map(|b| format!("{b:02x}")).collect();
         assert_eq!(hex, golden);
+    }
+
+    /// The cycle, the converter's frames and the graph's delay, and a time
+    /// that says something no `Duration` holds counted as no delay rather
+    /// than panicking the data thread.
+    #[test]
+    fn a_nonsense_delay_counts_as_none() {
+        let format = Format::new(48_000, 2).unwrap();
+        let t = |delay: i64, rate_num: u32, rate_denom: u32, buffered: u64| PwTime {
+            delay,
+            rate_num,
+            rate_denom,
+            buffered,
+            ..PwTime::default()
+        };
+        // 480 frames, 240 in the converter, 960 ticks of a 48 kHz clock.
+        assert_eq!(heard_in(format, 480, &t(960, 1, 48_000, 240)), Duration::from_millis(35));
+        assert_eq!(heard_in(format, 480, &t(960, 1, 0, 0)), Duration::from_millis(10));
+        assert_eq!(heard_in(format, 480, &t(-5, 1, 48_000, 0)), Duration::from_millis(10));
+        assert_eq!(heard_in(format, 480, &t(i64::MAX, u32::MAX, 1, 0)), Duration::from_millis(10));
+        assert!(heard_in(format, 480, &t(0, 1, 1, u64::MAX)) >= Duration::from_millis(10));
     }
 
     #[test]
     fn a_pods_size_is_its_body_and_the_positions_follow_the_channels() {
         for channels in 1..=8 {
-            let pod = format_pod(Format::new(48_000, channels).unwrap());
+            let pod = format_pod(Format::new(48_000, channels).unwrap()).bytes();
             let size = u32::from_ne_bytes(pod[..4].try_into().unwrap()) as usize;
             assert_eq!(pod.len(), 8 + size, "{channels} channels");
             assert_eq!(pod.len() % 8, 0);

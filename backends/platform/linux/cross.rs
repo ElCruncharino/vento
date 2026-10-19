@@ -162,7 +162,7 @@ pub fn meson_cross_file(target: &Target, tools: &Tools) -> Option<String> {
         .command
         .iter()
         .chain(tools.target_flags.iter())
-        .map(|s| quote(&s))
+        .map(|s| quote(s))
         .collect();
     // The CPU is the triple's first part, which is more than the family
     // where it says more (`armv7`, `i686`).
