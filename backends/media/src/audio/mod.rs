@@ -164,6 +164,28 @@ impl Format {
     }
 }
 
+/// A gain, as a factor: 1 is as sent, 0 is silence. Clamped to 0..=4, since
+/// past that a 16-bit sample only clips, and 1 for anything that is not a
+/// number. Kept as an `f32`'s bits, so that the device's thread reads it
+/// without a lock. The session's ([`Controls::set_gain`]) and each stream's
+/// ([`Stream::set_gain`]) are one of these each, over one another.
+pub(crate) struct Gain(AtomicU32);
+
+impl Gain {
+    pub(crate) fn new() -> Gain {
+        Gain(AtomicU32::new(1.0f32.to_bits()))
+    }
+
+    pub(crate) fn set(&self, gain: f32) {
+        let gain = if gain.is_finite() { gain.clamp(0.0, 4.0) } else { 1.0 };
+        self.0.store(gain.to_bits(), Ordering::Relaxed);
+    }
+
+    pub(crate) fn get(&self) -> f32 {
+        f32::from_bits(self.0.load(Ordering::Relaxed))
+    }
+}
+
 /// What a session's sound is played at, which whoever holds the session can
 /// change while it plays, from any thread: a gain over every stream, a mute,
 /// and whether anything is playing at all — and what the far end can be
@@ -181,8 +203,7 @@ impl Format {
 /// [`offer_enable`]: Controls::offer_enable
 /// [`set_enabled`]: Controls::set_enabled
 pub struct Controls {
-    /// An `f32`'s bits, so that the device's thread reads it without a lock.
-    gain: AtomicU32,
+    gain: Gain,
     muted: AtomicBool,
     /// The lateness remembered, in microseconds.
     late: AtomicU64,
@@ -366,7 +387,7 @@ impl Playback {
 impl Controls {
     pub fn new() -> Controls {
         Controls {
-            gain: AtomicU32::new(1.0f32.to_bits()),
+            gain: Gain::new(),
             muted: AtomicBool::new(false),
             late: AtomicU64::new(0),
             playing: Mutex::new(Playing {
@@ -386,12 +407,11 @@ impl Controls {
     /// 0 is silence. Clamped to 0..=4, since past that a 16-bit sample only
     /// clips.
     pub fn set_gain(&self, gain: f32) {
-        let gain = if gain.is_finite() { gain.clamp(0.0, 4.0) } else { 1.0 };
-        self.gain.store(gain.to_bits(), Ordering::Relaxed);
+        self.gain.set(gain);
     }
 
     pub fn gain(&self) -> f32 {
-        f32::from_bits(self.gain.load(Ordering::Relaxed))
+        self.gain.get()
     }
 
     /// Silence, at once and until unmuted: what is queued keeps draining

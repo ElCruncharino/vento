@@ -5,13 +5,13 @@
 //! policy over it.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use super::resample::Resampler;
 use super::rhythm::{Rhythm, WINDOW};
-use super::{CLEAN, CLEAN_START, Controls, Format, LIMIT, MARGIN, MARGIN_MAX, MARGIN_START, MARGIN_STEP};
+use super::{CLEAN, CLEAN_START, Controls, Format, Gain, LIMIT, MARGIN, MARGIN_MAX, MARGIN_START, MARGIN_STEP};
 
 /// How long a queue that ran dry may stay dry with the far end's sound
 /// still to come: sound that arrives again sooner was late, and the session
@@ -101,8 +101,8 @@ pub struct Stats {
 pub struct Queue {
     format: Format,
     controls: Arc<Controls>,
-    /// The stream's own gain, an `f32`'s bits.
-    gain: AtomicU32,
+    /// The stream's own gain.
+    gain: Gain,
     /// The device's buffer and the most it takes at once, in microseconds:
     /// see [`Queue::set_device`].
     buffer: AtomicU64,
@@ -168,7 +168,7 @@ impl Queue {
         Queue {
             format,
             controls,
-            gain: AtomicU32::new(1.0f32.to_bits()),
+            gain: Gain::new(),
             buffer: AtomicU64::new(0),
             period: AtomicU64::new(0),
             output: Mutex::new(None),
@@ -205,8 +205,7 @@ impl Queue {
 
     /// The stream's own gain: see [`Stream::set_gain`](super::Stream::set_gain).
     pub fn set_gain(&self, gain: f32) {
-        let gain = if gain.is_finite() { gain.clamp(0.0, 4.0) } else { 1.0 };
-        self.gain.store(gain.to_bits(), Ordering::Relaxed);
+        self.gain.set(gain);
     }
 
     /// What the device holds once it is running, `buffer` — which a device
@@ -568,7 +567,7 @@ impl Queue {
             }
         };
         out[filled * dch..].fill(0);
-        let factor = self.controls.factor(f32::from_bits(self.gain.load(Ordering::Relaxed)));
+        let factor = self.controls.factor(self.gain.get());
         gain(&mut out[..filled * dch], factor);
     }
 
