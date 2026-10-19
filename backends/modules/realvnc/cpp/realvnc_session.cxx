@@ -445,10 +445,13 @@ public:
                         int flags) override;
 
 private:
+    bool live() const;
+
     Session *session_;
 };
 
-/* The bridges the core still holds, kept so that it holds something. */
+/* The bridges the core still holds, kept so that it holds something. Core
+   thread only. */
 std::vector<std::shared_ptr<Bridge>> &graveyard() {
     static auto *the = new std::vector<std::shared_ptr<Bridge>>;
     return *the;
@@ -495,11 +498,13 @@ public:
        work, the connect timeout included, is posted to the core thread. */
     void start() {
         CoreThread &core = CoreThread::instance();
-        graveyard().push_back(bridge_);
         core.post([this] {
             if (dead_.load()) {
                 return;
             }
+            // Kept before the core is handed it, on the thread the graveyard
+            // is only ever touched on.
+            graveyard().push_back(bridge_);
             // Armed here rather than by the caller, so that the clock is only
             // ever touched on the core thread.
             connectTimeout_ = CoreThread::instance().postDelayed([this] { onConnectTimeout(); },
@@ -530,6 +535,12 @@ public:
     }
 
     const vento_callbacks &cb() const { return cb_; }
+
+    /* `closed` has gone out. */
+    bool over() {
+        const std::lock_guard<std::mutex> guard(lock_);
+        return closedSent_;
+    }
 
     // ---- calls in, from any thread ------------------------------------------
 
@@ -634,11 +645,6 @@ public:
                 hs->applyOptions();
             }
         });
-    }
-
-    bool viewOnly() {
-        const std::lock_guard<std::mutex> guard(lock_);
-        return get(options_, "ViewOnly", "false") == "true";
     }
 
     /* Everything `ConnectionInfoBindings` knows, gathered on the core thread.
@@ -811,6 +817,7 @@ public:
     /* `RealVncBackend.disconnect`: close it *and* retire the handle, which is
        what stops the close happening twice. */
     void disconnect() {
+        asked_.store(true);
         if (hs_.load()) {
             reap(true);
         } else {
@@ -827,6 +834,7 @@ public:
        is leaked is theirs (rule 3). */
     void destroy() {
         dead_.store(true);
+        asked_.store(true);
         reap(true);
         // A moment for the core's own `sessionClosed` to follow the close, so
         // that the usual ending is the usual one; the platform's own wait for
@@ -850,6 +858,9 @@ public:
     void onConnSuccess() {
         LOGI("connSuccess");
         CoreThread::instance().cancel(connectTimeout_);
+        // An error the core showed before it got here — a wrong password
+        // asked again — is not why the session ends later.
+        lastError_.clear();
         int w, h;
         {
             const std::lock_guard<std::mutex> guard(lock_);
@@ -930,7 +941,10 @@ public:
         // close that is still queued do so.
         coreClosed_ = true;
         reap(false);
-        closed(lastError_);
+        // A close that was asked for says nothing, whatever the core showed
+        // on the way out: the error a disconnect's own close brings about,
+        // or one from earlier in the session, is not a reason.
+        closed(asked_.load() ? "" : lastError_);
     }
 
     void onPromptPasswd(int64_t cookie, const std::string &serverName, const char *userName,
@@ -1291,6 +1305,7 @@ private:
 
     std::atomic<HostedSession *> hs_{nullptr};
     std::atomic<bool> dead_{false};
+    std::atomic<bool> asked_{false}; // disconnect or destroy: the ending is ours
 
     std::mutex pixels_;            // the scale buffer, against a concurrent resize
     uint8_t *buffer_ = nullptr;    // the core's
@@ -1318,29 +1333,47 @@ private:
 
 // ---- the bridge ---------------------------------------------------------------
 
+/* Whether a call of the core's still reaches the session: not once it is
+   retired, and not once `closed` has gone out either. The core can call back
+   between being told to close and saying it has — a `connSuccess`, a prompt,
+   a paint, after the connect timeout's close — and `closed` is the last
+   callback a session makes. Only `sessionClosed` passes after it, which
+   says nothing more and lets a close still queued know not to be sent. */
+bool Bridge::live() const {
+    return session_ && !session_->over();
+}
+
+/* A question nobody will answer, declined — and posted, never answered from
+   inside the call that asked it (rule 5). */
+static void decline(std::function<void(HostedCore *)> answer) {
+    CoreThread::instance().post([answer = std::move(answer)] {
+        answer(CoreThread::instance().core());
+    });
+}
+
 void Bridge::connSuccess() {
-    if (session_) session_->onConnSuccess();
+    if (live()) session_->onConnSuccess();
 }
 void Bridge::setDesktopSize(int width, int height) {
-    if (session_) session_->onDesktopSize(width, height);
+    if (live()) session_->onDesktopSize(width, height);
 }
 void Bridge::drawRegion(int x, int y, int width, int height) {
-    if (session_) session_->onDrawRegion(x, y, width, height);
+    if (live()) session_->onDrawRegion(x, y, width, height);
 }
 void Bridge::framebufferUpdateEnd() {
-    if (session_) session_->onFrameEnd();
+    if (live()) session_->onFrameEnd();
 }
 void Bridge::setCursor(const uint32_t *pixels, int width, int height, int negHotX, int negHotY) {
-    if (session_) session_->onCursor(pixels, width, height, negHotX, negHotY);
+    if (live()) session_->onCursor(pixels, width, height, negHotX, negHotY);
 }
 void Bridge::bell() {
-    if (session_) session_->onBell();
+    if (live()) session_->onBell();
 }
 bool Bridge::getClipboard(std::string *out) {
-    return session_ ? session_->onGetClipboard(out) : false;
+    return live() ? session_->onGetClipboard(out) : false;
 }
 void Bridge::setClipboard(const std::string &text) {
-    if (session_) session_->onSetClipboard(text);
+    if (live()) session_->onSetClipboard(text);
 }
 void Bridge::sessionClosed() {
     if (session_) session_->onSessionClosed();
@@ -1348,48 +1381,52 @@ void Bridge::sessionClosed() {
 void Bridge::promptPasswd(int64_t cookie, const std::string &serverName, const char *userName,
                           bool wantsPassword, const std::string &catchphrase,
                           const std::string &signature, const std::string &instructions) {
-    if (session_) {
+    if (live()) {
         session_->onPromptPasswd(cookie, serverName, userName, wantsPassword, catchphrase,
                                  signature, instructions);
     } else {
-        CoreThread::instance().core()->passwdResult(cookie, false, nullptr, nullptr);
+        decline([cookie](HostedCore *core) {
+            core->passwdResult(cookie, false, nullptr, nullptr);
+        });
     }
 }
 void Bridge::promptSecurity(int64_t cookie, int identityState, int encryptionState,
                             const std::string &signature, const std::string &catchphrase,
                             const std::string &name, const std::string &matchingName) {
-    if (session_) {
+    if (live()) {
         session_->onPromptSecurity(cookie, identityState, encryptionState, signature,
                                    catchphrase, name, matchingName);
     } else {
-        CoreThread::instance().core()->securityResult(cookie, false, false, false);
+        decline([cookie](HostedCore *core) { core->securityResult(cookie, false, false, false); });
     }
 }
 void Bridge::msgBox(int64_t cookie, const std::string &message, int flags,
                     const char *customButton) {
-    if (session_) {
+    if (live()) {
         session_->onMsgBox(cookie, message, flags, customButton);
     } else {
-        CoreThread::instance().core()->msgBoxResult(cookie, false);
+        LOGI("message after the end (flags %d): %s", flags, message.c_str());
+        decline([cookie](HostedCore *core) { core->msgBoxResult(cookie, false); });
     }
 }
 void Bridge::status(const std::string &text) {
-    if (session_) session_->onStatus(text);
+    if (live()) session_->onStatus(text);
 }
 void Bridge::reconnecting(const std::string &message, const std::string &detail) {
-    if (session_) session_->onReconnecting(message, detail);
+    if (live()) session_->onReconnecting(message, detail);
 }
 void Bridge::reconnected() {
-    if (session_) session_->onReconnected();
+    if (live()) session_->onReconnected();
 }
 void Bridge::saveCredentials(const std::string &userName, const std::string &password) {
-    if (session_) session_->onSaveCredentials(userName, password);
+    if (live()) session_->onSaveCredentials(userName, password);
 }
 void Bridge::saveIdentity(const std::string &identity) {
+    // Kept, not delivered: the identity is read out after the end.
     if (session_) session_->onSaveIdentity(identity);
 }
 void Bridge::securityBanner(const std::string &text, const std::string &background, int flags) {
-    if (session_) session_->onSecurityBanner(text, background, flags);
+    if (live()) session_->onSecurityBanner(text, background, flags);
 }
 
 // ---- the vtable ---------------------------------------------------------------

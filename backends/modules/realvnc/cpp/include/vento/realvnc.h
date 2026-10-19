@@ -104,7 +104,9 @@ const char *vento_realvnc_version(void);
    `traffic` is received bytes only, read out of the core's own line-speed
    estimator the way `RealVncTraffic` reads it, and is false until that
    number has been checked against a published one; the sent count is always
-   zero, because the core has none and the vtable has no way to say so.
+   zero, because the core has none, and the module's crate says it is not
+   counted (`Behaviour::sent_counted`), so that it is shown as unknown rather
+   than as nothing sent.
 
    `answer_trust` answers whichever of `security_needed` and `message` has
    been waiting longest, with no remember; `vento_realvnc_answer_security`

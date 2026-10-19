@@ -14,7 +14,11 @@
 // wraps these two streams in whatever its platform keeps secrets with; what
 // the core reads and writes through them does not change.
 
+#include <errno.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -98,6 +102,39 @@ void inputHooks(jnivm::ENV *E, const std::shared_ptr<jnivm::Class> &c) {
     c->HookInstanceFunction(E, "close", [](jnivm::ENV *, jnivm::Object *) {});
 }
 
+/* `data` as the whole of `path`, which only this user can read from the
+   moment it exists: a temporary file beside it, made 0600 by mkstemp, written
+   and then renamed over it. Opened in place and chmod'ed after, as it was, a
+   private key or the password store was readable by anyone on the machine
+   (under the usual umask) for as long as the write took, and a crash between
+   the truncate and the write left nothing where the old one was. */
+void writeWhole(const std::string &path, const std::vector<uint8_t> &data) {
+    std::string temporary = path + ".XXXXXX";
+    const int fd = mkstemp(temporary.data());
+    if (fd < 0) {
+        LOGW("%s: could not be written (%s)", path.c_str(), strerror(errno));
+        return;
+    }
+    size_t done = 0;
+    while (done < data.size()) {
+        const ssize_t n = write(fd, data.data() + done, data.size() - done);
+        if (n < 0 && errno == EINTR) {
+            continue;
+        }
+        if (n <= 0) {
+            break;
+        }
+        done += (size_t) n;
+    }
+    const bool ok = done == data.size() && fsync(fd) == 0;
+    const int err = errno;
+    close(fd);
+    if (!ok || rename(temporary.c_str(), path.c_str()) != 0) {
+        LOGW("%s: could not be written (%s)", path.c_str(), strerror(ok ? errno : err));
+        unlink(temporary.c_str());
+    }
+}
+
 template <int N>
 void outputHooks(jnivm::ENV *E, const std::shared_ptr<jnivm::Class> &c) {
     c->HookInstanceFunction(E, "write", [](jnivm::ENV *, jnivm::Object *o, Bytes buf, jint off, jint len) {
@@ -124,12 +161,7 @@ void outputHooks(jnivm::ENV *E, const std::shared_ptr<jnivm::Class> &c) {
     c->HookInstanceFunction(E, "flush", [](jnivm::ENV *, jnivm::Object *) {});
     c->HookInstanceFunction(E, "close", [](jnivm::ENV *, jnivm::Object *o) {
         if (auto *s = dynamic_cast<OutputStream *>(o)) {
-            std::ofstream out(s->path, std::ios::binary | std::ios::trunc);
-            out.write((const char *) s->buffer.data(), (std::streamsize) s->buffer.size());
-            if (!out) {
-                LOGW("%s: could not be written", s->path.c_str());
-            }
-            chmod(s->path.c_str(), 0600);
+            writeWhole(s->path, s->buffer);
         }
     });
 }

@@ -37,6 +37,7 @@
 #include <pthread.h>
 #include <sys/stat.h>
 
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -188,7 +189,9 @@ public:
     void pollOnce(int timeoutMs) override {
         // The looper's callbacks are the core's, and call back into the hooks.
         const LocalFrame frame(jenv_);
+        answerLater();
         looper_->pollOnce(timeoutMs, nullptr, nullptr, nullptr);
+        answerLater();
     }
 
     void wake() override { looper_->wake(); }
@@ -262,6 +265,17 @@ public:
         return mine;
     }
 
+    /* An answer a hook gives without asking anyone — a question with no
+       session to ask, or one this host declines — which goes to the core
+       after the call that asked has returned, from between two turns of the
+       looper, as `RealVncPrompts` posts its declines; the core takes its
+       answers from outside the question (realvnc_session.cxx, rule 5). Core
+       thread only. */
+    void later(std::function<void()> answer) {
+        later_.push_back(std::move(answer));
+        looper_->wake();
+    }
+
     /* `RealVncPrompts.owner`. */
     Listener *ownerOf(jobject session) {
         if (auto *s = unwrap<SessionHandle>(session)) {
@@ -276,6 +290,16 @@ public:
 private:
     void registerBindings();
 
+    void answerLater() {
+        while (!later_.empty()) {
+            std::vector<std::function<void()>> now;
+            now.swap(later_);
+            for (auto &answer : now) {
+                answer();
+            }
+        }
+    }
+
     jnivm::VM *vm_ = nullptr;      // leaked: the core holds pointers into it for life
     jnivm::ENV *env_ = nullptr;
     JNIEnv *jenv_ = nullptr;
@@ -288,6 +312,7 @@ private:
     std::unordered_map<jlong, Listener *> owners_;
     Listener *pending_ = nullptr;
     std::vector<DesktopSession *> sessions_; // never freed, as the core never lets one go
+    std::vector<std::function<void()>> later_; // `later`'s, core thread only
 };
 
 // ---- the session's natives -------------------------------------------------------------
@@ -495,8 +520,9 @@ bool DesktopCore::open(const std::string &libraryDir, const Bootstrap &b, std::s
 }
 
 /* The classes of this file, hooked. Each dialog answers through the core's
-   static result natives, called later from the core thread by the session
-   (through `HostedCore`), never from inside the question. */
+   static result natives, called later from the core thread — by the session
+   (through `HostedCore`), or, for a question this host answers itself, from
+   `later` — never from inside the question. */
 void DesktopCore::registerBindings() {
     auto env = vm_->GetEnv();
     auto *E = env.get();
@@ -625,7 +651,8 @@ void DesktopCore::registerBindings() {
                        std::shared_ptr<jnivm::String> name, std::shared_ptr<jnivm::String> matchingName,
                        std::shared_ptr<jnivm::String> /*hint*/) {
                     if (!d->listener) {
-                        core->securityResult(d->cookie, false, false, false);
+                        const jlong cookie = d->cookie;
+                        core->later([core, cookie] { core->securityResult(cookie, false, false, false); });
                         return;
                     }
                     d->listener->promptSecurity(d->cookie, identityState, encryptionState, fromJstr(signature),
@@ -645,7 +672,7 @@ void DesktopCore::registerBindings() {
                                            l->msgBox(cookie, fromJstr(message), flags,
                                                      custom ? custom->c_str() : nullptr);
                                        } else {
-                                           core->msgBoxResult(cookie, false);
+                                           core->later([core, cookie] { core->msgBoxResult(cookie, false); });
                                        }
                                        return std::make_shared<MsgBox>();
                                    });
@@ -671,7 +698,8 @@ void DesktopCore::registerBindings() {
                        jboolean wantsPassword, std::shared_ptr<jnivm::String> catchphrase,
                        std::shared_ptr<jnivm::String> signature, std::shared_ptr<jnivm::String> instructions) {
                     if (!d->listener) {
-                        core->passwdResult(d->cookie, false, nullptr, nullptr);
+                        const jlong cookie = d->cookie;
+                        core->later([core, cookie] { core->passwdResult(cookie, false, nullptr, nullptr); });
                         return;
                     }
                     const std::string user = fromJstr(userName);
@@ -697,7 +725,11 @@ void DesktopCore::registerBindings() {
         c->HookInstanceFunction(E, "promptInteractive",
                                 [core](jnivm::ENV *, InteractiveDlg *d, std::shared_ptr<jnivm::Object>, jboolean) {
                                     LOGW("declining interactive prompt");
-                                    core->natives().interactiveResult(core->env(), nullptr, d->cookie, false, nullptr);
+                                    const jlong cookie = d->cookie;
+                                    core->later([core, cookie] {
+                                        const LocalFrame frame(core->env());
+                                        core->natives().interactiveResult(core->env(), nullptr, cookie, false, nullptr);
+                                    });
                                 });
         c->HookInstanceFunction(E, "close", [](jnivm::ENV *, InteractiveDlg *) {});
     }
@@ -713,7 +745,11 @@ void DesktopCore::registerBindings() {
         c->HookInstanceFunction(E, "show",
                                 [core](jnivm::ENV *, AuthkeyChoiceDlg *d, std::shared_ptr<jnivm::Array<jnivm::String>>) {
                                     LOGW("declining identity choice");
-                                    core->natives().identityChosen(core->env(), nullptr, d->cookie, false, nullptr);
+                                    const jlong cookie = d->cookie;
+                                    core->later([core, cookie] {
+                                        const LocalFrame frame(core->env());
+                                        core->natives().identityChosen(core->env(), nullptr, cookie, false, nullptr);
+                                    });
                                 });
         c->HookInstanceFunction(E, "close", [](jnivm::ENV *, AuthkeyChoiceDlg *) {});
     }

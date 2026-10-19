@@ -151,6 +151,9 @@ int bitmapLockPixels(JNIEnv *, jobject bm, void **addr) {
     if (!b) {
         return -2;
     }
+    if (b->pixels.empty()) {
+        return -3; // ANDROID_BITMAP_RESULT_ALLOCATION_FAILED: one too big to make
+    }
     *addr = b->pixels.data();
     return 0;
 }

@@ -30,6 +30,10 @@ namespace vento_realvnc {
 
 namespace {
 
+/* runtime::MAX_CURSOR_SIDE: the widest and tallest cursor any backend takes
+   from a server. */
+constexpr jint MAX_CURSOR_SIDE = 1024;
+
 // ---- the stand-ins ----------------------------------------------------------------
 
 struct BitmapConfig final : jnivm::Object {
@@ -257,9 +261,18 @@ void registerClasses(jnivm::VM &vm, const std::shared_ptr<Context> &context) {
             ->Hook(E, "createBitmap",
                    [](jnivm::ENV *, jnivm::Class *, jint w, jint h, std::shared_ptr<BitmapConfig>) {
                        auto b = std::make_shared<Bitmap>();
+                       // The cursor's size is the server's, and its pixels are
+                       // allocated by it: past runtime::MAX_CURSOR_SIDE (the
+                       // other backends' bound) the bitmap is made empty, which
+                       // the pixel lock (Loader.cxx) refuses, and the core
+                       // draws no cursor rather than allocating gigabytes.
+                       if (w < 0 || h < 0 || w > MAX_CURSOR_SIDE || h > MAX_CURSOR_SIDE) {
+                           LOGW("a cursor of %dx%d is past %d a side; not drawn", w, h, MAX_CURSOR_SIDE);
+                           return b;
+                       }
                        b->width = w;
                        b->height = h;
-                       b->pixels.resize((size_t) std::max(0, w) * (size_t) std::max(0, h));
+                       b->pixels.resize((size_t) w * (size_t) h);
                        return b;
                    });
     env->GetClass("android/graphics/Bitmap$Config")->Hook(E, "ARGB_8888", &BitmapConfig::ARGB_8888);
