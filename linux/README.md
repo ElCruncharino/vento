@@ -393,7 +393,12 @@ printing each turn — the far end's side of it is what the socket carries,
 which `ss -tin` on the client shows.
 
 `--verbose` lets the backends' debug lines through (and not the GUI stack's,
-which would be tens of thousands a minute).
+which would be tens of thousands a minute). What is typed is never among
+them: the lines that name a key — `key down 0x61 as 3` for every key sent,
+and a backend's word that it has no way to send a keysym — are trace lines,
+which only `RUST_LOG=trace` in the environment lets through (with every
+debug line). That is for a test of the keys; a log with them in it holds any
+password typed into the far end.
 
 ## The window
 
@@ -1299,7 +1304,13 @@ What the window uses beyond `xdg_wm_base`:
   sway: a `wl-copy` stopped with `SIGSTOP` was given up after 1 s, and a copy
   at the far end arriving meanwhile was taken at once (smithay-clipboard,
   before, waited until the source was continued). Nothing keeps what the
-  window owns once it exits, unless the compositor or a tool does.
+  window owns once it exits, unless the compositor or a tool does. The
+  thread is stopped while the event loop is still there; one that has not
+  stopped 2.5 s later is still on the connection, so the windows (which hold
+  it) are then never dropped and the connection lasts until the process is
+  gone. Before, winit closed it under the thread: with the thread's quit held
+  back by a scratch hook, the client ended in a segmentation fault; now it
+  exits 0.
 - The native cursor goes through winit's `CustomCursor`, which on Wayland is
   a `wl_shm` buffer in the pointer surface. winit takes straight alpha and
   premultiplies it (the shapes arrive straight, which is what the phone's

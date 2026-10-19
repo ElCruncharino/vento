@@ -182,6 +182,7 @@ pub fn run(launch: Launch) -> i32 {
         teardowns: Vec::new(),
         launched: false,
         exit_code: 0,
+        clipboard_running: false,
     };
     let ran = event_loop.run_app(&mut app);
     let exit_code = app.exit_code;
@@ -199,7 +200,15 @@ pub fn run(launch: Launch) -> i32 {
             surface.window.set_visible(false);
         }
     }
-    drop(app);
+    if app.clipboard_running {
+        // Its windows hold winit's connection, which the clipboard's thread
+        // may still be using: never dropped, it stays open until the
+        // process is gone, and the thread with it.
+        log::warn!("the clipboard's thread did not stop; the windows are left to the process's exit");
+        std::mem::forget(app);
+    } else {
+        drop(app);
+    }
     let deadline = Instant::now() + TEARDOWN_PATIENCE;
     for teardown in teardowns {
         if !teardown.wait_until(deadline) {
@@ -447,6 +456,9 @@ struct App {
     /// when it ends, so a session started later from the dialog does not.
     launched: bool,
     exit_code: i32,
+    /// The clipboard's thread did not stop when the event loop ended, and
+    /// may still be on winit's Wayland connection (see `Clipboard::stop`).
+    clipboard_running: bool,
 }
 
 impl App {
@@ -1478,7 +1490,9 @@ impl ApplicationHandler<Wake> for App {
     /// thread is on winit's connection, which ends with the loop, and on
     /// X11 it may have a clipboard manager to hand the text to.
     fn exiting(&mut self, _: &ActiveEventLoop) {
-        self.clipboard = None;
+        if let Some(clipboard) = self.clipboard.take() {
+            self.clipboard_running = !clipboard.stop();
+        }
     }
 
     fn device_event(&mut self, _: &ActiveEventLoop, _: DeviceId, event: DeviceEvent) {

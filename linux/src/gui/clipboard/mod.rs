@@ -255,18 +255,39 @@ impl Clipboard {
     }
 }
 
-impl Drop for Clipboard {
+impl Clipboard {
     /// The thread is told to stop and given [`HANDOFF`] and a little more,
-    /// for a clipboard manager to copy what this process owns. On Wayland
-    /// the connection it uses is winit's, so this must happen while the
-    /// event loop is still there (see `App::exiting`).
-    fn drop(&mut self) {
+    /// for a clipboard manager to copy what this process owns: whether it
+    /// stopped in that time. On Wayland the connection it uses is winit's,
+    /// so this must happen while the event loop is still there (see
+    /// `App::exiting`), and a thread that did not stop is still on that
+    /// connection: the window then keeps it open to the end of the process
+    /// (see `run`), since winit closes it with the last window and the
+    /// thread would go on into a freed `wl_display`.
+    pub fn stop(mut self) -> bool {
+        self.quit()
+    }
+
+    fn quit(&mut self) -> bool {
+        let Some(thread) = self.thread.take() else {
+            return true;
+        };
         self.send(Command::Quit);
-        if self.done.recv_timeout(HANDOFF + Duration::from_millis(500)).is_ok()
-            && let Some(thread) = self.thread.take()
-        {
+        if self.done.recv_timeout(HANDOFF + Duration::from_millis(500)).is_ok() {
             let _ = thread.join();
+            true
+        } else {
+            false
         }
+    }
+}
+
+impl Drop for Clipboard {
+    /// [`stop`](Clipboard::stop), where nothing asks how it went: a
+    /// clipboard replaced while the event loop runs, whose connection
+    /// stays open anyway.
+    fn drop(&mut self) {
+        self.quit();
     }
 }
 
