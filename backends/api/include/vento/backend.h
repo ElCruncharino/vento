@@ -37,17 +37,23 @@
 // take the read side of a lock the protocol thread takes the write side of
 // only once per update, so a pixel fetch never queues behind a socket read.
 //
-// Every callback arrives on the protocol thread — the one that owns the
-// connection — and must not block on anything that thread is waiting for: a
-// callback that calls back into the session is fine, a callback that waits
+// Every callback arrives on a thread of the session's own: the protocol
+// thread — the one that owns the connection — or one its library runs beside
+// it for a part of the protocol. FreeRDP's dynamic channels have a thread of
+// their own, and the graphics pipeline's resizes and paints (`desktop_size`,
+// `damaged`, `frame_end`) come on it, so two callbacks of one session can be
+// running at once, and each has to be safe for that; the updates of the
+// picture are never two at once, since the library makes them all under one
+// lock. A callback must not block on anything those threads are waiting for:
+// a callback that calls back into the session is fine, a callback that waits
 // for a frame is a deadlock. The six questions (`credentials_needed`,
 // `trust_needed`, `question`, `unverified`, `security_needed`, `message`)
-// are the exception in spirit only: the protocol thread parks after asking,
+// are the exception in spirit only: the thread that asked parks after asking,
 // and the answer arrives later, through `answer_credentials` or
 // `answer_trust`, from whatever thread has it. `closed` is the last callback
-// a session makes, and `destroy` returns only after the protocol thread has
-// ended, so when it returns the callbacks are provably finished and whatever
-// `user` pointed at may be freed.
+// a session makes, and `destroy` returns only after the session's threads
+// have ended, so when it returns the callbacks are provably finished and
+// whatever `user` pointed at may be freed.
 //
 // ## Strings
 //
