@@ -3814,7 +3814,6 @@ version = "0.0.1"
 dependencies = [
  "bindgen",
  "log",
- "remotedesktop-media",
  "remotedesktop-runtime",
 ]
 
@@ -3847,7 +3846,6 @@ dependencies = [
  "ironrdp-svc",
  "log",
  "remotedesktop-api",
- "remotedesktop-media",
  "remotedesktop-platform-android",
  "remotedesktop-runtime",
  "rustls",
@@ -3865,13 +3863,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "remotedesktop-media"
-version = "0.0.1"
-dependencies = [
- "log",
-]
-
-[[package]]
 name = "remotedesktop-platform-android"
 version = "0.0.1"
 dependencies = [
@@ -3879,7 +3870,6 @@ dependencies = [
  "jni",
  "log",
  "remotedesktop-api",
- "remotedesktop-media",
  "remotedesktop-runtime",
 ]
 
@@ -3889,7 +3879,7 @@ version = "0.0.1"
 dependencies = [
  "cc",
  "log",
- "remotedesktop-media",
+ "remotedesktop-runtime",
 ]
 
 [[package]]
@@ -3937,7 +3927,6 @@ dependencies = [
  "protobuf",
  "protobuf-codegen",
  "remotedesktop-api",
- "remotedesktop-media",
  "remotedesktop-platform-android",
  "remotedesktop-runtime",
  "sha2 0.11.0",
@@ -3952,7 +3941,6 @@ dependencies = [
  "flate2",
  "log",
  "remotedesktop-api",
- "remotedesktop-media",
  "remotedesktop-platform-android",
  "remotedesktop-runtime",
  "rustls",
@@ -5122,10 +5110,10 @@ dependencies = [
  "remotedesktop-freerdp",
  "remotedesktop-ironrdp",
  "remotedesktop-libvnc",
- "remotedesktop-media",
  "remotedesktop-platform-linux",
  "remotedesktop-realvnc",
  "remotedesktop-rfb",
+ "remotedesktop-runtime",
  "remotedesktop-rustdesk",
  "remotedesktop-spice",
  "remotedesktop-tigervnc",

@@ -15,7 +15,7 @@ use api::backend::{
 use api::events::{Feed, Mailbox};
 use api::kind::{self, CONNECT_TIMEOUT_MS, Connect, Kind};
 use api::options::Options;
-use media::video::GpuPicture;
+use runtime::media::video::GpuPicture;
 use std::sync::{Arc, Mutex, RwLockReadGuard};
 use std::time::Duration;
 

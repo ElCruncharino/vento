@@ -40,7 +40,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
-pub use media::audio::{Sound, Switch};
+pub use runtime::media::audio::{Sound, Switch};
 
 /// A rectangle of the desktop, in pixels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

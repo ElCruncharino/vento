@@ -25,7 +25,7 @@
 //! [`thumbnail`]: Backend::thumbnail
 
 pub use runtime::Credentials;
-use media::audio::Controls;
+use runtime::media::audio::Controls;
 
 /// One of the far end's screens, as a rectangle in its coordinates.
 ///
@@ -413,8 +413,8 @@ pub trait Backend: Send + Sync {
 
     /// How the picture is being decoded, for a debug overlay, where the
     /// session decodes video through the platform's
-    /// [`Decoders`](media::video::Decoders): the decoder's own
-    /// [`status`](media::video::Decoder::status) line, as of the last
+    /// [`Decoders`](runtime::media::video::Decoders): the decoder's own
+    /// [`status`](runtime::media::video::Decoder::status) line, as of the last
     /// picture or so. `None` for a protocol whose picture is not video, and
     /// before the first frame.
     fn decoder_status(&self) -> Option<String> {
@@ -424,12 +424,12 @@ pub trait Backend: Send + Sync {
     /// The picture as the GPU holds it, where the backend's last picture was
     /// left there for whoever draws on that GPU: a session whose decoders
     /// were told the window takes such pictures
-    /// ([`Decoders::gpu_pictures`](media::video::Decoders::gpu_pictures)),
+    /// ([`Decoders::gpu_pictures`](runtime::media::video::Decoders::gpu_pictures)),
     /// and only while the newest picture is one. The frame events say when
     /// it changed, as for any other picture. `read_region` and `thumbnail`
     /// still answer, by reading the picture back first, which is the cost
     /// this was to save; `None` for every other backend and picture.
-    fn gpu_picture(&self) -> Option<std::sync::Arc<dyn media::video::GpuPicture>> {
+    fn gpu_picture(&self) -> Option<std::sync::Arc<dyn runtime::media::video::GpuPicture>> {
         None
     }
 
@@ -525,7 +525,7 @@ mod tests {
 
     #[test]
     fn the_sound_row_goes_before_the_diagnostics_while_sound_plays() {
-        use media::audio::{Device, Format, NoOutputs, Outputs, Queue};
+        use runtime::media::audio::{Device, Format, NoOutputs, Outputs, Queue};
         use std::sync::Arc;
 
         struct Quiet;

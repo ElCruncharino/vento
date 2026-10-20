@@ -20,7 +20,6 @@ crate-type = ["lib", "cdylib"]
 [dependencies]
 log.workspace = true
 remotedesktop-runtime.workspace = true
-remotedesktop-media.workspace = true
 # `src/backend.rs`, the protocol as an `api::Backend`: what the Linux
 # client holds, and what the phone's JNI layer stands in front of.
 remotedesktop-api.workspace = true

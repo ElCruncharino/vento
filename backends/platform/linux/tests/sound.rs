@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! libavcodec's AAC and Opus through `media::audio::decode`, against clips
-//! of a known tone: the format that comes out, its pitch and its level. How
-//! the clips were made is `fixtures/generate-sound.sh`.
+//! libavcodec's AAC and Opus through `runtime::media::audio::decode`, against
+//! clips of a known tone: the format that comes out, its pitch and its level.
+//! How the clips were made is `fixtures/generate-sound.sh`.
 //!
 //! Each clip is fed the way a protocol delivers it, one packet per call:
 //! AAC as raw frames, the ADTS header cut off as RDP never sends one, and
@@ -11,8 +11,8 @@
 
 #![cfg(not(target_os = "android"))]
 
-use media::audio::Format;
-use media::audio::decode::{Codec, Decoders, opus_head};
+use runtime::media::audio::Format;
+use runtime::media::audio::decode::{Codec, Decoders, opus_head};
 use platform_linux::ffmpeg_audio::FFmpegAudio;
 
 fn fixture(name: &str) -> Vec<u8> {

@@ -21,8 +21,8 @@
 extern "C" {
 #endif
 
-// The codecs, numbered as `media::audio::decode::Codec` declares them, from
-// one.
+// The codecs, numbered as `runtime::media::audio::decode::Codec` declares them,
+// from one.
 enum vento_ffaudio_codec {
     VENTO_FFAUDIO_AAC = 1,
     VENTO_FFAUDIO_OPUS = 2,

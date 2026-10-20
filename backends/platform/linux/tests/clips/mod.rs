@@ -9,7 +9,7 @@
 
 #![allow(dead_code)]
 
-use media::video::{Changes, Codec, Decoder, Output};
+use runtime::media::video::{Changes, Codec, Decoder, Output};
 
 /// The fixtures' size.
 pub const W: usize = 128;

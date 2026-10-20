@@ -33,7 +33,7 @@ use super::settings::Settings;
 use crate::backend::{ConnectionFact, Facts, Field, Monitor, Traffic};
 use crate::backends::Platform;
 use crate::options::{self, Options, Spec, Type};
-use media::audio::Switch;
+use runtime::media::audio::Switch;
 use egui::{
     Align, Align2, ComboBox, Grid, Layout, Response, RichText, ScrollArea, Sense, TextEdit, Ui, WidgetInfo,
     WidgetType, vec2,

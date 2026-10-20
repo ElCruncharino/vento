@@ -21,8 +21,8 @@
 use std::ffi::{c_int, c_void};
 use std::sync::Arc;
 
-use media::audio::decode::{Codec, Decoding};
-use media::audio::{Format, Outputs, Stream};
+use runtime::media::audio::decode::{Codec, Decoding};
+use runtime::media::audio::{Format, Outputs, Stream};
 
 use super::ffi;
 
@@ -257,8 +257,8 @@ unsafe extern "C" fn release(user: *mut c_void) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use media::audio::decode::{Decoder, Decoders};
-    use media::audio::{Controls, Device, Queue};
+    use runtime::media::audio::decode::{Decoder, Decoders};
+    use runtime::media::audio::{Controls, Device, Queue};
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
@@ -465,7 +465,7 @@ mod tests {
 
     #[test]
     fn the_switch_goes_through_the_table() {
-        use media::audio::Switch;
+        use runtime::media::audio::Switch;
         use std::sync::atomic::AtomicI32;
 
         // What a backend's ctx would be: here, a count of what it was asked.

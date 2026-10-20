@@ -48,9 +48,9 @@
 //! never crosses at all.
 
 use crate::{bitmap, string};
-pub use media::audio::Outputs;
-use media::audio::Switch;
-pub use media::video::Decoders;
+pub use runtime::media::audio::Outputs;
+use runtime::media::audio::Switch;
+pub use runtime::media::video::Decoders;
 use jni::errors::{Error, LogErrorAndDefault};
 use jni::objects::{Global, JIntArray, JLongArray, JMethodID, JObject, JObjectArray, JString};
 use jni::signature::{Primitive, ReturnType};
@@ -575,8 +575,8 @@ fn set_muted<'local>(_env: &mut Env<'local>, _this: JObject<'local>, handle: jlo
 
 /// The session's Enable switch: asks the far end to stop sending its sound,
 /// or to send it again, where the backend offered that
-/// (`media::audio::Switch::Enable`, said through `onSound`). A switch that
-/// asks nothing — a mute, or none — is left alone and says so.
+/// (`runtime::media::audio::Switch::Enable`, said through `onSound`). A switch
+/// that asks nothing — a mute, or none — is left alone and says so.
 fn set_sound_enabled<'local>(
     _env: &mut Env<'local>,
     _this: JObject<'local>,
@@ -669,7 +669,7 @@ fn info<'local>(
 }
 
 /// The debug overlay's sound line, in the Linux client's words
-/// (`media::audio::Sound::line`): what plays and how far behind, or
+/// (`runtime::media::audio::Sound::line`): what plays and how far behind, or
 /// "nothing playing", and DISABLED or MUTED. Null where the session has no
 /// sound switch, which is when an overlay has no such line.
 fn sound_line<'local>(env: &mut Env<'local>, _this: JObject<'local>, handle: jlong) -> Result<JString<'local>, Error> {

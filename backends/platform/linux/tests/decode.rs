@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! libavcodec through `media::video`, against clips whose picture is known:
-//! the colour that comes out, which rows a frame says it moved, and that the
-//! rows it does not name are left alone. How the clips were made, and what is
-//! in them, is `fixtures/generate.sh`.
+//! libavcodec through `runtime::media::video`, against clips whose picture is
+//! known: the colour that comes out, which rows a frame says it moved, and that
+//! the rows it does not name are left alone. How the clips were made, and what
+//! is in them, is `fixtures/generate.sh`.
 //!
 //! Each clip is fed the way a protocol delivers it — one encoded frame per
 //! call — so IVF is walked by its frame headers and Annex B is cut at its
@@ -15,7 +15,7 @@
 
 use std::ops::Range;
 
-use media::video::{Changes, Codec, Decoder, Decoders};
+use runtime::media::video::{Changes, Codec, Decoder, Decoders};
 use platform_linux::ffmpeg::FFmpeg;
 
 mod clips;

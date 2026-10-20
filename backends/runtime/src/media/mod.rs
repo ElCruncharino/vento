@@ -12,9 +12,10 @@
 //! for both. A protocol with sound gets an [`audio::Outputs`] the same way,
 //! and writes into the [`audio::Queue`] a platform's device drains.
 //!
-//! Nothing here is about a session's conversation — the handler, the events,
-//! the thread a protocol runs on — which is `remotedesktop-runtime`'s; the
-//! two meet in `remotedesktop-api`, and in the protocols that use both.
+//! Nothing here is about a session's conversation — the handler, the
+//! callbacks, the thread a protocol runs on — which is the rest of this
+//! crate's, and nothing here uses it: the two meet in the protocols that have
+//! a picture or a sound, and in `remotedesktop-api`.
 
 pub mod audio;
 pub mod video;

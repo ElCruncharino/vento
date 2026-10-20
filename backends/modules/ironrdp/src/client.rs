@@ -14,7 +14,7 @@ use crate::framebuffer::Framebuffer;
 use crate::keymap::{self, Key};
 use crate::sound::{QUIET, Sound};
 use crate::tls;
-use media::audio::{Outputs, Player};
+use runtime::media::audio::{Outputs, Player};
 use runtime::rate::Rate;
 use runtime::{Credentials, Handler, Hangup};
 

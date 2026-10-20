@@ -26,7 +26,7 @@ use crate::keymap::{self, Key};
 use crate::playback::Playback;
 use crate::tls;
 use runtime::Handler;
-use media::audio::Outputs;
+use runtime::media::audio::Outputs;
 use runtime::address::Ports;
 use shakenfist_spice_protocol::constants::{
     MOUSE_MODE_CLIENT, MOUSE_MODE_SERVER, cursor_client, display_client, image_compression,

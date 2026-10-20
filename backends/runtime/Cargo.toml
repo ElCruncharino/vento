@@ -3,9 +3,11 @@
 # `Callbacks` a platform answers it with, the `Runner` that runs one on a
 # thread of its own and the `Bridge` between them, the dial a hang-up can
 # interrupt, the pinned TLS of the protocols that reach it — and the address
-# parser, which is the one thing every client does before any of that. The picture and the
-# sound a session carries are `remotedesktop-media`'s, which needs nothing of
-# this crate and this crate nothing of it.
+# parser, which is the one thing every client does before any of that. And
+# what a platform is written to: the picture and the sound a session carries
+# (`src/media/`), whose video decoders and sound outputs a platform supplies
+# by implementing `media::video::Decoders` and `media::audio::Outputs`, and
+# what is done with their planes and samples, the same on both platforms.
 #
 # Nothing in here knows what a phone is. The Android half of a backend is
 # `remotedesktop-platform-android`, which depends on this crate and not the

@@ -18,9 +18,13 @@
 //! pinned rather than verified, and one connection read and written by two
 //! threads.
 //!
-//! What is not here: the picture and the sound, which are
-//! `remotedesktop-media`'s (`media::video`, `media::audio`) and need nothing
-//! of this crate; and anything with `jni` in it, which is
+//! The picture and the sound a session carries are [`media`]'s: the video
+//! decoders and sound outputs a platform supplies by implementing its two
+//! traits ([`media::video::Decoders`], [`media::audio::Outputs`]), and what is
+//! done with their planes and samples, the same for every protocol and both
+//! platforms. It and the conversation above use nothing of each other.
+//!
+//! What is not here: anything with `jni` in it, which is
 //! `remotedesktop-platform-android`.
 
 pub mod address;
@@ -29,6 +33,7 @@ pub mod client;
 pub mod cursor;
 pub mod handler;
 pub mod hangup;
+pub mod media;
 pub mod rate;
 pub mod runner;
 pub mod slot;

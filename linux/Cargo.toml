@@ -32,7 +32,10 @@ path = "src/main.rs"
 
 [dependencies]
 log = "0.4"
-remotedesktop-media = { path = "../backends/media" }
+# What a platform is written to (`runtime::media`: the sound switch and
+# controls, the decoded picture's conversion), which the window reaches
+# directly rather than through `api`.
+remotedesktop-runtime = { path = "../backends/runtime" }
 # The seam every backend is held by. Its `c` feature, the one adapter over
 # the C vtable, is the C backends' crates' to ask for, and nothing here names
 # it.
@@ -111,11 +114,13 @@ ttf-parser = "0.25"
 [patch.crates-io]
 winit = { path = "../third_party/winit" }
 
-# The conversion every decoded frame goes through (`media::video::convert`),
-# optimised even in a debug build, which is how `cargo run` runs it. Unoptimised
-# its row loop is most of a RustDesk session's processor, and the SSE2 one is
-# slower still, every intrinsic a call: 53 and 94 ms of a 1920×1200 frame,
-# where optimised they are 21 and 1. The crate is small, so this costs seconds
-# of a build, and its debug info is kept.
-[profile.dev.package.remotedesktop-media]
+# The conversion every decoded frame goes through
+# (`runtime::media::video::convert`), optimised even in a debug build, which is
+# how `cargo run` runs it. Unoptimised its row loop is most of a RustDesk
+# session's processor, and the SSE2 one is slower still, every intrinsic a call:
+# 53 and 94 ms of a 1920×1200 frame, where optimised they are 21 and 1. The
+# crate it is in, `remotedesktop-runtime`, is small (rustls and ring are crates
+# of their own, which this leaves alone), so this costs seconds of a build, and
+# its debug info is kept.
+[profile.dev.package.remotedesktop-runtime]
 opt-level = 3

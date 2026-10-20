@@ -71,7 +71,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use media::audio::{Device, Format, Queue};
+use runtime::media::audio::{Device, Format, Queue};
 
 #[link(name = "dl")]
 unsafe extern "C" {

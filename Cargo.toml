@@ -5,10 +5,10 @@
 # line in each list below.
 #
 # The layering is the point. `backends/runtime` is the neutral layer a
-# protocol is written against — the handler, the events, the thread a session
-# runs on, its TLS — and `backends/media` beside it the picture and the
-# sound, which a protocol hands on without knowing whose decoders or output
-# take them; `backends/api` is the one a client holds a session by — the
+# protocol is written against and a platform is written to — the handler, the
+# events, the thread a session runs on, its TLS, and the picture and the sound
+# (`runtime::media`), which a protocol hands on without knowing whose decoders
+# or output take them; `backends/api` is the one a client holds a session by — the
 # `Backend` trait, the events, the options and the rules every client keeps
 # alike — and each backend's adapter to it lives in that backend's own
 # crate under `backends/modules/`: the protocol crate for the four in Rust, a
@@ -27,8 +27,8 @@
 # metadata --filter-platform` filters packages, not features. Its own lock
 # file keeps all of that out of this graph; it reaches these crates by path.
 # What a platform supplies, it supplies by implementing a trait of
-# `runtime`'s or `media`'s (`Callbacks`, `video::Decoders`,
-# `audio::Outputs`) and handing it to the session, so no
+# `runtime`'s (`Callbacks`, `media::video::Decoders`,
+# `media::audio::Outputs`) and handing it to the session, so no
 # protocol crate says which platform it is on. A protocol crate depends on a
 # platform crate only under a target cfg — `android` for the library the app
 # loads, `desktop` for its probe — so neither build sees the other's.
@@ -36,7 +36,6 @@
 resolver = "2"
 members = [
     "backends/runtime",
-    "backends/media",
     "backends/api",
     "backends/platform/android",
     "backends/platform/android/codegen",
@@ -58,7 +57,6 @@ members = [
 # remotedesktop-platform-linux` for its own tests.
 default-members = [
     "backends/runtime",
-    "backends/media",
     "backends/api",
     "backends/platform/android",
     "backends/platform/android/codegen",
@@ -81,7 +79,6 @@ publish = false
 
 [workspace.dependencies]
 remotedesktop-runtime = { path = "backends/runtime", version = "0.0.1" }
-remotedesktop-media = { path = "backends/media", version = "0.0.1" }
 remotedesktop-api = { path = "backends/api", version = "0.0.1" }
 remotedesktop-platform-android = { path = "backends/platform/android", version = "0.0.1" }
 remotedesktop-platform-linux = { path = "backends/platform/linux", version = "0.0.1" }

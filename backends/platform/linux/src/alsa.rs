@@ -11,11 +11,11 @@
 //! its C: nine functions of `libasound.so.2`, whose ABI has not changed
 //! in twenty years, linked by name. It is the one sound library the Linux
 //! client links (PipeWire's is loaded at run time, where there is one):
-//! TigerVNC's QEMU audio and FreeRDP's rdpsnd play through `media::audio`
-//! (handed to their sessions as `vento/audio.h`'s table), and neither
-//! `libvento_tigervnc.so`, whose own ALSA sink this replaced, nor
-//! `libvento_freerdp.so`, whose PulseAudio device it replaced, links a sound
-//! library at all.
+//! TigerVNC's QEMU audio and FreeRDP's rdpsnd play through
+//! `runtime::media::audio` (handed to their sessions as `vento/audio.h`'s
+//! table), and neither `libvento_tigervnc.so`, whose own ALSA sink this
+//! replaced, nor `libvento_freerdp.so`, whose PulseAudio device it replaced,
+//! links a sound library at all.
 //!
 //! **A thread per stream does everything that can wait.** Opening the
 //! device is a round trip to the sound server, which can take a while and,
@@ -44,7 +44,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
-use media::audio::{Device, Format, Queue};
+use runtime::media::audio::{Device, Format, Queue};
 
 #[repr(C)]
 struct SndPcm {

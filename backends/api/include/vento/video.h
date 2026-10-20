@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // The platform's video decoders, as a C backend is handed them: a table of
-// calls over `media::video::Decoders` (MediaCodec on the phone, the Linux
-// client's FFmpeg with its opt-in VAAPI), filled in by `api::c::video` and
-// passed in a backend's config. Function pointers rather than symbols, so that
-// a backend library links nothing of the process it is loaded into — the Linux
-// client's `libvento_tigervnc.so` is one, and has no Rust in it.
+// calls over `runtime::media::video::Decoders` (MediaCodec on the phone, the
+// Linux client's FFmpeg with its opt-in VAAPI), filled in by `api::c::video`
+// and passed in a backend's config. Function pointers rather than symbols, so
+// that a backend library links nothing of the process it is loaded into — the
+// Linux client's `libvento_tigervnc.so` is one, and has no Rust in it.
 //
 // TigerVNC's H.264 rectangles and FreeRDP's H.264 surface commands are
 // decoded through this rather than through a decoder of either library's
@@ -24,7 +24,7 @@
 extern "C" {
 #endif
 
-/* The codecs, as `media::video::Codec` names them. */
+/* The codecs, as `runtime::media::video::Codec` names them. */
 #define VENTO_VIDEO_H264 1
 #define VENTO_VIDEO_H265 2
 #define VENTO_VIDEO_VP8 3
@@ -55,8 +55,8 @@ typedef struct vento_video_decoders {
        the GPU; true decodes as the person chose (`mode`). */
     vento_video_decoder *(*open)(void *user, int codec, int width, int height, bool hardware);
     /* How a decoder opened now would decode, as a number that changes when
-       the person's choice does: `media::video::Hardware` in declaration
-       order, 0 for off. Cheap enough to ask every frame. */
+       the person's choice does: `runtime::media::video::Hardware` in
+       declaration order, 0 for off. Cheap enough to ask every frame. */
     int (*mode)(void *user);
     /* One frame. `out` is `width * height` words, rows `width` apart, R, G, B,
        A in memory; only the rows that changed are written, unless `whole`,

@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use media::video::{Changes, GpuPicture};
+use runtime::media::video::{Changes, GpuPicture};
 
 /// A framebuffer of `R, G, B, A` words, so a read is a row copy into an Android
 /// `ARGB_8888` bitmap.

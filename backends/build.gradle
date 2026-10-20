@@ -98,7 +98,7 @@ ext.codegenSources = files(
         'api/Cargo.toml', 'api/build.rs', 'api/src',
         file('modules').listFiles().findAll { it.isDirectory() }.sort().collect { new File(it, 'catalog.rs') },
         'platform/android/Cargo.toml', 'platform/android/src',
-        'runtime/Cargo.toml', 'runtime/src', 'media/Cargo.toml', 'media/src')
+        'runtime/Cargo.toml', 'runtime/src')
 
 ext.generateCatalog = { Project module, variant, String backend, String className ->
     final cap = variant.name.substring(0, 1).toUpperCase(Locale.ROOT) + variant.name.substring(1)

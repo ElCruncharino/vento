@@ -11,7 +11,7 @@
 // FFmpeg is a change to this file's implementation alone. What crosses it is
 // what a frame-at-a-time decoder needs: a packet in, and the last picture out
 // described plane by plane, for the caller to convert. Conversion stays the
-// caller's (`media::video::convert`), the same on the phone as here.
+// caller's (`runtime::media::video::convert`), the same on the phone as here.
 //
 // Hardware decoding is the caller's to ask for and off unless it does: a
 // decoder opened with VENTO_VIDEO_HW_OFF is the software decoder it always
@@ -47,7 +47,7 @@ enum vento_video_codec {
 };
 
 // How a decoder may decode, as the caller asks for it: numbered as
-// `media::video::Hardware` declares them.
+// `runtime::media::video::Hardware` declares them.
 enum vento_video_hardware {
     // libavcodec's software decoders, and nothing else: the default.
     VENTO_VIDEO_HW_OFF = 0,

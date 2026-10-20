@@ -5,12 +5,13 @@
 //! what a decoder promises, and the few bytes of setup each codec needs that
 //! a protocol does not send.
 //!
-//! As with [`video::Decoders`](crate::video::Decoders), a protocol asks for a
-//! decoder and does not know whose it is: what it holds is the session's
-//! [`Outputs`](super::Outputs), whose [`decoders`](super::Outputs::decoders)
-//! are the platform's — libavcodec on the Linux client (built with the
-//! client's own FFmpeg), MediaCodec on the phone — so that RDP's AAC is
-//! decoded by the same code on both, and by none of FreeRDP's.
+//! As with [`video::Decoders`](crate::media::video::Decoders), a protocol
+//! asks for a decoder and does not know whose it is: what it holds is the
+//! session's [`Outputs`](super::Outputs), whose
+//! [`decoders`](super::Outputs::decoders) are the platform's — libavcodec on
+//! the Linux client (built with the client's own FFmpeg), MediaCodec on the
+//! phone — so that RDP's AAC is decoded by the same code on both, and by none
+//! of FreeRDP's.
 //!
 //! What comes out is what a [`Stream`](super::Stream) takes, signed 16-bit
 //! samples interleaved, whatever the decoder works in: both libraries decode

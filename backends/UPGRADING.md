@@ -204,8 +204,8 @@ under the host locale (`export LC_ALL=C`).
   vento's video decoders through `vento/video.h`'s table. Its QEMU audio is
   played on vento's sound output through `vento/audio.h`'s table
   (`VentoAudio.h`; AAudio on the phone, ALSA on the host, both behind
-  `media::audio`'s queue), not their viewer's `AudioOutput`, which is not
-  compiled. An upstream change to `H264DecoderContext`
+  `runtime::media::audio`'s queue), not their viewer's `AudioOutput`, which is
+  not compiled. An upstream change to `H264DecoderContext`
   or `H264Decoder` (the reset flags, the 64-context limit) or to the QEMU
   audio calls in `CConnection` reaches both platforms — in particular the
   session's sound switch leans on `CConnection::framebufferUpdateEnd`
@@ -266,8 +266,8 @@ line or one file somewhere that already has seven:
 
 - **The protocol.** A Rust crate at the module's root (`Cargo.toml`, `src/`,
   `examples/`; `crate-type = ["lib", "cdylib"]`) written against
-  `remotedesktop-runtime`, and `remotedesktop-media` where it has video or
-  sound to hand on, or a C shim in `cpp/` over
+  `remotedesktop-runtime` (its `media` too, where it has video or sound to
+  hand on), or a C shim in `cpp/` over
   `vento/backend.h` with its config in its own header,
   `cpp/include/vento/<name>.h` (on the include path of the module's targets
   through `vento_backend_library` and `vento_android_library`), a host probe

@@ -81,7 +81,7 @@ use crate::backends::{self, Connect, Dirs, Hardware, Pinned};
 use crate::events::{Cursor, Event, Mailbox, State};
 use crate::known_hosts::{self, KnownHosts, Store};
 use api::trust::{self, Decision};
-use media::audio::{Outputs, Playback, Sound, Switch};
+use runtime::media::audio::{Outputs, Playback, Sound, Switch};
 use crate::options::Options;
 use egui::{CursorIcon, TextureHandle, TextureOptions, Vec2, ViewportId, vec2};
 use pane::{MonitorKey, Pane, PaneId, Rebound};

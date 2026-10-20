@@ -8,7 +8,7 @@
 
 #![cfg(not(target_os = "android"))]
 
-use media::video::{Changes, Decoders};
+use runtime::media::video::{Changes, Decoders};
 use platform_linux::ffmpeg::{FFmpeg, Hardware, device_opened};
 
 mod clips;
@@ -19,18 +19,18 @@ fn off_opens_no_device_and_loads_no_library() {
     let ffmpeg = FFmpeg::default();
     assert_eq!(ffmpeg.hardware(), Hardware::Off);
     let clips = [
-        ("h264.h264", media::video::Codec::H264),
-        ("h264-high10.h264", media::video::Codec::H264),
-        ("h265-main10.h265", media::video::Codec::H265),
-        ("vp8.ivf", media::video::Codec::Vp8),
-        ("vp9.ivf", media::video::Codec::Vp9),
-        ("av1.ivf", media::video::Codec::Av1),
+        ("h264.h264", runtime::media::video::Codec::H264),
+        ("h264-high10.h264", runtime::media::video::Codec::H264),
+        ("h265-main10.h265", runtime::media::video::Codec::H265),
+        ("vp8.ivf", runtime::media::video::Codec::Vp8),
+        ("vp9.ivf", runtime::media::video::Codec::Vp9),
+        ("av1.ivf", runtime::media::video::Codec::Av1),
     ];
     for (name, codec) in clips {
         let bytes = fixture(name);
         let frames = match codec {
-            media::video::Codec::H264 => annex_b(&bytes, h264_aud),
-            media::video::Codec::H265 => annex_b(&bytes, h265_aud),
+            runtime::media::video::Codec::H264 => annex_b(&bytes, h264_aud),
+            runtime::media::video::Codec::H265 => annex_b(&bytes, h265_aud),
             _ => ivf(&bytes),
         };
         let mut decoder = ffmpeg.decoder(codec, 128, 128).expect("a decoder");

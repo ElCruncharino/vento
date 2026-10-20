@@ -39,7 +39,9 @@ name = "platform_linux"
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
 log.workspace = true
-remotedesktop-media.workspace = true
+# For `runtime::media`, whose two traits the decoders and the outputs here
+# implement (`video::Decoders`, `audio::Outputs`).
+remotedesktop-runtime.workspace = true
 # Nothing of FFmpeg's own API: `src/ffmpeg.rs` and `src/ffmpeg_audio.rs` call
 # the functions of `cpp/vento_video.h` and `cpp/vento_ffaudio.h`, declared by
 # hand, and only those C files include FFmpeg's headers. No bindgen, no

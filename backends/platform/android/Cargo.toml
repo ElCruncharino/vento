@@ -8,10 +8,10 @@
 # depends on it under a target cfg and nowhere else, which keeps the host
 # build — tests, examples, `remotedesktop-platform-linux` — free of anything
 # that knows a phone exists; and neither `remotedesktop-runtime` nor
-# `remotedesktop-media` depends on it at all, because the layering runs the
+# `remotedesktop-api` depends on it at all, because the layering runs the
 # other way: this crate holds an `api::Backend` for Java and implements
-# `media::video::Decoders` for MediaCodec, and neither `media` nor `api`
-# hears about either.
+# `runtime::media::video::Decoders` for MediaCodec, and neither `runtime` nor
+# `api` hears about either.
 #
 # On a host target the crate is the JNI table and nothing else: plain data,
 # no dependencies to fetch, read by `vento-codegen` (`codegen/`) to write
@@ -39,7 +39,6 @@ name = "platform_android"
 [target.'cfg(target_os = "android")'.dependencies]
 log.workspace = true
 remotedesktop-runtime.workspace = true
-remotedesktop-media.workspace = true
 remotedesktop-api.workspace = true
 jni.workspace = true
 android_logger.workspace = true

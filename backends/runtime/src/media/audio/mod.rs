@@ -5,7 +5,7 @@
 //! in, what a platform's output promises, and the policy between the two.
 //!
 //! A protocol asks for a stream and does not know whose it is, as with
-//! [`video::Decoders`](crate::video::Decoders): what it holds is an
+//! [`video::Decoders`](crate::media::video::Decoders): what it holds is an
 //! [`Outputs`], handed to it by whoever started the session — AAudio in
 //! `platform_android`, PipeWire or ALSA in `platform_linux`, [`NoOutputs`]
 //! for a test with neither. Before this each backend that had sound had a sink of its

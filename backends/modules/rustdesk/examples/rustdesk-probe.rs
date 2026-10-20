@@ -625,7 +625,7 @@ impl Video {
     /// next key frame.
     #[cfg(not(target_os = "android"))]
     fn write_ppm(&self, path: &str) -> Result<usize, String> {
-        use media::video::{Changes, Decoders};
+        use runtime::media::video::{Changes, Decoders};
         use remotedesktop_rustdesk::Codec;
 
         let codec = Codec::ALL

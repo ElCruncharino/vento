@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! A desktop's decoder, libavcodec's: [`FFmpeg`] is this platform's
-//! `media::video::Decoders`, and the counterpart of
+//! `runtime::media::video::Decoders`, and the counterpart of
 //! `platform_android::mediacodec` call for call.
 //!
 //! The same contract as the phone's, because it is the same trait and the same
@@ -45,19 +45,19 @@
 //! **Hardware decoding is opt-in** ([`Hardware`], off by default): asked for,
 //! a decoder decodes on VAAPI where the device has a decoder
 //! for the stream's profile, and in software where it has not, with the
-//! reason kept for [`status`](media::video::Decoder::status). What comes back
-//! is still planes in memory — the hardware's surface mapped for reading, in
-//! NV12, P010 or XV30 — converted by the same code as software's, so the
-//! picture is the same either way. A hardware failure mid-stream is a
+//! reason kept for [`status`](runtime::media::video::Decoder::status). What
+//! comes back is still planes in memory — the hardware's surface mapped for
+//! reading, in NV12, P010 or XV30 — converted by the same code as software's,
+//! so the picture is the same either way. A hardware failure mid-stream is a
 //! software decoder in its place and a key frame asked for
-//! ([`take_key_frame_request`](media::video::Decoder::take_key_frame_request)),
+//! ([`take_key_frame_request`](runtime::media::video::Decoder::take_key_frame_request)),
 //! not a lost picture. Off, nothing of libva is loaded.
 //!
 //! **Or left on the GPU**, for a window that draws there and says so
 //! ([`FFmpeg::set_gpu_pictures`]): a caller that asks
-//! ([`decode_picture`](media::video::Decoder::decode_picture)) is handed a
-//! VAAPI picture in NV12 or P010 as it is, a [`GpuPicture`] holding the
-//! surface, which it exports as DMA-BUFs ([`export`]) and converts on its
+//! ([`decode_picture`](runtime::media::video::Decoder::decode_picture)) is
+//! handed a VAAPI picture in NV12 or P010 as it is, a [`GpuPicture`] holding
+//! the surface, which it exports as DMA-BUFs ([`export`]) and converts on its
 //! GPU; nothing is mapped or converted here, which is most of what a
 //! hardware picture cost.
 //! Read back ([`GpuPicture::read`]), it is mapped and converted as a decode
@@ -82,13 +82,13 @@ use std::os::fd::{FromRawFd, OwnedFd};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use media::video::convert::{Frame, Plane};
-use media::video::{Changes, Codec, Decoded, Decoders, GpuPicture, Output};
+use runtime::media::video::convert::{Frame, Plane};
+use runtime::media::video::{Changes, Codec, Decoded, Decoders, GpuPicture, Output};
 /// How a decoder may decode, which whoever starts a session asks for (a
-/// setting, `--hw-decode`): `media`'s, since it is handed to every backend.
+/// setting, `--hw-decode`): `runtime`'s, since it is handed to every backend.
 /// Here [`Hardware::On`] is VAAPI, and the modes are named as
 /// [`hardware_name`] says.
-pub use media::video::Hardware;
+pub use runtime::media::video::Hardware;
 
 /// `cpp/vento_video.h`, declared by hand: the whole of what this crate calls.
 mod sys {
@@ -339,7 +339,7 @@ impl Decoders for FFmpeg {
         codec: Codec,
         width: usize,
         height: usize,
-    ) -> Option<Box<dyn media::video::Decoder>> {
+    ) -> Option<Box<dyn runtime::media::video::Decoder>> {
         self.decoder_as(codec, width, height, self.hardware())
     }
 
@@ -349,9 +349,9 @@ impl Decoders for FFmpeg {
         width: usize,
         height: usize,
         hardware: Hardware,
-    ) -> Option<Box<dyn media::video::Decoder>> {
+    ) -> Option<Box<dyn runtime::media::video::Decoder>> {
         Decoder::with_hardware(codec, width, height, hardware)
-            .map(|d| Box::new(d) as Box<dyn media::video::Decoder>)
+            .map(|d| Box::new(d) as Box<dyn runtime::media::video::Decoder>)
     }
 
     fn hardware(&self) -> Hardware {
@@ -502,7 +502,7 @@ impl Decoder {
     /// fallback on. One on a device whose stream it cannot take is still on
     /// it, and decodes in software: [`Decoder::hardware`] says which.
     ///
-    /// [`Decoder::hardware`]: media::video::Decoder::hardware
+    /// [`Decoder::hardware`]: runtime::media::video::Decoder::hardware
     pub fn method(&self) -> Hardware {
         hardware_of(unsafe { sys::vento_video_method(self.video) })
     }
@@ -594,9 +594,9 @@ impl Decoder {
 }
 
 impl Decoder {
-    /// A decode, as [`decode`](media::video::Decoder::decode) and
-    /// [`decode_picture`](media::video::Decoder::decode_picture) make one:
-    /// with `hold`, a picture the C side can hold is handed back held.
+    /// A decode, as [`decode`](runtime::media::video::Decoder::decode) and
+    /// [`decode_picture`](runtime::media::video::Decoder::decode_picture) make
+    /// one: with `hold`, a picture the C side can hold is handed back held.
     fn decode_as(
         &mut self,
         data: &[u8],
@@ -715,7 +715,7 @@ impl Decoder {
     }
 }
 
-impl media::video::Decoder for Decoder {
+impl runtime::media::video::Decoder for Decoder {
     fn decode(
         &mut self,
         data: &[u8],

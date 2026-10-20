@@ -4,8 +4,11 @@ The eight remote desktop backends, what they share, and how they are built
 for the phone and for the Linux client.
 
 **The rule:** a thing that only one backend needs lives under that backend's
-module, `modules/<name>/`; `runtime/`, `media/` and `api/` hold only
-what two or more backends, or both clients, share; and what one platform
+module, `modules/<name>/`; `runtime/` and `api/` hold only
+what two or more backends, or both clients, share — `runtime/` what a
+protocol client is written against and a platform is written to, its picture
+and sound (`runtime::media`) included, and `api/` what a client holds a
+session by; and what one platform
 needs of all of them lives under that platform, `platform/<os>/` — its crate, its C,
 its CMake half and, for the phone, its Java, the generator of the Java each
 module compiles, and its ports. Inside a module,
@@ -20,7 +23,8 @@ the CMake both builds include.
       buildSrc/         the Gradle tasks its helpers use
       CMakeLists.txt    the host build of the C backends
       cmake/            warnings.cmake, reproducible.cmake
-      runtime/  media/  api/
+      runtime/          what a protocol and a platform are written to, src/media/ too
+      api/              what a client holds a session by
       modules/<name>/   one per backend (eight)
       platform/
         android/        crate, codegen/, java/, javatest/, cpp/, cmake/, ports/
@@ -68,18 +72,18 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
 
 ## What they share
 
-- `runtime/` (`remotedesktop-runtime`) — what a protocol is written
-  against: the `Client` it implements, the `Handler` its thread calls and the
-  `Callbacks` a platform answers with, the `Runner` that is the session's
-  thread and the `Bridge` between them, the address parser, the dial a hang-up interrupts, the line
-  speed the protocols that state none measure (`rate`), and the rustls pinning and shared stream of
-  the Rust backends that speak TLS (`tls`).
-- `media/` (`remotedesktop-media`) — what a protocol hands its picture and
-  sound to: video (the decoders a platform supplies, and what is done with
-  their planes) and audio (the outputs a platform supplies, their decoders,
-  and the queue a device drains). It needs nothing of `runtime/`, nor
-  `runtime/` of it; `api/` holds both, and the Linux platform crate
-  depends on this one alone.
+- `runtime/` (`remotedesktop-runtime`) — what a protocol client is written
+  against and a platform is written to: the `Client` it implements, the
+  `Handler` its thread calls and the `Callbacks` a platform answers with, the
+  `Runner` that is the session's thread and the `Bridge` between them, the
+  address parser, the dial a hang-up interrupts, the line speed the protocols
+  that state none measure (`rate`), and the rustls pinning and shared stream
+  of the Rust backends that speak TLS (`tls`); and `media`, what a protocol
+  hands its picture and sound to: video (the decoders a platform supplies, and
+  what is done with their planes) and audio (the outputs a platform supplies,
+  their decoders, and the queue a device drains). `media` uses nothing of the
+  rest of the crate, nor the rest of it `media`; a platform crate depends on
+  `runtime/` for the traits it implements.
 - `api/` (`remotedesktop-api`) — what a client holds a session by:
   the `Backend` trait, events, the catalog registry and the shape of an
   option, `Kind`/`Connect`, and the rules both clients keep alike

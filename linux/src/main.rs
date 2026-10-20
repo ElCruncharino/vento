@@ -26,7 +26,7 @@ fn main() {
 }
 
 mod host {
-    use media::audio::Outputs as _;
+    use runtime::media::audio::Outputs as _;
     use std::cell::Cell;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -75,7 +75,7 @@ mod host {
         sound_cycle: Option<Duration>,
         /// The session's sound controls, for `--sound-cycle`, and when it
         /// next turns the switch.
-        sound_controls: std::cell::RefCell<Option<Arc<media::audio::Controls>>>,
+        sound_controls: std::cell::RefCell<Option<Arc<runtime::media::audio::Controls>>>,
         sound_cycle_at: Cell<Option<Instant>>,
         /// The session's sound as last printed, so that each change is said
         /// on its own line.
@@ -675,7 +675,7 @@ headless, any of which selects the probe instead of the window:
             let (Some(every), Some(controls)) = (self.sound_cycle, self.sound_controls.borrow().clone()) else {
                 return;
             };
-            if controls.sound().switch != Some(media::audio::Switch::Enable) {
+            if controls.sound().switch != Some(runtime::media::audio::Switch::Enable) {
                 self.sound_cycle_at.set(None);
                 return;
             }
