@@ -20,7 +20,7 @@ the CMake both builds include.
       buildSrc/         the Gradle tasks its helpers use
       CMakeLists.txt    the host build of the C backends
       cmake/            warnings.cmake, reproducible.cmake
-      runtime/  media/  api/  vectors/
+      runtime/  media/  api/
       modules/<name>/   one per backend (eight)
       platform/
         android/        crate, codegen/, java/, javatest/, cpp/, cmake/, ports/
@@ -83,16 +83,16 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
 - `api/` (`remotedesktop-api`) — what a client holds a session by:
   the `Backend` trait, events, the catalog registry and the shape of an
   option, `Kind`/`Connect`, and the rules both clients keep alike
-  (credentials, trust), held to their cases (`tests/vectors.rs`). With the
-  `c` feature, the one adapter over the C vtable and the shared headers'
+  (credentials, trust), held to their cases (`tests/vectors.rs`). The
+  options' cases are a file beside it, `tests/options.json`, since the one
+  rule with a Java copy (`settle`) is held to them by the Java tests in
+  `platform/android/javatest/` too; the rest are written in the test. With
+  the `c` feature, the one adapter over the C vtable and the shared headers'
   declarations (`api::c::ffi`), which each C backend's own declarations
   are written over. The neutral C API it adapts is in `api/include/vento/`
   (`backend.h`, `video.h`, `audio.h`, `log.h`, `text.h`; each C backend's
   own header is in its module): with the crate that reads them into Rust,
   as each backend's header is with its own.
-- `vectors/` — `options.json`, the cases of the one rule with a Java copy
-  (`settle`), which both the Rust and the Java tests read. Cases only the
-  Rust tests read are written in them.
 
 ## The platforms: `platform/<os>/`
 

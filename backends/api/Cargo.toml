@@ -44,6 +44,6 @@ remotedesktop-media.workspace = true
 bindgen = { workspace = true, optional = true }
 
 [dev-dependencies]
-# For the options cases in `backends/vectors/options.json` (tests/vectors.rs),
+# For the options cases in `tests/options.json` (tests/vectors.rs),
 # which the Java tests read too. Already in the graph through IronRDP (picky).
 serde_json = "1"

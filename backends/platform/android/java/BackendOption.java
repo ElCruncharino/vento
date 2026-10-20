@@ -202,7 +202,7 @@ public record BackendOption(String key, String label, String summary, Type type,
      * {@link #fallback}, through {@code set}; the keys that moved, in the
      * options' order. The one rule every screen keeps whenever a switch moves,
      * and the Linux client's {@code Options::settle}: the two are held to the
-     * same cases by {@code backends/vectors/options.json}.
+     * same cases by {@code backends/api/tests/options.json}.
      *
      * @param value what an option says now
      * @param on    whether the {@code BOOL} option with that key is on

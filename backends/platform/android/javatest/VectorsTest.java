@@ -17,10 +17,10 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The shared test vectors in {@code backends/vectors/}, which
- * {@code backends/api/tests/vectors.rs} reads too: one set of cases for a
- * rule both sides keep, so that the two copies cannot drift apart without one
- * of these failing.
+ * The shared test vectors in {@code backends/api/tests/options.json}, which
+ * {@code backends/api/tests/vectors.rs} beside it reads too: one set of cases
+ * for a rule both sides keep, so that the two copies cannot drift apart
+ * without one of these failing.
  *
  * <p>One rule is left with a Java copy: {@link BackendOption#settle}, which the
  * option screens run as somebody edits. The credentials and known-hosts
@@ -31,10 +31,11 @@ public class VectorsTest {
 
     @SuppressWarnings("unchecked")
     private static Map<String, Object> vectors(String name) throws IOException {
-        // A unit test runs in its module's directory. readAllBytes rather than
+        // A unit test runs in its module's directory, `backends/`, and the
+        // cases are the Rust tests' file. readAllBytes rather than
         // readString: a unit test compiles against android.jar.
         return (Map<String, Object>) Json.parse(new String(
-                Files.readAllBytes(Path.of("vectors", name)), StandardCharsets.UTF_8));
+                Files.readAllBytes(Path.of("api", "tests", name)), StandardCharsets.UTF_8));
     }
 
     @SuppressWarnings("unchecked")

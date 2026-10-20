@@ -35,10 +35,10 @@ android {
     }
 
     // The one rule this module keeps that the Linux client keeps too
-    // (`BackendOption.settle`), held to one set of cases: `vectors/`, which
-    // `cargo test` reads from the other side.
+    // (`BackendOption.settle`), held to one set of cases:
+    // `api/tests/options.json`, which `cargo test` reads from the other side.
     // Read at run time from the module's directory, which is where a test
-    // runs, so they are declared as an input of the task, or a changed case
+    // runs, so the file is declared as an input of the task, or a changed case
     // would not make it out of date.
     testOptions {
         unitTests.all {
@@ -46,8 +46,8 @@ android {
                 events = ["failed"]
                 exceptionFormat = "full"
             }
-            inputs.dir('vectors')
-                    .withPropertyName('vectors')
+            inputs.file('api/tests/options.json')
+                    .withPropertyName('options')
                     .withPathSensitivity(PathSensitivity.RELATIVE)
         }
     }
