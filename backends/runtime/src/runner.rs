@@ -185,9 +185,13 @@ impl<C: Client> Runner<C> {
             // A session sitting behind an unanswered prompt is blocked in one
             // of the slots, not in a socket read — and on a current-thread
             // runtime that means the whole session is — so closing has to wake
-            // those too or the thread never ends.
-            self.bridge.cancel();
+            // those too or the thread never ends. The client is closed first:
+            // the woken thread sees a refused prompt, and only a protocol that
+            // already knows it was closed reports that as the close it was
+            // (`closed_on_request`) rather than as a refusal — woken the other
+            // way round, it can read its flag before `close` has set it.
             self.client.close();
+            self.bridge.cancel();
         }
     }
 
