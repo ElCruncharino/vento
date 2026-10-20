@@ -18,10 +18,11 @@ import org.gradle.api.tasks.TaskAction
 import org.gradle.process.ExecOperations
 
 /**
- * Java sources written by {@code vento-codegen} ({@code backends/codegen}) out
- * of what the Rust side says, for a module to compile as a generated source
- * directory: {@code variant.sources.java.addGeneratedSourceDirectory}, which
- * is also where this task's output directory is decided.
+ * Java sources written by {@code vento-codegen} ({@code
+ * backends/platform/android/codegen}) out of what the Rust side says, for a
+ * module to compile as a generated source directory: {@code
+ * variant.sources.java.addGeneratedSourceDirectory}, which is also where this
+ * task's output directory is decided.
  *
  * <p>Unlike {@link CargoBuildTask} this one is checked and cached the ordinary
  * way, because what it reads is small and known: the generator's sources and

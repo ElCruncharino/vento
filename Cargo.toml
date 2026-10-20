@@ -15,7 +15,8 @@
 # small crate beside the C library for the others (RealVNC's the Linux
 # client's alone, and empty on the phone). None of them knows a phone.
 # `backends/platform/*` is where one platform's glue lives — Android's
-# JNI and MediaCodec in `android`, libavcodec in `linux`. The one client
+# JNI and MediaCodec in `android` (and, in `android/codegen`, the host tool
+# that writes its Java), libavcodec in `linux`. The one client
 # that is not a phone's is `linux/`: a desktop binary that holds a session on
 # any of the eight backends through those adapters, with the C libraries its
 # build.rs has CMake make. It is a workspace of its own, excluded here, and not for
@@ -37,8 +38,9 @@ members = [
     "backends/runtime",
     "backends/media",
     "backends/api",
-    "backends/codegen",
-    "backends/platform/*",
+    "backends/platform/android",
+    "backends/platform/android/codegen",
+    "backends/platform/linux",
     "backends/modules/rfb",
     "backends/modules/ironrdp",
     "backends/modules/spice",
@@ -58,8 +60,8 @@ default-members = [
     "backends/runtime",
     "backends/media",
     "backends/api",
-    "backends/codegen",
     "backends/platform/android",
+    "backends/platform/android/codegen",
     "backends/modules/rfb",
     "backends/modules/ironrdp",
     "backends/modules/spice",
