@@ -77,6 +77,8 @@ public final class IronRdpProvider implements BackendProvider {
     public static final String MONITORS = "Monitors";
     public static final String GRAPHICS = "Graphics";
     public static final String EXPERIENCE = "Experience";
+    /** The colour range to assume for GPU video when the server does not say. */
+    public static final String GPU_VIDEO_RANGE = "GpuVideoRange";
     public static final String COMPRESSION = "Compression";
     public static final String VIEW_ONLY = "ViewOnly";
 
@@ -126,6 +128,11 @@ public final class IronRdpProvider implements BackendProvider {
                     new Choice("full", "Everything"),
                     new Choice("balanced", "No animation"),
                     new Choice("plain", "As little as possible")),
+            BackendOption.choice(GPU_VIDEO_RANGE, "GPU video range",
+                    "Only used when the server does not say which range its video is in. Full is the default; if blacks look grey or whites look dull, try limited.",
+                    "full", Scope.CONNECTION, false,
+                    new Choice("full", "Full"),
+                    new Choice("limited", "Limited")),
             BackendOption.bool(COMPRESSION, "Compression",
                     "Enable connection-level compression. Uses less bandwidth, but more CPU.",
                     true, Scope.LAYERED, false),
