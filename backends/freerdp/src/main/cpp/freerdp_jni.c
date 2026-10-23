@@ -1513,18 +1513,11 @@ static void parseGateway(Session *s, const char *text) {
     }
     size_t hostLen = strlen(text);
     const char *colon = strrchr(text, ':');
-    if (colon && colon[1] != '\0') {
-        int digits = 1;
-        for (const char *p = colon + 1; *p; p++) {
-            if (*p < '0' || *p > '9') {
-                digits = 0;
-            }
-        }
-        const long port = digits ? strtol(colon + 1, NULL, 10) : 0;
-        if (digits && port > 0 && port <= 65535) {
-            hostLen = (size_t) (colon - text);
-            s->gatewayPort = (int) port;
-        }
+    char *end = NULL;
+    const long port = colon ? strtol(colon + 1, &end, 10) : 0;
+    if (colon && end && end != colon + 1 && *end == '\0' && port > 0 && port <= 65535) {
+        hostLen = (size_t) (colon - text);
+        s->gatewayPort = (int) port;
     }
     if (hostLen == 0) {
         return;
