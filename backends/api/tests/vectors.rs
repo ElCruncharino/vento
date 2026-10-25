@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use api::Credentials;
 use api::credentials::{fill_user, rdp_identity, split_domain};
 use api::events::Identity;
-use api::options::{Choice, Kind, Options, Scope, Spec};
+use api::options::{Choice, Options, Scope, Spec, Type};
 use api::trust::{self, Verdict};
 
 // What a credentials prompt's answer comes to, for every client that has
@@ -213,9 +213,9 @@ fn spec(value: &Value) -> Spec {
         label: leak(str(value, "key")),
         summary: None,
         desktop_summary: None,
-        kind: match str(value, "type") {
-            "choice" => Kind::Choice,
-            "bool" => Kind::Bool,
+        ty: match str(value, "type") {
+            "choice" => Type::Choice,
+            "bool" => Type::Bool,
             other => panic!("type {other}"),
         },
         choices: Box::leak(choices.into_boxed_slice()),

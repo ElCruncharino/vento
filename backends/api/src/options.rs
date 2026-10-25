@@ -13,9 +13,9 @@
 //! beside them ([`Spec::desktop_summary`], [`Choice::desktop_label`]).
 //!
 //! The values are strings, because that is what the backends' own
-//! configuration layers take; [`Kind`] says how to ask for one, not how to
+//! configuration layers take; [`Type`] says how to ask for one, not how to
 //! store it. An option, wherever it is set, is a key checked against a
-//! backend's list and a value checked against the kind, which is what keeps
+//! backend's list and a value checked against the type, which is what keeps
 //! it generic.
 //!
 //! The lists are `static` and the descriptions are `&'static str`, so a
@@ -29,7 +29,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Which control to offer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Kind {
+pub enum Type {
     /// `"true"` / `"false"`.
     Bool,
     /// One of the choices.
@@ -101,7 +101,7 @@ pub struct Spec {
     /// vibrates for a bell and a window cannot — or `None` where the phone's
     /// words do for both. See [`Spec::summary_on`].
     pub desktop_summary: Option<&'static str>,
-    pub kind: Kind,
+    pub ty: Type,
     /// For `Choice`, in display order; empty otherwise.
     pub choices: &'static [Choice],
     /// What the backend does when nothing is set.
@@ -134,16 +134,16 @@ impl Spec {
 
     /// Whether `value` is something this option takes, in words when not.
     pub fn check(&self, value: &str) -> Result<(), String> {
-        match self.kind {
-            Kind::Bool => match value {
+        match self.ty {
+            Type::Bool => match value {
                 "true" | "false" => Ok(()),
                 _ => Err(format!("{}: true or false, not {value:?}", self.key)),
             },
-            Kind::Int => value
+            Type::Int => value
                 .parse::<i64>()
                 .map(|_| ())
                 .map_err(|_| format!("{}: a whole number, not {value:?}", self.key)),
-            Kind::Choice => {
+            Type::Choice => {
                 if self.choices.iter().any(|c| c.value == value) {
                     Ok(())
                 } else {
@@ -155,7 +155,7 @@ impl Spec {
                     ))
                 }
             }
-            Kind::Text => Ok(()),
+            Type::Text => Ok(()),
         }
     }
 
@@ -226,7 +226,7 @@ pub(crate) const fn spec(
     key: &'static str,
     label: &'static str,
     summary: Option<&'static str>,
-    kind: Kind,
+    ty: Type,
     choices: &'static [Choice],
     default: &'static str,
     scope: Scope,
@@ -237,7 +237,7 @@ pub(crate) const fn spec(
         label,
         summary,
         desktop_summary: None,
-        kind,
+        ty,
         choices,
         default,
         scope,
@@ -258,7 +258,7 @@ pub(crate) const fn bool(
         key,
         label,
         Some(summary),
-        Kind::Bool,
+        Type::Bool,
         &[],
         if default { "true" } else { "false" },
         scope,
@@ -274,7 +274,7 @@ pub(crate) const fn integer(
     scope: Scope,
     live: bool,
 ) -> Spec {
-    spec(key, label, Some(summary), Kind::Int, &[], default, scope, live)
+    spec(key, label, Some(summary), Type::Int, &[], default, scope, live)
 }
 
 pub(crate) const fn text(
@@ -285,7 +285,7 @@ pub(crate) const fn text(
     scope: Scope,
     live: bool,
 ) -> Spec {
-    spec(key, label, Some(summary), Kind::Text, &[], default, scope, live)
+    spec(key, label, Some(summary), Type::Text, &[], default, scope, live)
 }
 
 pub(crate) const fn choices(
@@ -297,7 +297,7 @@ pub(crate) const fn choices(
     live: bool,
     choices: &'static [Choice],
 ) -> Spec {
-    spec(key, label, summary, Kind::Choice, choices, default, scope, live)
+    spec(key, label, summary, Type::Choice, choices, default, scope, live)
 }
 
 /// The same option, offered only where `key` says one of `values`.
@@ -476,7 +476,7 @@ pub fn find<'a>(specs: &'a [Spec], key: &str) -> Result<&'a Spec, String> {
 mod tests {
     use super::*;
 
-    /// Rows of every kind, as a backend's list has them: a choice with one
+    /// Rows of every type, as a backend's list has them: a choice with one
     /// value behind a switch and one in a desktop's own words, a gated row,
     /// a number, free text, and three of the shared rows.
     static FIXTURE: &[Spec] = &[
@@ -522,7 +522,7 @@ mod tests {
     }
 
     #[test]
-    fn a_value_is_checked_against_its_kind() {
+    fn a_value_is_checked_against_its_type() {
         let encoding = find(FIXTURE, "Encoding").unwrap();
         assert!(encoding.check("rre").is_ok());
         assert!(encoding.check("zrle").unwrap_err().contains("one of"));

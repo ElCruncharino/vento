@@ -26,7 +26,7 @@
 
 use api::catalog::{self, About};
 use api::kind::Platform;
-use api::options::{Kind, Scope, Spec};
+use api::options::{Scope, Spec, Type};
 use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -126,12 +126,12 @@ pub fn constant(key: &str) -> String {
     out
 }
 
-fn java_type(kind: Kind) -> &'static str {
-    match kind {
-        Kind::Bool => "Type.BOOL",
-        Kind::Choice => "Type.CHOICE",
-        Kind::Int => "Type.INT",
-        Kind::Text => "Type.TEXT",
+fn java_type(ty: Type) -> &'static str {
+    match ty {
+        Type::Bool => "Type.BOOL",
+        Type::Choice => "Type.CHOICE",
+        Type::Int => "Type.INT",
+        Type::Text => "Type.TEXT",
     }
 }
 
@@ -151,7 +151,7 @@ fn java_option(spec: &Spec) -> String {
         constant(spec.key),
         java_string(spec.label),
         java_nullable(spec.summary_on(Platform::Android)),
-        java_type(spec.kind),
+        java_type(spec.ty),
     );
     if spec.choices.is_empty() {
         out.push_str("List.of(),");
@@ -338,7 +338,7 @@ fn json() -> String {
                     json_string(s.key),
                     json_string(s.label),
                     json_nullable(s.summary_on(Platform::Android)),
-                    json_string(java_type(s.kind).trim_start_matches("Type.")),
+                    json_string(java_type(s.ty).trim_start_matches("Type.")),
                     choices.join(", "),
                     json_string(s.default),
                     json_string(java_scope(s.scope).trim_start_matches("Scope.")),
