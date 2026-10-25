@@ -20,7 +20,7 @@
 //! read when it is taken, but not past a change of the desktop's size: the
 //! rectangles of one size are not rectangles of the next. The events that
 //! say what something is now — the cursor's shape, the pointer mode, the far
-//! end's clipboard — are kept the same way, the latest unread one of each and
+//! end's clipboard, whether its sound is playing — are kept the same way, the latest unread one of each and
 //! no other, so that what waits for a window that stopped reading is a few
 //! events, however long it stopped for. A
 //! rectangle that repeats one already marked, lies inside one, or makes one
@@ -219,6 +219,11 @@ pub enum Event {
         question: bool,
         confirm_label: String,
     },
+    /// Whether the session is playing the far end's sound: true once a
+    /// stream has had sound written to it, false once the last such stream
+    /// has closed. What a window shows its mute by, so that a session with
+    /// no sound has no button for it.
+    Audio { playing: bool },
     /// Terminal, and the last event a session sends. `detail` is empty for an
     /// ending nobody needs telling about — the one that was asked for.
     Closed { detail: String },
@@ -234,7 +239,10 @@ impl Event {
     /// Whether this says what something is now rather than that something
     /// happened, so that only the latest of its kind is worth reading.
     fn is_state(&self) -> bool {
-        matches!(self, Event::Cursor(_) | Event::PointerMode { .. } | Event::Clipboard(_))
+        matches!(
+            self,
+            Event::Cursor(_) | Event::PointerMode { .. } | Event::Clipboard(_) | Event::Audio { .. }
+        )
     }
 }
 
@@ -507,6 +515,17 @@ impl Mailbox {
         self.push(Event::Bell);
     }
 
+    /// Whether sound is playing, from the session's audio controls (see
+    /// [`Kind::start`](crate::kind::Kind::start)). Dropped once the session
+    /// has closed: a backend that closes its last stream while it tears
+    /// down must not say anything after the event that is the last.
+    pub fn on_audio(&self, playing: bool) {
+        if self.state() == State::Closed {
+            return;
+        }
+        self.push(Event::Audio { playing });
+    }
+
     pub fn on_clipboard(&self, text: &str) {
         self.push(Event::Clipboard(text.to_string()));
     }
@@ -776,6 +795,21 @@ mod tests {
         mailbox.accept_bell(true);
         mailbox.on_bell();
         assert_eq!(mailbox.take(), Some(Event::Bell));
+    }
+
+    #[test]
+    fn whether_sound_plays_is_the_latest_and_never_after_the_end() {
+        let mailbox = Mailbox::new(None);
+        mailbox.on_audio(true);
+        mailbox.on_bell();
+        mailbox.on_audio(false);
+        mailbox.on_audio(true);
+        assert_eq!(mailbox.take(), Some(Event::Bell));
+        assert_eq!(mailbox.take(), Some(Event::Audio { playing: true }));
+        mailbox.on_closed("");
+        mailbox.on_audio(false);
+        assert_eq!(mailbox.take(), Some(Event::Closed { detail: String::new() }));
+        assert_eq!(mailbox.take(), None);
     }
 
     #[test]

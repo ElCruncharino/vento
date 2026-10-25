@@ -28,6 +28,7 @@
 //! page is generated from that graph.
 
 pub mod address;
+pub mod audio;
 pub mod client;
 pub mod cursor;
 pub mod events;

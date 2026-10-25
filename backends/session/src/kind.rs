@@ -9,6 +9,7 @@ use crate::backend::Backend;
 use crate::catalog::About;
 use crate::events::Mailbox;
 use crate::options::Options;
+use common::audio::Outputs;
 use common::video::Decoders;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -92,6 +93,12 @@ pub struct Connect<'a> {
     /// `None` is a RustDesk session with no picture, reported as such, and a
     /// TigerVNC or FreeRDP one that never offers H.264.
     pub decoders: Option<Arc<dyn Decoders>>,
+    /// Where the far end's sound goes, for the backends that have sound
+    /// (TigerVNC's QEMU audio and FreeRDP's rdpsnd, through `vento/audio.h`):
+    /// the phone's AAudio, one per session so that its controls — the mute a
+    /// window sets — are this session's alone. `None` is a session whose
+    /// sound is dropped.
+    pub audio: Option<Arc<dyn Outputs>>,
 }
 
 impl Connect<'_> {
@@ -137,10 +144,85 @@ impl Kind {
     /// all of them. (RealVNC's core is told as well, since its library has a
     /// switch of its own.) The option is not live, as the catalog has it,
     /// so this is once per session.
+    ///
+    /// Whether the session is playing sound is likewise said for every
+    /// backend at once: the session's audio controls are told to say it
+    /// through the mailbox, as [`Event::Audio`](crate::events::Event::Audio),
+    /// whichever backend's streams it is that start and stop.
     pub fn start(&self, connect: &Connect) -> Result<Arc<dyn Backend>, String> {
         if self.options.iter().any(|s| s.key == "AcceptBell") {
             connect.mailbox.accept_bell(connect.options.bool("AcceptBell"));
         }
+        if let Some(audio) = &connect.audio {
+            // Weak, so that a stream a backend leaks past its session does
+            // not keep the mailbox alive with it.
+            let mailbox = Arc::downgrade(&connect.mailbox);
+            audio.controls().on_playing(Box::new(move |playing| {
+                if let Some(mailbox) = mailbox.upgrade() {
+                    mailbox.on_audio(playing);
+                }
+            }));
+        }
         (self.create)(connect)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::events::Event;
+    use common::audio::{Controls, Device, Format, Queue};
+
+    struct Quiet;
+    impl Device for Quiet {}
+
+    struct Fake(Arc<Controls>);
+
+    impl Outputs for Fake {
+        fn controls(&self) -> &Arc<Controls> {
+            &self.0
+        }
+
+        fn device(&self, _queue: Arc<Queue>) -> Result<Box<dyn Device>, String> {
+            Ok(Box::new(Quiet))
+        }
+    }
+
+    #[test]
+    fn a_session_says_when_its_sound_starts_and_stops() {
+        static KIND: Kind = Kind {
+            about: &crate::catalog::TIGERVNC,
+            version: String::new,
+            create: |_| Err("not here".into()),
+        };
+        let audio = Arc::new(Fake(Arc::new(Controls::new())));
+        let mailbox = Mailbox::new(None);
+        let options = Options::default();
+        let dirs = Dirs {
+            config: PathBuf::new(),
+            state: PathBuf::new(),
+            realvnc_libs: PathBuf::new(),
+        };
+        let connect = Connect {
+            address: "",
+            user: "",
+            domain: "",
+            password: None,
+            options: &options,
+            mailbox: Arc::clone(&mailbox),
+            dirs: &dirs,
+            screen: None,
+            last_size: None,
+            client_name: "",
+            platform: Platform::Linux,
+            decoders: None,
+            audio: Some(Arc::clone(&audio) as Arc<dyn Outputs>),
+        };
+        assert!(KIND.start(&connect).is_err());
+        let mut stream = audio.open(Format::new(48_000, 2).unwrap()).unwrap();
+        stream.write(&[0, 0]);
+        assert_eq!(mailbox.take(), Some(Event::Audio { playing: true }));
+        drop(stream);
+        assert_eq!(mailbox.take(), Some(Event::Audio { playing: false }));
     }
 }

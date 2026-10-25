@@ -30,6 +30,7 @@ use std::os::raw::{c_char, c_int, c_void};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, ThreadId};
 
+pub mod audio;
 pub mod ffi;
 pub mod video;
 

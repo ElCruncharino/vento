@@ -348,6 +348,7 @@ fn create<'local>(
         client_name: &client_name,
         platform: Platform::Android,
         decoders: (module.decoders)(),
+        audio: None,
     };
     match kind.start(&connect) {
         Ok(backend) => {
@@ -872,6 +873,9 @@ impl Outlet {
                 }
                 Event::PointerMode { relative } => self.call(env, self.pointer_mode, &[jvalue { z: relative }]),
                 Event::Bell => self.call(env, self.bell, &[]),
+                // What the session screen will show a mute by; the Java
+                // side has no callback for it yet.
+                Event::Audio { .. } => Ok(()),
                 Event::Clipboard(text) => self.text(env, self.clipboard, &text),
                 Event::CredentialsNeeded { needs_user } => {
                     let user = env.new_string(if needs_user { self.asks.prompt_user.as_str() } else { "" })?;
