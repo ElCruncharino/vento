@@ -5,18 +5,23 @@ plugins {
     id 'com.android.library'
 }
 
-// Both halves of the FreeRDP backend: `src/main/java` implements `Backend` on
-// `src/main/cpp`, which is a shim over FreeRDP's own client, and the AAR carries
-// the library CMake compiles them to. The shim is itself two files:
-// `freerdp_session.c`, which drives the library and names no platform, and
-// `freerdp_jni.c`, the JNI entry points over the adapter shared with the other
-// C backends in `backends/platform/android/jni`.
+// The three parts of the FreeRDP backend: `src/main/cpp`, a shim over FreeRDP's
+// own client that names no platform; `src/main/rust`, the backend as a
+// `session::Backend` over it and the JNI layer every backend shares, registered
+// on the generated natives class; and `src/main/java`'s provider, which holds a
+// session as a `NativeBackend` with the RDP hooks. The AAR carries the one
+// library CMake links the first two into.
 //
 // As with the two borrowed VNC clients, the native half is not in this
 // directory: it is `third_party/freerdp`, a submodule at the repository root
 // pinned by its gitlink — and, under it, `backends/ports/openssl`, since RDP's
 // crypto is OpenSSL and nothing else, which is 64% of what this backend adds to
 // a build.
+
+// The crate in `src/main/rust`, as the static library CMake links in: see
+// `rustStaticLibrary` in :backends.
+final rustLibraries = project(':backends').rustStaticLibrary(project, 'remotedesktop-freerdp')
+
 android {
     namespace = 'net.pgaskin.remotedesktop.backend.freerdp'
     compileSdk 36
@@ -27,6 +32,7 @@ android {
         externalNativeBuild {
             cmake {
                 targets 'remotedesktop_freerdp'
+                arguments "-DVENTO_RUST_LIBRARY_DIR=${rustLibraries}"
                 // scripts/check-warnings.sh, and nothing in the path of building
                 // the app: see backends/cmake/warnings.cmake.
                 if (project.hasProperty('strictWarnings')) {
@@ -74,10 +80,12 @@ tasks.named('preBuild') {
     dependsOn patchCheck
 }
 
-// `FreeRdpCatalog`, what the catalog says this backend is: see :backends.
+// `FreeRdpCatalog`, what the catalog says this backend is, and `FreeRdpNatives`, what
+// the library registers its natives on: see :backends.
 androidComponents {
     onVariants(selector().all()) { variant ->
         project(':backends').generateCatalog(project, variant, 'freerdp', 'FreeRdpCatalog')
+        project(':backends').generateNatives(project, variant, 'FreeRdpNatives', 'remotedesktop_freerdp')
     }
 }
 

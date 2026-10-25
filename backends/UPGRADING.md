@@ -130,12 +130,15 @@ under the host locale (`export LC_ALL=C`).
 
 ## Adapting the shim
 
-- A C backend's shim is two files under `src/main/cpp`: `<name>_session.c`
+- A C backend's shim is one file under `src/main/cpp`, `<name>_session.c`
   (`.cxx` for TigerVNC), which drives the library against the neutral C API
-  in `backends/common/include/vento/` and names no platform, and
-  `<name>_jni.c`, which is the Java class's own entry points over the adapter
-  in `backends/platform/android/jni`. An upstream change reaches the session
-  file; the JNI file changes only when `nativeCreate`'s parameters do.
+  in `backends/common/include/vento/` and names no platform. Above it is the
+  crate in `src/main/rust`, which fills the backend's `vento_<name>_config`
+  from the options and words its rows; on the phone it is linked into the
+  module's library as a static library (`rustStaticLibrary` in
+  `backends/build.gradle`, `backends/cmake/vento_android.cmake`) with the one
+  JNI layer in `backends/platform/android`. An upstream change reaches the
+  session file; the crate changes only when the config does.
 - TigerVNC's two media sinks are platform code under
   `backends/platform/android/tigervnc`: the H.264 decoder context (selected
   by `H264_ANDROID`) and the audio sink behind the shim's own

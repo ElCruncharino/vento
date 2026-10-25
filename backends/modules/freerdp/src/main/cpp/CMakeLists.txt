@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Under Gradle this is a root, configured by the NDK toolchain, and makes
-# `libremotedesktop_freerdp.so`: the session and the JNI file over the Android
-# adapter, with the OpenSSL port linked in and FreeRDP's own MediaCodec and
-# OpenSL ES behind its H.264 and sound.
+# `libremotedesktop_freerdp.so`: the session, with the module's Rust crate
+# linked in as the JNI layer over it and the OpenSSL port and FreeRDP's own
+# MediaCodec and OpenSL ES behind its H.264 and sound.
 
 cmake_minimum_required(VERSION 3.30)
 project(remotedesktop_freerdp C)
@@ -20,7 +20,7 @@ endif()
 # matches.
 include("${VENTO_BACKENDS}/cmake/reproducible.cmake")
 include("${VENTO_BACKENDS}/cmake/warnings.cmake")
-include("${VENTO_BACKENDS}/cmake/vento_jni.cmake")
+include("${VENTO_BACKENDS}/cmake/vento_android.cmake")
 
 # One shared library per protocol, as every other backend module does, so a
 # build that drops this protocol drops the whole of it. Everything below is
@@ -130,14 +130,24 @@ set(FREERDP_INCLUDES
         "${THIRD_PARTY}/freerdp/include" "${CMAKE_CURRENT_BINARY_DIR}/freerdp/include"
         "${THIRD_PARTY}/freerdp/winpr/include" "${CMAKE_CURRENT_BINARY_DIR}/freerdp/winpr/include")
 
-# Two halves: the session, which is the shim over FreeRDP's client and names
-# no platform, and the JNI file, which is `FreeRdpNative`'s entry points over
-# the shared Android adapter `vento_jni` brings with it. OpenSSL's headers
-# are borrowed from the port for the TLS version constants, and as SYSTEM
-# like the rest, because linking the port would put them on the path as ours.
-add_library(remotedesktop_freerdp SHARED freerdp_session.c freerdp_jni.c)
+# The session, which is the shim over FreeRDP's client and names no
+# platform, and the Rust crate beside it in `src/main/rust`, which is the
+# backend over the session and the JNI layer every backend shares. OpenSSL's
+# headers are borrowed from the port for the TLS version constants, and as
+# SYSTEM like the rest, because linking the port would put them on the path
+# as ours.
+add_library(remotedesktop_freerdp SHARED freerdp_session.c)
+vento_android_library(remotedesktop_freerdp remotedesktop_freerdp)
 remotedesktop_warnings(remotedesktop_freerdp)
 target_include_directories(remotedesktop_freerdp SYSTEM PRIVATE ${FREERDP_INCLUDES}
         "$<TARGET_PROPERTY:openssl,INTERFACE_INCLUDE_DIRECTORIES>")
-target_link_libraries(remotedesktop_freerdp PRIVATE
-        freerdp-client freerdp winpr vento_jni jnigraphics log)
+target_link_libraries(remotedesktop_freerdp PRIVATE freerdp-client freerdp winpr)
+
+# A library has one `JNI_OnLoad`, and WinPR brings one: it keeps the
+# `JavaVM` it reads the time zone through. Theirs is compiled under
+# another name, and the crate's — the one that registers the natives —
+# calls it first (`natives!`'s `on_load`, in `src/main/rust/src/lib.rs`).
+# A definition on that one source file rather than a patch: jni.h's
+# declaration is renamed with it, so the two still agree.
+set_property(SOURCE "${THIRD_PARTY}/freerdp/winpr/libwinpr/utils/android.c"
+        TARGET_DIRECTORY winpr APPEND PROPERTY COMPILE_DEFINITIONS JNI_OnLoad=winpr_JNI_OnLoad)

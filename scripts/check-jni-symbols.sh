@@ -11,11 +11,15 @@
 # A library binds its natives one of two ways, and each is asked its own
 # question:
 #
-#   exported    by mangled name, `Java_<class>_<method>`: the C backends. Every
+#   exported    by mangled name, `Java_<class>_<method>`: RealVNC's traffic
+#               counter, the one native left outside the generic layer. Every
 #               native the class declares must be a dynamic symbol.
-#   registered  by `RegisterNatives` from the library's `JNI_OnLoad`: the Rust
-#               backends, which are one JNI layer (backends/platform/android)
-#               registered on each module's generated natives class. There is
+#   registered  by `RegisterNatives` from the library's `JNI_OnLoad`: every
+#               other backend, which is one JNI layer (backends/platform/android)
+#               registered on each module's generated natives class — a cdylib
+#               of the protocol crate for the four in Rust, and for the three
+#               in C the same layer linked into the library CMake makes, where
+#               `JNI_OnLoad` is the only export. There is
 #               no symbol to look for, so what is checked is what registration
 #               is made of — the library exports `JNI_OnLoad`, names the class
 #               it registers on, and carries each native's name and JNI
@@ -41,7 +45,7 @@ MODULES=(
     "libvnc:net/pgaskin/remotedesktop/backend/libvnc/LibVncNatives:remotedesktop_libvnc:cmake:registered"
     "tigervnc:net/pgaskin/remotedesktop/backend/tigervnc/TigerVncNatives:remotedesktop_tigervnc:cmake:registered"
     "ironrdp:net/pgaskin/remotedesktop/backend/ironrdp/IronRdpNatives:remotedesktop_ironrdp:cargo:registered"
-    "freerdp:net/pgaskin/remotedesktop/backend/freerdp/FreeRdpNative:remotedesktop_freerdp:cmake:exported"
+    "freerdp:net/pgaskin/remotedesktop/backend/freerdp/FreeRdpNatives:remotedesktop_freerdp:cmake:registered"
     "realvnc:net/pgaskin/remotedesktop/backend/realvnc/RealVncTraffic:remotedesktop_realvnc:cmake:exported"
     "rustdesk:net/pgaskin/remotedesktop/backend/rustdesk/RustDeskNatives:remotedesktop_rustdesk:cargo:registered"
     "spice:net/pgaskin/remotedesktop/backend/spice/SpiceNatives:remotedesktop_spice:cargo:registered"
