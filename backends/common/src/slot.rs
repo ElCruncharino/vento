@@ -5,9 +5,10 @@
 
 use std::sync::{Condvar, Mutex};
 
-/// There are three of these across the two backends — a password, a
-/// certificate, and RDP's credentials — and all of them work the same way: the
-/// handler asks Java, blocks here, and [`Slot::answer`] wakes it.
+/// There are two of these in a [`Bridge`](crate::Bridge) — the credentials
+/// and the trust decision — and both work the same way: the handler fires an
+/// event, blocks here, and [`Slot::answer`] wakes it from whatever thread the
+/// answer arrives on.
 ///
 /// `answered` is what tells "cancelled" (a `None` answer) apart from "not yet",
 /// so a cancel does not look like a spurious wake-up; taking the answer clears
@@ -44,5 +45,26 @@ impl<T> Slot<T> {
 impl<T> Default for Slot<T> {
     fn default() -> Slot<T> {
         Slot::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn an_answer_wakes_a_waiter_and_is_taken_once() {
+        let slot = Arc::new(Slot::new());
+        let waiter = {
+            let slot = Arc::clone(&slot);
+            std::thread::spawn(move || slot.wait())
+        };
+        slot.answer(Some(7));
+        assert_eq!(waiter.join().unwrap(), Some(7));
+
+        // Taken: the next wait is a fresh question, not a replay.
+        slot.answer(None);
+        assert_eq!(slot.wait(), None);
     }
 }

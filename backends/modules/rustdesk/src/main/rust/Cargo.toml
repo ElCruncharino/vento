@@ -36,10 +36,12 @@ sha2 = "0.11"
 # in here: it builds under the NDK without being asked anything.
 zstd = "0.13"
 
-# The only part of this crate that knows a phone exists.
+# The only part of this crate that knows a phone exists: the JNI entry points
+# in `src/bindings`, the platform crate they stand on, and the MediaCodec
+# decoder in `src/video`, which reaches the NDK directly.
 [target.'cfg(target_os = "android")'.dependencies]
 jni.workspace = true
-android_logger.workspace = true
+remotedesktop-platform-android.workspace = true
 
 [build-dependencies]
 protobuf-codegen = "3.7"

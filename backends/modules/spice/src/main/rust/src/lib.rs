@@ -32,9 +32,9 @@
 //! decoder produces was compared with `remote-viewer`'s own picture, pixel for
 //! pixel, before any of this was written.
 
-/// The JNI half: the entry points the Java in this module declares, and the
-/// session behind them. Android only — everything above is the protocol, and it
-/// builds and tests on the host with none of this compiled.
+/// The JNI half: the entry points the Java in this module declares, in front
+/// of a `common::Session`. Android only — everything above is the protocol,
+/// and it builds and tests on the host with none of this compiled.
 #[cfg(target_os = "android")]
 mod bindings;
 
@@ -49,6 +49,7 @@ mod images;
 mod keymap;
 mod tls;
 
-pub use client::{Client, Config, Handler, Info, VERSION, compression_of};
+pub use client::{Client, Config, Info, VERSION, compression_of};
+pub use common::{Credentials, Handler};
 pub use error::{Error, Result};
 pub use framebuffer::Framebuffer;

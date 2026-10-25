@@ -9,15 +9,19 @@
 //! thing in the path.
 //!
 //! One class per backend declares the interface and they are identical, so this
-//! takes the name: `RfbNative$Callbacks` and `IronRdpNative$Callbacks` are the same
-//! shape because they are answering the same `Backend`. Where the two protocols
-//! genuinely differ — RDP's credentials carry a domain — the difference is in
-//! what is sent *back* through `nativeAnswerCredentials`, not in what is
-//! called here.
+//! takes the name: `RfbNative$Callbacks` and `IronRdpNative$Callbacks` are the
+//! same shape because they are answering the same `Backend`. That shape is
+//! `common::Events`, method for method, and this is its JNI implementation:
+//! what a protocol asks goes to Java as a question, and what Java answers
+//! comes back through `nativeAnswerCredentials` and `nativeAnswerTrust` to the
+//! `common::Session` behind the handle. Where the protocols genuinely differ —
+//! RDP's credentials carry a domain — the difference is in what is sent
+//! *back*, not in what is called here.
 
+use common::Events;
 use jni::objects::{Global, JObject};
 use jni::signature::{Primitive, ReturnType};
-use jni::sys::{jvalue, jint};
+use jni::sys::{jint, jvalue};
 use jni::{Env, JavaVM, jni_sig, jni_str};
 
 /// The interface `RfbNative.Callbacks` declares, resolved.
@@ -49,7 +53,11 @@ impl Callbacks {
             vm: env.get_java_vm()?,
             target: env.new_global_ref(target)?,
             connected: env.get_method_id(&class, jni_str!("onConnected"), jni_sig!("(II)V"))?,
-            desktop_size: env.get_method_id(&class, jni_str!("onDesktopSize"), jni_sig!("(II)V"))?,
+            desktop_size: env.get_method_id(
+                &class,
+                jni_str!("onDesktopSize"),
+                jni_sig!("(II)V"),
+            )?,
             damaged: env.get_method_id(&class, jni_str!("onDamage"), jni_sig!("(IIII)V"))?,
             frame_end: env.get_method_id(&class, jni_str!("onFrameEnd"), jni_sig!("()V"))?,
             cursor: env.get_method_id(&class, jni_str!("onCursor"), jni_sig!("([IIIIIJ)V"))?,
@@ -107,99 +115,6 @@ impl Callbacks {
         }
     }
 
-    pub fn connected(&self, width: i32, height: i32) {
-        self.call(self.connected, &[int(width), int(height)]);
-    }
-
-    pub fn desktop_size(&self, width: i32, height: i32) {
-        self.call(self.desktop_size, &[int(width), int(height)]);
-    }
-
-    pub fn damaged(&self, x: i32, y: i32, width: i32, height: i32) {
-        self.call(
-            self.damaged,
-            &[int(x), int(y), int(width), int(height)],
-        );
-    }
-
-    pub fn frame_end(&self) {
-        self.call(self.frame_end, &[]);
-    }
-
-    /// `pixels` is the framebuffer's own `R, G, B, A` word order; Java's
-    /// `Bitmap.setPixels` wants `Color`'s `0xAARRGGBB`, so red and blue swap
-    /// here rather than on a thread that is drawing.
-    pub fn cursor(&self, pixels: &[u32], width: i32, height: i32, hot_x: i32, hot_y: i32) {
-        let argb: Vec<jint> = pixels.iter().map(|&p| swap_rb(p) as jint).collect();
-        let hash = cursor_hash(&argb, width, height);
-        let result: jni::errors::Result<()> = self.vm.attach_current_thread(|env| {
-            let array = env.new_int_array(argb.len())?;
-            if !argb.is_empty() {
-                array.set_region(env, 0, &argb)?;
-            }
-            unsafe {
-                env.call_method_unchecked(
-                    &self.target,
-                    self.cursor,
-                    ReturnType::Primitive(Primitive::Void),
-                    &[
-                        jvalue { l: array.as_raw() },
-                        int(width),
-                        int(height),
-                        int(hot_x),
-                        int(hot_y),
-                        jvalue { j: hash },
-                    ],
-                )
-            }?;
-            Ok(())
-        });
-        if let Err(e) = result {
-            log::warn!("cursor callback failed: {e}");
-        }
-    }
-
-    /// What a pointer event's coordinates now mean. RFB's only; an RDP session
-    /// is absolute for the length of its life and never calls this.
-    pub fn pointer_mode(&self, relative: bool) {
-        self.call(self.pointer_mode, &[jvalue { z: relative }]);
-    }
-
-    pub fn bell(&self) {
-        self.call(self.bell, &[]);
-    }
-
-    pub fn clipboard(&self, text: &str) {
-        self.with_string(self.clipboard, text);
-    }
-
-    pub fn closed(&self, detail: &str) {
-        self.with_string(self.closed, detail);
-    }
-
-    /// Ask for credentials. Returns nothing itself — the answer arrives through
-    /// the protocol's own `Session::answer_credentials`, because on the other
-    /// side of this is a dialog and a person.
-    pub fn credentials_needed(&self, needs_user: bool) {
-        self.call(self.credentials_needed, &[jvalue { z: needs_user }]);
-    }
-
-    /// Ask whether the server's certificate is the right one. Answered through
-    /// the protocol's own `Session::answer_trust`; the app is what holds the
-    /// pin store, so the decision is not ours to take here.
-    pub fn trust_needed(&self, fingerprint: &str) {
-        self.with_string(self.trust_needed, fingerprint);
-    }
-
-    /// Ask whether to go on with a far end that could not be verified at all,
-    /// which is a different question from whether an identity is the right one:
-    /// there is nothing to pin and nothing to compare, so what the app can offer
-    /// is the reason and a way out. Answered through `Session::answer_trust`,
-    /// since a yes and a no mean the same things to the protocol thread.
-    pub fn unverified(&self, why: &str) {
-        self.with_string(self.unverified, why);
-    }
-
     fn with_string(&self, method: jni::objects::JMethodID, text: &str) {
         let result: jni::errors::Result<()> = self.vm.attach_current_thread(|env| {
             let s = env.new_string(text)?;
@@ -219,26 +134,100 @@ impl Callbacks {
     }
 }
 
+impl Events for Callbacks {
+    fn connected(&self, width: usize, height: usize) {
+        self.call(self.connected, &[int(width as i32), int(height as i32)]);
+    }
+
+    fn desktop_size(&self, width: usize, height: usize) {
+        self.call(self.desktop_size, &[int(width as i32), int(height as i32)]);
+    }
+
+    fn damaged(&self, x: usize, y: usize, width: usize, height: usize) {
+        self.call(
+            self.damaged,
+            &[
+                int(x as i32),
+                int(y as i32),
+                int(width as i32),
+                int(height as i32),
+            ],
+        );
+    }
+
+    fn frame_end(&self) {
+        self.call(self.frame_end, &[]);
+    }
+
+    /// `pixels` is the framebuffer's own `R, G, B, A` word order; Java's
+    /// `Bitmap.setPixels` wants `Color`'s `0xAARRGGBB`, so red and blue swap
+    /// here rather than on a thread that is drawing — and the hash is taken
+    /// here too, because the pixels are already in cache from the swap.
+    fn cursor(&self, pixels: &[u32], width: usize, height: usize, hot_x: i32, hot_y: i32) {
+        let argb: Vec<u32> = pixels.iter().map(|&p| common::cursor::swap_rb(p)).collect();
+        let hash = common::cursor::hash(&argb, width, height) as i64;
+        let argb: Vec<jint> = argb.iter().map(|&p| p as jint).collect();
+        let result: jni::errors::Result<()> = self.vm.attach_current_thread(|env| {
+            let array = env.new_int_array(argb.len())?;
+            if !argb.is_empty() {
+                array.set_region(env, 0, &argb)?;
+            }
+            unsafe {
+                env.call_method_unchecked(
+                    &self.target,
+                    self.cursor,
+                    ReturnType::Primitive(Primitive::Void),
+                    &[
+                        jvalue { l: array.as_raw() },
+                        int(width as i32),
+                        int(height as i32),
+                        int(hot_x),
+                        int(hot_y),
+                        jvalue { j: hash },
+                    ],
+                )
+            }?;
+            Ok(())
+        });
+        if let Err(e) = result {
+            log::warn!("cursor callback failed: {e}");
+        }
+    }
+
+    fn pointer_mode(&self, relative: bool) {
+        self.call(self.pointer_mode, &[jvalue { z: relative }]);
+    }
+
+    fn bell(&self) {
+        self.call(self.bell, &[]);
+    }
+
+    fn clipboard(&self, text: &str) {
+        self.with_string(self.clipboard, text);
+    }
+
+    /// Returns nothing itself — the answer arrives through
+    /// `Session::answer_credentials`, because on the other side of this is a
+    /// dialog and a person.
+    fn credentials_needed(&self, needs_user: bool) {
+        self.call(self.credentials_needed, &[jvalue { z: needs_user }]);
+    }
+
+    /// Answered through `Session::answer_trust`; the app is what holds the pin
+    /// store, so the decision is not ours to take here.
+    fn trust_needed(&self, fingerprint: &str) {
+        self.with_string(self.trust_needed, fingerprint);
+    }
+
+    fn unverified(&self, why: &str) {
+        self.with_string(self.unverified, why);
+    }
+
+    fn closed(&self, detail: &str) {
+        self.with_string(self.closed, detail);
+    }
+}
+
 fn int(v: i32) -> jvalue {
     jvalue { i: v }
-}
-
-/// FNV-1a over a cursor's pixels, which is its identity in `CursorCache` — so
-/// this and the two C shims' copies of it and the Java one all have to agree.
-/// Computed here because the pixels are already in cache from the conversion
-/// above, and because what it saves on the other side is a bitmap and a texture
-/// per cursor change rather than anything on the wire.
-fn cursor_hash(argb: &[jint], width: i32, height: i32) -> i64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    h = (h ^ width as u32 as u64).wrapping_mul(0x100_0000_01b3);
-    h = (h ^ height as u32 as u64).wrapping_mul(0x100_0000_01b3);
-    for &p in argb {
-        h = (h ^ p as u32 as u64).wrapping_mul(0x100_0000_01b3);
-    }
-    h as i64
-}
-
-/// `0xAA_BB_GG_RR` (memory order R, G, B, A) to `0xAA_RR_GG_BB`.
-fn swap_rb(p: u32) -> u32 {
-    (p & 0xff00_ff00) | ((p & 0x00ff_0000) >> 16) | ((p & 0x0000_00ff) << 16)
 }

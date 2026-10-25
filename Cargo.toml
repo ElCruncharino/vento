@@ -2,11 +2,19 @@
 # but the workspace root is here because that is where cargo and rust-analyzer
 # look for one. Members are globs: adding a protocol is adding a directory under
 # `backends/modules/`.
+#
+# Three kinds of crate, and the layering is the point: `backends/common` is the
+# neutral layer every client speaks to, the protocol crates are written against
+# it and know nothing of a phone, and `backends/platform/*` is where one
+# platform's glue lives — today Android's JNI, one day a desktop's. A protocol
+# crate depends on a platform crate only under a target cfg, so the host build
+# never sees it.
 [workspace]
 resolver = "2"
 members = [
     "backends/common",
     "backends/tls",
+    "backends/platform/*",
     "backends/modules/*/src/main/rust",
 ]
 exclude = ["third_party"]
@@ -20,6 +28,7 @@ publish = false
 [workspace.dependencies]
 remotedesktop-common = { path = "backends/common", version = "0.0.1" }
 remotedesktop-tls = { path = "backends/tls", version = "0.0.1" }
+remotedesktop-platform-android = { path = "backends/platform/android", version = "0.0.1" }
 log = "0.4"
 # One version across the crates: a `Callbacks` built in one is used in another.
 jni = "0.22"

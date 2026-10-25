@@ -24,6 +24,7 @@ use crate::error::{Error, Result};
 use crate::framebuffer::Framebuffer;
 use crate::keymap::{self, Key};
 use crate::tls;
+use common::Handler;
 use common::address::Ports;
 use shakenfist_spice_protocol::constants::{
     MOUSE_MODE_CLIENT, MOUSE_MODE_SERVER, cursor_client, display_client, image_compression,
@@ -60,31 +61,6 @@ pub struct Config {
     /// it does by itself — which for QEMU is `auto_glz`.
     pub compression: Option<u8>,
     pub view_only: bool,
-}
-
-/// What the session tells the app. Every one of these arrives on the session's
-/// own thread and none of them may block for long.
-pub trait Handler {
-    fn connected(&mut self, width: usize, height: usize);
-    fn desktop_size(&mut self, width: usize, height: usize);
-    fn damaged(&mut self, x: usize, y: usize, width: usize, height: usize);
-    fn frame_end(&mut self);
-    /// The cursor's pixels in the framebuffer's own word order, or empty for a
-    /// cursor the guest has hidden.
-    fn cursor(&mut self, pixels: &[u32], width: i32, height: i32, hot_x: i32, hot_y: i32);
-    /// Which end owns the pointer, which SPICE says in the main channel's
-    /// `INIT` and can change mid-session.
-    fn pointer_mode(&mut self, relative: bool);
-    /// The ticket was refused, or none was given and one is wanted. Blocks the
-    /// session until somebody answers, which on this runtime blocks everything
-    /// — and is what waiting for a person means: there is nothing else this
-    /// session could usefully be doing.
-    fn password(&mut self) -> Option<String>;
-    /// The TLS certificate, by fingerprint, before the ticket goes out.
-    fn trust(&mut self, fingerprint: &str) -> bool;
-    /// What the guest's clipboard now holds, which arrives only where the guest
-    /// is running the agent.
-    fn clipboard(&mut self, text: &str);
 }
 
 /// Everything the connection panel can be told about a live session.
@@ -411,6 +387,27 @@ impl Client {
     }
 }
 
+/// The shape `common::Session` runs: the inherent `run` and `close` are the
+/// implementation, and this is them written down for a session that does not
+/// know which protocol it has.
+impl common::Client for Client {
+    type Config = Config;
+    type Error = Error;
+    const NAME: &'static str = "spice";
+
+    fn run(&self, config: &Config, handler: &mut dyn Handler) -> Result<()> {
+        self.run(config, handler)
+    }
+
+    fn close(&self) {
+        self.close();
+    }
+
+    fn closed_on_request(error: &Error) -> bool {
+        matches!(error, Error::Closed)
+    }
+}
+
 impl Default for Client {
     fn default() -> Client {
         Client::new()
@@ -514,7 +511,9 @@ impl Session<'_> {
                 // nothing on this socket left to retry with.
                 Err(Error::Refused(_)) => {
                     log::info!("{}: the ticket was refused", kind.name());
-                    match handler.password() {
+                    // A ticket is the whole of what a SPICE server asks for:
+                    // there is no user name in the protocol.
+                    match handler.credentials(false).map(|c| c.password) {
                         Some(answer) => password = Some(answer),
                         None => return Err(Error::Cancelled),
                     }

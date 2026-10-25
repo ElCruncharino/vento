@@ -37,7 +37,8 @@ rustls = { version = "0.23", default-features = false, features = [
     "logging",
 ] }
 
-# The only part of this crate that knows a phone exists.
+# The only part of this crate that knows a phone exists: the JNI entry points
+# in `src/bindings`, and the platform crate they stand on.
 [target.'cfg(target_os = "android")'.dependencies]
 jni.workspace = true
-android_logger.workspace = true
+remotedesktop-platform-android.workspace = true

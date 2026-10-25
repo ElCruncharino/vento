@@ -32,7 +32,7 @@
  *   SPICE_HEADS    a layout rather than a size, `1024x768+0+0,800x600+1024+0`,
  *                  which is how a second monitor is made to exist
  */
-use remotedesktop_spice::{Client, Config, Handler};
+use remotedesktop_spice::{Client, Config, Credentials, Handler};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -76,7 +76,7 @@ impl Handler for Printer {
         self.frames += 1;
     }
 
-    fn cursor(&mut self, pixels: &[u32], width: i32, height: i32, hot_x: i32, hot_y: i32) {
+    fn cursor(&mut self, pixels: &[u32], width: usize, height: usize, hot_x: i32, hot_y: i32) {
         println!("cursor: {width}x{height} at ({hot_x},{hot_y}), {} pixels", pixels.len());
     }
 
@@ -84,9 +84,12 @@ impl Handler for Printer {
         println!("pointer: {}", if relative { "the guest's" } else { "ours" });
     }
 
-    fn password(&mut self) -> Option<String> {
+    fn credentials(&mut self, _needs_user: bool) -> Option<Credentials> {
         println!("the ticket was refused");
-        self.password.take()
+        Some(Credentials {
+            password: self.password.take()?,
+            ..Credentials::default()
+        })
     }
 
     fn trust(&mut self, fingerprint: &str) -> bool {

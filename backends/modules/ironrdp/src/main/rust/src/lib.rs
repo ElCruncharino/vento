@@ -30,8 +30,8 @@
 /// native path is wired up.
 pub const PROTOCOL_VERSION: &str = "RDP 5.x (IronRDP)";
 
-// The JNI half: the entry points the Java in this module declares, and the
-// session behind them. Android only — everything above is the protocol, and it
+// The JNI half: the entry points the Java in this module declares, in front of
+// a `common::Session`. Android only — everything above is the protocol, and it
 // builds, tests and runs an example on the host with none of this compiled.
 #[cfg(target_os = "android")]
 mod bindings;
@@ -43,7 +43,8 @@ mod framebuffer;
 mod keymap;
 mod tls;
 
-pub use client::{Client, Config, Credentials, Experience, Handler, Info, Nla, compression, experience};
+pub use client::{Client, Config, Experience, Info, Nla, compression, experience};
+pub use common::{Credentials, Handler};
 pub use error::{Error, Result};
 pub use framebuffer::Framebuffer;
 pub use keymap::{Key, scancode};

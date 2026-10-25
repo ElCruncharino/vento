@@ -2464,7 +2464,6 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 name = "remotedesktop-common"
 version = "0.0.1"
 dependencies = [
- "jni",
  "log",
 ]
 
@@ -2472,7 +2471,6 @@ dependencies = [
 name = "remotedesktop-ironrdp"
 version = "0.0.1"
 dependencies = [
- "android_logger",
  "ironrdp-blocking",
  "ironrdp-cliprdr",
  "ironrdp-connector",
@@ -2487,22 +2485,33 @@ dependencies = [
  "jni",
  "log",
  "remotedesktop-common",
+ "remotedesktop-platform-android",
  "remotedesktop-tls",
  "rustls",
  "x509-cert 0.2.5",
 ]
 
 [[package]]
-name = "remotedesktop-rfb"
+name = "remotedesktop-platform-android"
 version = "0.0.1"
 dependencies = [
  "android_logger",
+ "jni",
+ "log",
+ "remotedesktop-common",
+]
+
+[[package]]
+name = "remotedesktop-rfb"
+version = "0.0.1"
+dependencies = [
  "cipher 0.5.2",
  "des",
  "flate2",
  "jni",
  "log",
  "remotedesktop-common",
+ "remotedesktop-platform-android",
  "remotedesktop-tls",
  "rustls",
  "sha2 0.11.0",
@@ -2512,13 +2521,13 @@ dependencies = [
 name = "remotedesktop-rustdesk"
 version = "0.0.1"
 dependencies = [
- "android_logger",
  "dryoc",
  "jni",
  "log",
  "protobuf",
  "protobuf-codegen",
  "remotedesktop-common",
+ "remotedesktop-platform-android",
  "sha2 0.11.0",
  "socket2",
  "zstd",
@@ -2528,11 +2537,11 @@ dependencies = [
 name = "remotedesktop-spice"
 version = "0.0.1"
 dependencies = [
- "android_logger",
  "flate2",
  "jni",
  "log",
  "remotedesktop-common",
+ "remotedesktop-platform-android",
  "remotedesktop-tls",
  "rustls",
  "shakenfist-spice-compression",

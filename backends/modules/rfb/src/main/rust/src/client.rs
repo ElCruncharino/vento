@@ -8,9 +8,10 @@ use crate::error::{Error, Result};
 use crate::framebuffer::Framebuffer;
 use crate::pixel::PixelFormat;
 use crate::proto::{Counter, Reader, Writer, to_latin1};
-use crate::security::{self, Credentials, Security};
+use crate::security::{self, Security};
 use crate::transport::{Wire, Writes};
 use crate::zlib::ZlibStream;
+use common::{Credentials, Handler};
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -55,35 +56,6 @@ impl Default for Config {
             connect_timeout: Duration::from_secs(20),
         }
     }
-}
-
-/// Everything the session tells the app. Every method arrives on the protocol
-/// thread and must be cheap; [`Handler::credentials`] and [`Handler::trust`] are
-/// the exceptions and are allowed to take as long as a person does.
-pub trait Handler {
-    fn connected(&mut self, width: usize, height: usize);
-    fn desktop_size(&mut self, width: usize, height: usize);
-    fn damaged(&mut self, x: usize, y: usize, width: usize, height: usize);
-    fn frame_end(&mut self);
-    /// `pixels` is `width × height` in [`PixelFormat::NATIVE`], alpha from the
-    /// cursor mask. A zero size means the server has hidden the pointer.
-    fn cursor(&mut self, pixels: &[u32], width: usize, height: usize, hot_x: i32, hot_y: i32);
-    /// The server has changed what a `PointerEvent`'s coordinates mean. In
-    /// relative mode nobody here knows where the cursor is, so a client that
-    /// draws one and follows it with a viewport has to stop doing both.
-    fn pointer_mode(&mut self, relative: bool);
-    fn bell(&mut self);
-    fn clipboard(&mut self, text: &str);
-    /// The server wants credentials and the config had none to give. `None`
-    /// gives up on the connection.
-    ///
-    /// `needs_user` is false for VncAuth, which has no notion of a user name —
-    /// a dialog that shows the field would be asking for something nobody can
-    /// answer.
-    fn credentials(&mut self, needs_user: bool) -> Option<Credentials>;
-    /// The server's certificate, by fingerprint, before anything secret is
-    /// sent. `false` ends the connection.
-    fn trust(&mut self, fingerprint: &str) -> bool;
 }
 
 /// What the connection panel can be told, as strings, because that is what it
@@ -417,12 +389,15 @@ impl Client {
             // one must not lock the session out of ever prompting.
             let mut ask = FromConfigThenHandler {
                 handler: &mut *handler,
-                stored: config.password.clone().filter(|p| !p.is_empty()).map(|password| {
-                    Credentials {
+                stored: config
+                    .password
+                    .clone()
+                    .filter(|p| !p.is_empty())
+                    .map(|password| Credentials {
                         user: config.user_name.clone().unwrap_or_default(),
+                        domain: String::new(),
                         password,
-                    }
-                }),
+                    }),
             };
             security::handshake_security(&mut wire, version, config.security, &host, &mut ask)?
         };
@@ -996,6 +971,23 @@ fn connect(host: &str, port: u16, timeout: Duration) -> Result<TcpStream> {
     Err(Error::Io(last.unwrap_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::NotFound, format!("no address for {host}"))
     })))
+}
+
+/// The shape `common::Session` runs: the inherent `run` and `close` are the
+/// implementation, and this is them written down for a session that does not
+/// know which protocol it has.
+impl common::Client for Client {
+    type Config = Config;
+    type Error = Error;
+    const NAME: &'static str = "rfb";
+
+    fn run(&self, config: &Config, handler: &mut dyn Handler) -> Result<()> {
+        self.run(config, handler)
+    }
+
+    fn close(&self) {
+        self.close();
+    }
 }
 
 impl Default for Client {

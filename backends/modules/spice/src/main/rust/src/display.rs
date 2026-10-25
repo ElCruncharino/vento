@@ -18,10 +18,10 @@
 //! counted and logged once, so a guest that does use them says so rather than
 //! quietly painting nothing.
 
-use crate::client::Handler;
 use crate::error::Result;
 use crate::framebuffer::Framebuffer;
 use crate::images::Images;
+use common::Handler;
 use shakenfist_spice_compression::{JpegDecoderRsDecoder, VideoDecoder, video};
 use shakenfist_spice_protocol::constants::display_server;
 use shakenfist_spice_protocol::messages::{

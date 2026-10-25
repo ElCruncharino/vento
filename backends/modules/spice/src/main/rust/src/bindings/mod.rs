@@ -2,25 +2,27 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The SPICE backend's JNI surface: the entry points `SpiceNative` declares,
-//! and the session behind them.
+//! in front of a `common::Session`.
 //!
 //! `libremotedesktop_spice.so` is this crate, and this module is everything in
 //! it that is not the protocol — it is compiled for Android and nowhere else.
 //! What it needs of Android rather than of SPICE — a locked bitmap, the
-//! callbacks into Java, a place to wait for a person — is `common::android`.
+//! callbacks into Java, the logger — is `platform_android`; the session, the
+//! thread and the place to wait for a person are `common`'s and the same for
+//! every protocol.
 
-mod session;
-
-use crate::client::{Config, compression_of};
-use common::android::bitmap;
-use common::android::callbacks::Callbacks;
-use common::android::string;
+use crate::client::{Client, Config, compression_of};
+use common::{Bridge, Credentials, Session as CommonSession};
 use jni::EnvUnowned;
 use jni::errors::LogErrorAndDefault;
 use jni::objects::{JClass, JIntArray, JLongArray, JObject, JObjectArray, JString};
 use jni::sys::{jboolean, jint, jintArray, jlong, jlongArray, jobjectArray, jstring};
-use session::Session;
+use platform_android::callbacks::Callbacks;
+use platform_android::{bitmap, string};
+use std::sync::Arc;
 use std::time::Duration;
+
+type Session = CommonSession<Client>;
 
 /// SAFETY: `handle` must be one `nativeCreate` returned and `nativeDestroy` has
 /// not been called for. A zero handle is the ordinary "already retired" case.
@@ -60,11 +62,7 @@ pub extern "system" fn Java_net_pgaskin_remotedesktop_backend_spice_SpiceNative_
     view_only: jboolean,
     connect_timeout_ms: jint,
 ) -> jlong {
-    android_logger::init_once(
-        android_logger::Config::default()
-            .with_max_level(log::LevelFilter::Info)
-            .with_tag("Spice"),
-    );
+    platform_android::log::init("Spice");
 
     env.with_env(|env| -> Result<jlong, jni::errors::Error> {
         let callbacks = Callbacks::new(
@@ -87,7 +85,8 @@ pub extern "system" fn Java_net_pgaskin_remotedesktop_backend_spice_SpiceNative_
             config.address,
             if tls { "TLS" } else { "plain" }
         );
-        Ok(Box::into_raw(Box::new(Session::start(callbacks, config))) as jlong)
+        let session = Session::start(Arc::new(Client::new()), config, Bridge::new(callbacks));
+        Ok(Box::into_raw(Box::new(session)) as jlong)
     })
     .resolve::<LogErrorAndDefault>()
 }
@@ -105,7 +104,12 @@ pub extern "system" fn Java_net_pgaskin_remotedesktop_backend_spice_SpiceNative_
         return;
     };
     env.with_env(|env| -> Result<(), jni::errors::Error> {
-        session.answer_password(string(env, &password)?);
+        // There is no user name in this protocol: a ticket is the whole of
+        // what a SPICE server asks for, and the rest of the answer is blank.
+        session.answer_credentials(string(env, &password)?.map(|password| Credentials {
+            password,
+            ..Credentials::default()
+        }));
         Ok(())
     })
     .resolve::<LogErrorAndDefault>();
