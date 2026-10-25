@@ -15,7 +15,7 @@
 # small crate beside the C library for the others. None of them knows a
 # phone. `backends/platform/*` is where one platform's glue lives — Android's
 # JNI and MediaCodec in `android`. What a platform supplies, it supplies by
-# implementing a trait of `runtime`'s (`Events`, `media::video::Decoders`,
+# implementing a trait of `runtime`'s (`Callbacks`, `media::video::Decoders`,
 # `media::audio::Outputs`) and handing it to the session, so no protocol crate
 # says which platform it is on. A protocol crate depends on the platform crate
 # only under a target cfg, `android`, for the library the app loads, so the host
@@ -48,7 +48,8 @@ remotedesktop-runtime = { path = "backends/runtime", version = "0.0.1" }
 remotedesktop-api = { path = "backends/api", version = "0.0.1" }
 remotedesktop-platform-android = { path = "backends/platform/android", version = "0.0.1" }
 log = "0.4"
-# One version across the crates: a `Callbacks` built in one is used in another.
+# Only `remotedesktop-platform-android` has it, and no other crate may (its
+# manifest says why).
 jni = "0.22"
 android_logger = "0.15"
 # One version for every crate that reads the C headers: `remotedesktop-api`

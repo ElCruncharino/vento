@@ -4,20 +4,20 @@
 // The neutral layer's C face: what a borrowed C or C++ client is written
 // against, and what a platform is written to, with neither knowing the other.
 //
-// It is `backends/runtime` in Rust — `Events` on the way out and `Session` on
-// the way in — said again in C, because three of the clients here are C and
-// C++ libraries with a shim of ours around each, and those shims were three
-// copies of one JNI binding. What differed between them was the protocol's;
+// It is `backends/runtime` in Rust — `Callbacks` on the way out and `Runner`
+// on the way in — said again in C, because three of the clients here are C
+// and C++ libraries with a shim of ours around each, and those shims were
+// three copies of one JNI binding. What differed between them was the protocol's;
 // what was the same is written once against this header, in Rust:
 // `api::c` in `backends/api` is every C backend as an
 // `api::Backend`, and the phone holds that through the one JNI layer in
 // `backends/platform/android`, linked into each C backend's own library. So
-// this header is that crate's, in `backends/api/include/vento/` with the
-// other neutral headers: the `api` crate reads them into Rust, and each C
-// backend's crate reads its own header over them. A platform's C is
-// `vento_log` and nothing else: logcat on the phone.
+// this header is that crate's, in `backends/api/include/vento/` with the other
+// neutral headers: the `api` crate reads them into Rust, and each C backend's
+// crate reads its own header over them. A platform's C is `vento_log` and
+// nothing else: logcat on the phone.
 //
-// The shape is `runtime::Events`, method for method: `vento_callbacks` is the outward half, fire-and-forget, with every
+// The shape is `runtime::Callbacks`, method for method: `vento_callbacks` is the outward half, fire-and-forget, with every
 // question a protocol can ask turned into an event that says one is pending,
 // answered later through the session. The inward half is `vento_session`, an
 // opaque object reached through a vtable, so that three backends can live in
@@ -121,7 +121,7 @@ enum {
 };
 
 /* What a session tells the platform. Every member is required: a platform
-   implements the whole interface or none of it, as the Rust `Events` trait
+   implements the whole interface or none of it, as the Rust `Callbacks` trait
    demands, and the session files call through these without a NULL check —
    which is the cheapest thing a callback can be, and `damaged` runs hundreds
    of times a frame. A platform that is not interested in one writes a
@@ -161,11 +161,11 @@ typedef struct vento_callbacks {
        same things to the protocol thread and only one of these questions can
        be outstanding. */
     void (*unverified)(void *user, const char *why);
-    /* The first of three extensions over `runtime::Events`, and only TigerVNC
-       calls it: for an RSA-AES server key, which their viewer shows and asks
-       about every time and keeps nothing of, so what crosses here is that
-       question — a title and a text, in its words — rather than a fingerprint
-       for the platform to decide about. (Its certificates go to
+    /* The first of three extensions over `runtime::Callbacks`, and only
+       TigerVNC calls it: for an RSA-AES server key, which their viewer shows
+       and asks about every time and keeps nothing of, so what crosses here is
+       that question — a title and a text, in its words — rather than a
+       fingerprint for the platform to decide about. (Its certificates go to
        `trust_needed` like anybody's.) Answered through `answer_trust` like the
        other two, because it is the same question at the protocol thread's
        end. A platform without a dialog answers no. */

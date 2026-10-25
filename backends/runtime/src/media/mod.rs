@@ -13,7 +13,7 @@
 //! platform's device drains.
 //!
 //! Nothing here is about a session's conversation — the handler, the
-//! events, the thread a protocol runs on — which is the rest of this
+//! callbacks, the thread a protocol runs on — which is the rest of this
 //! crate's, and nothing here uses it: the two meet in the protocols that have
 //! a picture or a sound, and in `remotedesktop-api`.
 

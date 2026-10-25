@@ -14,7 +14,7 @@ use std::fmt::Display;
 /// delivers every [`Handler`] call on the thread it was called from, and a
 /// `close` that makes `run` return — because `Backend` is what all of them
 /// have to fit. This trait is that shape written down, so that a
-/// [`Session`](crate::Session) can be written once.
+/// [`Runner`](crate::Runner) can be written once.
 ///
 /// `Send + Sync + 'static` because a session shares the client between the
 /// protocol thread and whoever else holds the handle: pointer events, region

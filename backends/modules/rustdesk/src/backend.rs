@@ -7,7 +7,7 @@
 //! client hands over in [`Connect::decoders`]: MediaCodec on the phone.
 
 use crate::{Client, Config, Platform, PreferredCodec, Quality, Reach};
-use runtime::{Bridge, Session};
+use runtime::{Bridge, Runner};
 use api::backend::{
     Backend, ConnectionFact, Credentials, Facts, Field, Monitor, Picture, Traffic,
 };
@@ -53,7 +53,7 @@ fn fps(options: &Options) -> i32 {
 }
 
 struct RustDesk {
-    session: Session<Client>,
+    session: Runner<Client>,
     mailbox: Arc<Mailbox>,
     options: Mutex<Options>,
 }
@@ -101,7 +101,7 @@ fn create(c: &Connect) -> Result<Arc<dyn Backend>, String> {
     );
     let decoders = c.decoders.clone().ok_or("no video decoder to hand the picture to")?;
     let client = Client::new(decoders);
-    let session = Session::start(
+    let session = Runner::start(
         Arc::new(client),
         config,
         Bridge::new(Feed(Arc::clone(&c.mailbox))),
