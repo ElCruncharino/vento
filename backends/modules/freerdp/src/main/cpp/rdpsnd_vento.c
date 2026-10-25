@@ -118,6 +118,9 @@ typedef struct {
     int streamRate, streamChannels;
     /* The server's volume, as a gain, applied to every stream opened. */
     float gain;
+    /* Whether this device's server listed a format it plays, and so counts
+       among the session's devices that offer the switch (`stopOffering`). */
+    bool offering;
 
     /* The stream and when it was last written to, under `lock`, which the
        closing thread takes too. */
@@ -225,6 +228,21 @@ static void *closer(void *arg) {
 
 /* ---- the device -------------------------------------------------------- */
 
+/* This device's channel will send no more sound: it closed — its server
+   closed it, or the session is ending — or its server lists nothing this end
+   plays. The switch goes when no channel of the session has sound left to
+   send, which is not yet where the other rdpsnd channel, the static or the
+   dynamic one, still offers. */
+static void stopOffering(Device *d) {
+    if (!d->offering) {
+        return;
+    }
+    d->offering = false;
+    if (atomic_fetch_sub(&d->sound->offering, 1) == 1 && d->sound->table.withdraw != NULL) {
+        d->sound->table.withdraw(d->sound->table.user);
+    }
+}
+
 static BOOL formatSupported(rdpsndDevicePlugin *device, const AUDIO_FORMAT *format) {
     const Device *d = (const Device *) device;
     return kindOf(d->sound, format) != KIND_NONE;
@@ -236,7 +254,7 @@ static BOOL formatSupported(rdpsndDevicePlugin *device, const AUDIO_FORMAT *form
    wave (`playEx`). */
 static UINT serverFormatAnnounce(rdpsndDevicePlugin *device, const AUDIO_FORMAT *formats,
                                  size_t count) {
-    const Device *d = (const Device *) device;
+    Device *d = (Device *) device;
     char line[1536];
     size_t used = 0;
     bool playable = false;
@@ -264,7 +282,13 @@ static UINT serverFormatAnnounce(rdpsndDevicePlugin *device, const AUDIO_FORMAT 
        formats are an answer to these, sent once), so the session's switch is
        a mute, there from this list rather than from the first wave. */
     if (playable && d->sound->table.offer != NULL) {
+        if (!d->offering) {
+            d->offering = true;
+            atomic_fetch_add(&d->sound->offering, 1);
+        }
         d->sound->table.offer(d->sound->table.user, VENTO_AUDIO_SWITCH_MUTE, true, NULL, NULL);
+    } else {
+        stopOffering(d);
     }
     return CHANNEL_RC_OK;
 }
@@ -459,6 +483,7 @@ static void free_(rdpsndDevicePlugin *device) {
     if (d == NULL) {
         return;
     }
+    stopOffering(d);
     pthread_mutex_lock(&d->lock);
     d->quit = true;
     closeLocked(d);
@@ -551,6 +576,7 @@ bool vento_sound_init(VentoSound *v, const vento_audio *table) {
     }
     v->table = *table;
     v->available = true;
+    atomic_init(&v->offering, 0);
     /* Asked once: what the server is offered for the whole session. */
     if (table->decodable != NULL && table->decoder_open != NULL && table->decode != NULL
             && table->decoder_close != NULL) {

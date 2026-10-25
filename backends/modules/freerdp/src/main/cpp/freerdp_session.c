@@ -93,7 +93,6 @@ enum {
     CMD_FOCUS,
     CMD_RESIZE,
     CMD_LAYOUT,
-    CMD_DISCONNECT,
 };
 
 typedef struct {
@@ -132,6 +131,7 @@ struct Session {
 
     Cmd ring[CMD_RING];
     int head, tail;
+    int dropped; /* since the ring was last empty, under `lock` */
 
     int quit;
     int started;
@@ -140,6 +140,11 @@ struct Session {
     int sawPointerPosition; /* protocol thread only: log the first, not the stream */
     _Atomic int viewOnly;
     _Atomic int canResize;
+    /* What the display-control channel's server said it takes: monitors in
+       a layout (at most VENTO_MAX_MONITORS, 0 before it has said), and
+       pixels over all of them. */
+    _Atomic UINT32 dispMonitors;
+    _Atomic uint64_t dispArea;
 
     /* the credential prompt, answered through the session */
     int credAnswered;
@@ -190,11 +195,12 @@ struct Session {
     VentoSound audio;
 
     /* The desktop's monitors, x, y, width, height each, under `lock`: as the
-       server last stated them (`serverCount`, -1 before it has), and as this
-       end last asked for them (`askedCount`, at connect and on every layout
-       sent). The server's is the answer where it has given one that covers the
-       desktop as it now is; what was asked is the answer where the desktop
-       came out that size; anything else is a desktop nothing here can divide.
+       server last stated them (`serverCount`, -1 before it has, 0 where what
+       it last stated was not a desktop), and as this end last asked for them
+       (`askedCount`, at connect and on every layout sent). The server's is
+       the answer where it has given one that covers the desktop as it now
+       is; what was asked is the answer where the desktop came out that size;
+       anything else is a desktop nothing here can divide.
        `wantCount` is the layout op_request_layout left for the protocol thread
        to send, the latest one only. */
     int32_t serverLayout[4 * VENTO_MAX_MONITORS];
@@ -203,6 +209,9 @@ struct Session {
     int askedCount;
     int32_t wantLayout[4 * VENTO_MAX_MONITORS];
     int wantCount;
+    /* A size asked for before the server said what it takes, 0 for none
+       (holdUntilCaps). */
+    int heldWidth, heldHeight;
 
     /* What this phone has copied, as the wire wants it — UTF-16 with its
        terminator — held until something over there pastes. RDP's clipboard is a
@@ -264,7 +273,10 @@ static void splitAddress(char *address, int *port, char *why, size_t whyLen) {
         memmove(address, address + lead, len - lead + 1);
         len -= lead;
     }
-    if (len == 0 || address[0] == ':') {
+    /* Not where another colon follows: "::1" is IPv6's loopback unbracketed,
+       and is told so below rather than that it has no host (as
+       common::address says it). */
+    if (len == 0 || (address[0] == ':' && strchr(address + 1, ':') == NULL)) {
         snprintf(why, whyLen, "No host in address");
         return;
     }
@@ -317,6 +329,47 @@ static void splitAddress(char *address, int *port, char *why, size_t whyLen) {
 
 /* ---- the command queue -------------------------------------------------- */
 
+/* A full ring: the protocol thread has been inside one call for as long as
+   it took a person to make CMD_RING - 1 changes, which is a stalled
+   connection more than a busy one. Something has to go, and it is the
+   oldest command whose loss the far end cannot tell from a slow hand: a key
+   press (whose release then finds nothing held and sends nothing), or a
+   command a later one of its kind restates — a pointer, whose mask is the
+   whole of the buttons, the focus, a size, a layout, a clipboard. A release
+   is never one of them, since a lost one is a key held at the far end until
+   somebody presses it again. Where nothing in the ring can go, the new
+   command goes instead if it may; and only a ring of nothing but releases,
+   which no keyboard makes, loses its oldest. Returns whether `c` has room;
+   under `lock`. */
+static bool releases(int type) {
+    return type == CMD_KEY_UP || type == CMD_RELEASE_KEYS;
+}
+
+static bool makeRoom(Session *s, const Cmd *c) {
+    int victim = -1;
+    unsigned later = 1u << c->type;
+    for (int i = (s->head + CMD_RING - 1) % CMD_RING;; i = (i + CMD_RING - 1) % CMD_RING) {
+        const int type = s->ring[i].type;
+        if (type == CMD_KEY_DOWN || (!releases(type) && (later & (1u << type)))) {
+            victim = i;
+        }
+        later |= 1u << type;
+        if (i == s->tail) {
+            break;
+        }
+    }
+    if (victim < 0 && !releases(c->type)) {
+        return false;
+    }
+    victim = victim < 0 ? s->tail : victim;
+    free(s->ring[victim].text);
+    for (int i = victim; (i + 1) % CMD_RING != s->head; i = (i + 1) % CMD_RING) {
+        s->ring[i] = s->ring[(i + 1) % CMD_RING];
+    }
+    s->head = (s->head + CMD_RING - 1) % CMD_RING;
+    return true;
+}
+
 static void post(Session *s, const Cmd *c) {
     pthread_mutex_lock(&s->lock);
     if (s->quit) {
@@ -337,15 +390,25 @@ static void post(Session *s, const Cmd *c) {
             return;
         }
     }
-    const int next = (s->head + 1) % CMD_RING;
-    if (next == s->tail) {
-        free(s->ring[s->tail].text);
-        s->tail = (s->tail + 1) % CMD_RING;
+    bool kept = true;
+    int dropped = 0;
+    if ((s->head + 1) % CMD_RING == s->tail) {
+        kept = makeRoom(s, c);
+        dropped = ++s->dropped;
     }
-    s->ring[s->head] = *c;
-    s->head = next;
+    if (kept) {
+        s->ring[s->head] = *c;
+        s->head = (s->head + 1) % CMD_RING;
+    }
     pthread_cond_broadcast(&s->cond);
     pthread_mutex_unlock(&s->lock);
+    if (!kept) {
+        free(c->text);
+    }
+    if (dropped == 1) {
+        LOGW("input: the protocol thread is %d commands behind, so some are dropped (never a "
+             "release)", CMD_RING - 1);
+    }
     SetEvent(s->wake);
 }
 
@@ -543,16 +606,47 @@ static bool covers(const int32_t *flat, int n, int w, int h) {
     if (n < 1) {
         return false;
     }
-    int right = 0, bottom = 0;
+    int64_t right = 0, bottom = 0;
     for (int i = 0; i < n; i++) {
         const int32_t *m = flat + 4 * i;
         if (m[0] < 0 || m[1] < 0) {
             return false;
         }
-        right = m[0] + m[2] > right ? m[0] + m[2] : right;
-        bottom = m[1] + m[3] > bottom ? m[1] + m[3] : bottom;
+        const int64_t r = (int64_t) m[0] + m[2], b = (int64_t) m[1] + m[3];
+        right = r > right ? r : right;
+        bottom = b > bottom ? b : bottom;
     }
     return right == w && bottom == h;
+}
+
+/* The widest and tallest a virtual desktop may be, and so any monitor in it
+   or any offset from its corner (MS-RDPBCGR 2.2.1.3.6). */
+#define MAX_DESKTOP_SIDE 32766
+
+/* `n` MONITOR_DEFs as x, y, width, height each into `flat`, from the top
+   left of them all; false, with `flat` unspecified, where they are not a
+   desktop: a monitor narrower or shorter than a pixel, or anything past
+   MAX_DESKTOP_SIDE from that corner. The corners are the server's 32-bit
+   numbers, so the sums are made in 64. */
+static bool flattenLayout(const MONITOR_DEF *defs, int n, int32_t *flat) {
+    int64_t left = 0, top = 0;
+    for (int i = 0; i < n; i++) {
+        left = i == 0 || defs[i].left < left ? defs[i].left : left;
+        top = i == 0 || defs[i].top < top ? defs[i].top : top;
+    }
+    for (int i = 0; i < n; i++) {
+        const int64_t x = (int64_t) defs[i].left - left, y = (int64_t) defs[i].top - top;
+        const int64_t w = (int64_t) defs[i].right - defs[i].left + 1;
+        const int64_t h = (int64_t) defs[i].bottom - defs[i].top + 1;
+        if (w < 1 || h < 1 || x + w > MAX_DESKTOP_SIDE || y + h > MAX_DESKTOP_SIDE) {
+            return false;
+        }
+        flat[4 * i + 0] = (int32_t) x;
+        flat[4 * i + 1] = (int32_t) y;
+        flat[4 * i + 2] = (int32_t) w;
+        flat[4 * i + 3] = (int32_t) h;
+    }
+    return true;
 }
 
 /* The monitors as the server states them, in its order, which is the only
@@ -565,16 +659,20 @@ static bool covers(const int32_t *flat, int n, int w, int h) {
 static void heardLayout(Session *s, const MONITOR_DEF *defs, UINT32 count, const char *where) {
     const int n = count > VENTO_MAX_MONITORS ? VENTO_MAX_MONITORS : (int) count;
     int32_t flat[4 * VENTO_MAX_MONITORS];
-    INT32 left = 0, top = 0;
-    for (int i = 0; i < n; i++) {
-        left = i == 0 || defs[i].left < left ? defs[i].left : left;
-        top = i == 0 || defs[i].top < top ? defs[i].top : top;
+    if (!flattenLayout(defs, n, flat)) {
+        /* Corners the far end could not have meant — a monitor of no width,
+           or one further from the others than a desktop is wide — whose sums
+           could overflow the 32 bits they arrived in. The whole of it
+           is set aside rather than the odd monitor: a monitor's place in the
+           list is its identity, and the rest renumbered would be wrong in a
+           quieter way. What was asked stands in for it (op_monitors). */
+        LOGW("%s: the server's %d monitors are not a desktop; their layout is ignored", where, n);
+        pthread_mutex_lock(&s->lock);
+        s->serverCount = 0;
+        pthread_mutex_unlock(&s->lock);
+        return;
     }
     for (int i = 0; i < n; i++) {
-        flat[4 * i + 0] = defs[i].left - left;
-        flat[4 * i + 1] = defs[i].top - top;
-        flat[4 * i + 2] = defs[i].right - defs[i].left + 1;
-        flat[4 * i + 3] = defs[i].bottom - defs[i].top + 1;
         LOGI("%s: monitor %d of %d %dx%d+%d+%d%s", where, i + 1, n, flat[4 * i + 2], flat[4 * i + 3],
              flat[4 * i + 0], flat[4 * i + 1],
              (defs[i].flags & MONITOR_PRIMARY) ? ", primary" : "");
@@ -661,14 +759,32 @@ static int buildLayout(const int32_t *rects, int n, int scale, DISPLAY_CONTROL_M
 
 /* A layout of `n` screens on the display-control channel, remembered as what
    was asked for. A refusal is silence: the server makes a new desktop, a
-   different one, or nothing. */
+   different one, or nothing. What the server said it takes is held to here,
+   in words: the channel's own code would cut a layout down to its monitor
+   count without a line in the log, and a layout past its area is one the
+   server is entitled to drop on the floor. */
 static void sendLayout(Session *s, const int32_t *rects, int n) {
-    if (!s->disp || !s->disp->SendMonitorLayout || n < 1) {
+    if (!s->disp || !s->disp->SendMonitorLayout || !s->canResize || n < 1) {
         return;
+    }
+    const int most = (int) atomic_load(&s->dispMonitors);
+    if (n > most) {
+        LOGW("the server takes at most %d monitors; the last %d of the layout are left out", most,
+             n - most);
+        n = most;
     }
     DISPLAY_CONTROL_MONITOR_LAYOUT layout[VENTO_MAX_MONITORS];
     int32_t asked[4 * VENTO_MAX_MONITORS];
     n = buildLayout(rects, n, s->scale, layout, asked);
+    uint64_t area = 0;
+    for (int i = 0; i < n; i++) {
+        area += (uint64_t) layout[i].Width * layout[i].Height;
+    }
+    if (area > atomic_load(&s->dispArea)) {
+        LOGW("a layout of %llu pixels is more than the server takes (%llu); it is not asked for",
+             (unsigned long long) area, (unsigned long long) atomic_load(&s->dispArea));
+        return;
+    }
     for (int i = 0; i < n; i++) {
         LOGI("asking for monitor %d of %d: %ux%u%+d%+d", i + 1, n, layout[i].Width, layout[i].Height,
              layout[i].Left, layout[i].Top);
@@ -964,6 +1080,39 @@ static UINT onGfxSurfaceCommand(RdpgfxClientContext *context, const RDPGFX_SURFA
     return rc;
 }
 
+/* The one thing that says a desktop can be reshaped at all, and a fact about
+   this session rather than about the backend: the display-control channel's
+   capabilities, which its server sends as the channel opens and before
+   which a layout would be cut down to a count the channel has not heard
+   yet. On the dynamic channels' thread; the numbers are read on the
+   protocol thread's. */
+static UINT onDisplayControlCaps(DispClientContext *disp, UINT32 maxMonitors, UINT32 factorA,
+                                 UINT32 factorB) {
+    Session *s = (Session *) disp->custom;
+    const UINT32 most = maxMonitors > VENTO_MAX_MONITORS ? VENTO_MAX_MONITORS : maxMonitors;
+    /* The area is per monitor it takes, the two factors' product each. */
+    const uint64_t each = (uint64_t) factorA * factorB;
+    const uint64_t area = most > 0 && each > UINT64_MAX / most ? UINT64_MAX : each * most;
+    LOGI("display control: the server takes %u monitors of %u x %u pixels", maxMonitors, factorA,
+         factorB);
+    atomic_store(&s->dispMonitors, most);
+    atomic_store(&s->dispArea, area);
+    pthread_mutex_lock(&s->lock);
+    s->canResize = most > 0;
+    Cmd held = {0, s->heldWidth, s->heldHeight, 0, NULL, 0};
+    if (s->canResize && s->heldWidth > 0) {
+        held.type = CMD_RESIZE;
+    } else if (s->canResize && s->wantCount > 0) {
+        held.type = CMD_LAYOUT;
+    }
+    s->heldWidth = s->heldHeight = 0;
+    pthread_mutex_unlock(&s->lock);
+    if (held.type) {
+        post(s, &held);
+    }
+    return CHANNEL_RC_OK;
+}
+
 /* A channel's interface arrives on an event rather than from a call, so the
    pointer has to be kept: this is the only place either of them is handed
    over. */
@@ -986,10 +1135,8 @@ static void onChannelConnected(void *context, const ChannelConnectedEventArgs *e
         wireCliprdr(s, (CliprdrClientContext *) e->pInterface);
     } else if (strcmp(e->name, DISP_DVC_CHANNEL_NAME) == 0) {
         s->disp = (DispClientContext *) e->pInterface;
-        /* The one thing that says a desktop can be reshaped at all: the channel
-           being open is the capability, and it is a fact about this session
-           rather than about the backend. */
-        s->canResize = 1;
+        s->disp->custom = s;
+        s->disp->DisplayControlCaps = onDisplayControlCaps;
     }
 }
 
@@ -1008,6 +1155,7 @@ static void onChannelDisconnected(void *context, const ChannelDisconnectedEventA
     } else if (strcmp(e->name, DISP_DVC_CHANNEL_NAME) == 0) {
         s->disp = NULL;
         s->canResize = 0;
+        atomic_store(&s->dispMonitors, 0);
     }
 }
 
@@ -1367,7 +1515,14 @@ static void doKeyDown(Session *s, UINT32 keysym, INT64 keyId) {
 }
 
 static void releaseAt(Session *s, int index) {
-    if (!s->keys[index].unicode) {
+    if (s->keys[index].unicode) {
+        /* A character has an up as a position does, and the far end is owed
+           it: Windows turns a Unicode event into a key of its own whose down
+           and up go to the application like any other key's (xfreerdp sends
+           the release too). */
+        freerdp_input_send_unicode_keyboard_event(s->instance->context->input, KBD_FLAGS_RELEASE,
+                                                  s->keys[index].unicode);
+    } else {
         sendScancode(s, s->keys[index].code, 0);
         if (s->keys[index].shift) {
             sendScancode(s, 0x2a, 0);
@@ -1485,6 +1640,30 @@ static void doFocus(Session *s, int focused) {
     gdi_send_suppress_output(s->instance->context->gdi, focused ? FALSE : TRUE);
 }
 
+/* A size or a layout asked for before the display-control channel's server
+   has said what it takes (onDisplayControlCaps), which on Windows is a
+   second or so after the session has connected: held, the latest one, and
+   sent when it has — or never, by a server with no such channel. `width` 0
+   is the layout op_request_layout left, which stays where it is. Whether it
+   was held; under `lock`, as the capabilities are taken, so that they cannot
+   arrive between the look and the hold. */
+static bool holdUntilCaps(Session *s, int width, int height) {
+    pthread_mutex_lock(&s->lock);
+    const bool hold = !s->canResize;
+    if (hold) {
+        s->heldWidth = width;
+        s->heldHeight = height;
+        if (width > 0) {
+            s->wantCount = 0;
+        }
+    }
+    pthread_mutex_unlock(&s->lock);
+    if (hold) {
+        LOGI("the desktop's new shape waits for the server to say what it takes");
+    }
+    return hold;
+}
+
 /* A desktop `width × height`, which is the whole of it and not one monitor:
    the seam's size is the framebuffer's everywhere else. So the monitors the
    session asks for divide the width between them, side by side, the last
@@ -1492,8 +1671,15 @@ static void doFocus(Session *s, int focused) {
    a desktop of two monitors twice as wide as the one asked for. (IronRDP's
    backend divides it the same way.) */
 static void doResize(Session *s, int width, int height) {
-    const int count = s->monitors < 1 ? 1
-                      : (s->monitors > VENTO_MAX_MONITORS ? VENTO_MAX_MONITORS : s->monitors);
+    if (holdUntilCaps(s, width, height)) {
+        return;
+    }
+    /* No more monitors than the server takes, so that a server of one is
+       still asked for the whole size rather than the first of its parts. */
+    const int most = (int) atomic_load(&s->dispMonitors);
+    int count = s->monitors < 1 ? 1
+                : (s->monitors > VENTO_MAX_MONITORS ? VENTO_MAX_MONITORS : s->monitors);
+    count = most > 0 && count > most ? most : count;
     const int each = width / count;
     int32_t rects[4 * VENTO_MAX_MONITORS];
     for (int i = 0; i < count; i++) {
@@ -1509,6 +1695,9 @@ static void doResize(Session *s, int width, int height) {
    than the thread drains are the same question asked again. */
 static void doLayout(Session *s) {
     int32_t rects[4 * VENTO_MAX_MONITORS];
+    if (holdUntilCaps(s, 0, 0)) {
+        return;
+    }
     pthread_mutex_lock(&s->lock);
     const int n = s->wantCount;
     memcpy(rects, s->wantLayout, sizeof(int32_t) * 4 * (size_t) n);
@@ -1522,7 +1711,12 @@ static void drainCommands(Session *s) {
         Cmd c;
         pthread_mutex_lock(&s->lock);
         if (s->head == s->tail) {
+            const int dropped = s->dropped;
+            s->dropped = 0;
             pthread_mutex_unlock(&s->lock);
+            if (dropped > 0) {
+                LOGW("input: caught up, %d commands dropped on the way", dropped);
+            }
             return;
         }
         c = s->ring[s->tail];
@@ -1538,10 +1732,6 @@ static void drainCommands(Session *s) {
             case CMD_FOCUS: doFocus(s, c.a); break;
             case CMD_RESIZE: doResize(s, c.a, c.b); break;
             case CMD_LAYOUT: doLayout(s); break;
-            case CMD_DISCONNECT:
-                doReleaseAll(s);
-                freerdp_abort_connect_context(s->instance->context);
-                break;
             default: break;
         }
         free(c.text);
