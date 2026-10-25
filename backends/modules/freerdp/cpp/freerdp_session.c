@@ -6,9 +6,9 @@
 // two clients rather than between two bindings of one. That is the purpose of
 // a second RDP client: every RFB question in this project could be checked
 // against another VNC client, while every RDP one had a single answer. Nothing
-// in here is platform-specific: on Android, the Rust adapter in the module's
-// `src/` is linked into the same library, behind the shared JNI layer in
-// `backends/platform/android`.
+// in here is platform-specific apart from where WinPR's log goes (`routeWLog`):
+// on Android, the Rust adapter in the module's `src/` is linked into the same
+// library, behind the shared JNI layer in `backends/platform/android`.
 //
 // Three behaviours come from the library rather than from this file. Each was
 // found by driving the library on the phone without a backend, before this
@@ -67,6 +67,7 @@
 #include <freerdp/settings.h>
 #include <winpr/string.h>
 #include <winpr/synch.h>
+#include <winpr/wlog.h>
 #include <openssl/tls1.h>
 
 #include <vento/backend.h>
@@ -2181,7 +2182,44 @@ const char *vento_freerdp_version(void) {
     return buf;
 }
 
+#ifdef VENTO_FREERDP_WLOG
+/* WinPR's log (WLog) through vento_log, under this backend's tag with the
+   logger's name and the function in front. Only on a desktop
+   (VENTO_FREERDP_WLOG, CMakeLists.txt), where WLog's console appender writes
+   to stdout and stderr in a layout of its own; on Android it writes to logcat.
+   Not where the environment picks an appender (WLOG_APPENDER) or a prefix
+   (WLOG_PREFIX). The level is still WLog's: warnings and errors unless
+   WLOG_LEVEL says otherwise. */
+static BOOL wlogMessage(const wLogMessage *msg) {
+    vento_log(msg->Level >= WLOG_WARN ? VENTO_LOG_WARN : VENTO_LOG_INFO, TAG, "%s%s",
+              msg->PrefixString ? msg->PrefixString : "", msg->TextString ? msg->TextString : "");
+    return TRUE;
+}
+
+static void routeWLog(void) {
+    if (getenv("WLOG_APPENDER")) {
+        return;
+    }
+    wLog *root = WLog_GetRoot();
+    if (!root || !WLog_SetLogAppenderType(root, WLOG_APPENDER_CALLBACK)) {
+        return;
+    }
+    wLogCallbacks callbacks = {.message = wlogMessage};
+    if (!WLog_ConfigureAppender(WLog_GetLogAppender(root), "callbacks", &callbacks)) {
+        (void) WLog_SetLogAppenderType(root, WLOG_APPENDER_CONSOLE);
+        return;
+    }
+    if (!getenv("WLOG_PREFIX")) {
+        (void) WLog_Layout_SetPrefixFormat(root, WLog_GetLogLayout(root), "%mn: [%fn]%{[%ctx]%}: ");
+    }
+}
+#endif
+
 vento_session *vento_freerdp_create(const vento_freerdp_config *cfg, const vento_callbacks *cb) {
+#ifdef VENTO_FREERDP_WLOG
+    static pthread_once_t wlogOnce = PTHREAD_ONCE_INIT;
+    pthread_once(&wlogOnce, routeWLog);
+#endif
     Session *s = calloc(1, sizeof(Session));
     if (!s) {
         if (cfg->video && cfg->video->release) {

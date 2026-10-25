@@ -556,6 +556,25 @@ which only `RUST_LOG=trace` in the environment lets through (with every
 debug line). That is for a test of the keys; a log with them in it holds any
 password typed into the far end.
 
+**Log lines** go to stderr as `HH:MM:SS.mmm L tag: text`, e.g.
+`14:03:27.512 I TigerVnc: CConnection: Using RFB protocol version 3.8`: the
+local time to the millisecond (short, and what the far end's own logs and
+the user's clock are read in; the date is left out), then the level letter
+(`W` for warnings and errors, `I`, `D`, `T`) and the tag. One writer makes
+every line, `vento_log_line` in `backends/platform/linux/cpp/vento_log.c`,
+in a single `writev`: the C backends' `vento_log` (their libraries each carry
+a copy of that file), the Rust logger (`src/log.rs`, whose tag is the crate's
+name, through `platform_linux::stderr`), FFmpeg's log under the tag `ffmpeg`
+(installed by `log::init`; libva's errors come through it too), and on a
+desktop FreeRDP's WLog under `FreeRdp`, with the logger's name and function
+in front (`routeWLog`, unless `WLOG_APPENDER` is set; its level is still
+`WLOG_LEVEL`'s), which otherwise writes its info lines to stdout among the
+probe's. The probe's own lines on stdout keep their `[seconds]` since the
+start: they are its output, not the log. Not covered: the user-facing
+`vento: …` errors, and what a library writes to stderr itself (the RealVNC
+loader's `linker:` lines and its core's `Failed to parse log param element`,
+libpipewire's and ALSA's own messages, Mesa's).
+
 ## The window
 
 One window, which is either the connection dialog or a session. A session
@@ -1735,7 +1754,7 @@ its key, identities and logs — as plain files where the phone has encrypted
 ones; see [Known hosts](#known-hosts) — and the client its known hosts)
 defaults to `$XDG_STATE_HOME/vento`.
 
-The core's own log comes out on stderr as `I RealVnc: <category>: …` (`W`
+The core's own log comes out on stderr as `HH:MM:SS.mmm I RealVnc: <category>: …` (`W`
 for its warnings and errors) whatever `--verbose` says: everything the
 phone's core would send to logcat, less three categories' VERBOSE lines,
 which the core is told not to write, here or on the phone — `CKeyboard`'s

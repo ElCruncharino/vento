@@ -120,7 +120,9 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
 - `platform/linux/` (`remotedesktop-platform-linux`) — the Linux client's
   platform: FFmpeg, built statically from `third_party/` by `build.rs`, and
   the decoders and the PipeWire/ALSA outputs over it (the crate); `cpp/`, the
-  C those decoders call and the stderr logger a C backend links;
+  C those decoders call and the stderr logger a C backend links (whose
+  `vento_log_line` the client's Rust logger and FFmpeg's log write through
+  too, `src/stderr.rs`);
   `cmake/vento_linux.cmake`, a C backend's host half (`vento_backend_library`,
   `vento_backend_probe`, `VENTO_SHARED`, `VENTO_PROBES`,
   `VENTO_FFMPEG_PREFIX`); `cmake/gnutls.cmake`, GnuTLS and nettle for the

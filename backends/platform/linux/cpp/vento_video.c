@@ -86,6 +86,7 @@
 #include <libavcodec/avcodec.h>
 #include <libavutil/error.h>
 #include <libavutil/hwcontext.h>
+#include <libavutil/log.h>
 #include <libavutil/pixdesc.h>
 
 // libva's declarations as `va_shim.c` defines them, hidden: the calls made
@@ -97,6 +98,7 @@
 #pragma GCC visibility pop
 
 #include "va_shim.h"
+#include "vento_log.h"
 
 // The internal status of a packet the hardware failed to decode, never
 // returned to the caller: the decoder falls back and decodes the packet again.
@@ -226,6 +228,32 @@ void vento_video_strerror(int error, char *buf, size_t len) {
         return;
     if (av_strerror(error, buf, len) < 0)
         snprintf(buf, len, "error %d", error);
+}
+
+// FFmpeg's log callback. Each call is a line of its own, with FFmpeg's
+// `[name @ address]` prefix, where FFmpeg's default callback would join a
+// line written in parts and fold repeats into one.
+static void log_line(void *avcl, int level, const char *fmt, va_list ap) {
+    // The level's high bits are a colour for the terminal.
+    if (level >= 0)
+        level &= 0xff;
+    if (level > av_log_get_level())
+        return;
+    char line[1024];
+    int print_prefix = 1;
+    int n = av_log_format_line2(avcl, level, fmt, ap, line, sizeof(line), &print_prefix);
+    if (n < 0)
+        return;
+    if (n >= (int)sizeof(line))
+        n = (int)sizeof(line) - 1;
+    while (n > 0 && (line[n - 1] == '\n' || line[n - 1] == '\r'))
+        n--;
+    if (n > 0)
+        vento_log_line(level <= AV_LOG_WARNING ? 'W' : 'I', "ffmpeg", 6, line, (size_t)n);
+}
+
+void vento_video_log_to_stderr(void) {
+    av_log_set_callback(log_line);
 }
 
 const char *vento_video_method_name(int method) {

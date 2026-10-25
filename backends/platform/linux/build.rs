@@ -97,6 +97,9 @@ fn main() {
     println!("cargo:rerun-if-changed=cpp/vento_ffaudio.h");
     println!("cargo:rerun-if-changed=cpp/va_shim.c");
     println!("cargo:rerun-if-changed=cpp/va_shim.h");
+    println!("cargo:rerun-if-changed=cpp/vento_log.c");
+    println!("cargo:rerun-if-changed=cpp/vento_log.h");
+    println!("cargo:rerun-if-changed=../../api/include/vento/log.h");
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android") {
         return;
     }
@@ -236,10 +239,14 @@ fn main() {
         build_va_shim(&manifest, &root, &prefix);
     }
 
+    // With `vento_log.c`, the stderr logger the C backends link, for the
+    // client's own log lines (`src/stderr.rs`) and FFmpeg's.
     cc::Build::new()
         .file(manifest.join("cpp/vento_video.c"))
         .file(manifest.join("cpp/vento_ffaudio.c"))
+        .file(manifest.join("cpp/vento_log.c"))
         .include(prefix.join("include"))
+        .include(manifest.join("../../api/include"))
         .warnings(true)
         .compile("vento_video");
     // libavcodec and its dependencies, in static link order, from its own

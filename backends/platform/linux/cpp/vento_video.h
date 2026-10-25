@@ -263,6 +263,11 @@ void vento_video_frame_free(vento_video_frame *frame);
 // libavcodec's message for an error code.
 void vento_video_strerror(int error, char *buf, size_t len);
 
+// Sends FFmpeg's log lines (and libva's, which FFmpeg passes on) to
+// `vento_log_line` under the tag `ffmpeg`, in place of its own writes to
+// stderr. Its level is unchanged: info and above.
+void vento_video_log_to_stderr(void);
+
 void vento_video_close(vento_video *video);
 
 #ifdef __cplusplus

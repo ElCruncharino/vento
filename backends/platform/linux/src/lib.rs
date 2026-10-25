@@ -4,8 +4,10 @@
 //! The Linux parts of a backend that belong to no protocol: [`ffmpeg`],
 //! libavcodec implementing `runtime::media::video::Decoders`; [`audio`],
 //! PipeWire streams ([`pipewire`]) or ALSA's default device ([`alsa`])
-//! implementing `runtime::media::audio::Outputs`; and [`ffmpeg_audio`],
-//! libavcodec's AAC and Opus decoders for compressed sound.
+//! implementing `runtime::media::audio::Outputs`; [`ffmpeg_audio`],
+//! libavcodec's AAC and Opus decoders for compressed sound; and [`stderr`],
+//! the stderr line writer shared by the client's logger, FFmpeg's log and
+//! the C backends' `vento_log`.
 //!
 //! It is the Linux client's platform, as `platform_android` is the phone's:
 //! the client (`linux/`) hands these decoders and outputs to every session it
@@ -27,6 +29,7 @@ mod dl;
 pub mod ffmpeg;
 pub mod ffmpeg_audio;
 pub mod pipewire;
+pub mod stderr;
 
 // The build script's cross-compiling arguments for FFmpeg and Meson, compiled
 // here only for their tests.

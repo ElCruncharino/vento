@@ -293,6 +293,9 @@ else()
     vento_backend_library(vento_freerdp freerdp_session.c h264_vento.c rdpsnd_vento.c)
     target_include_directories(vento_freerdp SYSTEM PRIVATE ${FREERDP_INCLUDES}
             "$<TARGET_PROPERTY:openssl,INTERFACE_INCLUDE_DIRECTORIES>")
+    # WLog's lines through `vento_log` rather than its console appender's
+    # layout on stdout and stderr (`routeWLog`).
+    target_compile_definitions(vento_freerdp PRIVATE VENTO_FREERDP_WLOG)
     target_link_libraries(vento_freerdp ${VENTO_BACKEND_LINK} freerdp-client freerdp winpr)
 
     vento_backend_probe(vento_freerdp freerdp_probe.c)

@@ -1,15 +1,17 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Where the Rust backends' log lines go: stderr, one line each, in the same
-//! `I tag: text` shape `vento_log` in the C libraries writes, so that a session
-//! on either half reads the same in a terminal.
+//! Where the Rust backends' log lines go: stderr, one line each, written by
+//! the same C as `vento_log` in the C libraries (`platform_linux::stderr`), so
+//! that a session on either half reads the same in a terminal:
+//! `14:03:27.512 I tag: text`, the time local and to the millisecond. FFmpeg's
+//! lines go there too, under the tag `ffmpeg`.
 //!
 //! A short logger rather than a crate, since nothing a logging crate adds is
 //! needed here.
 
 use log::{Level, LevelFilter, Log, Metadata, Record};
-use std::io::Write;
+use platform_linux::stderr;
 
 struct Stderr;
 
@@ -32,19 +34,19 @@ impl Log for Stderr {
             return;
         }
         let level = match record.level() {
-            Level::Error | Level::Warn => "W",
-            Level::Info => "I",
-            Level::Debug => "D",
-            Level::Trace => "T",
+            Level::Error | Level::Warn => b'W',
+            Level::Info => b'I',
+            Level::Debug => b'D',
+            Level::Trace => b'T',
         };
         // The crate's name is the tag, as the C side's is the backend's; the
         // module path after it is noise in a session's log.
         let target = record.target();
         let tag = target.split("::").next().unwrap_or(target);
-        // One write per line, so that two protocol threads do not interleave
-        // halfway through one.
-        let line = format!("{level} {tag}: {}\n", record.args());
-        let _ = std::io::stderr().lock().write_all(line.as_bytes());
+        match record.args().as_str() {
+            Some(text) => stderr::write_line(level, tag, text),
+            None => stderr::write_line(level, tag, &record.args().to_string()),
+        }
     }
 
     fn flush(&self) {}
@@ -57,6 +59,7 @@ impl Log for Stderr {
 /// sent with a report must not hold a password typed into the far end.
 pub fn init(verbose: bool) {
     let _ = log::set_logger(&Stderr);
+    stderr::route_ffmpeg();
     log::set_max_level(if trace_asked(std::env::var("RUST_LOG").ok().as_deref()) {
         LevelFilter::Trace
     } else if verbose {
