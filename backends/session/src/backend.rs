@@ -219,16 +219,23 @@ impl ConnectionFact {
         ConnectionFact::of(Field::Data, "Transferred", &value)
     }
 
-    /// The session's sound, "AAC 44.1 kHz stereo", with ", muted" while it
-    /// is: a row of the client's rather than the backend's, since the
-    /// client holds the sound's controls (the backend has only the streams
-    /// it writes), and worded here so that every client words it alike.
-    /// `None` while nothing plays: the session's sound switch, which is
-    /// there from when the far end may send sound, says the rest.
+    /// The session's sound, "AAC 44.1 kHz stereo", with the output it plays
+    /// on where the platform has more than one ("(PipeWire)", as a video row
+    /// says "(hardware)") and ", muted" while it is: a row of the client's
+    /// rather than the backend's, since the client holds the sound's
+    /// controls (the backend has only the streams it writes), and worded
+    /// here so that every client words it alike. `None` while nothing plays:
+    /// the session's sound switch, which is there from when the far end may
+    /// send sound, says the rest.
     pub fn sound(controls: &Controls) -> Option<ConnectionFact> {
         let playback = controls.playback()?;
+        let output = playback.output.map(|o| format!(" ({o})")).unwrap_or_default();
         let muted = if controls.muted() { ", muted" } else { "" };
-        Some(ConnectionFact::of(Field::Other, "Sound", &format!("{}{muted}", playback.describe())))
+        Some(ConnectionFact::of(
+            Field::Other,
+            "Sound",
+            &format!("{}{output}{muted}", playback.describe()),
+        ))
     }
 }
 
@@ -521,12 +528,16 @@ mod tests {
 
         struct Quiet;
         impl Device for Quiet {}
-        struct Out(Arc<Controls>);
+        /// The session's controls, and the output its devices say they are.
+        struct Out(Arc<Controls>, Option<&'static str>);
         impl Outputs for Out {
             fn controls(&self) -> &Arc<Controls> {
                 &self.0
             }
-            fn device(&self, _queue: Arc<Queue>) -> Result<Box<dyn Device>, String> {
+            fn device(&self, queue: Arc<Queue>) -> Result<Box<dyn Device>, String> {
+                if let Some(output) = self.1 {
+                    queue.set_output(output);
+                }
                 Ok(Box::new(Quiet))
             }
         }
@@ -537,7 +548,7 @@ mod tests {
                 ConnectionFact::diagnostic(Field::Other, "Pixels", "32 bpp"),
             ]
         };
-        let out = Out(Arc::new(Controls::new()));
+        let out = Out(Arc::new(Controls::new()), None);
         let mut info = rows();
         with_sound(&mut info, out.controls());
         assert_eq!(info, rows(), "nothing playing, no row");
@@ -552,6 +563,15 @@ mod tests {
         assert_eq!(info[2].label, "Pixels");
         out.controls().set_muted(true);
         assert_eq!(ConnectionFact::sound(out.controls()).unwrap().value, "PCM 48 kHz stereo, muted");
+        // A platform that says which of its outputs plays it has it said,
+        // as a decoder's "(hardware)" is.
+        let piped = Out(Arc::clone(&out.0), Some("PipeWire"));
+        let mut later = piped.open(Format::new(44_100, 2).unwrap()).unwrap();
+        later.write(&[0, 0]);
+        assert_eq!(
+            ConnectionFact::sound(out.controls()).unwrap().value,
+            "PCM 44.1 kHz stereo (PipeWire), muted"
+        );
     }
 
     #[test]

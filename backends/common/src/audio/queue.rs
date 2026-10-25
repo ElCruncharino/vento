@@ -43,6 +43,9 @@ pub struct Queue {
     /// see [`Queue::set_device`].
     buffer: AtomicU64,
     period: AtomicU64,
+    /// What the platform calls the output the device plays on, where it has
+    /// more than one: see [`Queue::set_output`].
+    output: Mutex<Option<&'static str>>,
     inner: Mutex<Inner>,
 }
 
@@ -77,6 +80,7 @@ impl Queue {
             gain: AtomicU32::new(1.0f32.to_bits()),
             buffer: AtomicU64::new(0),
             period: AtomicU64::new(0),
+            output: Mutex::new(None),
             inner: Mutex::new(Inner {
                 // Room for the limit and a write past it, allocated once.
                 samples: VecDeque::with_capacity(format.frames(LIMIT * 2) * format.channels),
@@ -155,6 +159,19 @@ impl Queue {
     fn limit(&self, inner: &Inner) -> usize {
         let buffer = Duration::from_micros(self.buffer.load(Ordering::Relaxed));
         self.format.frames(LIMIT.saturating_sub(buffer)).max(self.target(inner) * 2)
+    }
+
+    /// Which of the platform's outputs the device plays on, for the facts
+    /// row and the overlay to say. A platform with one way out (AAudio) need
+    /// not say; a device that falls back to another output mid-stream says
+    /// it again.
+    pub fn set_output(&self, output: &'static str) {
+        *self.output.lock().unwrap() = Some(output);
+    }
+
+    /// The output [`set_output`](Queue::set_output) was told, if any.
+    pub fn output(&self) -> Option<&'static str> {
+        *self.output.lock().unwrap()
     }
 
     /// The device's buffer, as [`set_device`](Queue::set_device) was told

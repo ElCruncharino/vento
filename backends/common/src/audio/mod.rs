@@ -242,8 +242,9 @@ impl Sound {
 
     /// A debug overlay's line for the sound, where the session has a switch:
     /// what plays — what is queued in front of the device and the device's
-    /// own buffer, the two together how far behind what arrived it is heard,
-    /// and what the queue has had to do about the far end's timing — or that
+    /// own buffer (named for the output where the platform says which, as
+    /// "PipeWire 11 ms"), the two together how far behind what arrived it is
+    /// heard, and what the queue has had to do about the far end's timing — or that
     /// nothing does; and DISABLED while the far end is asked not to send its
     /// sound, MUTED while it is muted here. Both clients' overlays say it in
     /// these words.
@@ -251,9 +252,10 @@ impl Sound {
         self.switch?;
         let what = match playback {
             Some(p) => format!(
-                "{}  queue {} ms + device {} ms  underruns {}  dropped {}",
+                "{}  queue {} ms + {} {} ms  underruns {}  dropped {}",
                 p.describe(),
                 p.queued.as_millis(),
+                p.output.unwrap_or("device"),
                 p.device.as_millis(),
                 p.stats.underruns,
                 p.stats.dropped,
@@ -284,6 +286,9 @@ pub struct Playback {
     /// The device's own buffer, as the platform said it when it opened
     /// ([`Queue::set_device`]); zero until then.
     pub device: Duration,
+    /// Which of the platform's outputs the device is ([`Queue::set_output`]):
+    /// `None` where the platform has only the one and does not say (AAudio).
+    pub output: Option<&'static str>,
     pub stats: Stats,
 }
 
@@ -452,6 +457,7 @@ impl Controls {
             codec,
             queued: queue.queued(),
             device: queue.device_buffer(),
+            output: queue.output(),
             stats: queue.stats(),
         })
     }
@@ -886,8 +892,11 @@ mod tests {
         assert_eq!(now.describe(), "PCM 48 kHz stereo");
         assert_eq!(now.queued, Format::new(48_000, 2).unwrap().duration(2));
         assert_eq!(now.device, Duration::ZERO);
+        assert_eq!(now.output, None);
         outputs.queues.lock().unwrap()[0].set_device(Duration::from_millis(50), Duration::from_millis(10));
+        outputs.queues.lock().unwrap()[0].set_output("ALSA");
         assert_eq!(controls.playback().unwrap().device, Duration::from_millis(50));
+        assert_eq!(controls.playback().unwrap().output, Some("ALSA"));
 
         controls.set_codec(Some(Codec::Aac));
         let mut aac = outputs.open(Format::new(44_100, 2).unwrap()).unwrap();
@@ -909,6 +918,7 @@ mod tests {
                 codec,
                 queued: Duration::ZERO,
                 device: Duration::ZERO,
+                output: None,
                 stats: Stats::default(),
             }
             .describe()
@@ -950,6 +960,7 @@ mod tests {
             codec: None,
             queued: Duration::from_millis(32),
             device: Duration::from_millis(50),
+            output: None,
             stats: Stats::default(),
         };
         assert_eq!(
@@ -959,6 +970,16 @@ mod tests {
         assert_eq!(
             sound(Some(Switch::Enable), true, false).line(Some(playback)).unwrap(),
             "snd PCM 48 kHz stereo  queue 32 ms + device 50 ms  underruns 0  dropped 0"
+        );
+        // Where the platform says which output plays it, that is its name.
+        let piped = Playback {
+            output: Some("PipeWire"),
+            device: Duration::from_millis(11),
+            ..playback
+        };
+        assert_eq!(
+            sound(Some(Switch::Mute), true, false).line(Some(piped)).unwrap(),
+            "snd PCM 48 kHz stereo  queue 32 ms + PipeWire 11 ms  underruns 0  dropped 0"
         );
     }
 }
