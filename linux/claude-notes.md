@@ -854,6 +854,10 @@ is showing is in the tooltip too. On it:
   smaller than the window in an axis is centred in it; one that is bigger is
   panned — move the pointer within 48 points of a window edge, over the
   desktop, and it moves that way, faster the nearer the edge.
+- **Resize** (`resize`, beside Scale at 1:1 when not fullscreen) asks for
+  the window to be the size of what it shows, the desktop or its monitor,
+  in device pixels, so that nothing is panned or left over; a maximised
+  window is unmaximised first.
 - **Monitor** (when the far end reports more than one) shows the whole desktop
   (`tv_displays`, several screens) or one monitor's rectangle (`monitor`, one
   screen), with the scale modes applied to that. Where a

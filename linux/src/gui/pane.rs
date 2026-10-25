@@ -44,6 +44,7 @@ use egui::{
     Sense, Stroke, Vec2, ViewportId, pos2, vec2,
 };
 use std::time::{Duration, Instant};
+use winit::dpi::PhysicalSize;
 use winit::window::Fullscreen;
 
 /// A pane is known by its window's egui viewport: the root one for the
@@ -628,10 +629,10 @@ impl Pane {
     /// Info and view only are highlighted while they are on, Sound while
     /// off or muted.
     ///
-    /// The main window's: Scale, Monitor, Pop out, View only, Sound, Info,
-    /// Fullscreen, Disconnect. A pop-out's: Scale, Monitor, View only,
-    /// Sound, Fullscreen, Return. Sound only where the far end may send
-    /// sound.
+    /// The main window's: Scale, Resize, Monitor, Pop out, View only,
+    /// Sound, Info, Fullscreen, Disconnect. A pop-out's: Scale, Resize,
+    /// Monitor, View only, Sound, Fullscreen, Return. Resize only at 1:1 in
+    /// a window, and Sound only where the far end may send sound.
     fn toolbar_items(&mut self, s: &mut Session, ui: &mut egui::Ui, host: &mut Host) {
         let connected = s.connected();
         let mode = self.view.mode;
@@ -646,6 +647,17 @@ impl Pane {
             .clicked()
         {
             self.view.cycle();
+        }
+        // At 1:1 in a window, the window can be made the size of what it
+        // shows, which at that scale is its size in device pixels.
+        if mode == ScaleMode::Original
+            && host.window.fullscreen().is_none()
+            && ui
+                .add_enabled(connected, icon_only(icons::RESIZE))
+                .on_hover_text("Resize window to desktop size")
+                .clicked()
+        {
+            self.fit_window(s, host);
         }
 
         let facts = &s.snapshot.facts;
@@ -762,6 +774,23 @@ impl Pane {
         {
             s.disconnect();
         }
+    }
+
+    /// Asks for the window to be the size of what it shows (the desktop, or
+    /// its monitor), in device pixels: one to one, nothing is panned or
+    /// left over. A maximised window is unmaximised first, since a window
+    /// manager keeps a maximised window's size.
+    fn fit_window(&self, s: &Session, host: &Host) {
+        let Some((width, height)) = s.desktop.as_ref().map(Desktop::size) else {
+            return;
+        };
+        let source = self.source_rect(width, height);
+        let size = PhysicalSize::new(source.width().round() as u32, source.height().round() as u32);
+        log::info!("resizing the window to {}×{}", size.width, size.height);
+        if host.window.is_maximized() {
+            host.window.set_maximized(false);
+        }
+        let _ = host.window.request_inner_size(size);
     }
 
     /// The main window's Pop out, beside Monitor: what this window shows,
