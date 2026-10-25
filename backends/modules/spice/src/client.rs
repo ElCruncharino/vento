@@ -21,7 +21,7 @@ use crate::cursor::Cursors;
 use crate::display::Display;
 use crate::error::{Error, Result};
 use crate::framebuffer::Framebuffer;
-use crate::keymap::{self, Key};
+use crate::keymap;
 use crate::playback::Playback;
 use crate::tls;
 use runtime::Handler;
@@ -349,8 +349,7 @@ impl Client {
             display: Display::new(Arc::clone(&self.framebuffer), IMAGE_CACHE),
             cursors: Cursors::new(),
             agent: Agent::new(),
-            keys: HashMap::new(),
-            shift_held: false,
+            keyboard: keymap::Keyboard::default(),
             buttons: 0,
             mouse_modes: 0,
             focused: true,
@@ -544,13 +543,8 @@ struct Session<'a> {
     /// The guest agent (`spice-vdagent`), which handles the clipboard and
     /// resizing. Its messages travel inside the main channel's.
     agent: Agent,
-    /// Keys held on the guest, by the caller's key id, so that a release names
-    /// the pressed key rather than a keysym; this makes auto-repeat and chords
-    /// work.
-    keys: HashMap<i64, Key>,
-    /// Whether this client pressed Shift to type a shifted character. It is
-    /// released once no shifted key is held.
-    shift_held: bool,
+    /// Keys held on the guest, and the Shift added for shifted characters.
+    keyboard: keymap::Keyboard,
     buttons: u16,
     mouse_modes: u32,
     focused: bool,
@@ -1030,67 +1024,34 @@ impl Session<'_> {
             log::trace!("no scancode for keysym {keysym:#x}");
             return Ok(());
         };
-        // Auto-repeat is a second press of a key already down. The guest
-        // expects it, but it must not press Shift again.
-        let repeat = self.keys.insert(id, key).is_some();
-        if let Key::Scancode { shift: true, .. } = key
-            && !self.shift_held
-            && !repeat
-        {
-            self.shift_held = true;
-            self.scancode(SHIFT.press()).await?;
-        }
-        self.scancode(key.press()).await
+        let strokes = self.keyboard.down(id, key);
+        self.strokes(strokes).await
     }
 
     async fn key_up(&mut self, id: i64) -> Result<()> {
-        let Some(key) = self.keys.remove(&id) else {
-            return Ok(());
-        };
-        if let Some(code) = key.release() {
-            self.scancode_up(code).await?;
-        }
-        if let Key::Scancode { shift: true, .. } = key
-            && self.shift_held
-            && !self.keys.values().any(|k| matches!(k, Key::Scancode { shift: true, .. }))
-        {
-            self.shift_held = false;
-            if let Some(code) = SHIFT.release() {
-                self.scancode_up(code).await?;
-            }
-        }
-        Ok(())
+        let strokes = self.keyboard.up(id);
+        self.strokes(strokes).await
     }
 
-    /// Releases everything this session still holds down on the guest: a
-    /// screen taken away mid-chord, an event stream that stopped between a
-    /// press and its release.
+    /// Releases everything this session still holds down on the guest.
     async fn release_all_keys(&mut self) -> Result<()> {
-        let held: Vec<Key> = self.keys.drain().map(|(_, key)| key).collect();
-        for key in held {
-            if let Some(code) = key.release() {
-                self.scancode_up(code).await?;
-            }
-        }
-        if self.shift_held {
-            self.shift_held = false;
-            if let Some(code) = SHIFT.release() {
-                self.scancode_up(code).await?;
-            }
+        let strokes = self.keyboard.release_all();
+        self.strokes(strokes).await
+    }
+
+    async fn strokes(&mut self, strokes: Vec<keymap::Stroke>) -> Result<()> {
+        for stroke in strokes {
+            let (message, code) = match stroke {
+                keymap::Stroke::Down(code) => (inputs_client::KEY_DOWN, code),
+                keymap::Stroke::Up(code) => (inputs_client::KEY_UP, code),
+            };
+            // Trace only: with the keysym it is what was typed.
+            log::trace!("scancode {code:#x} {}", if message == inputs_client::KEY_DOWN { "down" } else { "up" });
+            let mut payload = Vec::new();
+            KeyEvent { scancode: code }.write(&mut payload)?;
+            self.send(Kind::Inputs, message, &payload).await?;
         }
         Ok(())
-    }
-
-    async fn scancode(&mut self, code: u32) -> Result<()> {
-        let mut payload = Vec::new();
-        KeyEvent { scancode: code }.write(&mut payload)?;
-        self.send(Kind::Inputs, inputs_client::KEY_DOWN, &payload).await
-    }
-
-    async fn scancode_up(&mut self, code: u32) -> Result<()> {
-        let mut payload = Vec::new();
-        KeyEvent { scancode: code }.write(&mut payload)?;
-        self.send(Kind::Inputs, inputs_client::KEY_UP, &payload).await
     }
 
     /// The session left the screen, or came back.
@@ -1185,12 +1146,6 @@ impl Session<'_> {
         }
     }
 }
-
-/// Left Shift, which is what a layout's shifted characters are made with.
-const SHIFT: Key = Key::Scancode {
-    code: 0x2a,
-    shift: false,
-};
 
 /// The backend API's button mask is RFB's, and SPICE's first five bits are the
 /// same five buttons in the same order: left, middle, right, wheel up, wheel

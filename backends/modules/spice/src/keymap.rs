@@ -29,6 +29,8 @@
 //! is the make code with bit 7 set (`0x9E`, `0xE0CB`). That is what spice-gtk
 //! sends and what ryll's `make_scancode` builds.
 
+use std::collections::HashMap;
+
 /// What a keysym turns into on the wire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Key {
@@ -63,6 +65,99 @@ impl Key {
             Key::Scancode { code, .. } => Some(wire(code, true)),
             Key::Pause => None,
         }
+    }
+}
+
+/// Left Shift, which is what a layout's shifted characters are made with.
+pub const SHIFT: Key = Key::Scancode {
+    code: 0x2a,
+    shift: false,
+};
+
+/// Right Shift, which does the same for the guest.
+const RIGHT_SHIFT: Key = Key::Scancode {
+    code: 0x36,
+    shift: false,
+};
+
+/// One scancode for the inputs channel: a make code or a break code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stroke {
+    Down(u32),
+    Up(u32),
+}
+
+/// The keys this client holds on the guest, and the Shift it adds for a
+/// shifted character: a US layout needs Shift for `A` or `!`, the backend API
+/// delivers the keysym alone, so the Shift is pressed here and released once
+/// no shifted key is held. A Shift the user holds is theirs: the guest already
+/// has it down, so none is added, and releasing the character does not
+/// release it.
+#[derive(Default)]
+pub struct Keyboard {
+    /// By the caller's key id, so that a release names the pressed key rather
+    /// than a keysym; this makes auto-repeat and chords work.
+    held: HashMap<i64, Key>,
+    /// Whether this client pressed Shift for a shifted character.
+    shift_added: bool,
+}
+
+impl Keyboard {
+    /// `key` went down under `id`. A second press of a held id is auto-repeat,
+    /// which the guest expects, but it must not press Shift again.
+    pub fn down(&mut self, id: i64, key: Key) -> Vec<Stroke> {
+        let repeat = self.held.insert(id, key).is_some();
+        let mut out = Vec::with_capacity(2);
+        if let Key::Scancode { shift: true, .. } = key
+            && !repeat
+            && !self.shift_added
+            && !self.shift_held_by_user()
+        {
+            self.shift_added = true;
+            out.push(Stroke::Down(SHIFT.press()));
+        }
+        out.push(Stroke::Down(key.press()));
+        out
+    }
+
+    /// The key under `id` came up; nothing for an id that is not held.
+    pub fn up(&mut self, id: i64) -> Vec<Stroke> {
+        let Some(key) = self.held.remove(&id) else {
+            return Vec::new();
+        };
+        let mut out = Vec::with_capacity(2);
+        out.extend(key.release().map(Stroke::Up));
+        if self.shift_added
+            && !self.held.values().any(|k| matches!(k, Key::Scancode { shift: true, .. }))
+        {
+            self.shift_added = false;
+            // The added Shift is the left one, so a user who pressed Left
+            // Shift meanwhile keeps the guest's Shift down until their own
+            // release.
+            if !self.held.values().any(|k| *k == SHIFT) {
+                out.extend(SHIFT.release().map(Stroke::Up));
+            }
+        }
+        out
+    }
+
+    /// Everything still held: a screen taken away mid-chord, an event stream
+    /// that stopped between a press and its release.
+    pub fn release_all(&mut self) -> Vec<Stroke> {
+        let mut out: Vec<Stroke> = self
+            .held
+            .drain()
+            .filter_map(|(_, key)| key.release().map(Stroke::Up))
+            .collect();
+        if self.shift_added {
+            self.shift_added = false;
+            out.extend(SHIFT.release().map(Stroke::Up));
+        }
+        out
+    }
+
+    fn shift_held_by_user(&self) -> bool {
+        self.held.values().any(|k| *k == SHIFT || *k == RIGHT_SHIFT)
     }
 }
 
@@ -261,6 +356,77 @@ mod tests {
             Some(Key::Scancode { code, shift }) => (code, shift),
             other => panic!("expected a scancode for {keysym:#x}, got {other:?}"),
         }
+    }
+
+    fn key(keysym: u32) -> Key {
+        scancode(keysym).expect("a key with a scancode")
+    }
+
+    /// `A` needs Shift on this layout: pressed before the key, released after
+    /// it, and not pressed again for auto-repeat.
+    #[test]
+    fn shift_is_added_for_a_shifted_character_and_taken_back() {
+        let mut keyboard = Keyboard::default();
+        assert_eq!(keyboard.down(1, key('A' as u32)), [Stroke::Down(0x2a), Stroke::Down(0x1e)]);
+        assert_eq!(keyboard.down(1, key('A' as u32)), [Stroke::Down(0x1e)], "auto-repeat");
+        assert_eq!(keyboard.up(1), [Stroke::Up(0x9e), Stroke::Up(0xaa)]);
+        assert_eq!(keyboard.up(1), [], "already up");
+    }
+
+    /// One added Shift covers a chord of shifted keys, and it goes once the
+    /// last of them has.
+    #[test]
+    fn one_added_shift_covers_a_chord() {
+        let mut keyboard = Keyboard::default();
+        assert_eq!(keyboard.down(1, key('A' as u32)), [Stroke::Down(0x2a), Stroke::Down(0x1e)]);
+        assert_eq!(keyboard.down(2, key('!' as u32)), [Stroke::Down(0x02)]);
+        assert_eq!(keyboard.up(1), [Stroke::Up(0x9e)]);
+        assert_eq!(keyboard.up(2), [Stroke::Up(0x82), Stroke::Up(0xaa)]);
+    }
+
+    /// A Shift the user holds is left alone: the guest has it down already, so
+    /// the character needs no second press, and letting go of the character
+    /// must not let go of the user's Shift, or the Tab that follows arrives
+    /// unshifted.
+    #[test]
+    fn a_shift_the_user_holds_is_left_alone() {
+        let mut keyboard = Keyboard::default();
+        assert_eq!(keyboard.down(1, key(0xffe1)), [Stroke::Down(0x2a)], "Shift_L");
+        assert_eq!(keyboard.down(2, key('A' as u32)), [Stroke::Down(0x1e)]);
+        assert_eq!(keyboard.up(2), [Stroke::Up(0x9e)]);
+        assert_eq!(keyboard.down(3, key(0xff09)), [Stroke::Down(0x0f)], "Tab, still shifted");
+        assert_eq!(keyboard.up(3), [Stroke::Up(0x8f)]);
+        assert_eq!(keyboard.up(1), [Stroke::Up(0xaa)], "the user's own release");
+
+        let mut keyboard = Keyboard::default();
+        assert_eq!(keyboard.down(1, key(0xffe2)), [Stroke::Down(0x36)], "Shift_R");
+        assert_eq!(keyboard.down(2, key('A' as u32)), [Stroke::Down(0x1e)]);
+        assert_eq!(keyboard.up(2), [Stroke::Up(0x9e)]);
+    }
+
+    /// A Left Shift pressed while the added one is down takes it over: the
+    /// character's release leaves the guest's Shift to the user's release.
+    #[test]
+    fn a_shift_pressed_during_an_added_one_takes_it_over() {
+        let mut keyboard = Keyboard::default();
+        keyboard.down(1, key('A' as u32));
+        assert_eq!(keyboard.down(2, key(0xffe1)), [Stroke::Down(0x2a)]);
+        assert_eq!(keyboard.up(1), [Stroke::Up(0x9e)]);
+        assert_eq!(keyboard.up(2), [Stroke::Up(0xaa)]);
+    }
+
+    /// Releasing everything releases the added Shift as well, once.
+    #[test]
+    fn releasing_everything_includes_the_added_shift() {
+        let mut keyboard = Keyboard::default();
+        keyboard.down(1, key('A' as u32));
+        keyboard.down(2, key(0xff13));
+        let mut strokes = keyboard.release_all();
+        strokes.sort_by_key(|s| match s {
+            Stroke::Up(code) | Stroke::Down(code) => *code,
+        });
+        assert_eq!(strokes, [Stroke::Up(0x9e), Stroke::Up(0xaa)], "Pause has no break code");
+        assert_eq!(keyboard.release_all(), []);
     }
 
     /// The three that are easy to get wrong by one: F11 is not after F10, the
