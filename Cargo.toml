@@ -1,7 +1,8 @@
 # Every crate is under `backends/`, inside the Gradle module that packages it,
 # but the workspace root is here because that is where cargo and rust-analyzer
-# look for one. Members are globs: adding a protocol is adding a directory under
-# `backends/modules/`.
+# look for one. The members are named one by one: a backend's crate is its
+# module's directory, `backends/modules/<name>/`, except RealVNC's, which has
+# none, so adding a protocol is a line in each list below.
 #
 # The layering is the point. `backends/common` is the neutral layer a protocol
 # is written against; `backends/session` is the one a client holds a session
@@ -23,7 +24,13 @@ members = [
     "backends/codegen",
     "backends/tls",
     "backends/platform/*",
-    "backends/modules/*/src/main/rust",
+    "backends/modules/rfb",
+    "backends/modules/ironrdp",
+    "backends/modules/spice",
+    "backends/modules/rustdesk",
+    "backends/modules/libvnc/src/main/rust",
+    "backends/modules/tigervnc/src/main/rust",
+    "backends/modules/freerdp/src/main/rust",
 ]
 exclude = ["third_party"]
 
@@ -45,6 +52,25 @@ android_logger = "0.15"
 # One version for every crate that reads the C headers: `remotedesktop-session`
 # the shared ones, each C backend's crate its own over those.
 bindgen = "0.73"
+# The upstreams that are submodules rather than registry crates, named from
+# here so that a crate's distance from `third_party/` is nobody's concern:
+# IronRDP at a commit (why: `modules/ironrdp/Cargo.toml`) and ryll's SPICE
+# crates, patched (`modules/spice/Cargo.toml`).
+ironrdp-blocking = { path = "third_party/ironrdp/crates/ironrdp-blocking" }
+ironrdp-cliprdr = { path = "third_party/ironrdp/crates/ironrdp-cliprdr" }
+ironrdp-connector = { path = "third_party/ironrdp/crates/ironrdp-connector" }
+ironrdp-core = { path = "third_party/ironrdp/crates/ironrdp-core" }
+ironrdp-displaycontrol = { path = "third_party/ironrdp/crates/ironrdp-displaycontrol" }
+ironrdp-dvc = { path = "third_party/ironrdp/crates/ironrdp-dvc" }
+ironrdp-graphics = { path = "third_party/ironrdp/crates/ironrdp-graphics" }
+ironrdp-input = { path = "third_party/ironrdp/crates/ironrdp-input" }
+ironrdp-pdu = { path = "third_party/ironrdp/crates/ironrdp-pdu" }
+ironrdp-rdpdr = { path = "third_party/ironrdp/crates/ironrdp-rdpdr" }
+ironrdp-rdpsnd = { path = "third_party/ironrdp/crates/ironrdp-rdpsnd" }
+ironrdp-session = { path = "third_party/ironrdp/crates/ironrdp-session" }
+ironrdp-svc = { path = "third_party/ironrdp/crates/ironrdp-svc" }
+shakenfist-spice-protocol = { path = "third_party/ryll/shakenfist-spice-protocol", default-features = false }
+shakenfist-spice-compression = { path = "third_party/ryll/shakenfist-spice-compression", default-features = false }
 
 [profile.release]
 panic = "abort" # cannot unwind across jni

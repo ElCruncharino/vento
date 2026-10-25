@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-package net.pgaskin.remotedesktop.backend.rfb;
+package net.pgaskin.remotedesktop.backend.spice;
 
 import android.content.Context;
 
@@ -14,51 +14,53 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * This module's entry in a build's list of backends. What the RFB backend is
- * called and what it can be told are the catalog's: {@link RfbCatalog},
+ * This module's entry in a build's list of backends. What the SPICE backend is
+ * called and what it can be told are the catalog's: {@link SpiceCatalog},
  * generated from {@code backends/session} at build time, holds the words and
  * the option keys.
  *
- * <p>A session is a {@link NativeBackend} on {@link RfbNatives}, generated
- * too: the client in {@code src/main/rust} as a {@code session::Backend},
- * with nothing about RFB on this side of the boundary that needs a hook.
+ * <p>A session is a {@link NativeBackend} on {@link SpiceNatives}, generated
+ * too: the client in the module's crate as a {@code session::Backend}.
+ * Nothing about SPICE on this side of the boundary needs a hook — a ticket
+ * prompt has no user name because the session says so, and a pin exists only
+ * for a TLS session because only a TLS session asks.
  */
-public final class RfbProvider implements BackendProvider {
+public final class SpiceProvider implements BackendProvider {
 
     @Override
     public String id() {
-        return RfbCatalog.ID;
+        return SpiceCatalog.ID;
     }
 
     @Override
     public String name() {
-        return RfbCatalog.NAME;
+        return SpiceCatalog.NAME;
     }
 
     @Override
     public String shortName() {
-        return RfbCatalog.SHORT_NAME;
+        return SpiceCatalog.SHORT_NAME;
     }
 
     @Override
     public String description() {
-        return RfbCatalog.DESCRIPTION;
+        return SpiceCatalog.DESCRIPTION;
     }
 
     @Override
     public int order() {
-        return RfbCatalog.ORDER;
+        return SpiceCatalog.ORDER;
     }
 
     @Override
     public List<BackendOption> options() {
-        return RfbCatalog.OPTIONS;
+        return SpiceCatalog.OPTIONS;
     }
 
     @Override
     public Backend create(Context context, String address, String userName, String password,
                           Map<String, String> options) {
-        return new NativeBackend(context, "Rfb", RfbCatalog.OPTIONS, new RfbNatives(),
+        return new NativeBackend(context, "Spice", SpiceCatalog.OPTIONS, new SpiceNatives(),
                 NativeBackend.Hooks.NONE, address, userName, password, options);
     }
 }

@@ -21,7 +21,7 @@ import java.util.Map;
  * the option keys.
  *
  * <p>A session is a {@link NativeBackend} on {@link IronRdpNatives}, generated
- * too: IronRDP in {@code src/main/rust} as a {@code session::Backend}, which
+ * too: IronRDP in the module's crate as a {@code session::Backend}, which
  * reads the desktop size option and splits a domain out of the user name
  * itself. What is left on this side is {@link RdpHooks}: the size this machine
  * was left at, and the prompt's words.
