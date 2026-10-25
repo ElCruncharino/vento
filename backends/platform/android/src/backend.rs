@@ -365,6 +365,9 @@ fn create<'local>(
         dirs: &dirs,
         screen: pair(screen_width, screen_height),
         last_size: pair(last_width, last_height),
+        // RealVNC's identities are its Java backend's, the one backend on the
+        // phone that is not behind this layer.
+        identity: None,
         client_name: &client_name,
         platform: Platform::Android,
         decoders: (module.decoders)(),

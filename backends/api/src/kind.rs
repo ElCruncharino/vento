@@ -83,6 +83,13 @@ pub struct Connect<'a> {
     /// backends — which is what the RDP backends' `DesktopSize=remote` asks
     /// for.
     pub last_size: Option<(u32, u32)>,
+    /// What this address's server was last accepted as, where the client
+    /// keeps that note: the identity a backend handed over through
+    /// [`Backend::saved_identity`] after a session at this address, handed
+    /// back so that it does not ask again about a server it recognises.
+    /// RealVNC's core is the one library with identities of its own; the
+    /// other backends' far ends are pinned by the client and ignore this.
+    pub identity: Option<&'a str>,
     /// What the far end lists this machine as: a phone's model, a desktop's
     /// host name.
     pub client_name: &'a str,
@@ -214,6 +221,7 @@ mod tests {
             dirs: &dirs,
             screen: None,
             last_size: None,
+            identity: None,
             client_name: "",
             platform: Platform::Linux,
             decoders: None,

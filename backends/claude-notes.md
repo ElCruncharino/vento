@@ -44,10 +44,12 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
 - `build.gradle` — the Android module, its source sets and its CMake
   pointed at the directories below rather than at AGP's `src/main/`.
 - `Cargo.toml`, `src/`, `build.rs`, `examples/` — the backend's crate, at
-  the module's root: the protocol itself for the four in Rust (and its
-  `probe` example, behind the `probe` feature), or the small adapter over
-  the C library for libvnc, tigervnc and freerdp, whose `build.rs` reads the
-  backend's header into Rust with bindgen. RealVNC has no crate.
+  the module's root, which holds its adapter to `api`'s `Backend`: the
+  protocol itself for the four in Rust (and its `probe` example, behind the
+  `probe` feature), or the small adapter over the C library for libvnc,
+  tigervnc and freerdp, whose `build.rs` reads the backend's header into Rust
+  with bindgen. Every backend's adapter is in its module; no client holds one
+  of its own.
 - `cpp/` (the four C backends) — the C/C++ session over the upstream
   library, its CMake, and `include/vento/<name>.h`, the backend's own C API:
   its config, its constructor and its live calls.
