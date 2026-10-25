@@ -194,12 +194,22 @@ impl Channel {
     pub async fn set_paused(&mut self, paused: bool, ack: u16) -> Result<()> {
         let was = self.paused;
         self.paused = paused;
-        if was && !paused && self.since_ack > 0 {
-            // Whatever built up while nobody was looking is acknowledged in one
-            // go, so the picture starts again on the way back rather than after
-            // another window's worth of messages.
-            self.since_ack = 0;
-            self.send(ack, &[]).await?;
+        if was && !paused && self.ack_window > 0 {
+            // Whatever built up while nobody was looking is acknowledged on
+            // the way back, so the picture starts again at once rather than
+            // after another window's worth of messages — but a window at a
+            // time, and only whole ones. The server subtracts a whole window
+            // from its unsigned count per ack, so an ack for a part of one
+            // leaves that count wrapped around, and the channel then waits
+            // for an ack that can never come: nothing more arrives on it, and
+            // the next thing the server has to send — a resize's new surface
+            // — never does. A part of a window needs no ack: the server has
+            // not stopped for it.
+            let windows = self.since_ack / self.ack_window;
+            self.since_ack %= self.ack_window;
+            for _ in 0..windows {
+                self.send(ack, &[]).await?;
+            }
         }
         Ok(())
     }
