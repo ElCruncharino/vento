@@ -1,7 +1,7 @@
 #!/bin/bash
 # Does every `native` method we declare exist in the library we ship?
 #
-# `realvnc/check-jni-abi.sh` asks this of somebody else's binary; this
+# `scripts/check-jni-abi.sh` asks this of somebody else's binary; this
 # asks it of ours, and the failure mode is the same one: a native that is not
 # where Java looks for it does not fail to compile. It fails the first time
 # that method is called, as an UnsatisfiedLinkError — which for something like
@@ -19,18 +19,27 @@
 #               registered on each module's generated natives class — a cdylib
 #               of the protocol crate for the four in Rust, and for the three
 #               in C the same layer linked into the library CMake makes, where
-#               `JNI_OnLoad` is the only export. There is
-#               no symbol to look for, so what is checked is what registration
-#               is made of — the library exports `JNI_OnLoad`, names the class
-#               it registers on, and carries each native's name and JNI
-#               descriptor, as the compiled class declares them, as strings;
-#               and every `on…` callback `NativeBackend` declares, and the
-#               two `knownHosts…` methods the layer keeps its pins through,
-#               has its name and descriptor there too, since those are looked
-#               up by string.
-#               A descriptor that drifted on either side is a string the other
-#               does not have. (That each Rust function matches its descriptor
-#               is checked when it compiles, by `jni::native_method!`.)
+#               `JNI_OnLoad` is the only export. There is no symbol to look
+#               for, so what is checked is what registration is made of:
+#                 - the library exports `JNI_OnLoad` and names the class it
+#                   registers on;
+#                 - the table it registers, read out of the library itself
+#                   (each `JNINativeMethod` is a name, a descriptor and a
+#                   function, three relocated pointers in a row, so the pairs
+#                   come back exactly as `RegisterNatives` is handed them), is
+#                   the compiled class's natives, name for name and descriptor
+#                   for descriptor, both ways: one Java declares and the table
+#                   lacks is an UnsatisfiedLinkError when called, and one the
+#                   table has and Java does not declare fails the whole
+#                   registration when the library loads;
+#                 - the callbacks the layer looks up on `NativeBackend` (the
+#                   `on…` methods and the two `knownHosts…` it keeps its pins
+#                   through, each a `jni_str!`/`jni_sig!` pair in its source)
+#                   are the ones `NativeBackend` declares, both ways, and each
+#                   pair's name and descriptor are strings in the library, which
+#                   is as far as a binary shows a lookup made in code.
+#               (That each Rust function matches its descriptor is checked when
+#               it compiles, by `jni::native_method!`.)
 #
 # One library per protocol module, which is what the loop below is: each is
 # asked about its own declarations, and a module deleted is a line deleted.
@@ -89,6 +98,53 @@ methods() {
         { name = "" }
     '
 }
+
+# `name descriptor` of each `JNINativeMethod` in a library: three relocated
+# pointers in a row (name, descriptor, function) whose first two point at
+# strings shaped like a Java name and a method descriptor. The strings are in
+# `.rodata` and the pointers are RELATIVE relocations with their targets as
+# addends, which is how both the NDK's clang and rustc's lld lay out a static
+# table in a shared library; the same table can be there twice (one copy per
+# use in a debug build), hence the `sort -u`.
+registered() {
+    local so="$1"
+    {
+        readelf -W -S "$so" | awk '{ sub(/^ *\[ *[0-9]+\] */, "") } $1 == ".rodata" { print "SEC", $3 }'
+        readelf -W -p .rodata "$so" | LC_ALL=C awk 'match($0, /^ *\[ *[0-9a-f]+\]  /) {
+            off = substr($0, 1, RLENGTH); gsub(/[][ ]/, "", off); print "STR", off, substr($0, RLENGTH + 1) }'
+        readelf -W -r "$so" | awk '$3 ~ /_RELATIVE$/ { print "REL", $1, $4 }'
+    } | LC_ALL=C awk '
+        function hex(s,   i, v) {
+            v = 0; s = tolower(s)
+            for (i = 1; i <= length(s); i++) v = v * 16 + index("0123456789abcdef", substr(s, i, 1)) - 1
+            return v
+        }
+        # One parameter or return type of a descriptor.
+        BEGIN { t = "(\\[*([ZBCSIJFD]|L[A-Za-z0-9_/$]+;))" }
+        $1 == "SEC" { base = hex($2); next }
+        $1 == "STR" { s = $0; sub(/^STR [0-9a-f]+ /, "", s); str[base + hex($2)] = s; next }
+        $1 == "REL" { rel[hex($2)] = hex($3); order[++n] = hex($2); next }
+        END {
+            for (i = 1; i <= n; i++) {
+                o = order[i]
+                if (!((o + 8) in rel) || !((o + 16) in rel)) continue
+                name = str[rel[o]]; desc = str[rel[o + 8]]
+                if (name ~ /^[A-Za-z_][A-Za-z0-9_]*$/ && desc ~ ("^\\(" t "*\\)(V|" t ")$")) print name, desc
+            }
+        }' | sort -u
+}
+
+# The JNI layer every registered library is built with, and the callbacks it
+# looks up on NativeBackend: each `jni_str!("name"), jni_sig!("descriptor")`
+# pair in it, the file read as one line since a call can span several.
+LAYER=backends/platform/android/src/backend.rs
+looked_up="$(tr '\n' ' ' <"$LAYER" \
+    | grep -oE 'jni_str!\("[A-Za-z]+"\), *jni_sig!\("[^"]+"\)' \
+    | sed -E 's/jni_str!\("([^"]+)"\), *jni_sig!\("([^"]+)"\)/\1 \2/' | sort -u)"
+if [ -z "$looked_up" ]; then
+    echo "no callback lookups found in $LAYER" >&2
+    exit 1
+fi
 
 fail=0
 for entry in "${MODULES[@]}"; do
@@ -152,40 +208,69 @@ for entry in "${MODULES[@]}"; do
         printf 'MISSING  registers on another class than %s\n' "$class"
         fail=1
     fi
-    count=0
-    while read -r name desc; do
-        count=$((count + 1))
-        if has "$name" && has "$desc"; then
-            printf 'ok       native %s %s\n' "$name" "$desc"
-        else
-            printf 'MISSING  native %s %s is not what %s registers\n' "$name" "$desc" "$(basename "$so")"
-            fail=1
-        fi
-    done < <(methods "$natives_class" ' native ')
-    # A table that came out empty is a check that passes by asking nothing.
-    if [ "$count" = 0 ]; then
+
+    declared="$(methods "$natives_class" ' native ' | sort -u)"
+    table="$(registered "$so")"
+    # An empty side is a check that passes by asking nothing.
+    if [ -z "$declared" ]; then
         printf 'MISSING  %s declares no natives\n' "$(basename "$class")"
         fail=1
     fi
-    callbacks=0
+    if [ -z "$table" ]; then
+        printf 'MISSING  no JNINativeMethod table found in %s\n' "$(basename "$so")"
+        fail=1
+    fi
     while read -r name desc; do
-        callbacks=$((callbacks + 1))
-        if has "$name" && has "$desc"; then
-            printf 'ok       callback NativeBackend.%s %s\n' "$name" "$desc"
+        [ -n "$name" ] || continue
+        if grep -Fxq -- "$name $desc" <<<"$table"; then
+            printf 'ok       native %s %s\n' "$name" "$desc"
         else
-            printf 'MISSING  callback NativeBackend.%s %s is not looked up by %s\n' \
-                "$name" "$desc" "$(basename "$so")"
+            printf 'MISSING  native %s %s is not in what %s registers\n' "$name" "$desc" "$(basename "$so")"
             fail=1
         fi
-    done < <(methods "$events_class" ' (on|knownHosts)[A-Z][A-Za-z]*[(]')
-    if [ "$callbacks" = 0 ]; then
+    done <<<"$declared"
+    while read -r name desc; do
+        [ -n "$name" ] || continue
+        if ! grep -Fxq -- "$name $desc" <<<"$declared"; then
+            printf 'EXTRA    native %s %s is registered but %s does not declare it\n' \
+                "$name" "$desc" "$(basename "$class")"
+            fail=1
+        fi
+    done <<<"$table"
+
+    java_callbacks="$(methods "$events_class" ' (on|knownHosts)[A-Z][A-Za-z]*[(]' | sort -u)"
+    if [ -z "$java_callbacks" ]; then
         printf 'MISSING  NativeBackend declares no callbacks\n'
         fail=1
     fi
+    while read -r name desc; do
+        [ -n "$name" ] || continue
+        if ! grep -Fxq -- "$name $desc" <<<"$looked_up"; then
+            printf 'MISSING  callback NativeBackend.%s %s is not looked up by %s\n' "$name" "$desc" "$LAYER"
+            fail=1
+        elif has "$name" && has "$desc"; then
+            printf 'ok       callback NativeBackend.%s %s\n' "$name" "$desc"
+        else
+            printf 'MISSING  callback NativeBackend.%s %s is not in %s (built from an older %s?)\n' \
+                "$name" "$desc" "$(basename "$so")" "$LAYER"
+            fail=1
+        fi
+    done <<<"$java_callbacks"
+    while read -r name desc; do
+        [ -n "$name" ] || continue
+        if ! grep -Fxq -- "$name $desc" <<<"$java_callbacks"; then
+            printf 'EXTRA    callback %s %s is looked up by %s but NativeBackend does not declare it\n' \
+                "$name" "$desc" "$LAYER"
+            fail=1
+        fi
+    done <<<"$looked_up"
 done
 
 if [ "$fail" = 0 ]; then
-    echo "PASS: every declared native is bound in its own library"
+    echo "PASS: each library registers exactly the natives its class declares (name and" \
+        "descriptor, read from its table); the layer looks up exactly the callbacks" \
+        "NativeBackend declares, each name and descriptor present in every library;" \
+        "RealVNC's exported natives are symbols"
 else
     echo "FAIL: see above" >&2
     exit 1
