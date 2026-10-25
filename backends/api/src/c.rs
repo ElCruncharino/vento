@@ -11,7 +11,7 @@
 //! pointers filled in by each backend's crate: the libvncclient, TigerVNC,
 //! FreeRDP and RealVNC crates beside their C sources.
 //!
-//! The callbacks are trampolined into the mailbox: `user` is an `Arc<Mailbox>`
+//! The callbacks are trampolined into the mailbox: `user` is an `Arc<Target>`
 //! the session carries, borrowed by each trampoline and reclaimed in
 //! [`CBackend::destroy`], which the header guarantees runs only after the
 //! protocol thread has ended and no callback can still be running.
@@ -74,10 +74,23 @@ pub(crate) unsafe fn write_string(text: &str, out: *mut c_char, len: usize) -> b
     true
 }
 
-/// The mailbox a callback was given, as a borrow: `user` is a live
-/// `Arc<Mailbox>` for the length of the session.
+/// What the callbacks carry as `user`: the session's mailbox, and for an RDP
+/// backend the domain the credentials were last sent with, which the advice
+/// on a logon failure depends on ([`crate::credentials::logon_failed`]).
+struct Target {
+    mailbox: Arc<Mailbox>,
+    domain: Option<Mutex<String>>,
+}
+
+/// What a callback was given, as a borrow: `user` is a live `Arc<Target>`
+/// for the length of the session.
+unsafe fn target<'a>(user: *mut c_void) -> &'a Target {
+    unsafe { &*(user as *const Target) }
+}
+
+/// The mailbox a callback was given, as a borrow (see [`target`]).
 unsafe fn mailbox<'a>(user: *mut c_void) -> &'a Mailbox {
-    unsafe { &*(user as *const Mailbox) }
+    unsafe { &target(user).mailbox }
 }
 
 extern "C" fn cb_connected(user: *mut c_void, width: c_int, height: c_int) {
@@ -178,8 +191,18 @@ extern "C" fn cb_message(
     );
 }
 
+/// `VENTO_LOGON_FAILED` from an RDP backend is shown with the advice for the
+/// domain that was tried.
 extern "C" fn cb_closed(user: *mut c_void, detail: *const c_char) {
-    unsafe { mailbox(user) }.on_closed(&unsafe { string(detail) });
+    let target = unsafe { target(user) };
+    let detail = unsafe { string(detail) };
+    match &target.domain {
+        Some(domain) if detail == crate::credentials::LOGON_FAILED => {
+            let detail = crate::credentials::logon_failed(&domain.lock().unwrap());
+            target.mailbox.on_closed(&detail);
+        }
+        _ => target.mailbox.on_closed(&detail),
+    }
 }
 
 /// The callbacks table, pointed at `user`.
@@ -245,9 +268,9 @@ pub struct CSession {
     /// For a backend's own calls outside the vtable (a live option, its own
     /// kind of answer).
     pub session: *mut ffi::vento_session,
-    /// The `Arc<Mailbox>` the callbacks carry, as a raw pointer to reclaim
+    /// The `Arc<Target>` the callbacks carry, as a raw pointer to reclaim
     /// once the session is destroyed.
-    user: *const Mailbox,
+    user: *const Target,
     /// The calls in progress and whether `destroy` has begun.
     gate: Gate,
 }
@@ -638,6 +661,8 @@ pub struct CBackend {
     options: Mutex<Options>,
     user: String,
     domain: String,
+    /// What the callbacks carry, to record the domain each answer sends.
+    target: Arc<Target>,
     behaviour: &'static Behaviour,
     security: Option<&'static Security>,
 }
@@ -789,6 +814,9 @@ impl Backend for CBackend {
                 // one the session was created with. Only RDP sends a domain.
                 let (domain, c) = if self.behaviour.rdp_domain {
                     let (domain, user) = crate::credentials::rdp_identity(&c, &self.domain, &self.user);
+                    if let Some(sent) = &self.target.domain {
+                        sent.lock().unwrap().clone_from(&domain);
+                    }
                     (domain, Credentials { user, ..c })
                 } else {
                     (String::new(), crate::credentials::fill_user(c, &self.user))
@@ -833,8 +861,13 @@ pub fn start(
     security: Option<&'static Security>,
 ) -> Result<Arc<dyn Backend>, String> {
     let mailbox = Arc::clone(&c.mailbox);
-    // The mailbox reference the callbacks carry, owned by the session.
-    let user = Arc::into_raw(Arc::clone(&mailbox));
+    let (domain, user_name) = c.domain_and_user();
+    let target = Arc::new(Target {
+        mailbox: Arc::clone(&mailbox),
+        domain: behaviour.rdp_domain.then(|| Mutex::new(domain.clone())),
+    });
+    // The reference the callbacks carry, owned by the session.
+    let user = Arc::into_raw(Arc::clone(&target));
     let table = callbacks(user as *mut c_void);
     let session = make(&table);
     if session.is_null() {
@@ -850,7 +883,6 @@ pub fn start(
     if size < BASE_TABLE {
         log::warn!("the backend's vento_session_ops says it is {size} bytes, which no table is");
     }
-    let (domain, user_name) = c.domain_and_user();
     Ok(Arc::new(CBackend {
         session: CSession {
             session,
@@ -861,6 +893,7 @@ pub fn start(
         options: Mutex::new(c.options.clone()),
         user: user_name,
         domain,
+        target,
         behaviour,
         security,
     }))
@@ -948,7 +981,10 @@ mod tests {
         let mailbox = Mailbox::new(None);
         let session = Arc::new(CSession {
             session: &r.raw as *const _ as *mut _,
-            user: Arc::into_raw(Arc::clone(&mailbox)),
+            user: Arc::into_raw(Arc::new(Target {
+                mailbox: Arc::clone(&mailbox),
+                domain: None,
+            })),
             gate: Gate::default(),
         });
         (r, session, mailbox)
@@ -1076,5 +1112,33 @@ mod tests {
         assert_eq!(region_args(big, [0, 0, 1, 1], big, 0, big), None);
         assert_eq!(region_args(big, [0, 0, big, 1], big, 0, 0), None);
         assert_eq!(region_args(big, [0, 0, 1, 2], big, 0, 0), None);
+    }
+
+    #[test]
+    fn the_header_has_the_same_logon_failure_text() {
+        assert_eq!(&ffi::VENTO_LOGON_FAILED[..], format!("{}\0", crate::credentials::LOGON_FAILED).as_bytes());
+    }
+
+    /// A logon failure from an RDP backend gets the advice for the domain
+    /// last tried; any other detail, or any other backend's, is passed on.
+    #[test]
+    fn a_logon_failure_is_closed_with_advice_for_its_domain() {
+        let closed = |domain: Option<&str>, detail: &str| {
+            let target = Target {
+                mailbox: Mailbox::new(None),
+                domain: domain.map(|d| Mutex::new(d.to_string())),
+            };
+            let detail = CString::new(detail).unwrap();
+            cb_closed(&target as *const Target as *mut c_void, detail.as_ptr());
+            match target.mailbox.take() {
+                Some(crate::events::Event::Closed { detail }) => detail,
+                other => panic!("{other:?}"),
+            }
+        };
+        assert_eq!(closed(Some("MicrosoftAccount"), "Logon failed."), crate::credentials::logon_failed("MicrosoftAccount"));
+        assert_eq!(closed(Some("example.invalid"), "Logon failed."), crate::credentials::logon_failed("example.invalid"));
+        assert_eq!(closed(Some("CORP"), "Logon failed."), "Logon failed.");
+        assert_eq!(closed(Some("MicrosoftAccount"), "The connection failed"), "The connection failed");
+        assert_eq!(closed(None, "Logon failed."), "Logon failed.");
     }
 }

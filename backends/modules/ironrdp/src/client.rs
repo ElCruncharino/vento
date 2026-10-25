@@ -800,7 +800,14 @@ impl Client {
             public_key,
             None,
         )
-        .map_err(protocol)?;
+        .map_err(|e| {
+            if logon_refused(&e) {
+                log::info!("{}", describe(&e));
+                Error::Refused(api::credentials::logon_failed(&credentials.domain))
+            } else {
+                protocol(e)
+            }
+        })?;
 
         let desktop = result.desktop_size;
         {
@@ -1336,6 +1343,19 @@ fn timed_out(e: &std::io::Error) -> bool {
     )
 }
 
+/// Whether CredSSP failed because the server refused the user name or
+/// password (`STATUS_LOGON_FAILURE`, `STATUS_WRONG_PASSWORD`), which FreeRDP
+/// reports as its logon failure.
+fn logon_refused(e: &ironrdp_connector::ConnectorError) -> bool {
+    use ironrdp_connector::sspi::credssp::NStatusCode;
+    match e.kind() {
+        ironrdp_connector::ConnectorErrorKind::Credssp(e) => {
+            e.nstatus == Some(NStatusCode::LOGON_FAILURE) || e.nstatus == Some(NStatusCode::WRONG_PASSWORD)
+        }
+        _ => false,
+    }
+}
+
 fn protocol(e: ironrdp_connector::ConnectorError) -> Error {
     Error::Protocol(describe(&e))
 }
@@ -1666,6 +1686,27 @@ impl Default for Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Only a CredSSP status for a refused user name or password is a
+    /// logon failure; any other status or error is not.
+    #[test]
+    fn a_logon_failure_is_a_refused_name_or_password() {
+        use ironrdp_connector::sspi::credssp::NStatusCode;
+        use ironrdp_connector::{ConnectorError, ConnectorErrorKind};
+        let credssp = |status: NStatusCode| {
+            let e = ironrdp_connector::sspi::Error::new_with_nstatus(
+                ironrdp_connector::sspi::ErrorKind::InvalidToken,
+                "CredSSP server returned an error status",
+                status,
+            );
+            ConnectorError::new("CredSSP", ConnectorErrorKind::Credssp(e))
+        };
+        assert!(logon_refused(&credssp(NStatusCode::LOGON_FAILURE)));
+        assert!(logon_refused(&credssp(NStatusCode::WRONG_PASSWORD)));
+        assert!(!logon_refused(&credssp(NStatusCode::ACCOUNT_DISABLED)));
+        assert!(!logon_refused(&credssp(NStatusCode::PASSWORD_EXPIRED)));
+        assert!(!logon_refused(&ConnectorError::new("CredSSP", ConnectorErrorKind::AccessDenied)));
+    }
 
     /// A cursor's bytes become one word per pixel only when there are
     /// exactly `w * h` pixels of them.

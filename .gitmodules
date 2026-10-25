@@ -110,3 +110,12 @@
 	url = https://github.com/intel/libva.git
 	shallow = true
 	ignore = all
+# sspi-rs, the NTLM and CredSSP behind IronRDP, at the tag of the release
+# Cargo.lock and linux/Cargo.lock would otherwise take from crates.io, with
+# patches/sspi/ applied, through [patch.crates-io] in both workspaces. In the
+# APK, under IronRDP; its licence files are at the crate's root.
+[submodule "third_party/sspi"]
+	path = third_party/sspi
+	url = https://github.com/Devolutions/sspi-rs.git
+	shallow = true
+	ignore = all

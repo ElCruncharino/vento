@@ -29,6 +29,7 @@
 !third_party/openssl/
 !third_party/pixman/
 !third_party/ryll/
+!third_party/sspi/
 !third_party/tigervnc/
 !third_party/winit/
 

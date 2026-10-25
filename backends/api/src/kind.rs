@@ -43,8 +43,9 @@ pub enum Platform {
 pub struct Connect<'a> {
     pub address: &'a str,
     /// Empty for none. For the RDP backends, `DOMAIN\user` and `user@domain`
-    /// are split by [`Connect::domain_and_user`], and a domain given this way
-    /// overrides `domain`.
+    /// are split by [`Connect::domain_and_user`] (a backslash first, and an
+    /// address at a common email domain is `MicrosoftAccount\address`), and
+    /// a domain given this way overrides `domain`.
     pub user: &'a str,
     pub domain: &'a str,
     /// `None` prompts. Callers pass `None` rather than an empty password,
@@ -276,5 +277,10 @@ mod tests {
         assert_eq!(split("alice@lab.example", "CORP"), ("lab.example".into(), "alice".into()));
         assert_eq!(split(".\\alice", "CORP"), (".".into(), "alice".into()));
         assert_eq!(split("", "CORP"), ("CORP".into(), "".into()));
+        assert_eq!(
+            split("MicrosoftAccount\\a@corp.example", "CORP"),
+            ("MicrosoftAccount".into(), "a@corp.example".into())
+        );
+        assert_eq!(split("a@outlook.com", "CORP"), ("MicrosoftAccount".into(), "a@outlook.com".into()));
     }
 }

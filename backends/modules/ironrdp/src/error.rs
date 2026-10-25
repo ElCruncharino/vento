@@ -13,8 +13,8 @@ pub enum Error {
     /// The far end violated the protocol, or IronRDP refused to continue.
     /// The string is shown on screen.
     Protocol(String),
-    /// Refused deliberately: no TLS offered, or a certificate that was not
-    /// accepted.
+    /// Refused deliberately: no TLS offered, a certificate that was not
+    /// accepted, or credentials the server refused.
     Refused(String),
     /// [`crate::Client::close`] was called. Not a failure, and the app
     /// initiated it.

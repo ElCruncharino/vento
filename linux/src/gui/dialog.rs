@@ -136,7 +136,15 @@ impl Dialog {
             ui.end_row();
 
             ui.label("User");
-            ui.add(TextEdit::singleline(&mut self.user).desired_width(f32::INFINITY));
+            ui.add(
+                TextEdit::singleline(&mut self.user)
+                    .hint_text(if self.kinds[self.selected].user_has_domain {
+                        "DOMAIN\\user, .\\user or MicrosoftAccount\\email"
+                    } else {
+                        ""
+                    })
+                    .desired_width(f32::INFINITY),
+            );
             ui.end_row();
 
             ui.label("Password");

@@ -21,7 +21,9 @@ use api::trust::{self, Verdict};
 // How a credentials prompt's answer is read, for every client. A name is
 // trimmed everywhere, so one that is only spaces counts as empty.
 
-/// A typed user name, and the expected `(domain, user)`.
+/// A typed user name, and the expected `(domain, user)`. A backslash comes
+/// first, and the rest is kept whole; an address at a common email domain is
+/// a Microsoft account; any other `@` name is split.
 const SPLIT_DOMAIN: &[(&str, &str, &str)] = &[
     ("CORP\\alice", "CORP", "alice"),
     ("alice@corp.example", "corp.example", "alice"),
@@ -35,6 +37,40 @@ const SPLIT_DOMAIN: &[(&str, &str, &str)] = &[
     (".\\alice", ".", "alice"),
     ("\\alice", "", "alice"),
     ("DOM\\", "DOM", ""),
+    // Microsoft accounts, typed with their domain.
+    ("MicrosoftAccount\\someone@example.com", "MicrosoftAccount", "someone@example.com"),
+    ("microsoftaccount\\someone@corp.example", "microsoftaccount", "someone@corp.example"),
+    ("CORP\\someone@outlook.com", "CORP", "someone@outlook.com"),
+    (".\\x@y", ".", "x@y"),
+    (".\\someone@gmail.com", ".", "someone@gmail.com"),
+    // Addresses at common email domains, taken to be Microsoft accounts.
+    ("someone@outlook.com", "MicrosoftAccount", "someone@outlook.com"),
+    (" someone@Outlook.COM ", "MicrosoftAccount", "someone@Outlook.COM"),
+    ("someone@outlook.co.uk", "MicrosoftAccount", "someone@outlook.co.uk"),
+    ("someone@outlook.de", "MicrosoftAccount", "someone@outlook.de"),
+    ("someone@hotmail.com", "MicrosoftAccount", "someone@hotmail.com"),
+    ("someone@hotmail.fr", "MicrosoftAccount", "someone@hotmail.fr"),
+    ("someone@live.com.au", "MicrosoftAccount", "someone@live.com.au"),
+    ("someone@msn.com", "MicrosoftAccount", "someone@msn.com"),
+    ("someone@passport.com", "MicrosoftAccount", "someone@passport.com"),
+    ("someone@gmail.com", "MicrosoftAccount", "someone@gmail.com"),
+    ("someone@googlemail.com", "MicrosoftAccount", "someone@googlemail.com"),
+    ("someone@yahoo.co.jp", "MicrosoftAccount", "someone@yahoo.co.jp"),
+    ("someone@icloud.com", "MicrosoftAccount", "someone@icloud.com"),
+    ("someone@me.com", "MicrosoftAccount", "someone@me.com"),
+    ("someone@aol.com", "MicrosoftAccount", "someone@aol.com"),
+    ("someone@proton.me", "MicrosoftAccount", "someone@proton.me"),
+    ("someone@gmx.net", "MicrosoftAccount", "someone@gmx.net"),
+    // Any other domain, a subdomain or a longer name included, is split.
+    ("someone@example.com", "example.com", "someone"),
+    ("someone@mail.outlook.com", "mail.outlook.com", "someone"),
+    ("someone@outlook.corp.example", "outlook.corp.example", "someone"),
+    ("someone@gmail.com.example", "gmail.com.example", "someone"),
+    ("someone@outlook.company", "outlook.company", "someone"),
+    ("someone@myoutlook.com", "myoutlook.com", "someone"),
+    ("user@DESKTOP-12B9288", "DESKTOP-12B9288", "user"),
+    ("x@gmail.com@y", "gmail.com@y", "x"),
+    ("@gmail.com", "", "@gmail.com"),
 ];
 
 /// An RDP prompt's answer given the session's own domain and user (already
@@ -54,6 +90,15 @@ const RDP_IDENTITY: &[(&str, &str, &str, &str, &str, &str)] = &[
     ("", "", "", "", "", ""),
     ("CORP", "proto", "alice", "LAB", "LAB", "alice"),
     ("CORP", "proto", "", "LAB", "CORP", "proto"),
+    // A domain in the name is used over one given separately.
+    ("CORP", "proto", "OTHER\\alice", "LAB", "OTHER", "alice"),
+    ("CORP", "proto", "alice@lab.example", "LAB", "lab.example", "alice"),
+    // A Microsoft account's address is never split again.
+    ("MicrosoftAccount", "someone@example.com", "", "", "MicrosoftAccount", "someone@example.com"),
+    ("", "proto", "MicrosoftAccount\\someone@example.com", "", "MicrosoftAccount", "someone@example.com"),
+    ("", "proto", "MicrosoftAccount\\someone@example.com", "LAB", "MicrosoftAccount", "someone@example.com"),
+    ("CORP", "proto", "someone@outlook.com", "", "MicrosoftAccount", "someone@outlook.com"),
+    ("CORP", "proto", "CORP\\someone@outlook.com", "", "CORP", "someone@outlook.com"),
 ];
 
 /// Any other backend's answer, where an empty user name means the

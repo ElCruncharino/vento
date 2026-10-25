@@ -2080,6 +2080,9 @@ static void *protocolThread(void *arg) {
         const UINT32 err = freerdp_get_last_error(ctx);
         const char *detail = freerdp_get_last_error_string(err);
         LOGW("connect failed: 0x%08x (%s)", err, detail ? detail : "?");
+        if (err == FREERDP_ERROR_CONNECT_LOGON_FAILURE || err == FREERDP_ERROR_CONNECT_WRONG_PASSWORD) {
+            detail = VENTO_LOGON_FAILED;
+        }
         pthread_mutex_lock(&s->lock);
         const int asked = s->quit;
         pthread_mutex_unlock(&s->lock);

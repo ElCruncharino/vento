@@ -1344,7 +1344,10 @@ answer is a click (or Tab to a button, and Enter): a key on its way to the far
 end must not accept a changed server for you. Enter while held, its repeats,
 answers nothing, and Enter in a field submits the form. The prompts: credentials (the user name
 field only where the scheme has one; for RDP a name typed without a domain
-keeps the session's, and `.\user` is a local account), a certificate the
+keeps the session's, `.\user` is a local account, and `MicrosoftAccount\address`,
+or an address at a common email domain, is a Microsoft account; the split is
+`api::credentials`', and a refused login's message adds advice for its domain,
+`api::credentials::logon_failed`), a certificate the
 [known hosts](#known-hosts) do not match, an unverifiable server (asked every
 time, and never remembered), TigerVNC's question about an RSA-AES server key
 (likewise), RealVNC's security prompt with its identity and encryption states in

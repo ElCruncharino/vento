@@ -1,0 +1,92 @@
+From 3337942ae3e202571788d2c8603b7b7e400f156b Mon Sep 17 00:00:00 2001
+From: "Claude Opus 5.5" <noreply@anthropic.com>
+Date: Sun, 25 Oct 2026 00:48:11 -0400
+Subject: [PATCH 1/1] fix(sspi): allow @ in a down-level logon name's account
+ name
+
+Username::new_down_level_logon_name rejected an account name containing
+`@` with UsernameError::MixedFormat, so Username::new("user@example.com",
+Some("MicrosoftAccount")) and Username::parse("MicrosoftAccount\user@example.com")
+failed. That is how Windows names a Microsoft account on a PC
+(CredUIParseUserName accepts it, and mstsc and FreeRDP send it as
+User=user@example.com, Domain=MicrosoftAccount), and a sAMAccountName
+may contain `@` too. A client could only send such an account as a UPN
+with no domain.
+
+The account name is now only checked for `\`. The NetBIOS domain is
+still checked for both separators, and a name without a domain is still
+parsed as a UPN when it has an `@`, so no name that parsed before parses
+differently. The round trip through AuthIdentityBuffers keeps the split
+(user=user@example.com, domain=MicrosoftAccount).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/src/auth_identity.rs b/src/auth_identity.rs
+index b037314..0796275 100644
+--- a/src/auth_identity.rs
++++ b/src/auth_identity.rs
+@@ -174,8 +174,11 @@ impl Username {
+     }
+ 
+     /// Builds a down-level logon name from an account name and a NetBIOS domain name
++    ///
++    /// The account name may contain `@`: Windows signs in a Microsoft account as
++    /// `MicrosoftAccount\user@example.com`, and an AD account name may contain `@` as well.
+     pub fn new_down_level_logon_name(account_name: &str, netbios_domain_name: &str) -> Result<Self, UsernameError> {
+-        if account_name.contains(['\\', '@']) {
++        if account_name.contains('\\') {
+             return Err(UsernameError::MixedFormat);
+         }
+ 
+@@ -809,8 +812,8 @@ mod tests {
+                 );
+             }
+ 
+-            // A down-level user name can't contain a @ in the account name
+-            if !initial_username.account_name().contains('@') {
++            // Without a domain, an account name with a @ is parsed as a UPN
++            if domain.is_some() || !initial_username.account_name().contains('@') {
+                 let netbios_name = Username::new(initial_username.account_name(), domain).expect("NetBIOS");
+                 assert_eq!(netbios_name.format(), UserNameFormat::DownLevelLogonName);
+                 assert_eq!(netbios_name.account_name(), initial_username.account_name());
+@@ -867,6 +870,40 @@ mod tests {
+         })
+     }
+ 
++    #[test]
++    fn down_level_logon_name_with_at_in_account_name() {
++        let username = Username::new("user@example.com", Some("MicrosoftAccount")).expect("down-level logon name");
++
++        assert_eq!(username.inner(), "MicrosoftAccount\\user@example.com");
++        assert_eq!(username.format(), UserNameFormat::DownLevelLogonName);
++        assert_eq!(
++            username.parts(),
++            UsernameParts::DownLevelLogonName(DownLevelLogonNameParts {
++                account_name: "user@example.com",
++                netbios_domain: Some("MicrosoftAccount"),
++            })
++        );
++        check_round_trip_property(&username);
++
++        let identity = AuthIdentity {
++            username,
++            password: String::from("password").into(),
++        };
++        let buffers = AuthIdentityBuffers::from(identity.clone());
++        assert_eq!(buffers.user.to_string(), "user@example.com");
++        assert_eq!(buffers.domain.to_string(), "MicrosoftAccount");
++        assert_eq!(AuthIdentity::try_from(&buffers).expect("auth identity"), identity);
++
++        assert_eq!(
++            Username::new_down_level_logon_name("user@example.com", "EXAMPLE@COM"),
++            Err(UsernameError::MixedFormat)
++        );
++        assert_eq!(
++            Username::new_down_level_logon_name("a\\b", "EXAMPLE"),
++            Err(UsernameError::MixedFormat)
++        );
++    }
++
+     #[test]
+     fn down_level_logon_name_without_domain_parts() {
+         // When a bare name (no `\` and no `@`) is parsed, it is a down-level logon name with no

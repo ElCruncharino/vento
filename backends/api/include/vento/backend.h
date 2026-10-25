@@ -192,10 +192,16 @@ typedef struct vento_callbacks {
     void (*message)(void *user, const char *text, int severity, bool question,
                     const char *confirm_label);
     /* Terminal, and the last callback this session makes. `detail` is empty
-       for a requested disconnect, and otherwise gives the reason in the
-       library's words. */
+       for a requested disconnect, `VENTO_LOGON_FAILED` when the server
+       refused the user name or password, and otherwise gives the reason in
+       the library's words. */
     void (*closed)(void *user, const char *detail);
 } vento_callbacks;
+
+/* The `closed` detail for a user name or password the server refused. The
+   adapter shows it with advice for the domain that was tried
+   (`api::credentials::logon_failed`). */
+#define VENTO_LOGON_FAILED "Logon failed."
 
 /* The strings `info` returns: a row per fact, in the order that backend's
    Rust adapter labels them. Owned by the caller, and freed with

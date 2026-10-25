@@ -147,7 +147,7 @@ commands:
 
 options:
   -c, --connect              automatically connect, and quit on disconnect
-  -u, --user NAME            username (can also include domain for RDP, overriding --domain)
+  -u, --user NAME            username (for RDP, DOMAIN\user overrides --domain; .\user for a local account, MicrosoftAccount\email@address.com for a Microsoft Account)
       --domain NAME          domain (RDP only)
   -p, --password TEXT        password
   -o, --option KEY=VALUE     backend option (see backends below)

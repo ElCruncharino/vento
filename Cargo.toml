@@ -111,5 +111,15 @@ ironrdp-svc = { path = "third_party/ironrdp/crates/ironrdp-svc" }
 shakenfist-spice-protocol = { path = "third_party/ryll/shakenfist-spice-protocol", default-features = false }
 shakenfist-spice-compression = { path = "third_party/ryll/shakenfist-spice-compression", default-features = false }
 
+# sspi-rs, the NTLM and CredSSP behind IronRDP, from the submodule at the tag
+# of the release on crates.io, with `patches/sspi/` applied by `./patch.sh`:
+# the same source plus a fix of ours, written to go upstream, that lets a
+# down-level logon name's account name contain `@`, so that
+# `MicrosoftAccount\user@example.com` is sent as that user and domain.
+# `winscard` comes along as sspi's path dependency, from the same tag.
+# linux/Cargo.toml has the same entry.
+[patch.crates-io]
+sspi = { path = "third_party/sspi" }
+
 [profile.release]
 panic = "abort" # cannot unwind across jni

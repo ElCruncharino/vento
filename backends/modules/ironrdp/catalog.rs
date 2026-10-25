@@ -187,6 +187,7 @@ mod tests {
     #[test]
     fn its_prompt_starts_with_the_domain_and_its_pins_are_the_address() {
         assert_eq!(prompt_user(&IRONRDP, "proto@corp.example"), "corp.example\\proto");
+        assert_eq!(prompt_user(&IRONRDP, "proto@hotmail.com"), "MicrosoftAccount\\proto@hotmail.com");
         let pinned = pinned_as(&IRONRDP, "Host:3389", &Options::defaults(OPTIONS));
         assert_eq!(pinned.key, "Host:3389");
         assert!(!pinned.first_sight_silent);
