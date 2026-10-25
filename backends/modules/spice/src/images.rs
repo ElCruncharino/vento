@@ -91,9 +91,10 @@ impl Images {
     async fn decode(&mut self, descriptor: &ImageDescriptor, data: &[u8]) -> Option<Image> {
         let kind = ImageType::from_u8(descriptor.image_type);
         self.seen.insert(name(descriptor.image_type));
-        // QUIC and LZ4 are handed the descriptor's size and allocate by it, so
-        // a size no desktop could be is refused before they are asked; LZ and
-        // GLZ allocate by their stream's own, which is held to this one.
+        // QUIC and LZ4 are handed the descriptor's size and allocate by it, up
+        // to ryll's own cap of 64 Mi pixels (256 MiB), so a size no desktop
+        // could be is refused before they are asked; LZ and GLZ allocate by
+        // their stream's own, which is held to this one.
         let pixels = (descriptor.width as usize).checked_mul(descriptor.height as usize);
         let Some(pixels) = pixels.filter(|&n| n <= runtime::MAX_DESKTOP_PIXELS) else {
             log::warn!("display: a {}x{} image", descriptor.width, descriptor.height);
@@ -125,28 +126,31 @@ impl Images {
                 lz_fits(&glz, Lz::Glz, pixels)?;
                 decompress_glz(&glz, &self.dictionary).await.ok()
             }
-            // The prefix is the compressed size here as well, whatever the
-            // reference client's comment says: what follows it is the
-            // `top_down` byte and the bitmap format, and a decoder handed the
-            // size instead reads the low byte of a length as an orientation.
-            Some(ImageType::Lz4) => decompress_spice_lz4(
-                data.get(4..)?,
-                descriptor.width as usize,
-                descriptor.height as usize,
-            ),
+            // A `BinaryData`: the prefix is the size of the image's bytes, and
+            // the decoder is handed exactly those. Whatever follows them in
+            // the message is not the image's, and the decoder would take it
+            // for one more block and refuse the image.
+            Some(ImageType::Lz4) => {
+                let size = u32::from_le_bytes(data.get(..4)?.try_into().ok()?) as usize;
+                decompress_spice_lz4(
+                    data.get(4..4usize.checked_add(size)?)?,
+                    descriptor.width as usize,
+                    descriptor.height as usize,
+                )
+            }
             Some(ImageType::Quic) => quic_decode(data.get(4..)?, descriptor.width, descriptor.height)
-                .map(|pixels| {
+                .and_then(|pixels| {
                     DecompressedImage::new(descriptor.width, descriptor.height, pixels, descriptor.image_id)
                 }),
             Some(ImageType::Jpeg) => {
                 let jpeg = data.get(4..)?;
                 let decoded = self.jpeg.decode(jpeg)?;
-                Some(DecompressedImage::new(
+                DecompressedImage::new(
                     decoded.width,
                     decoded.height,
                     decoded.rgba,
                     descriptor.image_id,
-                ))
+                )
             }
             // A JPEG and its alpha channel, which is a *separate* LZ stream
             // rather than a fourth channel in the JPEG. The server sends this
@@ -166,12 +170,12 @@ impl Images {
                 if !lz_alpha(body.get(jpeg_size..)?, &mut pixels) {
                     log::warn!("display: a JPEG's alpha channel did not decode");
                 }
-                Some(DecompressedImage::new(
+                DecompressedImage::new(
                     decoded.width,
                     decoded.height,
                     pixels,
                     descriptor.image_id,
-                ))
+                )
             }
             // The image at the size it was kept, whatever this descriptor
             // says: a server that names a cached pixel as 100×100 has its
@@ -237,10 +241,10 @@ enum Lz {
 /// Whether an LZ or GLZ stream's own size is within its image's, which is
 /// what has to be true before `decompress_lz` or `decompress_glz` sees it:
 /// both allocate width x height x 4 from the stream's header before a pixel
-/// is read, checked for overflow but not for size, so a one-pixel image
-/// whose stream said 65535x65535 would allocate 17 GB. The image's size has
-/// been held to the desktop cap; a stream smaller than it is drawn stretched,
-/// as any small image is.
+/// is read, refusing only a side past 16384 or more than 64 Mi pixels, so a
+/// one-pixel image whose stream said 8192x8192 would allocate 256 MiB. The
+/// image's size has been held to the desktop cap; a stream smaller than it is
+/// drawn stretched, as any small image is.
 fn lz_fits(stream: &[u8], kind: Lz, pixels: usize) -> Option<()> {
     // Big-endian, unlike the rest of the wire, after the magic and version.
     let at = match kind {
@@ -333,12 +337,7 @@ fn pixmap(data: &[u8], id: u64) -> Option<DecompressedImage> {
             out[3] = if format == 9 { px[3] } else { 0xff };
         }
     }
-    Some(DecompressedImage::new(
-        width as u32,
-        height as u32,
-        pixels,
-        id,
-    ))
+    DecompressedImage::new(width as u32, height as u32, pixels, id)
 }
 
 /// The alpha channel of a `JPEG_ALPHA` image, written into `pixels` in place.
@@ -694,17 +693,17 @@ mod tests {
     }
 
     /// An LZ or GLZ stream carries a size of its own, and ryll's decoders
-    /// allocate by it before a pixel is read: a one-pixel image whose stream
-    /// said 65535x65535 would ask for 17 GB. The stream's size is held to the
-    /// descriptor's (which is held to the desktop cap) before they are
-    /// called, and a stream that fits still decodes.
+    /// allocate by it before a pixel is read, up to 64 Mi pixels: a one-pixel
+    /// image whose stream said 8192x8192 would ask for 256 MiB. The stream's
+    /// size is held to the descriptor's (which is held to the desktop cap)
+    /// before they are called, and a stream that fits still decodes.
     #[test]
     fn an_lz_stream_is_no_bigger_than_its_image() {
         use crate::testing::block_on;
         for (glz, kind) in [(false, ImageType::LzRgb), (true, ImageType::GlzRgb)] {
             let mut images = Images::new(1 << 20);
             let descriptor = lz_descriptor(kind);
-            for (w, h) in [(65535, 65535), (2, 1), (u32::MAX, u32::MAX)] {
+            for (w, h) in [(65535, 65535), (8192, 8192), (2, 1), (u32::MAX, u32::MAX)] {
                 let data = lz_stream(glz, w, h);
                 let drawn = block_on(images.draw(&descriptor, &data, (0, 0, 1, 1), 1, 1));
                 assert!(drawn.is_none(), "{kind:?} {w}x{h}");

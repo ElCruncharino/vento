@@ -33,7 +33,7 @@ use shakenfist_spice_protocol::constants::{
 };
 use shakenfist_spice_protocol::messages::{
     ChannelsList, DisplayInit, KeyEvent, MainInit, MouseMotion, MousePosition, Notify,
-    Ping, SetAck,
+    Ping, SetAck, WireType,
 };
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -401,11 +401,11 @@ impl Client {
         let mut payload = Vec::new();
         DisplayInit {
             cache_id: 1,
-            cache_size: IMAGE_CACHE as u64,
+            cache_size: IMAGE_CACHE as i64,
             glz_dict_id: 1,
-            glz_dict_window: GLZ_WINDOW as u32,
+            glz_dict_window: GLZ_WINDOW as i32,
         }
-        .write(&mut payload)?;
+        .write(&mut payload);
         session.send(Kind::Display, display_client::INIT, &payload).await?;
         if let Some(compression) = config.compression {
             session.compression(compression).await?;
@@ -689,7 +689,7 @@ impl Session<'_> {
             match (message.kind, message.message_type) {
                 (Kind::Main, main_server::INIT) => {
                     self.acknowledge(&message).await?;
-                    let init = MainInit::read(&message.body)?;
+                    let init = MainInit::decode(&message.body)?;
                     session_id = init.session_id;
                     self.mouse_modes = init.supported_mouse_modes;
                     log::info!(
@@ -712,7 +712,7 @@ impl Session<'_> {
                 }
                 (Kind::Main, main_server::CHANNELS_LIST) => {
                     self.acknowledge(&message).await?;
-                    let list = ChannelsList::read(&message.body)?;
+                    let list = ChannelsList::decode(&message.body)?;
                     log::info!("{} channels offered", list.channels.len());
                     let playback = Kind::Playback.channel_type() as u8;
                     let sound = list.channels.iter().any(|c| c.channel_type == playback);
@@ -728,27 +728,27 @@ impl Session<'_> {
         self.acknowledge(&message).await?;
         match message.message_type {
             main_server::SET_ACK => {
-                let set_ack = SetAck::read(&message.body)?;
+                let set_ack = SetAck::decode(&message.body)?;
                 if let Some(channel) = self.channels.get_mut(&message.kind) {
                     channel.ack_window = set_ack.window;
                 }
                 let mut payload = Vec::new();
-                SetAck::write_ack_sync(set_ack.generation, &mut payload)?;
+                set_ack.ack_sync().write(&mut payload);
                 self.send(message.kind, ack_sync_of(message.kind), &payload).await?;
                 return Ok(());
             }
             main_server::PING => {
                 // The server's ping carries padding for measuring the link,
                 // which is most of the traffic on an idle session.
-                let ping = Ping::read(&message.body)?;
+                let ping = Ping::decode(&message.body)?;
                 let mut payload = Vec::new();
-                ping.write_pong(&mut payload)?;
+                ping.pong().write(&mut payload);
                 self.send(message.kind, pong_of(message.kind), &payload).await?;
                 return Ok(());
             }
             main_server::NOTIFY => {
-                let notify = Notify::read(&message.body)?;
-                log::info!("{}: {}", message.kind.name(), notify.message);
+                let notify = Notify::decode(&message.body)?;
+                log::info!("{}: {}", message.kind.name(), notify.message_text());
                 return Ok(());
             }
             _ => {}
@@ -940,10 +940,10 @@ impl Session<'_> {
                 MousePosition {
                     x: x.max(0) as u32,
                     y: y.max(0) as u32,
-                    buttons: buttons_of(buttons),
+                    buttons_state: buttons_of(buttons),
                     display_id: 0,
                 }
-                .write(&mut payload)?;
+                .write(&mut payload);
                 self.send(Kind::Inputs, inputs_client::MOUSE_POSITION, &payload).await?;
                 self.mouse_buttons(buttons).await?;
             }
@@ -952,9 +952,9 @@ impl Session<'_> {
                 MouseMotion {
                     dx,
                     dy,
-                    buttons: buttons_of(buttons),
+                    buttons_state: buttons_of(buttons),
                 }
-                .write(&mut payload)?;
+                .write(&mut payload);
                 self.send(Kind::Inputs, inputs_client::MOUSE_MOTION, &payload).await?;
                 self.mouse_buttons(buttons).await?;
             }
@@ -1048,7 +1048,7 @@ impl Session<'_> {
             // Trace only: with the keysym it is what was typed.
             log::trace!("scancode {code:#x} {}", if message == inputs_client::KEY_DOWN { "down" } else { "up" });
             let mut payload = Vec::new();
-            KeyEvent { scancode: code }.write(&mut payload)?;
+            KeyEvent { scancode: code }.write(&mut payload);
             self.send(Kind::Inputs, message, &payload).await?;
         }
         Ok(())
@@ -1169,8 +1169,8 @@ const BUTTONS: u16 = 7;
 /// A press or release of the button at `bit` of SPICE's mask: its
 /// `SpiceMouseButton` (the bit's place counted from one: left, middle,
 /// right, up, down, side, extra) and the mask after it. Written here rather
-/// than by ryll's `MouseButton`, whose id table stops at the wheel and makes
-/// side and extra the invalid button 0.
+/// than by ryll's `MouseButton::id_for_mask`, which maps only left, middle,
+/// right and the wheel and makes side and extra the invalid button 0.
 fn press_of(bit: u16, buttons: u16) -> Vec<u8> {
     let mut payload = vec![bit as u8 + 1];
     payload.extend_from_slice(&buttons.to_le_bytes());

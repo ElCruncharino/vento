@@ -54,3 +54,9 @@ impl From<std::io::Error> for Error {
         Error::Io(e)
     }
 }
+
+impl From<shakenfist_spice_protocol::reader::LinkError> for Error {
+    fn from(e: shakenfist_spice_protocol::reader::LinkError) -> Error {
+        Error::Protocol(e.to_string())
+    }
+}

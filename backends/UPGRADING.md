@@ -561,8 +561,15 @@ One commit per upstream, after review, by the lead:
   commit recorded) and `crypto.rs` importing `IdPk` from the rendezvous
   module. The kx-v2 key exchange that followed is not needed: this client
   never answers the exchange, like theirs without a token.
-- **ryll** develop 3ba0f24; four patches, none merged upstream. No tag since
-  v0.1.7. Only the protocol and compression crates are consumed; `client` is
+- **ryll** v0.3.0 (f12d9b2); two patches, `0001` (the rustls provider and
+  the public root store are the embedder's) and `0002` (openh264 behind a
+  feature). The two LZ4 patches were dropped as upstream's df2f06b, which
+  reads the bitmap format as SpiceBitmapFmt and decodes the blocks in order,
+  each with the output before it as its dictionary. That decoder takes
+  exactly the image's `BinaryData` bytes and refuses anything after them, so
+  `images.rs` bounds them by the size prefix. develop's `h264-decode` feature
+  (6c719a70) does what `0002` does, and `0002` goes at the next release.
+  Only the protocol and compression crates are consumed; `client` is
   deliberately not (bundled root store).
 - **logger**, **libc-shim**, **mcpelauncher-linker** (branch `ng`, with its
   nested `bionic` and `core`) and **libjnivm** (October 2026): the host-only

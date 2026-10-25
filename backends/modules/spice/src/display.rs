@@ -26,8 +26,9 @@ use runtime::Handler;
 use shakenfist_spice_compression::{JpegDecoderRsDecoder, VideoDecoder, video};
 use shakenfist_spice_protocol::constants::display_server;
 use shakenfist_spice_protocol::messages::{
-    DrawBase, ImageDescriptor, Notify, SpiceBrush, SpiceOpaque, SurfaceCreate,
+    DrawBase, ImageDescriptor, Notify, SpiceBrush, SpiceOpaque, SurfaceCreate, WireType,
 };
+use shakenfist_spice_protocol::reader::BoundedReader;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
@@ -126,7 +127,7 @@ impl Display {
                 }
             }
             display_server::SURFACE_CREATE => {
-                let create = SurfaceCreate::read(body)?;
+                let create = SurfaceCreate::decode(body)?;
                 if create.surface_id == 0 {
                     self.reset_surface(create.width as usize, create.height as usize, handler)?;
                 }
@@ -141,8 +142,7 @@ impl Display {
                 // SpiceCopy, and SpiceBlend has the identical layout: the image
                 // offset, the source rectangle inside it, then the rop, the
                 // scale mode and a mask this client does not apply.
-                let base = DrawBase::read(body)?;
-                let at = base.end_offset;
+                let (base, at) = draw_base(body)?;
                 let Some(offset) = read_u32(body, at) else {
                     return Ok(());
                 };
@@ -156,8 +156,8 @@ impl Display {
                     .await;
             }
             display_server::DRAW_OPAQUE => {
-                let base = DrawBase::read(body)?;
-                let (opaque, _) = SpiceOpaque::read(&body[base.end_offset..])?;
+                let (base, at) = draw_base(body)?;
+                let (opaque, _) = SpiceOpaque::read(&body[at..])?;
                 let src = (
                     opaque.src_left,
                     opaque.src_top,
@@ -168,8 +168,8 @@ impl Display {
                     .await;
             }
             display_server::DRAW_FILL => {
-                let base = DrawBase::read(body)?;
-                let (brush, _) = SpiceBrush::read(&body[base.end_offset..])?;
+                let (base, at) = draw_base(body)?;
+                let (brush, _) = SpiceBrush::read(&body[at..])?;
                 // Only a solid brush is a fill; a pattern brush is a bitmap
                 // this client does not tile, and painting its first colour over
                 // the box would be worse than leaving the box alone.
@@ -178,18 +178,17 @@ impl Display {
                 }
             }
             display_server::DRAW_BLACKNESS => {
-                let base = DrawBase::read(body)?;
+                let (base, _) = draw_base(body)?;
                 self.fill(&base, 0xff00_0000, handler);
             }
             display_server::DRAW_WHITENESS => {
-                let base = DrawBase::read(body)?;
+                let (base, _) = draw_base(body)?;
                 self.fill(&base, 0xffff_ffff, handler);
             }
             display_server::COPY_BITS => {
                 // The one draw that reads the framebuffer as well as writing
                 // it: a source point, and the base's box as the destination.
-                let base = DrawBase::read(body)?;
-                let at = base.end_offset;
+                let (base, at) = draw_base(body)?;
                 let (Some(src_x), Some(src_y)) = (read_u32(body, at), read_u32(body, at + 4)) else {
                     return Ok(());
                 };
@@ -223,8 +222,8 @@ impl Display {
             display_server::STREAM_DESTROY_ALL => self.streams.clear(),
             display_server::MONITORS_CONFIG => self.monitors_config(body),
             display_server::NOTIFY => {
-                let notify = Notify::read(body)?;
-                log::info!("display: {}", notify.message);
+                let notify = Notify::decode(body)?;
+                log::info!("display: {}", notify.message_text());
             }
             other => {
                 // Every draw this client does not do is a QXL command a guest
@@ -284,7 +283,7 @@ impl Display {
         if offset == 0 || offset + ImageDescriptor::SIZE > body.len() {
             return;
         }
-        let Ok(descriptor) = ImageDescriptor::read(&body[offset..]) else {
+        let Ok(descriptor) = ImageDescriptor::decode(&body[offset..]) else {
             return;
         };
         let (x, y, w, h) = box_of(base);
@@ -451,14 +450,23 @@ impl Display {
     }
 }
 
-/// The destination box a draw names, as an origin and a size.
+/// A draw's base, and the offset in `body` of the fields that follow it.
+fn draw_base(body: &[u8]) -> Result<(DrawBase, usize)> {
+    let mut reader = BoundedReader::new(body);
+    let base = DrawBase::read(&mut reader)?;
+    Ok((base, reader.position()))
+}
+
+/// The destination box a draw names, as an origin and a size. The edges are
+/// signed on the wire, and a negative one is taken as zero.
 fn box_of(base: &DrawBase) -> (usize, usize, usize, usize) {
-    let (left, top) = (base.left as usize, base.top as usize);
+    let edge = |v: i32| v.max(0) as usize;
+    let (left, top) = (edge(base.bbox.left), edge(base.bbox.top));
     (
         left,
         top,
-        (base.right as usize).saturating_sub(left),
-        (base.bottom as usize).saturating_sub(top),
+        edge(base.bbox.right).saturating_sub(left),
+        edge(base.bbox.bottom).saturating_sub(top),
     )
 }
 

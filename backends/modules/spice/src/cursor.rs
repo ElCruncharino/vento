@@ -13,8 +13,11 @@
 
 use crate::error::Result;
 use runtime::Handler;
-use shakenfist_spice_protocol::constants::cursor_server;
-use shakenfist_spice_protocol::messages::{CursorInit, CursorSet, SpiceCursorHeader};
+use shakenfist_spice_protocol::constants::{cursor_flags, cursor_server};
+use shakenfist_spice_protocol::messages::{
+    CursorHeader, CursorInitHead, CursorSetHead, SpiceCursorRef,
+};
+use shakenfist_spice_protocol::reader::BoundedReader;
 use std::collections::HashMap;
 
 /// The shapes the server has asked this end to keep, by its own id: SPICE
@@ -67,9 +70,9 @@ impl Cursors {
             // keeps the shape it had, which is what a lost shape costs.
             cursor_server::INIT | cursor_server::SET => {
                 let fields = if message_type == cursor_server::INIT {
-                    CursorInit::SIZE
+                    CursorInitHead::SIZE
                 } else {
-                    CursorSet::SIZE
+                    CursorSetHead::SIZE
                 };
                 match body.get(fields..) {
                     Some(cursor) => self.cursor(cursor, handler),
@@ -87,10 +90,12 @@ impl Cursors {
     }
 
     fn cursor(&mut self, data: &[u8], handler: &mut dyn Handler) {
-        let Ok(Some(header)) = SpiceCursorHeader::read(data) else {
-            return; // FLAG_NONE, or a body too short to hold one
+        let Ok(SpiceCursorRef { flags, header: Some(header), data }) =
+            SpiceCursorRef::read(&mut BoundedReader::new(data))
+        else {
+            return; // NONE, or a body too short to hold one
         };
-        if header.flags & SpiceCursorHeader::FLAG_FROM_CACHE != 0 {
+        if flags & cursor_flags::FROM_CACHE != 0 {
             if let Some(shape) = self.shapes.get(&header.unique_id) {
                 handler.cursor(&shape.pixels, shape.width, shape.height, shape.hot_x, shape.hot_y);
             } else {
@@ -99,7 +104,7 @@ impl Cursors {
             return;
         }
 
-        let Some(pixels) = pixels(&header, &data[SpiceCursorHeader::SIZE..]) else {
+        let Some(pixels) = pixels(&header, data) else {
             return;
         };
         let shape = Shape {
@@ -110,7 +115,7 @@ impl Cursors {
             pixels,
         };
         handler.cursor(&shape.pixels, shape.width, shape.height, shape.hot_x, shape.hot_y);
-        if header.flags & SpiceCursorHeader::FLAG_CACHE_ME != 0 {
+        if flags & cursor_flags::CACHE_ME != 0 {
             if self.order.len() >= MAX_SHAPES && let Some(oldest) = self.order.first().copied() {
                 self.order.remove(0);
                 self.shapes.remove(&oldest);
@@ -134,7 +139,7 @@ impl Default for Cursors {
 /// with a driver sends. The monochrome ones come from a text-mode guest and
 /// are two bitplanes rather than pixels; they are not decoded, since no guest
 /// tested has sent one.
-fn pixels(header: &SpiceCursorHeader, data: &[u8]) -> Option<Vec<u32>> {
+fn pixels(header: &CursorHeader, data: &[u8]) -> Option<Vec<u32>> {
     let (width, height) = (header.width as usize, header.height as usize);
     if width > MAX_SIDE || height > MAX_SIDE {
         log::warn!("cursor: {width}x{height} is bigger than any cursor");
@@ -184,9 +189,8 @@ fn pixels(header: &SpiceCursorHeader, data: &[u8]) -> Option<Vec<u32>> {
 mod tests {
     use super::*;
 
-    fn header(cursor_type: u8, width: u16, height: u16) -> SpiceCursorHeader {
-        SpiceCursorHeader {
-            flags: 0,
+    fn header(cursor_type: u8, width: u16, height: u16) -> CursorHeader {
+        CursorHeader {
             unique_id: 1,
             cursor_type,
             width,
@@ -226,8 +230,8 @@ mod tests {
     fn a_cursor_message_shorter_than_its_own_fields_is_dropped() {
         let mut cursors = Cursors::new();
         for (kind, size) in [
-            (cursor_server::INIT, CursorInit::SIZE),
-            (cursor_server::SET, CursorSet::SIZE),
+            (cursor_server::INIT, CursorInitHead::SIZE),
+            (cursor_server::SET, CursorSetHead::SIZE),
         ] {
             for len in 0..size {
                 let body = vec![0u8; len];

@@ -1,7 +1,7 @@
-From 326fd363f4e014a8f13200040097d2815a66ac17 Mon Sep 17 00:00:00 2001
+From c5409fe57d9e308e62ff51c0145daa8e504a6b4f Mon Sep 17 00:00:00 2001
 From: Claude Opus 5 <noreply@anthropic.com>
 Date: Sun, 16 Aug 2026 15:58:34 -0400
-Subject: [PATCH 2/4] compression: openh264 behind a feature
+Subject: [PATCH 2/2] compression: openh264 behind a feature
 
 openh264-sys2 builds a C++ decoder from vendored source, which is a
 toolchain a pure-Rust consumer does not otherwise need and a second
@@ -9,10 +9,10 @@ decoder on a platform that has one in hardware. Off, a STREAM_CREATE
 naming H.264 is an unsupported codec like any other.
 
 diff --git a/Cargo.lock b/Cargo.lock
-index a5a9072..c833239 100644
+index 38eda7e..bcdcea6 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
-@@ -6165,6 +6165,7 @@ dependencies = [
+@@ -6178,6 +6178,7 @@ dependencies = [
   "rand 0.8.8",
   "rcgen",
   "rsa",
@@ -21,7 +21,7 @@ index a5a9072..c833239 100644
   "serde",
   "sha1 0.10.7",
 diff --git a/shakenfist-spice-compression/Cargo.toml b/shakenfist-spice-compression/Cargo.toml
-index a9a45dc..4354f0c 100644
+index 9f50988..59de548 100644
 --- a/shakenfist-spice-compression/Cargo.toml
 +++ b/shakenfist-spice-compression/Cargo.toml
 @@ -13,7 +13,7 @@ readme = "README.md"
@@ -33,7 +33,16 @@ index a9a45dc..4354f0c 100644
  quic = []
  glz = ["dep:tokio"]
  lz = []
-@@ -26,6 +26,10 @@ jpeg = ["dep:jpeg-decoder"]
+@@ -22,7 +22,7 @@ lz4 = ["dep:lz4_flex"]
+ # decoder features above, so `default-features = false, features =
+ # ["encode"]` builds. LZ4 and JPEG encode images, H.264 (openh264)
+ # video streams.
+-encode = ["dep:lz4_flex", "dep:jpeg-encoder", "dep:openh264-sys2"]
++encode = ["dep:lz4_flex", "dep:jpeg-encoder", "dep:openh264", "dep:openh264-sys2"]
+ jpeg = ["dep:jpeg-decoder"]
+ # Cross-platform SIMD-accelerated JPEG decode via the `mozjpeg`
+ # crate. The `with_simd` feature on `mozjpeg-sys` is enabled by
+@@ -31,6 +31,10 @@ jpeg = ["dep:jpeg-decoder"]
  # `JpegDecoder` trait surface exists; the pure-Rust
  # `jpeg-decoder` crate remains the universal fallback.
  mozjpeg = ["dep:mozjpeg", "jpeg"]
@@ -44,17 +53,17 @@ index a9a45dc..4354f0c 100644
  
  [dependencies]
  anyhow = "1"
-@@ -52,7 +56,7 @@ mozjpeg = { version = "=0.10.13", optional = true, features = ["with_simd"] }
- # dependency). The same crate is used on the encode side in
- # shakenfist-spice-renderer/src/encoder/h264.rs. Used by
- # `H264VideoDecoder` in `src/video.rs`.
--openh264 = "0.9"
-+openh264 = { version = "0.9", optional = true }
- 
- # macOS-only: ImageIO JPEG decoder backend. Pinned to the 0.3.x
- # `objc2-*` family so the framework crates all agree on the
+@@ -67,7 +71,7 @@ mozjpeg = { version = "=0.10.13", optional = true, features = ["with_simd"] }
+ # together, and recheck the encoder's tests: its behaviour notes
+ # (the screen-content QP clamp, bitrate ceilings, lazy
+ # initialisation) are about this version.
+-openh264 = "=0.9.8"
++openh264 = { version = "=0.9.8", optional = true }
+ # The raw option types openh264 does not re-export (SBitrateInfo,
+ # SEncParamExt and the ENCODER_OPTION_* constants), for the encoder's
+ # live bitrate, frame rate and slice settings. Only with `encode`.
 diff --git a/shakenfist-spice-compression/src/video.rs b/shakenfist-spice-compression/src/video.rs
-index adb8a2e..a27326f 100644
+index 4b0b1fe..42ee4db 100644
 --- a/shakenfist-spice-compression/src/video.rs
 +++ b/shakenfist-spice-compression/src/video.rs
 @@ -7,6 +7,10 @@
@@ -76,7 +85,7 @@ index adb8a2e..a27326f 100644
  use tracing::{info, warn};
  
  use crate::jpeg::{DecodedJpeg, JpegDecoder};
-@@ -169,6 +174,7 @@ pub fn for_stream(
+@@ -171,6 +176,7 @@ pub fn for_stream(
  ) -> Result<Box<dyn VideoDecoder>, VideoDecoderError> {
      match codec_type {
          SPICE_VIDEO_CODEC_TYPE_MJPEG => Ok(Box::new(MJpegVideoDecoder::new(jpeg_decoder))),
@@ -84,7 +93,7 @@ index adb8a2e..a27326f 100644
          SPICE_VIDEO_CODEC_TYPE_H264 => Ok(Box::new(H264VideoDecoder::new()?)),
          other => Err(VideoDecoderError::UnsupportedCodec(other)),
      }
-@@ -281,6 +287,7 @@ impl VideoDecoder for MJpegVideoDecoder {
+@@ -283,6 +289,7 @@ impl VideoDecoder for MJpegVideoDecoder {
  /// off entirely (see `terminal`). The counter resets on any
  /// successful decode (including `Ok(None)`, which is a normal
  /// "need more data" outcome — not an error).
@@ -92,7 +101,7 @@ index adb8a2e..a27326f 100644
  pub struct H264VideoDecoder {
      decoder: openh264::decoder::Decoder,
      /// Caller-owned RGBA scratch buffer reused across frames to
-@@ -314,6 +321,7 @@ pub struct H264VideoDecoder {
+@@ -316,6 +323,7 @@ pub struct H264VideoDecoder {
  /// Number of consecutive H.264 decode errors before we escalate
  /// the log level from `debug!` to `warn!`. Chosen to avoid noise
  /// from single-packet glitches but surface persistent corruption.
@@ -100,7 +109,7 @@ index adb8a2e..a27326f 100644
  const H264_WARN_AFTER_CONSECUTIVE_FAILURES: u32 = 3;
  
  /// Number of consecutive H.264 decode errors after which the
-@@ -330,8 +338,10 @@ const H264_WARN_AFTER_CONSECUTIVE_FAILURES: u32 = 3;
+@@ -332,8 +340,10 @@ const H264_WARN_AFTER_CONSECUTIVE_FAILURES: u32 = 3;
  /// counts `frames_decode_failed` and keeps feeding packets in.
  /// The latch is the decoder's own half of that policy; deciding to
  /// destroy the stream is the display channel's call to make.
@@ -111,7 +120,7 @@ index adb8a2e..a27326f 100644
  impl H264VideoDecoder {
      /// Construct a new openh264-backed decoder.
      ///
-@@ -378,6 +388,7 @@ impl H264VideoDecoder {
+@@ -380,6 +390,7 @@ impl H264VideoDecoder {
      }
  }
  
@@ -119,7 +128,7 @@ index adb8a2e..a27326f 100644
  impl VideoDecoder for H264VideoDecoder {
      fn decode(&mut self, packet: &[u8]) -> Result<Option<DecodedFrame>, VideoDecoderError> {
          // The stream has already failed for long enough to be
-@@ -574,6 +585,7 @@ mod tests {
+@@ -570,6 +581,7 @@ mod tests {
          );
      }
  
@@ -127,7 +136,7 @@ index adb8a2e..a27326f 100644
      #[test]
      fn for_stream_h264_returns_h264_decoder() {
          let jpeg_dec: Arc<dyn JpegDecoder> = Arc::new(JpegDecoderRsDecoder::new());
-@@ -718,6 +730,7 @@ mod tests {
+@@ -714,6 +726,7 @@ mod tests {
          );
      }
  
@@ -135,7 +144,7 @@ index adb8a2e..a27326f 100644
      #[test]
      fn h264_zero_length_packet_is_rejected_without_panic() {
          let mut dec = H264VideoDecoder::new().expect("H264VideoDecoder::new failed");
-@@ -768,6 +781,7 @@ mod tests {
+@@ -764,6 +777,7 @@ mod tests {
      // H.264 terminal-failure latch (S1-6)
      // ------------------------------------------------------------------
  
@@ -143,7 +152,7 @@ index adb8a2e..a27326f 100644
      #[test]
      fn h264_latches_terminal_after_threshold_failures() {
          let mut dec = H264VideoDecoder::new().expect("H264VideoDecoder::new failed");
-@@ -1023,7 +1037,7 @@ mod mjpeg_round_trip_tests {
+@@ -1019,7 +1033,7 @@ mod mjpeg_round_trip_tests {
  // up to 50, mean up to 15. H.264 with no rate control hint at
  // 64x64 is unusually lossy compared to 1080p video — these
  // numbers are calibrated to the worst case, not the typical one.
@@ -153,7 +162,7 @@ index adb8a2e..a27326f 100644
      use super::*;
  
 diff --git a/shakenfist-spice-protocol/Cargo.toml b/shakenfist-spice-protocol/Cargo.toml
-index c3eccd4..3c16e12 100644
+index d10a20f..324d9bb 100644
 --- a/shakenfist-spice-protocol/Cargo.toml
 +++ b/shakenfist-spice-protocol/Cargo.toml
 @@ -50,3 +50,6 @@ tokio = { version = "1", features = ["io-util", "net", "macros", "rt"] }
@@ -164,15 +173,15 @@ index c3eccd4..3c16e12 100644
 +# is what ryll installs.
 +rustls = { version = "0.23", features = ["ring"] }
 diff --git a/shakenfist-spice-protocol/src/client.rs b/shakenfist-spice-protocol/src/client.rs
-index 7402d12..759d6a0 100644
+index eb80fc9..89074d0 100644
 --- a/shakenfist-spice-protocol/src/client.rs
 +++ b/shakenfist-spice-protocol/src/client.rs
-@@ -439,7 +439,7 @@ mod tests {
-     /// (the only caller that consults the global default), so a fresh
+@@ -726,7 +726,7 @@ mod tests {
+     /// the global default, see `install_crypto_provider`), so a fresh
      /// instance per test avoids any cross-test install race entirely.
      fn crypto_provider() -> Arc<CryptoProvider> {
 -        Arc::new(tokio_rustls::rustls::crypto::aws_lc_rs::default_provider())
 +        Arc::new(tokio_rustls::rustls::crypto::ring::default_provider())
      }
  
-     fn utf8(s: &str) -> DnValue {
+     /// Install a process-wide default CryptoProvider, for the tests that
