@@ -36,6 +36,7 @@ pub mod handler;
 pub mod hangup;
 pub mod session;
 pub mod slot;
+pub mod text;
 pub mod video;
 
 pub use client::Client;
@@ -63,9 +64,12 @@ pub const MAX_DESKTOP_PIXELS: usize = 32 << 20;
 pub const MAX_CURSOR_SIDE: usize = 1024;
 
 /// The most of the far end's clipboard a backend takes, in bytes of text as
-/// it arrives (after any compression the protocol puts over it). A clipboard
-/// past it is skipped rather than cut short, since a part of a text pasted
-/// here reads as the whole of it, and rather than refused, since a large copy
-/// at the far end is somebody's ordinary afternoon and not a reason to end
-/// the session.
+/// it arrives (after any compression the protocol puts over it, and as the
+/// UTF-8 it becomes where the protocol's text is UTF-16, as RDP's is). A
+/// clipboard past it is skipped rather than cut short, since a part of a text
+/// pasted here reads as the whole of it, and rather than refused, since a
+/// large copy at the far end is somebody's ordinary afternoon and not a reason
+/// to end the session. The two RDP backends hold what they offer the far end
+/// to it too, and FreeRDP's C has it as `VENTO_MAX_CLIPBOARD` (`vento/text.h`),
+/// which `session` holds equal to this.
 pub const MAX_CLIPBOARD: usize = 1 << 20;

@@ -22,12 +22,17 @@ use ironrdp_cliprdr::pdu::{
 };
 use ironrdp_core::impl_as_any;
 
+use common::text::{to_crlf, to_lf};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
-/// Longer than this is a file rather than a copy. The same number the Android
-/// side stops reading its own clipboard at.
-const MAX_CHARS: usize = 1 << 20;
+/// Longer than this is a file rather than a copy, in bytes of the text as
+/// this side of the seam has it (UTF-8, LF line ends), in either direction:
+/// the bound every backend holds the far end's clipboard to, and the one
+/// FreeRDP's C keeps as `VENTO_MAX_CLIPBOARD`. The phone reads its own
+/// clipboard up to 1 Mi characters (`SessionClipboard`), which past ASCII is
+/// more bytes than this; such a copy is not offered.
+const MAX_CLIPBOARD: usize = common::MAX_CLIPBOARD;
 
 /// Something only the channel can encode, left for the protocol thread.
 #[derive(Debug)]
@@ -65,7 +70,13 @@ struct State {
 impl Clipboard {
     /// Any thread: this phone copied something.
     pub fn set_local(&self, text: &str) {
-        if text.is_empty() || text.chars().count() > MAX_CHARS {
+        if text.is_empty() {
+            return;
+        }
+        if text.len() > MAX_CLIPBOARD {
+            log::warn!(
+                "this end's clipboard is over the {MAX_CLIPBOARD} bytes it offers; not offered"
+            );
             return;
         }
         let mut state = self.state.lock().unwrap();
@@ -94,7 +105,7 @@ impl Clipboard {
     /// application expects. `None` means we have nothing to give, which is an
     /// error response rather than empty data.
     pub fn data(&self, format: ClipboardFormatId) -> Option<Vec<u8>> {
-        let text = crlf(self.state.lock().unwrap().ours.as_deref()?);
+        let text = to_crlf(self.state.lock().unwrap().ours.as_deref()?);
         match format {
             ClipboardFormatId::CF_UNICODETEXT => Some(utf16le(&text)),
             ClipboardFormatId::CF_TEXT => Some(latin1(&text)),
@@ -192,8 +203,14 @@ impl CliprdrBackend for Channel {
             // A response to a request nobody remembers making.
             _ => return,
         };
-        let text = lf(&text);
-        if text.is_empty() || text.chars().count() > MAX_CHARS {
+        let text = to_lf(&text);
+        if text.is_empty() {
+            return;
+        }
+        if text.len() > MAX_CLIPBOARD {
+            log::warn!(
+                "the far end's clipboard is over the {MAX_CLIPBOARD} bytes this end takes; skipped"
+            );
             return;
         }
         let mut state = self.shared.state.lock().unwrap();
@@ -212,7 +229,7 @@ impl CliprdrBackend for Channel {
     fn on_unlock(&mut self, _data_id: LockDataId) {}
 }
 
-// ---- the two encodings, and the line endings between them -------------------
+// ---- the two encodings ------------------------------------------------------
 
 fn utf16le(text: &str) -> Vec<u8> {
     text.encode_utf16()
@@ -249,16 +266,6 @@ fn from_latin1(bytes: &[u8]) -> String {
         .collect()
 }
 
-/// What a Windows application puts on the clipboard.
-fn crlf(text: &str) -> String {
-    lf(text).replace('\n', "\r\n")
-}
-
-/// What everything above this expects.
-fn lf(text: &str) -> String {
-    text.replace("\r\n", "\n").replace('\r', "\n")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -275,12 +282,39 @@ mod tests {
         assert_eq!(from_latin1(&latin1("日本")), "??");
     }
 
-    /// One newline in, one newline out, whichever end started it.
+    /// The far end gets CRLF and this side LF, as FreeRDP's backend does.
     #[test]
-    fn line_endings_are_normalised_once() {
-        assert_eq!(crlf("a\nb"), "a\r\nb");
-        assert_eq!(crlf("a\r\nb"), "a\r\nb");
-        assert_eq!(lf("a\r\nb\rc\nd"), "a\nb\nc\nd");
+    fn line_endings_are_crlf_there_and_lf_here() {
+        let clip = Arc::new(Clipboard::default());
+        clip.set_local("a\nb\r\nc");
+        assert_eq!(
+            clip.data(ClipboardFormatId::CF_UNICODETEXT),
+            Some(utf16le("a\r\nb\r\nc"))
+        );
+        let mut channel = clip.backend();
+        channel.on_remote_copy(&[ClipboardFormat::new(ClipboardFormatId::CF_UNICODETEXT)]);
+        channel.on_format_data_response(FormatDataResponse::new_data(utf16le("x\r\ny\rz")));
+        assert_eq!(clip.take_incoming(), ["x\ny\nz"]);
+    }
+
+    /// Both directions are held to the shared bound in bytes, not in
+    /// characters: a text of two-byte characters is over it at half the count.
+    #[test]
+    fn the_bound_is_bytes_both_ways() {
+        let clip = Arc::new(Clipboard::default());
+        let at = "x".repeat(MAX_CLIPBOARD);
+        let over = "é".repeat(MAX_CLIPBOARD / 2 + 1);
+        clip.set_local(&over);
+        assert!(clip.formats().is_empty());
+        clip.set_local(&at);
+        assert_eq!(clip.formats().len(), 2);
+
+        let mut channel = clip.backend();
+        for (text, arrives) in [(&over, false), (&at, true)] {
+            channel.on_remote_copy(&[ClipboardFormat::new(ClipboardFormatId::CF_UNICODETEXT)]);
+            channel.on_format_data_response(FormatDataResponse::new_data(utf16le(text)));
+            assert_eq!(clip.take_incoming().len(), usize::from(arrives));
+        }
     }
 
     /// A copy is announced once; the same text again is not.

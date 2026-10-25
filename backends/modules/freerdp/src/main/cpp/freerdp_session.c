@@ -213,8 +213,8 @@ struct Session {
        (holdUntilCaps). */
     int heldWidth, heldHeight;
 
-    /* What this phone has copied, as the wire wants it — UTF-16 with its
-       terminator — held until something over there pastes. RDP's clipboard is a
+    /* What this phone has copied, as the wire wants it — UTF-16, CRLF, with
+       its terminator — held until something over there pastes. RDP's clipboard is a
        delayed rendering: the format list says there is text and the bytes go
        only when they are asked for. */
     WCHAR *clipOut;
@@ -429,13 +429,24 @@ static void fireClosed(Session *s, const char *detail) {
     free(utf8);
 }
 
-/* The far end's text, which is UTF-16 on the wire and UTF-8 at the seam. */
+/* The far end's text, which is UTF-16 with Windows' line ends on the wire
+   and UTF-8 with LF at the seam, held to the bound every backend holds the
+   far end's clipboard to — in bytes of what the seam is given, as the IronRDP
+   backend counts it. */
 static void fireClipboard(Session *s, const WCHAR *text, size_t units) {
     char *utf8 = ConvertWCharNToUtf8Alloc(text, units, NULL);
-    if (utf8) {
-        s->cb.clipboard(s->cb.user, utf8);
-        free(utf8);
+    if (!utf8) {
+        return;
     }
+    vento_text_to_lf(utf8);
+    const size_t bytes = strlen(utf8);
+    if (bytes > VENTO_MAX_CLIPBOARD) {
+        LOGW("the far end's clipboard is over the %d bytes this end takes; skipped",
+             VENTO_MAX_CLIPBOARD);
+    } else if (bytes > 0) {
+        s->cb.clipboard(s->cb.user, utf8);
+    }
+    free(utf8);
 }
 
 /* ---- the framebuffer ---------------------------------------------------- */
@@ -2456,14 +2467,26 @@ static void op_request_layout(vento_session *base, int width, int height, const 
     post(s, &c);
 }
 
-/* Held as the wire wants it, UTF-16 with its terminator, from the moment it
-   arrives: the conversion is done once here rather than on every paste. */
+/* Held as the wire wants it, UTF-16 with CRLF line ends and its terminator,
+   from the moment it arrives: the conversion is done once here rather than
+   on every paste. A text past the clipboard bound is not offered at all, as
+   the IronRDP backend does not offer one. */
 static void op_clipboard(vento_session *base, const char *utf8) {
     if (!utf8) {
         return;
     }
+    if (strlen(utf8) > VENTO_MAX_CLIPBOARD) {
+        LOGW("this end's clipboard is over the %d bytes it offers; not offered",
+             VENTO_MAX_CLIPBOARD);
+        return;
+    }
+    char *crlf = vento_text_to_crlf(utf8);
+    if (!crlf) {
+        return;
+    }
     size_t units = 0;
-    WCHAR *copy = ConvertUtf8ToWCharAlloc(utf8, &units);
+    WCHAR *copy = ConvertUtf8ToWCharAlloc(crlf, &units);
+    free(crlf);
     if (!copy) {
         return;
     }
