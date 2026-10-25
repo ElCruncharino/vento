@@ -495,13 +495,28 @@ static BOOL onSurfaceBits(rdpContext *context, const SURFACE_BITS_COMMAND *cmd) 
    EndPaint while the buffers change under it. gdi_resize ends a paint of
    its own first (update_end_paint, into onEndPaint), with the copy already
    at the new size and the GDI still at the old, which onEndPaint's clamp to
-   the smaller of the two is for. */
+   the smaller of the two is for.
+
+   Without the pipeline, the codecs are this resize's too. They are sized at
+   connect, and planar, RemoteFX and NSCodec refuse anything wider than that
+   (planar's "maxWidth 1920 < nSrcWidth 2400"), which ended a bitmap session
+   at the first update after a resize past its starting width; only the
+   pipeline's reset resizes them in the library (gdi/gfx.c), and the core's
+   reactivation leaves them to the client, which xfreerdp does not do either.
+   With the pipeline open they are the reset's, and not touched here. */
 static BOOL onDesktopResize(rdpContext *context) {
     Session *s = sessionOf(context);
     rdp_update_lock(context->update);
     const UINT32 w = freerdp_settings_get_uint32(context->settings, FreeRDP_DesktopWidth);
     const UINT32 h = freerdp_settings_get_uint32(context->settings, FreeRDP_DesktopHeight);
-    const BOOL ok = allocFramebuffer(s, (int) w, (int) h) && gdi_resize(context->gdi, w, h);
+    const UINT32 bitmapCodecs =
+            FREERDP_CODEC_INTERLEAVED | FREERDP_CODEC_PLANAR | FREERDP_CODEC_NSCODEC | FREERDP_CODEC_REMOTEFX;
+    const BOOL codecs = s->gfxOpen || !context->codecs
+                        || freerdp_client_codecs_reset(context->codecs, bitmapCodecs, w, h);
+    if (!codecs) {
+        LOGW("the codecs could not be made %ux%u", (unsigned) w, (unsigned) h);
+    }
+    const BOOL ok = codecs && allocFramebuffer(s, (int) w, (int) h) && gdi_resize(context->gdi, w, h);
     if (ok) {
         s->cb.desktop_size(s->cb.user, (int) w, (int) h);
     }
