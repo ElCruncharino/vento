@@ -323,7 +323,7 @@ public:
 
     void bell() override;
 
-    void getUserPasswd(bool secure, std::string *user, std::string *password) override;
+    void getUserPasswd(std::string *user, std::string *password) override;
 
     bool verifyCertificate(unsigned int status, const uint8_t *certificate,
                            size_t length) override;
@@ -688,13 +688,19 @@ public:
         // each be deciding the other's encoding list.
         conn->setNoJpeg(quality < 0);
         conn->setQualityLevel(quality);
-        // Safe at any moment, which is the library's doing rather than ours:
-        // their setPF only records the format, and the connection switches to it
-        // where nothing is in flight (for continuous updates, by stopping them
-        // and waiting for the end-of-continuous-updates message). libvncclient
-        // has no such point, which is why the same row is not live there.
+        // Safe at any moment once the connection is up, which is the library's
+        // doing rather than ours: their setPF only records the format, and the
+        // connection switches to it where nothing is in flight (for continuous
+        // updates, by stopping them and waiting for the end-of-continuous-updates
+        // message). libvncclient has no such point, which is why the same row
+        // is not live there. Their setPF also ignores every change for a server
+        // older than RFB 3.8, and before the handshake the version reads as 0.0,
+        // so the first request is from initDone, and an older server is never
+        // asked (initDone reports its own format instead).
         const rfb::PixelFormat &pf = colourPF(colorLevel, conn->bandwidth());
-        if (!requestedPF_ || !(*requestedPF_ == pf)) {
+        if (conn->state() == rfb::CConnection::RFBSTATE_NORMAL
+                && !conn->server.beforeVersion(3, 8)
+                && (!requestedPF_ || !(*requestedPF_ == pf))) {
             requestedPF_ = pf;
             conn->setPF(pf);
             setViewerPF(pf);
@@ -908,7 +914,10 @@ public:
         return true;
     }
 
-    /** What was last asked for on the wire, which is not the framebuffer's. */
+    /**
+     * The format the server sends in: what was last asked for on the wire, or
+     * the server's own for one older than RFB 3.8. Not the framebuffer's.
+     */
     void setViewerPF(const rfb::PixelFormat &pf) {
         char text[100];
         pf.print(text, sizeof(text));
@@ -950,6 +959,9 @@ void Conn::initDone() {
     server.pf().print(pf, sizeof(pf));
 
     s->applyPicture(this);
+    if (server.beforeVersion(3, 8)) {
+        s->setViewerPF(server.pf());
+    }
     newFramebuffer(server.width(), server.height());
 
     char protocol[32];
@@ -1122,7 +1134,7 @@ void Conn::bell() {
     s->cb().bell(s->cb().user);
 }
 
-void Conn::getUserPasswd(bool /*secure*/, std::string *user, std::string *password) {
+void Conn::getUserPasswd(std::string *user, std::string *password) {
     const std::string stored = s->takeStoredPassword();
     if (!stored.empty()) {
         if (user != nullptr) {
@@ -1362,8 +1374,7 @@ void Session::runCmd(Conn *conn, Cmd &cmd) {
                 // Bits 0–8: the backend API's mask is RFB's, and TigerVNC
                 // carries the eighth and ninth through the extended pointer
                 // message when the server has asked for it.
-                conn->writer()->writePointerEvent(core::Point(cmd.a, cmd.b),
-                                                  (uint16_t) (cmd.c & 0x1FF));
+                conn->sendPointerEvent(core::Point(cmd.a, cmd.b), (uint16_t) (cmd.c & 0x1FF));
             }
             break;
         case CMD_KEY_DOWN:
@@ -1399,7 +1410,7 @@ void Session::runCmd(Conn *conn, Cmd &cmd) {
             applyPicture(conn);
             break;
         case CMD_RESIZE: {
-            // Guarded rather than attempted: writeSetDesktopSize throws where
+            // Guarded rather than attempted: requestScreenLayout throws where
             // the server never offered one, and an exception out of here ends
             // the session.
             if (viewOnly_ || !conn->server.supportsSetDesktopSize
@@ -1427,7 +1438,7 @@ void Session::runCmd(Conn *conn, Cmd &cmd) {
                 LOGW("not asking for %dx%d: the layout it would need is not valid", cmd.a, cmd.b);
                 break;
             }
-            conn->writer()->writeSetDesktopSize(cmd.a, cmd.b, layout);
+            conn->requestScreenLayout(cmd.a, cmd.b, layout);
             break;
         }
         case CMD_LAYOUT: {
@@ -1444,7 +1455,7 @@ void Session::runCmd(Conn *conn, Cmd &cmd) {
                     && conn->server.height() == cmd.b) {
                 break;
             }
-            conn->writer()->writeSetDesktopSize(cmd.a, cmd.b, layout);
+            conn->requestScreenLayout(cmd.a, cmd.b, layout);
             break;
         }
         case CMD_SOUND:
@@ -1645,9 +1656,9 @@ void Session::run() {
                 }
                 paused = paused_;
                 // Held rather than dropped until the connection is up: every
-                // command below needs a writer, and there is none until the
-                // handshake finishes, which can take as long as the user takes
-                // to answer a question about a certificate.
+                // command below writes to the server, and nothing may be
+                // written until the handshake finishes, which can take as long
+                // as the user takes to answer a question about a certificate.
                 if (connected_) {
                     pending.swap(queue_);
                 }

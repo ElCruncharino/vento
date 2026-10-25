@@ -1,4 +1,4 @@
-From 24df62fbf5e6a2f252f0ecbcb6367a299760c96e Mon Sep 17 00:00:00 2001
+From 80698e91908a935dd03ccafc7f51f0b32d919904 Mon Sep 17 00:00:00 2001
 From: "Claude Opus 5.5" <noreply@anthropic.com>
 Date: Thu, 15 Oct 2026 00:44:47 -0400
 Subject: [PATCH 6/6] rfb: a certificate that verifies is the client's question
@@ -21,10 +21,10 @@ such a certificate at once, as it always has.
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 diff --git a/common/rfb/CConnection.h b/common/rfb/CConnection.h
-index 2408153a..3bbac241 100644
+index a27bf65f..dd56b738 100644
 --- a/common/rfb/CConnection.h
 +++ b/common/rfb/CConnection.h
-@@ -188,8 +188,9 @@ namespace rfb {
+@@ -194,8 +194,9 @@ namespace rfb {
                                 std::string* password) = 0;
  
      // verifyCertificate() is called when a certificate is received from
@@ -55,10 +55,10 @@ index 9faa918f..37c5b24d 100644
    cert_list = gnutls_certificate_get_peers(session, &cert_list_size);
    if (!cert_list_size) {
 diff --git a/vncviewer/CConn.cxx b/vncviewer/CConn.cxx
-index 8934715a..28f99832 100644
+index 0b9bb832..44be3e77 100644
 --- a/vncviewer/CConn.cxx
 +++ b/vncviewer/CConn.cxx
-@@ -473,7 +473,9 @@ bool CConn::verifyCertificate(unsigned int status,
+@@ -462,7 +462,9 @@ bool CConn::verifyCertificate(unsigned int status,
    std::string info;
    size_t len;
  

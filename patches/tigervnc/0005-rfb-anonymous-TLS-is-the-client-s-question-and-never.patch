@@ -1,4 +1,4 @@
-From fc5f31c825e4d82db020a3d4ffd9b9c1b449e64a Mon Sep 17 00:00:00 2001
+From 185c98c68405af1e01681199b50ab7ba3a3f694c Mon Sep 17 00:00:00 2001
 From: Claude Opus 5 <noreply@anthropic.com>
 Date: Sun, 16 Aug 2026 14:45:46 -0400
 Subject: [PATCH 5/6] rfb: anonymous TLS is the client's question, and never
@@ -25,10 +25,10 @@ X509Vnc decided for the client that its identity would not be checked.
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 
 diff --git a/common/rfb/CConnection.h b/common/rfb/CConnection.h
-index 9d999f8a..2408153a 100644
+index 72d82eb9..a27bf65f 100644
 --- a/common/rfb/CConnection.h
 +++ b/common/rfb/CConnection.h
-@@ -200,6 +200,13 @@ namespace rfb {
+@@ -206,6 +206,13 @@ namespace rfb {
      virtual bool verifyHostKey(const uint8_t* key, size_t length,
                                 const char* fingerprint) = 0;
  

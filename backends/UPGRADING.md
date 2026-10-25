@@ -233,7 +233,8 @@ under the host locale (`export LC_ALL=C`).
   asking for audio (format, then enable) in the update that acknowledged
   it, which the shim's own `framebufferUpdateEnd` follows with a disable
   for a session started without sound, and on `writeQEMUAudioEnable`
-  staying public in `CMsgWriter`.
+  staying public in `CMsgWriter` and `CConnection::writer()` staying
+  reachable from the subclass (protected since 93d8d71e).
 - Every comment of ours that names an upstream version or behaviour ("in
   3.19.1", "the assembly is GAS", "returns Some") is a claim to re-verify
   against the target and correct or remove. Grep for the old version string
@@ -460,8 +461,15 @@ One commit per upstream, after review, by the lead:
   `0008` calls `GotCursorShape` with a 0x0 shape for a cursor update of no
   pixels, the server hiding the pointer, which upstream returns from
   before the callback.
-- **tigervnc** master dd416cbf, reporting 1.16.80; six patches (the PAM one
-  dropped, and the libav context's pixel format fix with that context). The certificate check is the shim's now: what cannot be excused is
+- **tigervnc** master ed951a41, reporting 1.16.80; six patches (the PAM one
+  dropped, and the libav context's pixel format fix with that context). The
+  client API is upstream's after their October 2026 cleanup: `writer()` is
+  protected, so pointer events and layouts go through `sendPointerEvent` and
+  `requestScreenLayout`, and `getUserPasswd` has no `secure`. Their `setPF`
+  ignores every change for a server older than RFB 3.8, and before the
+  handshake the version reads as 0.0, so the shim asks for a format only
+  once the connection is up, and against an older server reports the
+  server's own. The certificate check is the shim's now: what cannot be excused is
   refused and the rest goes to `trust_needed`, their viewer's known-hosts store
   not used at all; the RSA-AES key question is ported from
   `vncviewer/CConn.cxx`; audio is offered wherever there is an output, the

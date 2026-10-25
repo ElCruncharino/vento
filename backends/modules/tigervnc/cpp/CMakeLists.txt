@@ -156,13 +156,12 @@ endif()
 # decoders (the platform's, through `vento/video.h`: MediaCodec on Android,
 # the Linux client's FFmpeg with its opt-in hardware decoding on a desktop).
 # Their `common/rfb/CMakeLists.txt` compiles the decoder itself whenever
-# ENABLE_H264 is on and adds either of theirs only where it found FFmpeg or is
+# HAVE_H264 is set and adds either of theirs only where it found FFmpeg or is
 # building for Windows, neither of which applies here; H264_VENTO selects
 # ours, and the six lines that do so are the one patch it needs. HAVE_LIBAV
 # stays unset, since it would compile FFmpeg's context (and with it a second
 # FFmpeg into this library), and so do the three results their build
 # compiles the libav context on, whatever a cache left behind.
-set(ENABLE_H264 ON)
 set(HAVE_H264 1)
 add_definitions(-DH264_VENTO)
 foreach(lib AVCODEC AVUTIL SWSCALE)

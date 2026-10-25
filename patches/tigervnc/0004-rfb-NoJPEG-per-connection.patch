@@ -1,4 +1,4 @@
-From 04b406d63496469ba1ab1480191bae5657b423be Mon Sep 17 00:00:00 2001
+From e62cce0084cba596c7c51921661203f6fc1ac149 Mon Sep 17 00:00:00 2001
 From: Claude Opus 5 <noreply@anthropic.com>
 Date: Wed, 12 Aug 2026 22:37:59 -0400
 Subject: [PATCH 4/6] rfb: NoJPEG per connection
@@ -11,19 +11,19 @@ Keep the parameter as the starting value and make the decision a member
 beside the compression and quality levels it belongs with.
 
 diff --git a/common/rfb/CConnection.cxx b/common/rfb/CConnection.cxx
-index b16d0df4..879b08ab 100644
+index ac871670..13a450b0 100644
 --- a/common/rfb/CConnection.cxx
 +++ b/common/rfb/CConnection.cxx
-@@ -79,7 +79,7 @@ CConnection::CConnection()
+@@ -80,7 +80,7 @@ CConnection::CConnection()
      shared(false),
      state_(RFBSTATE_UNINITIALISED),
      pendingPFChange(false), preferredEncoding(encodingTight),
--    compressLevel(2), qualityLevel(-1),
-+    compressLevel(2), qualityLevel(-1), jpegDisabled(noJpeg),
+-    compressLevel(-1), qualityLevel(-1),
++    compressLevel(-1), qualityLevel(-1), jpegDisabled(noJpeg),
      formatChange(false), encodingChange(false),
      firstUpdate(true), pendingUpdate(false), continuousUpdates(false),
      forceNonincremental(true),
-@@ -1023,6 +1023,20 @@ int CConnection::getQualityLevel()
+@@ -1054,6 +1054,20 @@ int CConnection::getQualityLevel()
    return qualityLevel;
  }
  
@@ -43,8 +43,8 @@ index b16d0df4..879b08ab 100644
 +
  void CConnection::setPF(const PixelFormat& pf)
  {
-   if (server.pf() == pf && !formatChange)
-@@ -1127,7 +1141,7 @@ void CConnection::updateEncodings()
+   if (server.beforeVersion(3, 8)) {
+@@ -1169,7 +1183,7 @@ void CConnection::updateEncodings()
    encodings.push_back(pseudoEncodingExtendedMouseButtons);
  
    if (Decoder::supported(preferredEncoding) && offerEncoding(preferredEncoding)) {
@@ -53,7 +53,7 @@ index b16d0df4..879b08ab 100644
        encodings.push_back(preferredEncoding);
    }
  
-@@ -1135,7 +1149,7 @@ void CConnection::updateEncodings()
+@@ -1177,7 +1191,7 @@ void CConnection::updateEncodings()
  
    for (int i = encodingMax; i >= 0; i--) {
      if ((i != preferredEncoding) && Decoder::supported(i) && offerEncoding(i)) {
@@ -62,7 +62,7 @@ index b16d0df4..879b08ab 100644
          continue;
        encodings.push_back(i);
      }
-@@ -1144,7 +1158,7 @@ void CConnection::updateEncodings()
+@@ -1186,7 +1200,7 @@ void CConnection::updateEncodings()
    if (compressLevel >= 0 && compressLevel <= 9)
        encodings.push_back(pseudoEncodingCompressLevel0 + compressLevel);
    // Tight JPEG is enabled by setting a quality level
@@ -72,10 +72,10 @@ index b16d0df4..879b08ab 100644
        encodings.push_back(pseudoEncodingQualityLevel0 + qualityLevel);
    }
 diff --git a/common/rfb/CConnection.h b/common/rfb/CConnection.h
-index fe7feaa5..9d999f8a 100644
+index 39f1c7c0..72d82eb9 100644
 --- a/common/rfb/CConnection.h
 +++ b/common/rfb/CConnection.h
-@@ -141,6 +141,12 @@ namespace rfb {
+@@ -150,6 +150,12 @@ namespace rfb {
      int getCompressLevel();
      void setQualityLevel(int level);
      int getQualityLevel();
@@ -88,7 +88,7 @@ index fe7feaa5..9d999f8a 100644
      // setPF() controls the pixel format requested from the server.
      // server.pf() will automatically be adjusted once the new format
      // is active.
-@@ -356,6 +362,7 @@ namespace rfb {
+@@ -363,6 +369,7 @@ namespace rfb {
      int preferredEncoding;
      int compressLevel;
      int qualityLevel;
