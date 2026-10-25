@@ -1,0 +1,62 @@
+# The build context of linux/Dockerfile (BuildKit reads this file instead of
+# a .dockerignore at the root). It holds only the sources the Linux build
+# reads: no Android app, add-ons or website, no submodules only the phone
+# builds, and no build trees (hundreds of gigabytes in a working checkout).
+*
+
+!Cargo.toml
+!rust-toolchain.toml
+!backends/
+!linux/
+!patches/
+# The RealVNC module's CMakeLists reads its pins from here.
+!realvnc/src/main/java/com/realvnc/vncviewer/jni/Library.java
+
+!third_party/dav1d/
+!third_party/ffmpeg/
+!third_party/freerdp/
+!third_party/hbb_common/
+!third_party/ironrdp/
+!third_party/libc-shim/
+!third_party/libjnivm/
+!third_party/libjpeg-turbo/
+!third_party/libva/
+!third_party/libvncserver/
+!third_party/logger/
+!third_party/mcpelauncher-linker/
+!third_party/pixman/
+!third_party/ryll/
+!third_party/tigervnc/
+!third_party/winit/
+
+# Build trees: Gradle's and the NDK's under backends/, cargo's under linux/.
+backends/build/
+backends/**/build/
+backends/**/.cxx/
+backends/**/.gradle/
+linux/target/
+linux/Dockerfile*
+
+# Each submodule's .git file points outside the context.
+**/.git
+
+# Upstream files outside the sources this build compiles: README.md's list,
+# minus directories a patch in patches/ touches (the Dockerfile checks the
+# patches against them), and the unused Android sources in the linker
+# RealVNC's hosting layer uses.
+third_party/freerdp/client/Android/
+third_party/freerdp/client/iOS/
+third_party/freerdp/client/Mac/
+third_party/freerdp/client/Windows/
+third_party/freerdp/docs/
+third_party/libjpeg-turbo/doc/
+third_party/libjpeg-turbo/testimages/
+third_party/pixman/demos/
+third_party/tigervnc/java/
+third_party/tigervnc/media/
+third_party/tigervnc/win/
+third_party/mcpelauncher-linker/bionic/benchmarks/
+third_party/mcpelauncher-linker/bionic/tests/
+third_party/mcpelauncher-linker/core/adb/
+third_party/mcpelauncher-linker/core/libbacktrace/
+third_party/mcpelauncher-linker/core/libunwindstack/

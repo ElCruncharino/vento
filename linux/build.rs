@@ -23,9 +23,9 @@
 //! the directory can be moved, unpacked anywhere, run from a USB stick.
 //! The target directory is laid out the same way: the libraries are linked
 //! (or copied) into `target/<profile>/lib/` beside the binary, so that `cargo
-//! run` is already an installed tree, and so is `target/release/`, to be
-//! copied out as it is. A second entry, `$ORIGIN/../lib`, is for the test
-//! harness, which cargo puts one directory down in `deps/`; in an installed
+//! run` is already an installed tree, and `target/release/` is what
+//! `linux/Dockerfile` copies one out of. A second entry, `$ORIGIN/../lib`, is
+//! for the test harness, which cargo puts one directory down in `deps/`; in an installed
 //! tree it is a directory that holds no `libvento_*.so`, and the search goes
 //! on to the system's as it would anyway. No absolute path is baked in, so
 //! nothing of the build machine's is in the binary and nothing is looked

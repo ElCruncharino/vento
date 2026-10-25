@@ -373,11 +373,34 @@ build compiles none of them.
 
 ### Installing
 
-An installed client is the same layout as the target directory: the
-`vento` binary with a `lib/` directory beside it holding the
-`libvento_*.so` files (RealVNC's only where the build had clang), and the
-two go together anywhere — `/opt/vento`, a home directory — since the rpath
-is relative to the binary. Making one by hand is three steps:
+An installed client has the target directory's layout: the `vento` binary
+and, beside it, a `lib/` directory with the `libvento_*.so` files (RealVNC's
+only where the build had clang). The rpath is relative to the binary, so the
+two can go anywhere together: `/opt/vento`, a home directory.
+
+**Release builds come from `linux/Dockerfile`**, which runs the whole build
+in a container and outputs only that tree:
+
+```sh
+# from the repository root, with the submodules initialised
+docker build -f linux/Dockerfile --output type=local,dest=build/dist/vento .
+```
+
+The binary needs the glibc symbol versions it was linked against, so it runs
+on the build's glibc and later ones. The Dockerfile builds on Ubuntu 18.04
+(glibc 2.27), with clang 18, CMake, Meson and NASM fetched at pinned
+versions, and Rust at `rust-toolchain.toml`'s channel; the glibc baseline is
+the Dockerfile's alone. It copies the checkout (`linux/Dockerfile.dockerignore`
+limits what is sent), applies `patches/` to submodules still at their pinned
+commits, runs `cargo build --release --locked`, strips the libraries' debug
+information, and checks the tree with `readelf` and `ldd`: the relative
+rpath, no library missing, the backends resolved in the tree's own `lib/`.
+It writes nothing to the checkout. A build from scratch takes about
+eight minutes on eight cores (the toolchain about a minute and a half of it,
+cached after the first build).
+
+A build on the machine itself gives the same layout, tied to that machine's
+glibc and libraries:
 
 ```sh
 cargo build --release
@@ -386,14 +409,16 @@ cp target/release/vento /opt/vento/
 cp target/release/lib/libvento_*.so /opt/vento/lib/
 ```
 
-What the tree does not carry is the system's libraries, which a machine
-running it needs installed: glibc as new as the build machine's (it is
-linked against its symbol versions), zlib, and per backend — **libvnc**
-GnuTLS; **tigervnc** GnuTLS, Nettle (and hogweed, GMP) and libstdc++;
-**freerdp** OpenSSL 3 (`libssl.so.3`, `libcrypto.so.3`) and nothing else
-(its UTF-16 conversion is WinPR's own, not ICU's); **realvnc** libstdc++
-(and libatomic, where the build machine's compiler had no static one).
-libjpeg-turbo and pixman are inside the libraries. A backend's library that cannot be loaded stops the binary from
+The tree does not carry the system's libraries. A machine running it needs
+glibc (2.27 or later for the Dockerfile's tree), zlib, and per backend:
+**libvnc** GnuTLS; **tigervnc** GnuTLS, Nettle (and hogweed, GMP) and
+libstdc++; **freerdp** OpenSSL and nothing else (its UTF-16 conversion is
+WinPR's own, not ICU's); **realvnc** libstdc++ (and libatomic, where the
+build's compiler had no static one). The TLS libraries are needed at the
+sonames of the build machine: for the Dockerfile's tree, Ubuntu 18.04's
+(`libgnutls.so.30`, `libnettle.so.6`, `libhogweed.so.4`, `libgmp.so.10`,
+`libssl.so.1.1`, `libcrypto.so.1.1`), which most current distributions no
+longer ship. libjpeg-turbo and pixman are inside the libraries. A backend's library that cannot be loaded stops the binary from
 starting (RealVNC's excepted, which is opened at run time and says it is not
 available). Loaded at run time where they are there, and not needed
 otherwise: libpipewire-0.3 and libasound (sound), libva and libva-drm
