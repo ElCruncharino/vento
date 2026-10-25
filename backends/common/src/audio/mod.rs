@@ -62,8 +62,10 @@ pub const TARGET: Duration = Duration::from_millis(100);
 pub const MARGIN: Duration = Duration::from_millis(10);
 
 /// How much sound the queue and the device hold together before the queue
-/// drops the oldest, back down to its share of [`TARGET`]. TigerVNC's viewer
-/// kept a second, and a stream that ran even slightly faster than the device
+/// drops the oldest, back down to its share of [`TARGET`] — or twice that
+/// share, for a far end whose own rhythm needs more than the target (see
+/// [`Queue`]'s, which follows the size of its writes). TigerVNC's viewer kept
+/// a second, and a stream that ran even slightly faster than the device
 /// lagged further behind the picture for as long as it ran.
 pub const LIMIT: Duration = Duration::from_millis(250);
 
