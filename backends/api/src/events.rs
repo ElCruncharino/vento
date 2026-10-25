@@ -192,6 +192,18 @@ pub enum Event {
     /// Which end owns the cursor has changed.
     PointerMode { relative: bool },
     Bell,
+    /// A decoded video picture for a rectangle of the desktop, as NV12 (see
+    /// `runtime::Handler::video`), for a window that draws video itself. It
+    /// is not in the framebuffer; a `Frame` over the rectangle that follows it
+    /// means the framebuffer has the pixels again.
+    Video {
+        x: usize,
+        y: usize,
+        width: usize,
+        height: usize,
+        color_mode: i32,
+        nv12: Vec<u8>,
+    },
     /// The far end's new clipboard contents.
     Clipboard(String),
     /// Credentials are needed; answered through `answer_credentials`.
@@ -312,6 +324,49 @@ struct Inner {
     /// `AcceptBell`, for the backends that have it; see
     /// [`Mailbox::accept_bell`].
     accept_bell: bool,
+    /// Whether the window draws video itself; see [`Mailbox::accept_video`].
+    accept_video: bool,
+}
+
+impl Inner {
+    /// Turns the marked damage into a `Frame` in the queue, or into the
+    /// unread one it can join. False when nothing was marked.
+    fn flush_damage(&mut self) -> bool {
+        if self.damage.is_empty() {
+            return false;
+        }
+        let rects = self.damage.take();
+        // The unread Frame since the desktop last changed size, wherever
+        // it is in the queue: its pixels are read when it is taken, so
+        // merging these into it reads the same pixels, only sooner, and
+        // the events in between are unrelated. A size change is the only
+        // event a rectangle cannot be moved across, and a video picture the
+        // other: damage that came after one must not be taken before it.
+        let unread = self
+            .queue
+            .iter_mut()
+            .rev()
+            .take_while(|e| !e.is_size() && !matches!(e, Event::Video { .. }))
+            .find_map(|e| match e {
+                Event::Frame { rects, .. } => Some(rects),
+                _ => None,
+            });
+        // The unread frame keeps its `ended` time: its pixels have been
+        // waiting since then.
+        match unread {
+            Some(previous) => {
+                let mut merged = Damage::default();
+                merged.extend(std::mem::take(previous));
+                merged.extend(rects);
+                *previous = merged.take();
+            }
+            _ => self.queue.push_back(Event::Frame {
+                rects,
+                ended: Instant::now(),
+            }),
+        }
+        true
+    }
 }
 
 /// A session's event queue, and the state its events have reported.
@@ -335,6 +390,7 @@ impl Mailbox {
                 state: State::Connecting,
                 pointer_relative: false,
                 accept_bell: true,
+                accept_video: false,
             }),
             ready: Condvar::new(),
             wake,
@@ -460,38 +516,49 @@ impl Mailbox {
         {
             let mut inner = self.inner.lock().unwrap();
             inner.frames += 1;
-            if inner.damage.is_empty() {
+            if !inner.flush_damage() {
                 return;
             }
-            let rects = inner.damage.take();
-            // The unread Frame since the desktop last changed size, wherever
-            // it is in the queue: its pixels are read when it is taken, so
-            // merging these into it reads the same pixels, only sooner, and
-            // the events in between are unrelated. A size change is the only
-            // event a rectangle cannot be moved across.
-            let unread = inner
-                .queue
-                .iter_mut()
-                .rev()
-                .take_while(|e| !e.is_size())
-                .find_map(|e| match e {
-                    Event::Frame { rects, .. } => Some(rects),
-                    _ => None,
-                });
-            // The unread frame keeps its `ended` time: its pixels have been
-            // waiting since then.
-            match unread {
-                Some(previous) => {
-                    let mut merged = Damage::default();
-                    merged.extend(std::mem::take(previous));
-                    merged.extend(rects);
-                    *previous = merged.take();
-                }
-                _ => inner.queue.push_back(Event::Frame {
-                    rects,
-                    ended: Instant::now(),
-                }),
+        }
+        self.notify();
+    }
+
+    /// Whether the window draws video itself (the phone), which a backend
+    /// asks before it sends any: when not, it composes the picture into the
+    /// framebuffer as it always has. Off until set.
+    pub fn accept_video(&self, accept: bool) {
+        self.inner.lock().unwrap().accept_video = accept;
+    }
+
+    pub fn accepts_video(&self) -> bool {
+        self.inner.lock().unwrap().accept_video
+    }
+
+    /// A video picture, queued after the damage that came before it, so that
+    /// a window that gives a rectangle back on damage does not do so to a
+    /// picture that was drawn after it. An unread picture for the same
+    /// rectangle is replaced: a window that fell behind needs only the last.
+    pub fn on_video(&self, x: usize, y: usize, width: usize, height: usize, color_mode: i32, nv12: &[u8]) {
+        {
+            let mut inner = self.inner.lock().unwrap();
+            if !inner.accept_video {
+                return;
             }
+            inner.flush_damage();
+            if let Some(i) = inner.queue.iter().position(|e| {
+                matches!(e, Event::Video { x: ex, y: ey, width: ew, height: eh, .. }
+                    if (*ex, *ey, *ew, *eh) == (x, y, width, height))
+            }) {
+                inner.queue.remove(i);
+            }
+            inner.queue.push_back(Event::Video {
+                x,
+                y,
+                width,
+                height,
+                color_mode,
+                nv12: nv12.to_vec(),
+            });
         }
         self.notify();
     }
@@ -620,6 +687,14 @@ impl runtime::Callbacks for Feed {
 
     fn frame_end(&self) {
         self.0.on_frame_end();
+    }
+
+    fn takes_video(&self) -> bool {
+        self.0.accepts_video()
+    }
+
+    fn video(&self, x: usize, y: usize, width: usize, height: usize, color_mode: i32, nv12: &[u8]) {
+        self.0.on_video(x, y, width, height, color_mode, nv12);
     }
 
     fn cursor(&self, pixels: &[u32], width: usize, height: usize, hot_x: i32, hot_y: i32) {
@@ -959,5 +1034,34 @@ mod tests {
         assert_eq!(cursor.rgba, [0x11, 0x22, 0x33, 0x44]);
         mailbox.on_cursor(&[], 0, 0, 0, 0);
         assert_eq!(mailbox.take(), Some(Event::Cursor(None)));
+    }
+
+    #[test]
+    fn video_follows_the_damage_before_it_and_replaces_its_unread_self() {
+        let mailbox = Mailbox::new(None);
+        mailbox.on_video(0, 0, 2, 2, 3, &[0; 6]);
+        assert_eq!(mailbox.take(), None, "off until the window asks");
+        mailbox.accept_video(true);
+        mailbox.on_damaged(10, 10, 4, 4);
+        mailbox.on_video(0, 0, 2, 2, 3, &[1; 6]);
+        mailbox.on_damaged(20, 20, 4, 4);
+        mailbox.on_video(0, 0, 2, 2, 3, &[2; 6]);
+        mailbox.on_frame_end();
+        // The first damage stays before the first picture, which the second
+        // replaces: the second damage cannot join the first frame across it,
+        // and the picture that is left comes after both.
+        let Some(Event::Frame { rects, .. }) = mailbox.take() else {
+            panic!("the damage before the video comes first");
+        };
+        assert_eq!(rects, vec![Rect { x: 10, y: 10, width: 4, height: 4 }]);
+        let Some(Event::Frame { rects, .. }) = mailbox.take() else {
+            panic!("the damage that came between the two pictures");
+        };
+        assert_eq!(rects, vec![Rect { x: 20, y: 20, width: 4, height: 4 }]);
+        assert_eq!(
+            mailbox.take(),
+            Some(Event::Video { x: 0, y: 0, width: 2, height: 2, color_mode: 3, nv12: vec![2; 6] })
+        );
+        assert_eq!(mailbox.take(), None);
     }
 }

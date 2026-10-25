@@ -48,6 +48,25 @@ pub trait Handler {
     /// draw what [`damaged`](Handler::damaged) marked.
     fn frame_end(&mut self);
 
+    /// Whether the platform draws decoded video itself, so that a backend
+    /// whose library can leave a picture undrawn does, and hands it to
+    /// [`video`](Handler::video) instead of composing it into the
+    /// framebuffer. Asked before the session sends any.
+    fn takes_video(&self) -> bool {
+        false
+    }
+
+    /// A decoded picture for the `width` by `height` rectangle at (`x`, `y`)
+    /// of the desktop, as NV12: `width * height` bytes of Y, then
+    /// `width.div_ceil(2) * height.div_ceil(2)` pairs of U and V. Bit 0 of
+    /// `color_mode` is BT.709 over BT.601, bit 1 full range over limited.
+    /// These pixels are not in the framebuffer: a later
+    /// [`damaged`](Handler::damaged) over the rectangle means the framebuffer
+    /// has them again. Called only where [`takes_video`](Handler::takes_video).
+    fn video(&mut self, x: usize, y: usize, width: usize, height: usize, color_mode: i32, nv12: &[u8]) {
+        let _ = (x, y, width, height, color_mode, nv12);
+    }
+
     /// The pointer's shape. `pixels` is `width × height` in the framebuffer's
     /// own word order (`R, G, B, A` in memory), alpha from the cursor's mask
     /// where the protocol has one. A zero size means the server has hidden

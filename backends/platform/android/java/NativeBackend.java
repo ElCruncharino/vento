@@ -676,6 +676,18 @@ public final class NativeBackend implements Backend {
     }
 
     /**
+     * A decoded video picture for a rectangle of the desktop, as NV12; the
+     * protocol thread, in order with {@link #onFrame}. See
+     * {@link Listener#videoFrame}.
+     */
+    void onVideoFrame(int x, int y, int width, int height, int colorMode, byte[] nv12) {
+        final Listener l = listener;
+        if (l != null) {
+            l.videoFrame(x, y, width, height, width, height, colorMode, nv12);
+        }
+    }
+
+    /**
      * @param argb {@code width * height} pixels, {@code Color}-packed; empty
      *             when the server has hidden the pointer
      * @param hash of the pixels, computed where they were filled in: the

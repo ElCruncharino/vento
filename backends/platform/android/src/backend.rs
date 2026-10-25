@@ -352,6 +352,9 @@ fn create<'local>(
     let wake = Arc::clone(&outlet);
     let mailbox = Mailbox::new(Some(Box::new(move || wake.wake())));
     let _ = outlet.mailbox.set(Arc::downgrade(&mailbox));
+    // The phone draws decoded video on the GPU (`VideoLayer`), so a backend
+    // that can leave its pictures undrawn does.
+    mailbox.accept_video(true);
 
     // Empty is not a password: something that looks like a stored secret
     // and is not one fails the connection instead of asking for the real one.
@@ -802,6 +805,7 @@ struct Outlet {
     connected: JMethodID,
     desktop_size: JMethodID,
     frame: JMethodID,
+    video: JMethodID,
     cursor: JMethodID,
     pointer_mode: JMethodID,
     bell: JMethodID,
@@ -846,6 +850,7 @@ impl Outlet {
             connected: id(env, jni_str!("onConnected"), jni_sig!("(II)V"))?,
             desktop_size: id(env, jni_str!("onDesktopSize"), jni_sig!("(II)V"))?,
             frame: id(env, jni_str!("onFrame"), jni_sig!("([I)V"))?,
+            video: id(env, jni_str!("onVideoFrame"), jni_sig!("(IIIII[B)V"))?,
             cursor: id(env, jni_str!("onCursor"), jni_sig!("([IIIIIJ)V"))?,
             pointer_mode: id(env, jni_str!("onPointerMode"), jni_sig!("(Z)V"))?,
             bell: id(env, jni_str!("onBell"), jni_sig!("()V"))?,
@@ -929,6 +934,21 @@ impl Outlet {
                     let array = env.new_int_array(flat.len())?;
                     array.set_region(env, 0, &flat)?;
                     self.call(env, self.frame, &[jvalue { l: array.as_raw() }])
+                }
+                Event::Video {
+                    x,
+                    y,
+                    width,
+                    height,
+                    color_mode,
+                    nv12,
+                } => {
+                    let bytes = env.byte_array_from_slice(&nv12)?;
+                    self.call(
+                        env,
+                        self.video,
+                        &[int(x), int(y), int(width), int(height), jvalue { i: color_mode }, jvalue { l: bytes.as_raw() }],
+                    )
                 }
                 Event::Cursor(cursor) => {
                     // `Color`-packed for `Bitmap.setPixels`, and hashed here

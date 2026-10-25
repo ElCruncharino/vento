@@ -25,6 +25,20 @@ pub trait Callbacks: Send + Sync {
     fn desktop_size(&self, width: usize, height: usize);
     fn damaged(&self, x: usize, y: usize, width: usize, height: usize);
     fn frame_end(&self);
+    /// Whether this platform draws video itself: asked once, before the
+    /// session sends any, by a backend that can hand the decoder's pictures
+    /// over undrawn (see [`Handler::video`](crate::Handler::video)). A
+    /// platform that says no gets the same pixels through
+    /// [`damaged`](Callbacks::damaged).
+    fn takes_video(&self) -> bool {
+        false
+    }
+    /// A decoded picture for the rectangle at (`x`, `y`) of the desktop, as
+    /// [`Handler::video`](crate::Handler::video) describes it. Called only
+    /// where [`takes_video`](Callbacks::takes_video) is true.
+    fn video(&self, x: usize, y: usize, width: usize, height: usize, color_mode: i32, nv12: &[u8]) {
+        let _ = (x, y, width, height, color_mode, nv12);
+    }
     /// `pixels` is the framebuffer's own word order (`R, G, B, A` in memory);
     /// whatever the platform wants instead, it converts on its side of this
     /// call, where it already has to copy. See [`crate::cursor`] for the two
