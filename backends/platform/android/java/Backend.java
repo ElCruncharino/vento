@@ -57,6 +57,21 @@ public interface Backend {
          */
         void damaged(int x, int y, int width, int height);
 
+        /**
+         * Protocol thread. A decoded video frame for the rectangle of the desktop at
+         * ({@code x}, {@code y}), {@code width} by {@code height}, as NV12 (a Y plane,
+         * then interleaved U and V at half the size). {@code frameWidth} by
+         * {@code frameHeight} is the picture's size, which is at least the rectangle;
+         * its top-left part is what is shown. Bit 0 of {@code colorMode} is BT.709 over
+         * BT.601, bit 1 full range over limited. Pixels delivered here are not in
+         * {@link #readRegion}; damage over the rectangle later gives it back to the
+         * CPU framebuffer. A default, since only the backends that decode video
+         * themselves call it.
+         */
+        default void videoFrame(int x, int y, int width, int height,
+                                int frameWidth, int frameHeight, int colorMode, byte[] nv12) {
+        }
+
         /** Any thread. End of an update batch: a good moment to draw. */
         void frameEnd();
 
