@@ -127,6 +127,15 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
          * black screen, and possibly a password dialog over it.
          */
         void firstFrame();
+
+        /**
+         * The session's sound switch changed: offered, withdrawn, turned, or
+         * its sound started or stopped. The switch itself is on the
+         * connection panel, which is the activity's and may be open while it
+         * happens; this view has nothing to show for it but the overlay's
+         * line, which is redrawn every frame anyway.
+         */
+        void soundChanged();
     }
 
     /**
@@ -477,6 +486,11 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
     @Override
     public void bell() {
         performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+    }
+
+    @Override
+    public void soundSwitch(int soundSwitch, boolean enabled, boolean playing) {
+        host.soundChanged();
     }
 
     @Override

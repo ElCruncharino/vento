@@ -88,8 +88,9 @@ public interface Backend {
         /**
          * Main thread. Whether the far end's sound is playing: from its first
          * sound until its last stream closes, which a backend does a couple of
-         * seconds after the sound ends. A default, since only the backends
-         * with sound ever say it.
+         * seconds after the sound ends. Not what a sound switch is shown by,
+         * which is {@link #soundSwitch}, from before any sound plays. A
+         * default, since only the backends with sound ever say it.
          */
         default void soundPlaying(boolean playing) {
         }

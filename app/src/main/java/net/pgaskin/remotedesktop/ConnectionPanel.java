@@ -131,8 +131,11 @@ final class ConnectionPanel {
 
     /** The same again for the far end's displays, where it sends one at a time. */
     private PanelOptions displayOptions;
-    private PanelOptions soundOptions;
     private List<BackendOption.Choice> displayChoices = List.of();
+
+    /** The sound switch's row, and which switch it was built for. */
+    private PanelOptions soundOptions;
+    private int soundKind = Backend.SOUND_SWITCH_NONE;
 
     /** The fact rows on screen: what they are, and where their values go. */
     private List<String> factShape = List.of();
@@ -400,35 +403,61 @@ final class ConnectionPanel {
     // ---- the far end's sound -------------------------------------------------
 
     /**
-     * A switch to mute the far end's sound. A fact about the live session for
-     * {@link #refreshResize}'s reason — there only while the far end's sound
-     * plays — and not an option: the mute is the session's, at once, and not
-     * remembered (see {@link Backend#setMuted}).
+     * The session's sound switch, from when the far end may send sound rather
+     * than from when it does, so that a sound can be refused before it starts.
+     * What it does is the backend's to say: "Enable audio" where the far end
+     * can be asked to stop sending it and to send it again, "Mute audio" where
+     * it cannot (RDP) and the sound is silenced here instead. Here and not on
+     * the toolbar, whose buttons are the tap regions' and nothing else, since
+     * a screen may have either one alone. A fact about the live session for
+     * {@link #refreshResize}'s reason, and not an option: it is the session's,
+     * at once, and not remembered (see {@link Backend#setSoundEnabled} and
+     * {@link Backend#setMuted}).
+     *
+     * <p>Called by the poll and, through the screen, whenever the session says
+     * the switch changed.
      */
-    private void refreshSound() {
-        final boolean playing = !session.isClosed() && session.backend().soundPlaying();
-        soundRow.setVisibility(playing ? View.VISIBLE : View.GONE);
-        if (!playing) {
+    void refreshSound() {
+        final int kind = session.isClosed()
+                ? Backend.SOUND_SWITCH_NONE : session.backend().soundSwitch();
+        soundRow.setVisibility(kind == Backend.SOUND_SWITCH_NONE ? View.GONE : View.VISIBLE);
+        if (kind != soundKind) {
+            // Rebuilt rather than relabelled: a session that withdraws an
+            // Enable switch may offer a Mute one later, and the row's label is
+            // what it does.
+            soundKind = kind;
             soundOptions = null;
             soundRow.removeAllViews();
-            return;
+            if (kind != Backend.SOUND_SWITCH_NONE) {
+                soundOptions = soundSwitch(kind == Backend.SOUND_SWITCH_ENABLE);
+            }
+        } else if (soundOptions != null) {
+            soundOptions.refresh();
         }
         if (soundOptions != null) {
-            soundOptions.refresh();
-            return;
+            soundOptions.setEnabled(connected());
         }
+    }
+
+    private PanelOptions soundSwitch(boolean enable) {
         final BackendOption option = BackendOption.bool("", // no backend owns this one
-                activity.getString(R.string.panel_mute), null, false,
-                BackendOption.Scope.CONNECTION, true);
-        soundOptions = new PanelOptions(soundRow, List.of(option), new PanelOptions.Values() {
+                activity.getString(enable ? R.string.panel_sound_enable : R.string.panel_sound_mute),
+                null, false, BackendOption.Scope.CONNECTION, true);
+        return new PanelOptions(soundRow, List.of(option), new PanelOptions.Values() {
             @Override
             public String get(BackendOption o) {
-                return Boolean.toString(session.backend().muted());
+                final Backend b = session.backend();
+                return Boolean.toString(enable ? b.soundEnabled() : b.muted());
             }
 
             @Override
             public void set(BackendOption o, String value) {
-                session.backend().setMuted(Boolean.parseBoolean(value));
+                final Backend b = session.backend();
+                if (enable) {
+                    b.setSoundEnabled(Boolean.parseBoolean(value));
+                } else {
+                    b.setMuted(Boolean.parseBoolean(value));
+                }
             }
         });
     }

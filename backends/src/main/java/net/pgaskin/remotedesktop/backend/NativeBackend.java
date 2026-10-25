@@ -483,6 +483,13 @@ public final class NativeBackend implements Backend {
     public void setSoundEnabled(boolean enabled) {
         final long h = handle;
         if (h != 0 && !dead) {
+            // Kept at once, as the session's controls keep it: what the switch
+            // is set to is the request, and a screen that asks straight after
+            // turning it must not see it turned back until the far end's
+            // answer has crossed. onSound says the same a moment later.
+            if (soundSwitch == SOUND_SWITCH_ENABLE) {
+                soundEnabled = enabled;
+            }
             natives.setSoundEnabled(h, enabled);
         }
     }

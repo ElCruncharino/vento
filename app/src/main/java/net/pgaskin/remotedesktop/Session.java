@@ -623,6 +623,12 @@ public final class Session implements Backend.Listener, Prompt.Handler {
     }
 
     @Override
+    public void soundSwitch(int soundSwitch, boolean enabled, boolean playing) {
+        assertMain("soundSwitch");
+        view.soundSwitch(soundSwitch, enabled, playing);
+    }
+
+    @Override
     public void clipboardFromRemote(String text) {
         assertMain("clipboardFromRemote");
         view.clipboardFromRemote(text);
