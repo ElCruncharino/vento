@@ -5,9 +5,10 @@ plugins {
     id 'com.android.library'
 }
 
-// Both halves of the RDP backend: `src/main/java` implements `Backend` on
-// `src/main/rust`, IronRDP in the RFB client's shape, and the AAR carries the
-// library it compiles to.
+// Both halves of the RDP backend: `src/main/rust`, IronRDP in the RFB
+// client's shape, as the library the AAR carries, and `src/main/java`'s
+// provider, which holds a session on it as a `NativeBackend` through the
+// natives class generated below.
 android {
     namespace = 'net.pgaskin.remotedesktop.backend.ironrdp'
     compileSdk 36
@@ -33,7 +34,7 @@ android {
 
 dependencies {
     // The seam, and the only thing of the app's this module may name. `api`
-    // because `IronRdpBackend` is a `Backend` and whoever holds one says so.
+    // because a session here is a `Backend` and whoever holds one says so.
     api project(':backends')
 }
 
@@ -59,8 +60,10 @@ androidComponents {
         }
         variant.sources.jniLibs?.addGeneratedSourceDirectory(cargoBuild) { it.outputDir }
 
-        // `IronRdpCatalog`, what the catalog says this backend is: see :backends.
+        // `IronRdpCatalog`, what the catalog says this backend is, and
+        // `IronRdpNatives`, what the library registers its natives on: see :backends.
         seam.generateCatalog(project, variant, 'rdp', 'IronRdpCatalog')
+        seam.generateNatives(project, variant, 'IronRdpNatives', 'remotedesktop_ironrdp')
     }
 }
 
