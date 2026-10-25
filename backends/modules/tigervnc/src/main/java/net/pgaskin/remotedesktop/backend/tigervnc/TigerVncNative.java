@@ -9,7 +9,7 @@ import android.graphics.Bitmap;
  * The JNI surface of {@code libremotedesktop_tigervnc.so} — TigerVNC's own
  * client code and the shim in {@code src/main/cpp} that adapts it.
  *
- * <p>Deliberately the same surface {@code RfbNative} and {@code LibVncNative}
+ * <p>Deliberately the surface {@code NativeBackend.Natives} and {@code LibVncNative}
  * describe, so that everything above it is the same code against any of the
  * three and a comparison is between the clients. Where it differs from
  * libvncclient's:

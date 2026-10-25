@@ -9,7 +9,7 @@ import android.graphics.Bitmap;
  * The JNI surface of {@code libremotedesktop_libvnc.so} — LibVNCServer's
  * {@code libvncclient} and the shim in {@code src/main/cpp} that adapts it.
  *
- * <p>Deliberately the same surface {@code RfbNative} describes, minus what
+ * <p>Deliberately the surface {@code NativeBackend.Natives} describes, minus what
  * libvncclient does not have, so that everything above it is the same code
  * against either client and a comparison is between the clients. What is
  * missing, and why:

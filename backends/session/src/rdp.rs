@@ -25,12 +25,13 @@ pub fn parse_size(value: &str) -> Option<(u32, u32)> {
 }
 
 /// The desktop size to ask this connection's server for. `remote` means
-/// "whatever it was last time", which is a note a client keeps per address
-/// where it keeps one, and the fallback where it does not. `device` is the
-/// screen the session will be drawn on, where the caller knows it.
-pub fn desktop_size(value: &str, screen: Option<(u32, u32)>) -> (u32, u32) {
+/// "whatever it was last time", which is `last`: a note a client keeps per
+/// address where it keeps one (the phone does), and the fallback where it
+/// does not. `device` is the screen the session will be drawn on, where the
+/// caller knows it.
+pub fn desktop_size(value: &str, screen: Option<(u32, u32)>, last: Option<(u32, u32)>) -> (u32, u32) {
     match value {
-        "remote" => FALLBACK_SIZE,
+        "remote" => last.filter(|&(w, h)| w > 0 && h > 0).unwrap_or(FALLBACK_SIZE),
         "device" => screen
             .filter(|&(w, h)| (200..=4096).contains(&w) && (200..=4096).contains(&h))
             .unwrap_or(FALLBACK_SIZE),
@@ -50,12 +51,14 @@ mod tests {
 
     #[test]
     fn the_desktop_size_option_is_read_as_the_provider_reads_it() {
-        assert_eq!(desktop_size("1366x768", None), (1366, 768));
-        assert_eq!(desktop_size("remote", Some((800, 600))), FALLBACK_SIZE);
-        assert_eq!(desktop_size("device", Some((2560, 1440))), (2560, 1440));
-        assert_eq!(desktop_size("device", Some((100, 100))), FALLBACK_SIZE);
-        assert_eq!(desktop_size("device", None), FALLBACK_SIZE);
-        assert_eq!(desktop_size("nonsense", None), FALLBACK_SIZE);
+        assert_eq!(desktop_size("1366x768", None, None), (1366, 768));
+        assert_eq!(desktop_size("remote", Some((800, 600)), None), FALLBACK_SIZE);
+        assert_eq!(desktop_size("remote", None, Some((1279, 800))), (1279, 800));
+        assert_eq!(desktop_size("1366x768", None, Some((1279, 800))), (1366, 768));
+        assert_eq!(desktop_size("device", Some((2560, 1440)), None), (2560, 1440));
+        assert_eq!(desktop_size("device", Some((100, 100)), None), FALLBACK_SIZE);
+        assert_eq!(desktop_size("device", None, None), FALLBACK_SIZE);
+        assert_eq!(desktop_size("nonsense", None, None), FALLBACK_SIZE);
         assert_eq!(parse_size("0x5"), None);
     }
 }

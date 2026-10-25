@@ -35,7 +35,7 @@ fn scale(o: &Options) -> i32 {
 fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
     let o = c.options;
     let (domain, user) = c.domain_and_user();
-    let (width, height) = desktop_size(o.get("DesktopSize"), c.screen);
+    let (width, height) = desktop_size(o.get("DesktopSize"), c.screen, c.last_size);
     // A directory of ours: the library sets a certificate store up there at
     // connect, never consulted, and without a path for one cannot connect.
     let store = c.dirs.state.join("freerdp");

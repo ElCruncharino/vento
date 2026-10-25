@@ -1,19 +1,20 @@
-# What a backend's native half needs of Android and no protocol owns: the
-# locked bitmap, the calls back into Java, the logger, the one string helper
-# every entry point uses — and MediaCodec, which is the phone's video decoder
-# and is reached through the NDK rather than through Java.
+# What a backend's native half needs of Android and no protocol owns: the one
+# JNI layer every Rust backend is reached through (any `session::Backend`,
+# registered on its module's natives class), the locked bitmap, the logger —
+# and MediaCodec, which is the phone's video decoder and is reached through
+# the NDK rather than through Java.
 #
 # This is the only crate in the workspace with `jni` in it. A protocol crate
 # depends on it under a target cfg and nowhere else, which keeps the host
 # build — tests, examples — free of anything that knows a phone exists; and
 # `remotedesktop-common` does not depend on it at all, because the layering
-# runs the other way: this crate implements `common::Events` for Java and
-# `common::video::Decoders` for MediaCodec, and `common` never hears about
-# either.
+# runs the other way: this crate holds a `session::Backend` for Java and
+# implements `common::video::Decoders` for MediaCodec, and neither `common`
+# nor `session` hears about either.
 #
-# On a host target the crate is empty rather than absent. It is a workspace
-# member, so `cargo test --workspace` builds it; what it builds there is a
-# library with nothing in it and no dependencies to fetch.
+# On a host target the crate is the JNI table and nothing else: plain data,
+# no dependencies to fetch, read by `vento-codegen` to write each module's
+# natives class.
 [package]
 name = "remotedesktop-platform-android"
 version.workspace = true
@@ -27,5 +28,6 @@ name = "platform_android"
 [target.'cfg(target_os = "android")'.dependencies]
 log.workspace = true
 remotedesktop-common.workspace = true
+remotedesktop-session.workspace = true
 jni.workspace = true
 android_logger.workspace = true

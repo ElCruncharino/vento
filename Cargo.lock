@@ -2519,6 +2519,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 name = "remotedesktop-codegen"
 version = "0.0.1"
 dependencies = [
+ "remotedesktop-platform-android",
  "remotedesktop-session",
 ]
 
@@ -2580,6 +2581,7 @@ dependencies = [
  "jni",
  "log",
  "remotedesktop-common",
+ "remotedesktop-session",
 ]
 
 [[package]]
@@ -2589,7 +2591,6 @@ dependencies = [
  "cipher 0.5.2",
  "des",
  "flate2",
- "jni",
  "log",
  "remotedesktop-common",
  "remotedesktop-platform-android",

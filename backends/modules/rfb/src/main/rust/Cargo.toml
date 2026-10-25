@@ -1,6 +1,7 @@
-# The RFB backend's native half. The client is plain Rust and `src/bindings` is
-# Android-only, so `cargo test` and `cargo run --example rfb-probe` exercise the
-# protocol on the host.
+# The RFB backend's native half. The client is plain Rust, and on Android the
+# library is that client as a `session::Backend` (`src/backend.rs`) registered
+# through the platform crate's one JNI layer, so `cargo test` and
+# `cargo run --example rfb-probe` exercise everything but that line on the host.
 [package]
 name = "remotedesktop-rfb"
 version.workspace = true
@@ -37,12 +38,11 @@ rustls = { version = "0.23", default-features = false, features = [
     "logging",
 ] }
 
-# `src/backend.rs`, the protocol as a `session::Backend`.
-[target.'cfg(not(target_os = "android"))'.dependencies]
+# `src/backend.rs`, the protocol as a `session::Backend`: what the phone's JNI
+# layer stands in front of.
 remotedesktop-session.workspace = true
 
-# The only part of this crate that knows a phone exists: the JNI entry points
-# in `src/bindings`, and the platform crate they stand on.
+# The only part of this crate that knows a phone exists: the one line in
+# `src/lib.rs` that hands the backend to the platform crate's JNI layer.
 [target.'cfg(target_os = "android")'.dependencies]
-jni.workspace = true
 remotedesktop-platform-android.workspace = true
