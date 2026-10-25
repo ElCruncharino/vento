@@ -58,7 +58,7 @@ mod pipeline;
 mod sound;
 mod tls;
 
-pub use client::{Client, Config, Experience, Graphics, Info, Nla, Platform, compression, experience, graphics};
+pub use client::{Client, Config, Experience, Graphics, Info, Nla, Platform, TouchPhase, compression, experience, graphics};
 pub use runtime::{Credentials, Handler};
 pub use error::{Error, Result};
 pub use framebuffer::Framebuffer;

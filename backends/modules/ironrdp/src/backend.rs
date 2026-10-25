@@ -5,10 +5,11 @@
 //! backend's option handling and its info rows, used by the Linux client
 //! directly and by the phone through `platform_android`'s JNI layer.
 
-use crate::{Client, Config, Nla, Platform};
+use crate::{Client, Config, Nla, Platform, TouchPhase};
 use runtime::{Bridge, Runner};
 use api::backend::{
-    Backend, ConnectionFact, Credentials, Facts, Field, Monitor, Picture, Traffic,
+    Backend, ConnectionFact, Credentials, Facts, Field, Monitor, Picture, TOUCH_CANCEL, TOUCH_DOWN,
+    TOUCH_MOVE, TOUCH_UP, Traffic,
 };
 use api::credentials::rdp_identity;
 use api::events::{Feed, Mailbox};
@@ -112,6 +113,26 @@ impl Backend for IronRdp {
             y.clamp(0, 65535) as u16,
             // Nine bits: back and forward are buttons 8 and 9.
             (button_mask & 0x1ff) as u16,
+        );
+    }
+
+    fn supports_touch(&self) -> bool {
+        true
+    }
+
+    fn touch(&self, contact: i32, phase: i32, x: i32, y: i32) {
+        let phase = match phase {
+            TOUCH_DOWN => TouchPhase::Down,
+            TOUCH_MOVE => TouchPhase::Move,
+            TOUCH_UP => TouchPhase::Up,
+            TOUCH_CANCEL => TouchPhase::Cancel,
+            _ => return,
+        };
+        self.session.client.touch(
+            contact.clamp(0, 255) as u8,
+            phase,
+            x.clamp(0, 65535) as u16,
+            y.clamp(0, 65535) as u16,
         );
     }
 

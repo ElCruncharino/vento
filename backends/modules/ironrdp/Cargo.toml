@@ -45,6 +45,8 @@ ironrdp-pdu.workspace = true
 # The server's sound, played on the session's output (`src/sound.rs`), and
 # device redirection with no devices, without which Windows never starts sound.
 ironrdp-rdpsnd.workspace = true
+# Direct touch, over the touch input channel (`Client::touch`).
+ironrdp-rdpei.workspace = true
 ironrdp-rdpdr.workspace = true
 ironrdp-session.workspace = true
 ironrdp-svc.workspace = true
