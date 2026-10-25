@@ -26,6 +26,7 @@ pub static LIBVNC: About = About {
     order: 15,
     pinning: Pinning::ADDRESS,
     user_has_domain: false,
+    saves_identity: false,
     options: OPTIONS,
 };
 
