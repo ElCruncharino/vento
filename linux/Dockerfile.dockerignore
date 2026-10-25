@@ -26,6 +26,7 @@
 !third_party/logger/
 !third_party/mcpelauncher-linker/
 !third_party/nettle/
+!third_party/openssl/
 !third_party/pixman/
 !third_party/ryll/
 !third_party/tigervnc/
@@ -62,3 +63,4 @@ third_party/mcpelauncher-linker/bionic/tests/
 third_party/mcpelauncher-linker/core/adb/
 third_party/mcpelauncher-linker/core/libbacktrace/
 third_party/mcpelauncher-linker/core/libunwindstack/
+third_party/openssl/test/

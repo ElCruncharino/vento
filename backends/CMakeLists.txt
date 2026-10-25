@@ -4,8 +4,8 @@
 # The host build of the C backends: the session files under
 # `modules/*/cpp`, against the libraries a Linux desktop has instead
 # of the ports and vendored trees the phone needs (but for libjpeg-turbo,
-# pixman, GnuTLS and nettle, which are built from the phone's sources here
-# too), and, with `-DVENTO_PROBES=ON`,
+# pixman, GnuTLS, nettle and OpenSSL, which are built from the phone's
+# sources here too), and, with `-DVENTO_PROBES=ON`,
 # a probe in front of each that connects, prints every callback and writes the
 # framebuffer out.
 # Three of them are open clients; the fourth, RealVNC, is their proprietary
@@ -41,13 +41,14 @@
 # gives it the one `backends/platform/linux/build.rs` made (see
 # platform/linux/cmake/vento_linux.cmake).
 #
-# Needs, as development packages: openssl, zlib, FFmpeg's libswscale and
+# Needs, as development packages: zlib, FFmpeg's libswscale and
 # libavutil
 # (unless VENTO_FFMPEG_PREFIX is given; FreeRDP links the host's libavcodec
 # too where there is one, for its camera channel's MJPEG, which nothing
 # loads), plus
 # pkg-config, make and m4 (GnuTLS and nettle are built by their own
 # autotools build; nettle's assembly needs m4, and is left out without it),
+# perl with its core modules (OpenSSL's Configure),
 # nasm (libjpeg-turbo's x86 SIMD; it is C without), and a C and
 # C++ compiler CMake can find — clang for RealVNC (`CC=clang CXX=clang++ cmake ...`), whose
 # four host-only submodules are initialised with `--recursive`. GnuTLS and
@@ -146,6 +147,10 @@ set(VENTO_JPEG_INCLUDE_DIRS
 # and built by their own autotools build at build time (the file says why).
 # libvncclient and TigerVNC link them in, as they do libjpeg-turbo.
 include(platform/linux/cmake/gnutls.cmake)
+
+# OpenSSL, from the submodule the phone's port builds, configured and built
+# by its own build at build time in the same way. FreeRDP links it in.
+include(platform/linux/cmake/openssl.cmake)
 
 # Four roots under Gradle, four subdirectories here; each branches on
 # `ANDROID` and takes its host half. The vendored trees under them share

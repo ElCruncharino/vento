@@ -121,7 +121,9 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
   `vento_backend_probe`, `VENTO_SHARED`, `VENTO_PROBES`,
   `VENTO_FFMPEG_PREFIX`); `cmake/gnutls.cmake`, GnuTLS and nettle for the
   host, built at build time by their own autotools build from the tarballs
-  the Android ports use; `probe/`, the development tools — the C probes'
+  the Android ports use, and `cmake/openssl.cmake`, OpenSSL for the host,
+  built the same way by its own Configure from the submodule the Android
+  port uses; `probe/`, the development tools — the C probes'
   shared body and the two sound rigs (`--features probe`); and `tests/`, the
   decoders' fixture tests.
 

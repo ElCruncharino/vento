@@ -28,29 +28,27 @@
 # At run time the tree needs:
 # - Linux on x86_64 with glibc 2.27 or later, libstdc++ (GLIBCXX_3.4.22) and
 #   zlib (libz.so.1);
-# - OpenSSL 1.1 (libssl.so.1.1, libcrypto.so.1.1), Ubuntu 18.04's, for
-#   FreeRDP. Few current distributions ship it, and the binary does not
-#   start without it until it is built in;
 # - for the window, a Vulkan or GL driver and a Wayland or X11 session;
 # - for RealVNC, the two libraries from RealVNC's viewer (linux/claude-notes.md
 #   says how to extract them from its APK).
 # Sound (PipeWire, ALSA) and hardware decoding (libva) are loaded at run time
-# when installed. libjpeg-turbo, pixman, GnuTLS, nettle, libatomic, FFmpeg
-# and dav1d are linked in.
+# when installed. libjpeg-turbo, pixman, GnuTLS, nettle, OpenSSL, libatomic,
+# FFmpeg and dav1d are linked in.
 
 FROM ubuntu:18.04@sha256:152dc042452c496007f07ca9127571cb9c29697f42acbfad72324b2bb2e43c98 AS build
 SHELL ["/bin/bash", "-eo", "pipefail", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
 
 # From Ubuntu: GCC 8 for its libstdc++ headers (clang uses the newest GCC
-# installed), make, m4 for nettle's assembly, pkg-config, Python 3.8 for
-# Meson, Ninja 1.8.2, git for `git apply`, and the development files of
-# OpenSSL and zlib.
+# installed), make, m4 for nettle's assembly, perl for OpenSSL's Configure
+# (the base image has only perl-base, without the modules it needs),
+# pkg-config, Python 3.8 for Meson, Ninja 1.8.2, git for `git apply`, and
+# zlib's development files.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates curl gnupg xz-utils binutils make m4 g++-8 pkg-config \
+        ca-certificates curl gnupg xz-utils binutils make m4 perl g++-8 pkg-config \
         ninja-build python3.8 git \
-        zlib1g-dev libssl-dev \
+        zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # clang 18 and LLVM's binutils from apt.llvm.org, the key checked by its

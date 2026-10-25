@@ -5,8 +5,9 @@
 # toolchain, and makes `libremotedesktop_freerdp.so`: the session, with the
 # module's Rust crate linked in as the JNI layer over it, and the OpenSSL port.
 # Under `backends/CMakeLists.txt` it is a subdirectory on a Linux host and
-# makes `vento_freerdp`, the session alone, against the host's OpenSSL, with
-# libswscale for the graphics pipeline's scaling, and a probe in front of it.
+# makes `vento_freerdp`, the session alone, with the OpenSSL the host root
+# builds from the same submodule as the port, libswscale for the graphics
+# pipeline's scaling, and a probe in front of it.
 # Its H.264 is vento's decoders on both, the phone's MediaCodec and the Linux
 # client's FFmpeg, through the subsystem in h264_vento.c; and its sound is
 # vento's output and vento's AAC and Opus decoders on both, AAudio and
@@ -54,23 +55,29 @@ endmacro()
 
 if(ANDROID)
     string(APPEND CMAKE_C_FLAGS_DEBUG " -O2 -DNDEBUG")
-
-    # Answers find_package(OpenSSL) with the port in
-    # backends/platform/android/ports/openssl instead of the copy CMake ships,
-    # which would either fail against a sysroot that has no OpenSSL or find the
-    # host's. An override of the command rather than a module on
-    # CMAKE_MODULE_PATH, because winpr *replaces* that path with FreeRDP's own — and
-    # it is winpr, in the scope where a module of ours is invisible, that looks for
-    # OpenSSL a second time and fails the configure when it is not there.
-    set(SHIM_CMAKE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-    macro(find_package name)
-        if("${name}" STREQUAL "OpenSSL")
-            include("${SHIM_CMAKE_DIR}/FindOpenSSL.cmake")
-        else()
-            _find_package(${ARGV})
-        endif()
-    endmacro()
 endif()
+
+# Answers find_package(OpenSSL) with the port in
+# backends/platform/android/ports/openssl on the phone, and on the host with
+# the build of the same submodule the host root makes
+# (platform/linux/cmake/openssl.cmake), instead of the module CMake ships,
+# which would either fail against a sysroot that has no OpenSSL or find the
+# host's. An override of the command rather than a module on
+# CMAKE_MODULE_PATH, because winpr *replaces* that path with FreeRDP's own — and
+# it is winpr, in the scope where a module of ours is invisible, that looks for
+# OpenSSL a second time and fails the configure when it is not there.
+if(ANDROID)
+    set(SHIM_CMAKE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+else()
+    set(SHIM_CMAKE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/cmake/host")
+endif()
+macro(find_package name)
+    if("${name}" STREQUAL "OpenSSL")
+        include("${SHIM_CMAKE_DIR}/FindOpenSSL.cmake")
+    else()
+        _find_package(${ARGV})
+    endif()
+endmacro()
 
 # Upstream's own Android build (client/Android/cmake/ExternalFreeRDP.cmake) is
 # where this list comes from, less everything a phone has no use for. Three of
@@ -283,11 +290,11 @@ else()
     # The session alone, for whatever desktop process links it: the neutral
     # include directory is its interface, and `vento_log` is left to the
     # platform — the probe's `vento_linux`, or the library's own copy of it
-    # under VENTO_SHARED (vento_linux.cmake). OpenSSL's headers are the ones
-    # their configure found, for the same constants.
+    # under VENTO_SHARED (vento_linux.cmake). OpenSSL's headers are the
+    # host root's build's, for the same constants.
     vento_backend_library(vento_freerdp freerdp_session.c h264_vento.c rdpsnd_vento.c)
     target_include_directories(vento_freerdp SYSTEM PRIVATE ${FREERDP_INCLUDES}
-            ${OPENSSL_INCLUDE_DIR})
+            "$<TARGET_PROPERTY:openssl,INTERFACE_INCLUDE_DIRECTORIES>")
     target_link_libraries(vento_freerdp ${VENTO_BACKEND_LINK} freerdp-client freerdp winpr)
 
     vento_backend_probe(vento_freerdp freerdp_probe.c)
@@ -301,7 +308,8 @@ else()
         target_include_directories(vento_freerdp_test PRIVATE "${_VENTO_BACKENDS}/api/include"
                 "${CMAKE_CURRENT_SOURCE_DIR}/include")
         target_include_directories(vento_freerdp_test SYSTEM PRIVATE ${FREERDP_INCLUDES}
-                ${OPENSSL_INCLUDE_DIR} "${THIRD_PARTY}/freerdp/libfreerdp/codec")
+                "$<TARGET_PROPERTY:openssl,INTERFACE_INCLUDE_DIRECTORIES>"
+                "${THIRD_PARTY}/freerdp/libfreerdp/codec")
         target_link_libraries(vento_freerdp_test PRIVATE freerdp-client freerdp winpr vento_linux)
         target_link_options(vento_freerdp_test PRIVATE
                 "LINKER:--wrap=freerdp_input_send_keyboard_event"

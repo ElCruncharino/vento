@@ -35,6 +35,8 @@ Nothing runs in parallel: every step needs a clean tree to commit from.
 1. libjpeg-turbo (libvnc, tigervnc)
 2. pixman (tigervnc)
 3. openssl (freerdp), via `backends/platform/android/ports/openssl/gen.sh`
+   (the host build's `backends/platform/linux/cmake/openssl.cmake` has
+   nothing to regenerate)
 4. nettle, then gnutls (libvnc, tigervnc), via the tarball pins and
    `backends/platform/android/ports/{nettle,gnutls}/gen.sh`
 5. libvncserver, tigervnc, freerdp, ironrdp, hbb_common, ryll
@@ -332,9 +334,10 @@ Native modules:
 
 The C backends again on the host, which is the one build that then runs — a
 probe per backend, against the test desktops under `scripts/` (README,
-Development). The three open ones build against the system's OpenSSL and
-zlib, and the phone's other libraries (GnuTLS and nettle from the same
-tarballs, by their own build rather than the ports'); the
+Development). The three open ones build against the system's zlib, and
+the phone's other libraries (GnuTLS and nettle from the same tarballs and
+OpenSSL from the same submodule, by their own builds rather than the
+ports'); the
 RealVNC one builds under clang only and runs their pinned library out of
 the viewer APK, so a change to `realvnc/.../Library.java`'s pins, to
 `realvnc_traffic.h`'s walk or to the four host-only submodules is proven
@@ -410,7 +413,13 @@ One commit per upstream, after review, by the lead:
   API is reached. The checkout's origin is freedesktop's gitlab while
   `.gitmodules` names the X11Libre mirror; they match.
 - **openssl** 3.5.8, LTS to 2030. No patches. Moving to 4.x needs `no-ech`,
-  and the engine references in `gen.sh` and the port's CMakeLists go.
+  and the engine references in `gen.sh` and the port's CMakeLists go. The
+  host build (`platform/linux/cmake/openssl.cmake`) runs Configure with the
+  port's options without `no-legacy`, the assembly on as there, plus
+  `no-autoload-config` and OPENSSLDIR `/etc/ssl`, in a directory named after
+  the version, so a bump is a fresh build there; an option the new release
+  renames or drops shows up in its configure log (under that directory's
+  `src/*-stamp/`).
 - **nettle** 4.0, **gnutls** 3.8.13 (the release that added nettle-4
   support; newest in the 3.8 line). nettle 4.1 warns of further API changes.
   `MINI_GMP_ENABLE_FLOAT=0` is an answer configure puts in CFLAGS, so the
