@@ -53,10 +53,14 @@ pub fn audio(title: &str, output: AudioOutput) -> Arc<Audio> {
 
 /// Every backend this binary has, in the picker's order. The C backends are
 /// always among them, since their libraries are opened only when first
-/// asked for: where one cannot be loaded (RealVNC's where `build.rs` had no
-/// clang to build it with, say), its version says it is not available and a
-/// session on it fails to start with the same sentence.
+/// asked for: where one cannot be loaded, its version says it is not
+/// available and why, and a session on it fails to start with the same
+/// sentence. Where `build.rs` had no clang to build RealVNC's library with,
+/// the reason is that, rather than a file the loader did not find.
 pub fn all() -> Vec<&'static Kind> {
+    if env!("VENTO_REALVNC_BUILT") == "0" {
+        remotedesktop_realvnc::not_built();
+    }
     vec![
         &remotedesktop_rfb::backend::KIND,
         &remotedesktop_libvnc::KIND,

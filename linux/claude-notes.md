@@ -1604,8 +1604,9 @@ on `PATH`. The crate opens it as the other backends' are opened (*Backend
 libraries* under *Installing*), through the rpath (`lib/` beside the
 binary), the first time a session or `--list` asks. Without clang the build
 says so in a note, the backend is still listed, `--list` shows it as `not
-available: …` with the reason, and a session on it fails to start with that
-sentence. The next `cargo build` after `PATH` changes
+available: libvento_realvnc.so was not built: …` with the reason, and a
+session on it fails to start with that sentence. Where the library was built
+but cannot be loaded, the reason is the loader's, as for the other backends. The next `cargo build` after `PATH` changes
 (clang installed, say) looks again, and when the answer differs the C tree is
 configured afresh with the other compilers, so nothing has to be cleaned by
 hand. To use it, take

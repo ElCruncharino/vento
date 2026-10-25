@@ -108,7 +108,12 @@ fn main() {
         assert!(path.is_file(), "the C build did not produce {}", path.display());
     }
     beside_the_binary(&lib, &out);
-    if lib.join("libvento_realvnc.so").is_file() {
+    // Whether RealVNC's library was made, for the binary
+    // (`backends::all`), which says it was not built where it was not,
+    // rather than that the loader could not find it.
+    let realvnc = lib.join("libvento_realvnc.so").is_file();
+    println!("cargo:rustc-env=VENTO_REALVNC_BUILT={}", u8::from(realvnc));
+    if realvnc {
         println!("cargo:warning=RealVNC backend: in (built with clang)");
     } else {
         println!("cargo:warning=RealVNC backend: not available (its library needs clang on the path)");

@@ -76,6 +76,15 @@ impl<T> Library<T> {
         self.get().expect("a session is started only over its opened library")
     }
 
+    /// Marks the library as one the client's build did not make, for `why`,
+    /// unless it has been opened already: every later call is told `why`
+    /// rather than the loader's "cannot open shared object file", which would
+    /// not say how to get it. For a client whose build knows that it made no
+    /// such file.
+    pub fn not_built(&self, why: String) {
+        let _ = self.loaded.set(Err(why));
+    }
+
     /// A backend's `version` over this library: its own version, as `read`
     /// reads it, or "not available: <why>".
     pub fn version(&self, read: impl FnOnce(&T) -> String) -> String {
@@ -185,6 +194,19 @@ mod tests {
         let version = MISSING.version(|_| unreachable!());
         assert!(version.starts_with("not available: libvento_nothing.so: "), "{version}");
         assert_eq!(MISSING.get().unwrap_err(), version.trim_start_matches("not available: "));
+    }
+
+    /// A library the build did not make says why, and is never opened.
+    #[test]
+    fn a_library_not_built_says_why() {
+        static ABSENT: Library<()> = Library::new("libc.so.6", "vento/nothing.h", Scope::Local, nothing);
+        ABSENT.not_built("built only with clang".to_string());
+        assert_eq!(ABSENT.version(|_| unreachable!()), "not available: built only with clang");
+        // Once opened, it is what was opened.
+        static OPENED: Library<()> = Library::new("libc.so.6", "vento/nothing.h", Scope::Local, nothing);
+        assert!(OPENED.get().is_ok());
+        OPENED.not_built("built only with clang".to_string());
+        assert!(OPENED.get().is_ok());
     }
 
     /// A library that opens but lacks a function of the header is not the

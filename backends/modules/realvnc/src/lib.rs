@@ -10,8 +10,9 @@
 //! The library, `libvento_realvnc.so`, is opened when it is first needed
 //! rather than linked: the client's build makes it only where clang is on
 //! the path, and decides that after this crate is built, so the backend is
-//! always listed and says why it cannot start where the library is not
-//! there ([`library`]). It is found by name, through the shared loader of
+//! always listed and says why it cannot start where the library cannot be
+//! opened ([`library`]), or that it was not built where the client says so
+//! ([`not_built`]). It is found by name, through the shared loader of
 //! the C backends' libraries ([`api::c::library`]) — through the binary's
 //! rpath, `$ORIGIN/lib`, the `lib/` directory beside the binary where the
 //! client's build puts every `libvento_*.so`, or `LD_LIBRARY_PATH` — and once
@@ -53,10 +54,18 @@ static LIBRARY: Library<ffi::Library> =
     Library::new("libvento_realvnc.so", "vento/realvnc.h", Scope::Global, ffi::Library::from_library);
 
 /// The library, or why it could not be opened.
-fn library() -> Result<&'static ffi::Library, String> {
-    LIBRARY
-        .get()
-        .map_err(|why| format!("{why} (the Linux client's build makes it only with clang on the path)"))
+fn library() -> Result<&'static ffi::Library, &'static str> {
+    LIBRARY.get()
+}
+
+/// Said by a client whose build did not make the library, before anything
+/// asks for it: the backend is then not available for that reason, rather
+/// than for the file the loader could not find.
+pub fn not_built() {
+    LIBRARY.not_built(
+        "libvento_realvnc.so was not built: the Linux client's build makes it only with clang on the path"
+            .to_string(),
+    );
 }
 
 /// The library a session was started over. A [`CSession`] of this backend
@@ -67,10 +76,7 @@ fn loaded() -> &'static ffi::Library {
 
 pub static KIND: Kind = Kind {
     about: &api::catalog::REALVNC,
-    version: || match library() {
-        Ok(library) => unsafe { api::c::string(library.vento_realvnc_version()) },
-        Err(why) => format!("not available: {why}"),
-    },
+    version: || LIBRARY.version(|library| unsafe { api::c::string(library.vento_realvnc_version()) }),
     create,
     forget: Some(forget),
 };
@@ -313,5 +319,16 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "other::5900/extra=0201\n");
         assert_eq!(forget(&dirs, "127.0.0.1:5901"), Ok(Vec::new()));
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Where the client's build made no library, the backend says so and
+    /// why, and a session's start says the same.
+    #[test]
+    fn a_library_not_built_says_clang() {
+        not_built();
+        let version = (KIND.version)();
+        assert!(version.starts_with("not available: libvento_realvnc.so was not built: "), "{version}");
+        assert!(version.ends_with("only with clang on the path"), "{version}");
+        assert_eq!(library().err(), version.strip_prefix("not available: "));
     }
 }
