@@ -7,46 +7,18 @@ import android.content.Context;
 
 import net.pgaskin.remotedesktop.backend.Backend;
 import net.pgaskin.remotedesktop.backend.BackendOption;
-import net.pgaskin.remotedesktop.backend.BackendOption.Choice;
-import net.pgaskin.remotedesktop.backend.BackendOption.Scope;
 import net.pgaskin.remotedesktop.backend.BackendProvider;
 
 import java.util.List;
 import java.util.Map;
 
 /**
- * This module's entry in a build's list of backends, and what the TigerVNC
- * backend can be told.
- *
- * <p>The option list is the libvncclient one with a different meaning under the
- * encoding row: TigerVNC's client always offers every encoding it can decode
- * and names one of them preferred, so this is a hint rather than a restriction
- * and there is no "automatic" to choose — the server chooses either way.
- *
- * <p>Where there <em>is</em> an automatic to offer is the picture quality and
- * the colour depth, and only here: this is the one client in the repository
- * that measures its own throughput, so it is the one that can move a setting on
- * somebody's behalf. Both rules are the viewer's own, thresholds included.
+ * This module's entry in a build's list of backends. What the TigerVNC backend
+ * is called and what it can be told are the catalog's: {@link
+ * TigerVncCatalog}, generated from {@code backends/session} at build time,
+ * holds the words and the option keys.
  */
 public final class TigerVncProvider implements BackendProvider {
-
-    public static final String ENCODING = "Encoding";
-    public static final String COMPRESSION = "Compression";
-    public static final String QUALITY = "Quality";
-    /** The same key, values and words the RealVNC backend's colour row has. */
-    public static final String COLOUR = "ColorLevel";
-    public static final String VIEW_ONLY = "ViewOnly";
-    public static final String SHARED = "Shared";
-    /** The same key, words and default the libvncclient backend's row has. */
-    public static final String ANONYMOUS_TLS = "AnonymousTLS";
-    public static final String BELL = "AcceptBell";
-    public static final String H264 = "H264";
-    /**
-     * Their viewer's own parameter. QEMU's audio extension, which only servers
-     * that speak it offer — QEMU's own, and the ones built the same way — so
-     * against anything else this row changes nothing at all.
-     */
-    public static final String AUDIO = "Audio";
 
     /** RFB encoding numbers, which is what this client's preference is. */
     private static final int ENCODING_RAW = 0;
@@ -64,94 +36,34 @@ public final class TigerVncProvider implements BackendProvider {
      */
     static final int LEVEL_AUTO = -2;
 
-    static final List<BackendOption> OPTIONS = List.of(
-            // ---- the picture and the sound: a connection's, defaulting to the backend's ----
-            BackendOption.choice(ENCODING, "Encoding",
-                    "Preferred image encoding. The server may still choose to use a different one.",
-                    "tight", Scope.LAYERED, true,
-                    new Choice("tight", "Tight"),
-                    new Choice("h264", "H.264", null, H264),
-                    new Choice("zrle", "ZRLE"),
-                    new Choice("hextile", "Hextile"),
-                    new Choice("rre", "RRE"),
-                    new Choice("raw", "Raw (uncompressed)")),
-            BackendOption.choice(COMPRESSION, "Compression",
-                    "Image compression level, where supported by the encoding.",
-                    "auto", Scope.LAYERED, true,
-                    new Choice("auto", "Automatic"),
-                    new Choice("1", "1 (fastest)"),
-                    new Choice("3", "3"),
-                    new Choice("6", "6 (balanced)"),
-                    new Choice("9", "9 (smallest)")),
-            BackendOption.choice(QUALITY, "Picture quality",
-                    "JPEG image quality, for Tight encoding.",
-                    "lossless", Scope.LAYERED, true,
-                    new Choice("auto", "Automatic"),
-                    new Choice("lossless", "Lossless"),
-                    new Choice("9", "9 (best)"),
-                    new Choice("7", "7"),
-                    new Choice("5", "5 (balanced)"),
-                    new Choice("3", "3"),
-                    new Choice("0", "0 (smallest)")),
-            BackendOption.choice(COLOUR, "Colour depth",
-                    "Pixel color depth.",
-                    "full", Scope.LAYERED, true,
-                    new Choice("auto", "Automatic"),
-                    new Choice("full", "Full colour (24-bit)"),
-                    new Choice("rgb222", "6-bit (rgb222)"),
-                    new Choice("rgb111", "3-bit (rgb111)")),
-            BackendOption.bool(AUDIO, "Sound",
-                    "Play audio sent by the server, if it offers any.",
-                    true, Scope.LAYERED, false),
-
-            // ---- per connection ---------------------------------------------
-            BackendOption.bool(VIEW_ONLY, "View only",
-                    "Do not send input or clipboard events.",
-                    false, Scope.CONNECTION, true),
-            BackendOption.bool(SHARED, "Shared",
-                    "Do not ask the server to disconnect other clients.",
-                    true, Scope.CONNECTION, false),
-            BackendOption.bool(ANONYMOUS_TLS, "Unverified encryption",
-                    "Ask before using encryption without a peer certificate.",
-                    true, Scope.CONNECTION, false),
-
-            // ---- per backend -------------------------------------------------
-            BackendOption.bool(H264, "Offer H.264 encoding",
-                    "Allow the server to use H.264 encoding, with local hardware-accelerated decoding.",
-                    false, Scope.GLOBAL, true),
-            BackendOption.bool(BELL, "Bell",
-                    "Vibrate when the remote servers rings the bell.",
-                    true, Scope.GLOBAL, false));
-
     @Override
     public String id() {
-        return "tigervnc";
+        return TigerVncCatalog.ID;
     }
 
     @Override
     public String name() {
-        return "VNC (TigerVNC)";
+        return TigerVncCatalog.NAME;
     }
 
     @Override
     public String shortName() {
-        return "TigerVNC";
+        return TigerVncCatalog.SHORT_NAME;
     }
 
     @Override
     public String description() {
-        return "Fastest implementation, dropping the fewest frames, but using 2-5x the CPU usage. This the only VNC backend which supports H.264 encoding, which is the most bandwidth-efficient for large screen updates, where supported by the server. It also supports QEMU audio.";
+        return TigerVncCatalog.DESCRIPTION;
     }
 
-    /** After libvncclient, which came first. */
     @Override
     public int order() {
-        return 17;
+        return TigerVncCatalog.ORDER;
     }
 
     @Override
     public List<BackendOption> options() {
-        return OPTIONS;
+        return TigerVncCatalog.OPTIONS;
     }
 
     @Override

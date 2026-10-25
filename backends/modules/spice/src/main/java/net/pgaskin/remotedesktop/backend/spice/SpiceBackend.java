@@ -93,7 +93,7 @@ public final class SpiceBackend implements Backend, SpiceNative.Callbacks {
         // one.
         this.password = password == null || password.isEmpty() ? null : password;
         this.options = new ConcurrentHashMap<>();
-        for (var option : SpiceProvider.OPTIONS) {
+        for (var option : SpiceCatalog.OPTIONS) {
             options.put(option.key(), option.defaultValue());
         }
         if (extraOptions != null) {
@@ -121,8 +121,8 @@ public final class SpiceBackend implements Backend, SpiceNative.Callbacks {
         state = State.CONNECTING;
         fireState(State.CONNECTING, "Connecting to " + address);
         final long h = SpiceNative.nativeCreate(this, address, tls(), password,
-                options.get(SpiceProvider.COMPRESSION),
-                bool(SpiceProvider.VIEW_ONLY),
+                options.get(SpiceCatalog.COMPRESSION),
+                bool(SpiceCatalog.VIEW_ONLY),
                 CONNECT_TIMEOUT_MS);
         if (h == 0) {
             closed("Could not start the connection");
@@ -234,7 +234,7 @@ public final class SpiceBackend implements Backend, SpiceNative.Callbacks {
 
     @Override
     public boolean viewOnly() {
-        return bool(SpiceProvider.VIEW_ONLY);
+        return bool(SpiceCatalog.VIEW_ONLY);
     }
 
     @Override
@@ -245,9 +245,9 @@ public final class SpiceBackend implements Backend, SpiceNative.Callbacks {
             return;
         }
         switch (key) {
-            case SpiceProvider.VIEW_ONLY ->
+            case SpiceCatalog.VIEW_ONLY ->
                     SpiceNative.nativeViewOnly(h, Boolean.parseBoolean(value));
-            case SpiceProvider.COMPRESSION -> SpiceNative.nativeSetCompression(h, value);
+            case SpiceCatalog.COMPRESSION -> SpiceNative.nativeSetCompression(h, value);
             default -> {
             }
         }
@@ -500,7 +500,7 @@ public final class SpiceBackend implements Backend, SpiceNative.Callbacks {
     // ---- plumbing ----------------------------------------------------------
 
     private boolean tls() {
-        return SpiceProvider.TLS.equals(options.get(SpiceProvider.SECURITY));
+        return SpiceProvider.TLS.equals(options.get(SpiceCatalog.SECURITY));
     }
 
     private boolean bool(String key) {

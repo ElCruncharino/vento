@@ -66,6 +66,9 @@ androidComponents {
             outputDir.set(layout.buildDirectory.dir("generated/rustNativeLibs/${variant.name}"))
         }
         variant.sources.jniLibs?.addGeneratedSourceDirectory(cargoBuild) { it.outputDir }
+
+        // `SpiceCatalog`, what the catalog says this backend is: see :backends.
+        seam.generateCatalog(project, variant, 'spice', 'SpiceCatalog')
     }
 }
 

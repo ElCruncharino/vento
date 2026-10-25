@@ -57,6 +57,9 @@ androidComponents {
             outputDir.set(layout.buildDirectory.dir("generated/rustNativeLibs/${variant.name}"))
         }
         variant.sources.jniLibs?.addGeneratedSourceDirectory(cargoBuild) { it.outputDir }
+
+        // `RfbCatalog`, what the catalog says this backend is: see :backends.
+        seam.generateCatalog(project, variant, 'rfb', 'RfbCatalog')
     }
 }
 

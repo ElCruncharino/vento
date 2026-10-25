@@ -91,7 +91,7 @@ public final class LibVncBackend implements Backend, LibVncNative.Callbacks {
         // one.
         this.password = password == null || password.isEmpty() ? null : password;
         this.options = new ConcurrentHashMap<>();
-        for (var option : LibVncProvider.OPTIONS) {
+        for (var option : LibVncCatalog.OPTIONS) {
             options.put(option.key(), option.defaultValue());
         }
         if (extraOptions != null) {
@@ -119,12 +119,12 @@ public final class LibVncBackend implements Backend, LibVncNative.Callbacks {
         state = State.CONNECTING;
         fireState(State.CONNECTING, "Connecting to " + address);
         final long h = LibVncNative.nativeCreate(this, address, userName, password,
-                bool(LibVncProvider.SHARED),
-                bool(LibVncProvider.ANONYMOUS_TLS),
-                LibVncProvider.encodings(options.get(LibVncProvider.ENCODING)),
-                LibVncProvider.level(options.get(LibVncProvider.COMPRESSION)),
-                LibVncProvider.level(options.get(LibVncProvider.QUALITY)),
-                LibVncProvider.colorLevel(options.get(LibVncProvider.COLOUR)),
+                bool(LibVncCatalog.SHARED),
+                bool(LibVncCatalog.ANONYMOUS_TLS),
+                LibVncProvider.encodings(options.get(LibVncCatalog.ENCODING)),
+                LibVncProvider.level(options.get(LibVncCatalog.COMPRESSION)),
+                LibVncProvider.level(options.get(LibVncCatalog.QUALITY)),
+                LibVncProvider.colorLevel(options.get(LibVncCatalog.COLOR_LEVEL)),
                 CONNECT_TIMEOUT_MS);
         if (h == 0) {
             closed("Could not start the connection");
@@ -133,7 +133,7 @@ public final class LibVncBackend implements Backend, LibVncNative.Callbacks {
         synchronized (pixels) {
             handle = h;
         }
-        LibVncNative.nativeViewOnly(h, bool(LibVncProvider.VIEW_ONLY));
+        LibVncNative.nativeViewOnly(h, bool(LibVncCatalog.VIEW_ONLY));
     }
 
     @Override
@@ -238,7 +238,7 @@ public final class LibVncBackend implements Backend, LibVncNative.Callbacks {
 
     @Override
     public boolean viewOnly() {
-        return bool(LibVncProvider.VIEW_ONLY);
+        return bool(LibVncCatalog.VIEW_ONLY);
     }
 
     @Override
@@ -251,13 +251,13 @@ public final class LibVncBackend implements Backend, LibVncNative.Callbacks {
             return;
         }
         switch (key) {
-            case LibVncProvider.VIEW_ONLY ->
+            case LibVncCatalog.VIEW_ONLY ->
                     LibVncNative.nativeViewOnly(h, Boolean.parseBoolean(value));
-            case LibVncProvider.ENCODING, LibVncProvider.COMPRESSION, LibVncProvider.QUALITY ->
+            case LibVncCatalog.ENCODING, LibVncCatalog.COMPRESSION, LibVncCatalog.QUALITY ->
                     LibVncNative.nativeSetEncodings(h,
-                            LibVncProvider.encodings(options.get(LibVncProvider.ENCODING)),
-                            LibVncProvider.level(options.get(LibVncProvider.COMPRESSION)),
-                            LibVncProvider.level(options.get(LibVncProvider.QUALITY)));
+                            LibVncProvider.encodings(options.get(LibVncCatalog.ENCODING)),
+                            LibVncProvider.level(options.get(LibVncCatalog.COMPRESSION)),
+                            LibVncProvider.level(options.get(LibVncCatalog.QUALITY)));
             default -> {
                 // Shared is decided at ClientInit and the clipboard switches are
                 // read where the clipboard is handled; neither is a call.
@@ -417,7 +417,7 @@ public final class LibVncBackend implements Backend, LibVncNative.Callbacks {
 
     @Override
     public void onBell() {
-        if (!bool(LibVncProvider.BELL)) {
+        if (!bool(LibVncCatalog.ACCEPT_BELL)) {
             return;
         }
         main.post(() -> {

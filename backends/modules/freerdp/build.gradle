@@ -74,6 +74,13 @@ tasks.named('preBuild') {
     dependsOn patchCheck
 }
 
+// `FreeRdpCatalog`, what the catalog says this backend is: see :backends.
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        project(':backends').generateCatalog(project, variant, 'freerdp', 'FreeRdpCatalog')
+    }
+}
+
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(21)
