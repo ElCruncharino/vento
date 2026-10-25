@@ -159,6 +159,118 @@ pub trait Decoder {
     fn take_key_frame_request(&mut self) -> bool {
         false
     }
+
+    /// [`decode`](Decoder::decode), except that a picture the decoder can
+    /// leave where the hardware decoded it is left there and handed back
+    /// rather than converted into `out`: what a caller that draws on the
+    /// same GPU asks for, which then has no picture in `out` to read and
+    /// no conversion to pay for. Every other picture — software's, one in a
+    /// format the GPU picture cannot describe, the first after a fallback —
+    /// is converted as [`decode`](Decoder::decode) converts it, so a caller
+    /// has to take either. The default is a decoder that never can.
+    fn decode_picture(
+        &mut self,
+        data: &[u8],
+        out: &mut [u32],
+        width: usize,
+        height: usize,
+        changed: &mut Changes,
+    ) -> Decoded {
+        if self.decode(data, out, width, height, changed) {
+            Decoded::Converted
+        } else {
+            Decoded::Nothing
+        }
+    }
+}
+
+/// What [`Decoder::decode_picture`] made of a frame.
+pub enum Decoded {
+    /// No picture: the decoder is waiting for more, or refused the frame.
+    Nothing,
+    /// A picture, converted into the caller's buffer as
+    /// [`Decoder::decode`] converts one.
+    Converted,
+    /// A picture left on the GPU. The caller's buffer was not touched.
+    Gpu(std::sync::Arc<dyn GpuPicture>),
+}
+
+/// A decoded picture left in the memory the hardware decoded it into, for
+/// whoever draws on the same GPU to import and convert there.
+///
+/// Holding one holds the surface: the decoder will not decode into it again
+/// until every holder has let go, so a holder lets go once the GPU has
+/// finished reading it. The decoder makes more surfaces as it needs them
+/// rather than waiting for these, so holding one or two costs memory and
+/// never a picture.
+pub trait GpuPicture: Send + Sync {
+    /// The visible picture, which is smaller than the surface it is in
+    /// where the codec works in blocks (1080 rows of a 1088-row surface).
+    fn width(&self) -> usize;
+    fn height(&self) -> usize;
+
+    /// Which of the decoder's surfaces this is: the same answer is the same
+    /// memory, so an importer may keep what it made of a surface and use it
+    /// again for the next picture decoded into it rather than importing it
+    /// again. The first number changes whenever the surfaces do (a new
+    /// decoder, a new size), and is never used twice in a process.
+    fn surface(&self) -> (u64, u32);
+
+    /// BT.709 rather than BT.601, and full range rather than limited, as
+    /// [`convert::Frame`] says them: the picture's own, which may change
+    /// with the stream while the surfaces stay.
+    fn colour(&self) -> (bool, bool);
+
+    /// The surface as DMA-BUFs, one a plane, each descriptor a new one of
+    /// the caller's own.
+    #[cfg(unix)]
+    fn export(&self) -> Result<Dmabuf, String>;
+
+    /// The picture converted on the processor into `out`, `width * height`
+    /// words as [`Decoder::decode`] writes them (the part both sizes have,
+    /// every row of it): for whoever needs it in memory after all, which
+    /// costs the readback this picture was left on the GPU to save.
+    fn read(&self, out: &mut [u32], width: usize, height: usize) -> bool;
+}
+
+/// A [`GpuPicture`]'s surface as DMA-BUFs, with what its numbers mean.
+#[cfg(unix)]
+pub struct Dmabuf {
+    /// Y, then U and V interleaved (NV12, P010): a single-plane buffer each,
+    /// in the order they are read.
+    pub layers: Vec<DmabufLayer>,
+    /// BT.709 rather than BT.601, and full range rather than limited, as
+    /// [`convert::Frame`] says them.
+    pub bt709: bool,
+    pub full_range: bool,
+}
+
+/// One plane of a [`Dmabuf`]: its descriptor, its DRM format and layout
+/// modifier, and where its samples are in it.
+#[cfg(unix)]
+pub struct DmabufLayer {
+    pub fd: std::os::fd::OwnedFd,
+    /// A DRM fourcc: `R8  ` and `GR88` for NV12, `R16 ` and `GR32` (GR1616)
+    /// for P010.
+    pub fourcc: u32,
+    pub modifier: u64,
+    pub offset: u32,
+    pub pitch: u32,
+    /// The plane's size in samples, which is the surface's and not the
+    /// picture's.
+    pub width: u32,
+    pub height: u32,
+}
+
+/// The DRM fourccs a [`DmabufLayer`] can be in.
+pub mod fourcc {
+    const fn code(c: &[u8; 4]) -> u32 {
+        u32::from_le_bytes(*c)
+    }
+    pub const R8: u32 = code(b"R8  ");
+    pub const GR88: u32 = code(b"GR88");
+    pub const R16: u32 = code(b"R16 ");
+    pub const GR1616: u32 = code(b"GR32");
 }
 
 /// What this platform can decode, and a decoder when asked for one.
@@ -202,6 +314,16 @@ pub trait Decoders: Send + Sync {
     /// every frame.
     fn hardware(&self) -> Hardware {
         Hardware::Off
+    }
+
+    /// Whether whoever draws the session can take pictures on the GPU
+    /// ([`Decoder::decode_picture`]), which it says by setting it where the
+    /// platform's decoders can be told. A caller that can hand such a picture
+    /// on asks this every frame, as it asks [`hardware`](Decoders::hardware):
+    /// it can change under a running session, to off, where an import failed.
+    /// No by default.
+    fn gpu_pictures(&self) -> bool {
+        false
     }
 }
 
