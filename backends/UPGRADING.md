@@ -130,11 +130,11 @@ under the host locale (`export LC_ALL=C`).
 
 ## Adapting the shim
 
-- A C backend's shim is one file under `src/main/cpp`, `<name>_session.c`
+- A C backend's shim is one file in its module's `cpp/`, `<name>_session.c`
   (`.cxx` for TigerVNC), which drives the library against the neutral C API
   in `backends/common/include/vento/` and names no platform; what it offers
   is declared in the backend's own header beside it,
-  `include/vento/<name>.h`. Above it is the crate in `src/main/rust`, which
+  `include/vento/<name>.h`. Above it is the crate at the module's root, which
   reads that header into Rust (its `build.rs`, with bindgen), fills the
   backend's `vento_<name>_config` from the options and words its rows; on the
   phone it is linked into the module's library as a static library
@@ -218,14 +218,13 @@ is a module under `backends/modules/<name>/`, and each layer of it is one
 line or one file somewhere that already has seven:
 
 - **The protocol.** A Rust crate at the module's root (`Cargo.toml`, `src/`,
-  `examples/`; `crate-type = ["lib", "cdylib"]`), or a C shim in
-  `src/main/cpp` over `vento/backend.h` with its config in its own header,
-  `src/main/cpp/include/vento/<name>.h` (on the include path of the module's
-  targets through `vento_android_library`), and a small crate in
-  `src/main/rust` beside it (`remotedesktop-session` with the `c` feature;
-  `session::c::start` and a `Behaviour` do the rest) whose `build.rs` reads
-  the header with bindgen, its own items only, over `session::c::ffi` —
-  libvnc's, copied.
+  `examples/`; `crate-type = ["lib", "cdylib"]`), or a C shim in `cpp/` over
+  `vento/backend.h` with its config in its own header,
+  `cpp/include/vento/<name>.h` (on the include path of the module's targets
+  through `vento_android_library`), and a small crate at the module's root
+  (`remotedesktop-session` with the `c` feature; `session::c::start` and a
+  `Behaviour` do the rest) whose `build.rs` reads the header with bindgen,
+  its own items only, over `session::c::ffi` — libvnc's, copied.
 - **The catalog.** `modules/<name>/catalog.rs`: the backend's `About` (its
   pinning and whether its user name carries a domain are data there, which
   the shared rules read) and its `OPTIONS` table, with their tests; one
@@ -322,7 +321,7 @@ One commit per upstream, after review, by the lead:
   `main` is the 3.2 line; `3.1.x` is ESR. arm64 SIMD is Neon intrinsics;
   x86 SIMD stays off (needs NASM).
 - **pixman** 0.46.4. No patches. Hand-written source list in
-  `backends/modules/tigervnc/src/main/cpp/cmake/pixman.cmake`; only the region
+  `backends/modules/tigervnc/cpp/cmake/pixman.cmake`; only the region
   API is reached. The checkout's origin is freedesktop's gitlab while
   `.gitmodules` names the X11Libre mirror; they match.
 - **openssl** 3.5.8, LTS to 2030. No patches. Moving to 4.x needs `no-ech`,

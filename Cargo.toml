@@ -28,9 +28,9 @@ members = [
     "backends/modules/ironrdp",
     "backends/modules/spice",
     "backends/modules/rustdesk",
-    "backends/modules/libvnc/src/main/rust",
-    "backends/modules/tigervnc/src/main/rust",
-    "backends/modules/freerdp/src/main/rust",
+    "backends/modules/libvnc",
+    "backends/modules/tigervnc",
+    "backends/modules/freerdp",
 ]
 exclude = ["third_party"]
 

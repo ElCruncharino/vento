@@ -6,9 +6,9 @@ plugins {
 }
 
 // `Backend` implemented on somebody else's viewer core. A protocol module like
-// the others: `:realvnc-jni` holds the declarations, and what is here is
-// ours — the session's lifecycle, the prompts, the options, and one small
-// library that reads a counter their exported functions do not offer.
+// the others: `:realvnc-jni` holds the declarations, and what is here is ours —
+// the session's lifecycle, the prompts, the options, and one small library that
+// reads a counter their exported functions do not offer.
 //
 // Nothing of RealVNC's is in this or in anything built from it. It is the one
 // backend that ships in an add-on rather than in the app, because everything
@@ -40,7 +40,7 @@ android {
 
     externalNativeBuild {
         cmake {
-            path 'src/main/cpp/CMakeLists.txt'
+            path 'cpp/CMakeLists.txt'
             version = '3.30.5'
         }
     }
@@ -48,6 +48,15 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_21
         targetCompatibility JavaVersion.VERSION_21
+    }
+
+    // Not AGP's `src/main/`, as in every module here: the Java is in `java/`,
+    // the files themselves with no package directories over them (javac goes
+    // by the `package` line), and the provider's registration is in
+    // `resources/`; the C is `cpp/`, above.
+    sourceSets.main {
+        java.srcDirs = ['java']
+        resources.srcDirs = ['resources']
     }
 
     publishing {
