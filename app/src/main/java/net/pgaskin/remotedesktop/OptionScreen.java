@@ -13,6 +13,7 @@ import androidx.preference.Preference;
 import androidx.preference.PreferenceDataStore;
 import androidx.preference.PreferenceGroup;
 import androidx.preference.SwitchPreferenceCompat;
+import androidx.preference.TwoStatePreference;
 
 import net.pgaskin.remotedesktop.backend.BackendOption;
 import net.pgaskin.remotedesktop.control.input.Config;
@@ -102,6 +103,14 @@ final class OptionScreen {
             return prefs.getString(key, defValue);
         }
 
+        /**
+         * Back to unanswered, whatever is building: for a value the screen
+         * itself takes back ({@link #requirements}), which is nobody's answer.
+         */
+        void remove(String key) {
+            prefs.edit().remove(key).apply();
+        }
+
         @Override
         public void putBoolean(String key, boolean value) {
             if (asStrings) {
@@ -169,6 +178,91 @@ final class OptionScreen {
             group.addPreference(p);
         }
         gates(group, options);
+        requirements(group, options);
+    }
+
+    /**
+     * The choices that need a switch, offered only while it is on, and one
+     * already chosen taken back when it goes off — {@link
+     * BackendOption#settle}, the rule the connection panel keeps too. Taken
+     * back to unanswered rather than to a stored fallback: the fallback is
+     * nobody's choice, and an unanswered row is one a later default reaches.
+     *
+     * <p>The switch may be in another group of the same screen — a backend's
+     * own switches are above its connection defaults — so it is looked for
+     * from the top. One that is not on the screen at all counts as on, as the
+     * panel counts it: rewriting a choice for a reason nobody can see is worse
+     * than offering one that the switch elsewhere may yet allow.
+     */
+    private static void requirements(PreferenceGroup group, List<BackendOption> options) {
+        PreferenceGroup root = group;
+        while (root.getParent() != null) {
+            root = root.getParent();
+        }
+        final PreferenceGroup screen = root;
+        final Map<String, List<BackendOption>> bySwitch = new LinkedHashMap<>();
+        for (BackendOption o : options) {
+            if (!(group.findPreference(o.key()) instanceof ListPreference)) {
+                continue;
+            }
+            for (BackendOption.Choice c : o.choices()) {
+                if (c.requires() != null) {
+                    final List<BackendOption> dependents =
+                            bySwitch.computeIfAbsent(c.requires(), k -> new ArrayList<>());
+                    if (!dependents.contains(o)) {
+                        dependents.add(o);
+                    }
+                }
+            }
+        }
+        for (Map.Entry<String, List<BackendOption>> e : bySwitch.entrySet()) {
+            final List<BackendOption> dependents = e.getValue();
+            offer(group, dependents, key -> on(screen, key));
+            final Preference control = screen.findPreference(e.getKey());
+            if (control == null) {
+                continue;
+            }
+            // After whatever else is listening: the value handed over is the
+            // one about to be stored, which the rows have to be offered for.
+            final Preference.OnPreferenceChangeListener before =
+                    control.getOnPreferenceChangeListener();
+            control.setOnPreferenceChangeListener((pref, value) -> {
+                if (before != null && !before.onPreferenceChange(pref, value)) {
+                    return false;
+                }
+                offer(group, dependents, key -> key.equals(e.getKey())
+                        ? Boolean.parseBoolean(String.valueOf(value)) : on(screen, key));
+                return true;
+            });
+        }
+    }
+
+    private static boolean on(PreferenceGroup screen, String key) {
+        return !(screen.findPreference(key) instanceof TwoStatePreference t) || t.isChecked();
+    }
+
+    private static void offer(PreferenceGroup group, List<BackendOption> dependents,
+                              java.util.function.Predicate<String> on) {
+        for (BackendOption o : dependents) {
+            final ListPreference l = group.findPreference(o.key());
+            final List<BackendOption.Choice> offered = o.choices().stream()
+                    .filter(c -> c.requires() == null || on.test(c.requires()))
+                    .toList();
+            l.setEntries(offered.stream()
+                    .map(BackendOption.Choice::label).toArray(CharSequence[]::new));
+            l.setEntryValues(offered.stream()
+                    .map(BackendOption.Choice::value).toArray(CharSequence[]::new));
+            BackendOption.settle(List.of(o), x -> l.getValue(), on, (x, fallback) -> {
+                if (l.getPreferenceDataStore() instanceof Store store) {
+                    store.remove(o.key());
+                }
+                // Shown, not stored: the store has just been told the row is
+                // unanswered, which is what the default it shows means.
+                l.setPersistent(false);
+                l.setValue(fallback);
+                l.setPersistent(true);
+            });
+        }
     }
 
     /**
