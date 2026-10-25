@@ -8,12 +8,12 @@
 // links nothing of the process it is loaded into.
 //
 // What is behind a stream is the same for every backend: about a tenth of a
-// second queued ahead of the device and never more than a quarter (past that
-// the oldest is dropped, so a burst or a stall costs a skip rather than a
-// lag that grows), silence while it fills back up after running dry, the
-// session's gain and mute, and a device opened off the caller's thread. So a
-// backend only writes what the far end sends, as it arrives, and never
-// waits.
+// second between a write and its being heard, the queue and the device's own
+// buffer together, and never more than a quarter (past that the oldest is
+// dropped, so a burst or a stall costs a skip rather than a lag that grows),
+// silence while it fills back up after running dry, the session's gain and
+// mute, and a device opened off the caller's thread. So a backend only writes
+// what the far end sends, as it arrives, and never waits.
 
 #ifndef VENTO_AUDIO_H
 #define VENTO_AUDIO_H

@@ -250,8 +250,9 @@ fn try_open(shared: &Arc<Shared>, rate: i32, channels: i32) -> Result<Open, i32>
         AAudioStreamBuilder_setUsage(builder, AAUDIO_USAGE_MEDIA);
         AAudioStreamBuilder_setContentType(builder, AAUDIO_CONTENT_TYPE_MUSIC);
         // The performance mode is left as it is (none): the queue in front
-        // keeps a tenth of a second anyway, and a low-latency stream's
-        // small bursts would only wake the phone more often for nothing.
+        // keeps a few tens of milliseconds anyway, and a low-latency
+        // stream's small bursts would only wake the phone more often for
+        // nothing.
         AAudioStreamBuilder_setDataCallback(builder, data, context.cast());
         AAudioStreamBuilder_setErrorCallback(builder, error, context.cast());
         let result = AAudioStreamBuilder_openStream(builder, &mut stream);
@@ -276,9 +277,12 @@ fn try_open(shared: &Arc<Shared>, rate: i32, channels: i32) -> Result<Open, i32>
         return Err(-1);
     };
     unsafe { (*context).format = device };
-    shared
-        .latency_us
-        .store(device.duration(buffer.max(0) as usize).as_micros() as u64, Ordering::Relaxed);
+    let buffered = device.duration(buffer.max(0) as usize);
+    shared.latency_us.store(buffered.as_micros() as u64, Ordering::Relaxed);
+    // AAudio keeps its buffer topped up from the callback, so it is that much
+    // of the target the queue need not keep itself; and each callback asks
+    // for a burst, which the queue has to have left over.
+    shared.queue.set_device(buffered, device.duration(burst.max(0) as usize));
     let result = unsafe { AAudioStream_requestStart(stream) };
     if result != AAUDIO_OK {
         open.close();

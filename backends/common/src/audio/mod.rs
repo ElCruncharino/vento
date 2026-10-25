@@ -14,11 +14,12 @@
 //!
 //! What every platform does alike is here, in [`Queue`]: a protocol thread
 //! writes into it and never waits, and the platform's device drains it on a
-//! thread of the device's own. The queue keeps about [`TARGET`] of sound
-//! ahead of the device, never more than [`LIMIT`] — past that it drops the
-//! oldest, so that a burst or a stall costs a skip rather than a lag that
-//! grows for the rest of the session — and plays silence when it runs dry
-//! until it has the target again. The gain and the mute are applied as the
+//! thread of the device's own. Between them the queue and the device's own
+//! buffer keep about [`TARGET`] of sound ahead of what is heard, never more
+//! than [`LIMIT`] — past that the queue drops the oldest, so that a burst or
+//! a stall costs a skip rather than a lag that grows for the rest of the
+//! session — and the queue plays silence when it runs dry until it has its
+//! share of the target again. The gain and the mute are applied as the
 //! device takes the samples, so a mute is heard at once rather than after
 //! what is queued, and [`Controls`] can be set from any thread: a window's
 //! toolbar, while the protocol thread writes.
@@ -37,16 +38,29 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-/// How much sound the queue keeps ahead of the device, and fills back up to
-/// before it plays again after running dry: enough to ride out a network
-/// that delivers in bursts of a few tens of milliseconds, little enough that
-/// what is heard is not noticeably behind what is seen.
+/// How far what is heard is behind what arrived: the queue and the device's
+/// own buffer together, which the queue fills back up to before it plays
+/// again after running dry. Enough to ride out a network that delivers in
+/// bursts of a few tens of milliseconds, little enough that what is heard is
+/// not noticeably behind what is seen.
+///
+/// The total rather than the queue's alone, since the device's buffer is
+/// delay just as the queue is: with a tenth of a second queued in front of
+/// ALSA's 50 ms, RDP's sound was heard 100 ms later than through the
+/// PulseAudio device it replaced. So the queue keeps the target less what the
+/// device holds ([`Queue::set_device`]), down to what keeps it from running
+/// dry between the far end's writes.
 pub const TARGET: Duration = Duration::from_millis(100);
 
-/// How much sound the queue holds before it drops the oldest, back down to
-/// [`TARGET`]. TigerVNC's viewer kept a second, and a stream that ran even
-/// slightly faster than the device lagged further behind the picture for as
-/// long as it ran.
+/// What the queue keeps beyond what the far end's own rhythm and the
+/// device's take from it ([`Queue`] works the rest out from the writes),
+/// for a write that is later than any before it.
+pub const MARGIN: Duration = Duration::from_millis(10);
+
+/// How much sound the queue and the device hold together before the queue
+/// drops the oldest, back down to its share of [`TARGET`]. TigerVNC's viewer
+/// kept a second, and a stream that ran even slightly faster than the device
+/// lagged further behind the picture for as long as it ran.
 pub const LIMIT: Duration = Duration::from_millis(250);
 
 /// The most channels a stream may have: 7.1, which is more than any
