@@ -589,6 +589,7 @@ set(OPENSSL_SOURCES_libcrypto_lib
         crypto/rand/rand_pool.c
         crypto/rand/rand_uniform.c
         crypto/rand/randfile.c
+        crypto/rbtree/rbtree.c
         crypto/rc2/rc2_cbc.c
         crypto/rc2/rc2_ecb.c
         crypto/rc2/rc2_skey.c
@@ -858,14 +859,10 @@ set(OPENSSL_SOURCES_libcommon_lib
         providers/common/der/der_slh_dsa_key.c
         providers/common/provider_ctx.c
         providers/common/provider_err.c
-        providers/implementations/ciphers/ciphercommon.c
         providers/implementations/ciphers/ciphercommon_block.c
-        providers/implementations/ciphers/ciphercommon_ccm.c
         providers/implementations/ciphers/ciphercommon_ccm_hw.c
-        providers/implementations/ciphers/ciphercommon_gcm.c
         providers/implementations/ciphers/ciphercommon_gcm_hw.c
         providers/implementations/ciphers/ciphercommon_hw.c
-        providers/implementations/digests/digestcommon.c
         ssl/record/methods/tls_pad.c
 )
 
@@ -956,9 +953,13 @@ set(OPENSSL_SOURCES_libdefault_lib
         providers/implementations/ciphers/cipher_tdes_hw.c
         providers/implementations/ciphers/cipher_tdes_wrap.c
         providers/implementations/ciphers/cipher_tdes_wrap_hw.c
+        providers/implementations/ciphers/ciphercommon.c
+        providers/implementations/ciphers/ciphercommon_ccm.c
+        providers/implementations/ciphers/ciphercommon_gcm.c
         providers/implementations/digests/blake2_prov.c
         providers/implementations/digests/blake2b_prov.c
         providers/implementations/digests/blake2s_prov.c
+        providers/implementations/digests/digestcommon.c
         providers/implementations/digests/md5_prov.c
         providers/implementations/digests/md5_sha1_prov.c
         providers/implementations/digests/null_prov.c
@@ -1089,12 +1090,12 @@ set(OPENSSL_SOURCES_libssl_lib
         ssl/quic/quic_record_util.c
         ssl/quic/quic_rstream.c
         ssl/quic/quic_rx_depack.c
-        ssl/quic/quic_sf_list.c
         ssl/quic/quic_srt_gen.c
         ssl/quic/quic_srtm.c
         ssl/quic/quic_sstream.c
         ssl/quic/quic_statm.c
         ssl/quic/quic_stream_map.c
+        ssl/quic/quic_strm_reas.c
         ssl/quic/quic_thread_assist.c
         ssl/quic/quic_tls.c
         ssl/quic/quic_tls_api.c

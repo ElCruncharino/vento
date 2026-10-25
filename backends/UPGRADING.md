@@ -380,6 +380,11 @@ aside:
     linux/target/debug/vento <backend> <address> --password ... --trust \
         --probe wait=3,out=build/scratch/<backend>.ppm
 
+`linux/build.rs` does not watch the submodules, so after a pin moves its
+`cargo build` keeps the C libraries it already built: `touch
+backends/CMakeLists.txt` first, and check that the library under
+`linux/target/debug/lib/` names the new version.
+
 Always `./patch.sh check`. After an options change, `cargo test --locked -p
 remotedesktop-api` and `./gradlew :backends:testDebugUnitTest`: the
 first checks every table's defaults against its own rows and the keys
@@ -428,7 +433,7 @@ One commit per upstream, after review, by the lead:
   `backends/modules/tigervnc/cpp/cmake/pixman.cmake`; only the region
   API is reached. The checkout's origin is freedesktop's gitlab while
   `.gitmodules` names the X11Libre mirror; they match.
-- **openssl** 3.5.8, LTS to 2030. No patches. Moving to 4.x needs `no-ech`,
+- **openssl** 3.5.9, LTS to 2030. No patches. Moving to 4.x needs `no-ech`,
   and the engine references in `gen.sh` and the port's CMakeLists go. The
   host build (`platform/linux/cmake/openssl.cmake`) runs Configure with the
   port's options without `no-legacy`, the assembly on as there, plus
