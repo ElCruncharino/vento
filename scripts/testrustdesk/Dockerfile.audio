@@ -7,7 +7,8 @@
 # default sink's monitor, as on any Linux desktop), and testqemu's
 # `audio/tone.c` playing into it through ALSA's PulseAudio plugin: silence,
 # and a 440 Hz burst per 't' on a TCP port, answered with its own share of
-# the delay. Build with the tone's source as a second context:
+# the delay, so that scripts/testaudio/bursts.py times it as it times the
+# QEMU guest. Build with the tone's source as a second context:
 #
 #   docker build -t protorustdesk-audio -f Dockerfile.audio \
 #       --build-context tonesrc=../testqemu/audio .

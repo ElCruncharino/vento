@@ -4,7 +4,7 @@
 // The audio guest's one program: it keeps the sound card playing silence and
 // plays a burst of 440 Hz at half scale each time a 't' arrives on the serial
 // port, so that the host decides when every tone starts and can time it to
-// the null sink's recording .
+// the null sink's recording (scripts/testaudio/bursts.py).
 //
 // The stream never stops between bursts, which is what a guest playing music
 // looks like to QEMU: one AudioBegin, data for as long as it runs, and the

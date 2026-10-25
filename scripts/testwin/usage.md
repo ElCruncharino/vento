@@ -29,7 +29,7 @@ desktop is. `vnc-compare.sh` drives these by name.
 | `kill.ps1` | both of those away again, by window title rather than process name, since both are `powershell.exe` and one of them is this script |
 | `shot.ps1` | the whole virtual screen to a PNG, which is this machine's `xwd` |
 | `info.ps1` | the screen layout, where the pointer is in it, and the windows on it. A screenshot cannot answer the second: the capture APIs here do not draw the cursor |
-| `tone.ps1` | a known tone — half-second 440 Hz bursts on a schedule — for timing an RDP client's sound end to end. Not installed by `install.sh` |
+| `tone.ps1` | a known tone — half-second 440 Hz bursts on a schedule — for timing an RDP client's sound end to end. Not installed by `install.sh`: `scripts/testaudio/winbursts.py` writes it, registers it as `vento-tone` for one run in the RDP session (whose sound is what the client hears) and removes both |
 
 The machine's account is `user` throughout, which is what `setup.ps1` names in
 the principal and what `install.sh` copies to.

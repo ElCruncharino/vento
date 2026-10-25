@@ -10,6 +10,7 @@
 # the player and "end <seconds>" after it has finished, in Unix seconds from
 # GetSystemTimePreciseAsFileTime: DateTime.UtcNow moves in steps of the
 # timer's 15.6 ms here, which is coarser than what is being measured.
+# scripts/testaudio/winbursts.py writes, runs and removes this.
 param(
     [int]$Seconds = 60,
     [double]$Every = 2,

@@ -144,3 +144,9 @@ well. Same image, same ports, same `t` and `s`:
 ```sh
 AUDIO=spice NAME=myqemu PORT=5962 SPICE_PORT=5964 SPICE_TLS_PORT=5965 TONE_PORT=5956 ./run.sh
 ```
+
+`scripts/testaudio/bursts.py` is the measurement: with a client playing the
+guest into the null sink, it sends a `t` every two seconds, records the
+sink's monitor, and reports per burst the latency from the guest's card to
+the capture, how much was heard, the pitch, the level against the source,
+discontinuities and gaps (`scripts/testaudio/usage.md`).

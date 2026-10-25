@@ -64,8 +64,10 @@ It adds a PulseAudio server for root whose default sink is a null sink,
 which their server records from (that sink's monitor, as on any Linux
 desktop), and `scripts/testqemu/audio/tone.c` playing into it through
 ALSA's PulseAudio plugin: silence, and half a second of 440 Hz at half
-scale per `t` on `TONE_PORT`, answered with its own share of the delay. Three
-things it has to do that a desktop does not, all in `start-audio.sh`:
+scale per `t` on `TONE_PORT`, answered with its own share of the delay, so
+that `scripts/testaudio/bursts.py --port 5957` times it as it times the QEMU
+guest. Three things it has to do that a desktop does not, all in
+`start-audio.sh`:
 
 - **Their connection manager runs from the start, without its window**
   (`rustdesk --cm-no-ui`, started again whenever it exits, which it does
