@@ -105,6 +105,7 @@ ironrdp-egfx = { path = "third_party/ironrdp/crates/ironrdp-egfx" }
 ironrdp-graphics = { path = "third_party/ironrdp/crates/ironrdp-graphics" }
 ironrdp-input = { path = "third_party/ironrdp/crates/ironrdp-input" }
 ironrdp-pdu = { path = "third_party/ironrdp/crates/ironrdp-pdu" }
+ironrdp-rdpei = { path = "third_party/ironrdp/crates/ironrdp-rdpei" }
 ironrdp-rdpdr = { path = "third_party/ironrdp/crates/ironrdp-rdpdr" }
 ironrdp-rdpsnd = { path = "third_party/ironrdp/crates/ironrdp-rdpsnd" }
 ironrdp-session = { path = "third_party/ironrdp/crates/ironrdp-session" }
