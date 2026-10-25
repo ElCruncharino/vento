@@ -592,7 +592,13 @@ One commit per upstream, after review, by the lead:
   server's half of the exchange (`KeyExchange.version`, `signed_params`)
   is not answered, like upstream's client without a token or a WebRTC
   offer. The licence entries in `plugins/rustdesk/build.gradle` read
-  rustdesk's `LICENCE`; hbb_common has none of its own.
+  rustdesk's `LICENCE`; hbb_common has none of its own. The client reports
+  `VERSION` (`modules/rustdesk/src/client.rs`), which the peer compares
+  with the versions that introduced its features (`lr.version` in
+  `src/server/connection.rs`, the `is_support_*` functions in
+  `src/common.rs`): raise it with the pin once every gate up to the new
+  version is checked. Cursor ids are a hash of the shape from 1.5.0 and the
+  platform's handle before it; the client files shapes by content either way.
 - **ryll** v0.3.0 (f12d9b2); two patches, `0001` (the rustls provider and
   the public root store are the embedder's) and `0002` (openh264 behind a
   feature). The two LZ4 patches were dropped as upstream's df2f06b, which

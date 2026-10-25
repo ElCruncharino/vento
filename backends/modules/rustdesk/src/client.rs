@@ -58,10 +58,11 @@ use runtime::media::video::{self, Codec, Decoded, Decoders, GpuPicture, Hardware
 /// RustDesk's default direct-access port, `RENDEZVOUS_PORT + 2`.
 pub const DIRECT_PORT: u16 = 21118;
 
-/// The version this client reports. RustDesk's server compares it with its own
-/// to choose a compatibility path, so reporting the version this was written
-/// against avoids paths not implemented here.
-pub const VERSION: &str = "1.4.9";
+/// The version this client reports. The peer compares it with the versions
+/// that introduced its features to choose compatibility paths for older
+/// clients, so it is a version whose gated behaviour this client was checked
+/// against.
+pub const VERSION: &str = "1.5.0";
 
 /// The peer's `TestDelay` arrives about once a second regardless of activity,
 /// so silence for this long means the link is gone. A timeout is fatal rather
@@ -900,7 +901,7 @@ impl Client {
         let mut decoder: Option<Current> = None;
         let mut back = Back::new();
         let mut rate = Rate::new();
-        let mut cursors: HashMap<u64, Cursor> = HashMap::new();
+        let mut cursors = Cursors::default();
         let mut connected = false;
         // The peer's sound and its last announced format. A peer sends
         // something at least every second (its timing message), so checking
@@ -974,14 +975,12 @@ impl Client {
                     }
                 }
                 message::Union::CursorData(data) => {
-                    let id = data.id;
-                    if let Some(cursor) = Cursor::of(data) {
+                    if let Some(cursor) = cursors.arrived(data) {
                         cursor.deliver(handler);
-                        cursors.insert(id, cursor);
                     }
                 }
                 message::Union::CursorId(id) => {
-                    if let Some(cursor) = cursors.get(&id) {
+                    if let Some(cursor) = cursors.get(id) {
                         cursor.deliver(handler);
                     }
                 }
@@ -1891,6 +1890,54 @@ impl Rate {
     }
 }
 
+/// The cursor shapes the peer has sent, kept once per shape.
+///
+/// The peer sends a shape's pixels once with an id, and after that only the
+/// id. From RustDesk 1.5.0 the id is a hash of the shape. Before that it is
+/// the platform's handle for the cursor, and some applications (Chrome and
+/// Electron on Windows) create a new handle each time they show a shape, so
+/// the same pixels arrive again under each new id. Shapes are filed here by
+/// their content, as RustDesk 1.5.0's client does for an older peer, so that
+/// each is decoded and kept once; for a peer from 1.5.0 this changes nothing.
+#[derive(Default)]
+struct Cursors {
+    /// The peer's ids, to the keys of `shapes`.
+    ids: HashMap<u64, u64>,
+    shapes: HashMap<u64, Cursor>,
+}
+
+impl Cursors {
+    /// The shape a `CursorData` carries, decoded unless it is already kept.
+    fn arrived(&mut self, data: crate::protos::message::CursorData) -> Option<&Cursor> {
+        let id = data.id;
+        let key = Cursor::content(&data);
+        if self.shapes.contains_key(&key) {
+            log::debug!("cursor {id}: a shape already kept");
+        } else {
+            let Some(cursor) = Cursor::of(data) else {
+                // The id no longer names the shape it named before, if any.
+                self.ids.remove(&id);
+                return None;
+            };
+            log::debug!(
+                "cursor {id}: {}x{}, hotspot {},{}",
+                cursor.width,
+                cursor.height,
+                cursor.hot_x,
+                cursor.hot_y
+            );
+            self.shapes.insert(key, cursor);
+        }
+        self.ids.insert(id, key);
+        self.shapes.get(&key)
+    }
+
+    /// The shape the peer sent under this id, for a `CursorId`.
+    fn get(&self, id: u64) -> Option<&Cursor> {
+        self.shapes.get(self.ids.get(&id)?)
+    }
+}
+
 /// A cursor shape, kept because the protocol sends the pixels once and refers
 /// to them by id after that.
 struct Cursor {
@@ -1933,6 +1980,16 @@ impl Cursor {
             hot_x: data.hotx,
             hot_y: data.hoty,
         })
+    }
+
+    /// A key for the shape in a `CursorData`, from its size, hotspot and
+    /// still-compressed pixels: a peer compresses the same pixels to the same
+    /// bytes, so a shape sent again is recognised without decoding it.
+    fn content(data: &crate::protos::message::CursorData) -> u64 {
+        use std::hash::{DefaultHasher, Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        (data.width, data.height, data.hotx, data.hoty, &data.colors).hash(&mut hasher);
+        hasher.finish()
     }
 
     fn deliver(&self, handler: &mut dyn Handler) {
@@ -2551,5 +2608,52 @@ mod tests {
         let small = zstd::encode_all(&[1u8, 2, 3, 4, 5, 6, 7, 8][..], 3).unwrap();
         let cursor = Cursor::of(cursor_data(2, 1, small)).unwrap();
         assert_eq!(cursor.pixels, [0x0403_0201, 0x0807_0605]);
+    }
+
+    fn shape(id: u64, byte: u8) -> crate::protos::message::CursorData {
+        let mut data = cursor_data(2, 2, zstd::encode_all(&[byte; 16][..], 3).unwrap());
+        data.id = id;
+        data
+    }
+
+    fn pixels(cursor: Option<&Cursor>) -> Option<Vec<u32>> {
+        cursor.map(|c| c.pixels.clone())
+    }
+
+    /// A peer before 1.5.0 names a shape by the platform's handle, and an
+    /// application can show the same shape under a new handle each time: the
+    /// pixels arrive again under each id, and are kept once.
+    #[test]
+    fn a_shape_sent_under_several_ids_is_kept_once() {
+        let mut cursors = Cursors::default();
+        let arrow = Some(vec![0x0101_0101; 4]);
+        assert_eq!(pixels(cursors.arrived(shape(10, 1))), arrow);
+        assert_eq!(pixels(cursors.arrived(shape(11, 1))), arrow);
+        assert_eq!(pixels(cursors.arrived(shape(12, 2))), Some(vec![0x0202_0202; 4]));
+        assert_eq!(cursors.shapes.len(), 2);
+        assert_eq!(pixels(cursors.get(10)), arrow);
+        assert_eq!(pixels(cursors.get(11)), arrow);
+        assert!(cursors.get(13).is_none());
+
+        // The hotspot is part of the shape.
+        let mut moved = shape(13, 1);
+        moved.hotx = 1;
+        assert_eq!(cursors.arrived(moved).map(|c| c.hot_x), Some(1));
+        assert_eq!(cursors.shapes.len(), 3);
+    }
+
+    /// An id sent again with other pixels names the new shape, and one whose
+    /// pixels do not decode names nothing, rather than the shape before.
+    #[test]
+    fn an_id_names_the_shape_it_last_arrived_with() {
+        let mut cursors = Cursors::default();
+        cursors.arrived(shape(10, 1));
+        cursors.arrived(shape(10, 2));
+        assert_eq!(pixels(cursors.get(10)), Some(vec![0x0202_0202; 4]));
+
+        let mut broken = shape(10, 3);
+        broken.colors = vec![0; 8];
+        assert!(cursors.arrived(broken).is_none());
+        assert!(cursors.get(10).is_none());
     }
 }

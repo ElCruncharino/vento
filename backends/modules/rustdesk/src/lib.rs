@@ -12,9 +12,9 @@
 //! It is the first protocol here defined by a product rather than a published
 //! specification: one implementation, nothing to compare it with, and a wire
 //! format that changes whenever upstream changes it. Everything here was
-//! written against **rustdesk 1.4.9** and tested against a peer of that
-//! version, except key exchange version 1 (`crypto.rs`), which is 1.5.0's and
-//! was tested against a peer of each.
+//! written against **rustdesk 1.4.9** and checked against 1.5.0, the version
+//! it reports, which added key exchange version 1 (`crypto.rs`); it is tested
+//! against a peer of each.
 //!
 //! What it supports:
 //!

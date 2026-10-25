@@ -34,7 +34,7 @@
 //! names the display to capture, `refresh` asks for a key frame. All three by
 //! default; the flag exists to test which of them the picture depends on.
 
-use remotedesktop_rustdesk::{crypto, protos, rendezvous, wire};
+use remotedesktop_rustdesk::{VERSION, crypto, protos, rendezvous, wire};
 
 use std::io::Write;
 use std::sync::Arc;
@@ -52,11 +52,6 @@ use protos::message::{
 
 /// RustDesk's direct-access port, `RENDEZVOUS_PORT + 2`.
 const DIRECT_PORT: u16 = 21118;
-
-/// The version this client reports. RustDesk's server compares it with its own
-/// for feature gating, so reporting the version this was written against
-/// avoids compatibility paths not implemented here.
-const VERSION: &str = "1.4.9";
 
 fn main() {
     // The crate reports progress through `log`, which goes to logcat on a
