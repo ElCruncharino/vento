@@ -429,6 +429,20 @@ impl CSession {
         }
     }
 
+    /// Whether the backend's table has a touch call at all.
+    fn has_touch(&self) -> bool {
+        self.call(false, || optional!(self.ops(), touch).is_some())
+    }
+
+    fn touch(&self, contact: i32, phase: i32, x: i32, y: i32) {
+        let Some(_entered) = self.enter() else {
+            return;
+        };
+        if let Some(touch) = optional!(self.ops(), touch) {
+            unsafe { touch(self.session, contact, phase, x, y) }
+        }
+    }
+
     fn clipboard(&self, text: &str) {
         if let Ok(c) = CString::new(text) {
             self.call((), || unsafe { ((*self.ops()).clipboard.unwrap())(self.session, c.as_ptr()) })
@@ -689,6 +703,14 @@ impl CBackend {
 impl Backend for CBackend {
     fn pointer(&self, x: i32, y: i32, button_mask: i32) {
         self.session.pointer(x, y, button_mask & 0x1ff);
+    }
+
+    fn supports_touch(&self) -> bool {
+        self.session.has_touch()
+    }
+
+    fn touch(&self, contact: i32, phase: i32, x: i32, y: i32) {
+        self.session.touch(contact, phase, x, y);
     }
 
     fn key_down(&self, keysym: u32, key_id: i64) {

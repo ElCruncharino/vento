@@ -345,6 +345,12 @@ typedef struct vento_session_ops {
        with its NUL, truncated to fit. False, with nothing written, before
        the first picture and for a picture that is not video. */
     bool (*decoder_status)(vento_session *s, char *out, size_t len);
+    /* A touch contact at a desktop pixel, as a finger rather than a cursor:
+       `phase` is 0 down, 1 move, 2 up, 3 cancelled, and `contact` is a small
+       id the caller keeps stable while the finger is down. Dropped where the
+       far end has not opened a touch channel. NULL when the protocol cannot
+       carry touch. */
+    void (*touch)(vento_session *s, int contact, int phase, int x, int y);
 } vento_session_ops;
 
 /* Whether `s`'s table has a non-NULL `member`: the table's `size` covers

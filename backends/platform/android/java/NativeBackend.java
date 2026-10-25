@@ -142,6 +142,10 @@ public final class NativeBackend implements Backend {
 
         void pointerRelative(long handle, int dx, int dy, int buttonMask);
 
+        void touch(long handle, int contact, int phase, int x, int y);
+
+        boolean supportsTouch(long handle);
+
         void keyDown(long handle, int keysym, long keyId);
 
         void keyUp(long handle, long keyId);
@@ -542,6 +546,20 @@ public final class NativeBackend implements Backend {
         final long h = handle;
         if (h != 0) {
             natives.pointerRelative(h, dx, dy, buttonMask);
+        }
+    }
+
+    @Override
+    public boolean supportsTouch() {
+        final long h = handle;
+        return h != 0 && !dead && natives.supportsTouch(h);
+    }
+
+    @Override
+    public void touch(int contact, int phase, int x, int y) {
+        final long h = handle;
+        if (h != 0 && !dead) {
+            natives.touch(h, contact, phase, x, y);
         }
     }
 

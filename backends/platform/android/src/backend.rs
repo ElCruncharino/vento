@@ -251,6 +251,11 @@ pub const METHODS: &[NativeMethod] = &[
         error_policy = LogErrorAndDefault,
     },
     native_method! {
+        fn touch(handle: jlong, contact: jint, phase: jint, x: jint, y: jint),
+        error_policy = LogErrorAndDefault,
+    },
+    native_method! { fn supports_touch(handle: jlong) -> jboolean, error_policy = LogErrorAndDefault },
+    native_method! {
         fn key_down(handle: jlong, keysym: jint, key_id: jlong),
         error_policy = LogErrorAndDefault,
     },
@@ -498,6 +503,25 @@ fn pointer_relative<'local>(
         backend.pointer_relative(dx, dy, button_mask);
     }
     Ok(())
+}
+
+fn touch<'local>(
+    _env: &mut Env<'local>,
+    _this: JObject<'local>,
+    handle: jlong,
+    contact: jint,
+    phase: jint,
+    x: jint,
+    y: jint,
+) -> Result<(), Error> {
+    if let Some(backend) = unsafe { backend(handle) } {
+        backend.touch(contact, phase, x, y);
+    }
+    Ok(())
+}
+
+fn supports_touch<'local>(_env: &mut Env<'local>, _this: JObject<'local>, handle: jlong) -> Result<jboolean, Error> {
+    Ok(unsafe { backend(handle) }.is_some_and(|backend| backend.supports_touch()))
 }
 
 fn key_down<'local>(
