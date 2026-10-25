@@ -455,7 +455,7 @@ One commit per upstream, after review, by the lead:
   configures the same tarballs with the port's options but for the
   assembly, which it leaves on, a CA bundle path and a system priority
   file path.
-- **libvncserver** at upstream master; eight patches. No releases since
+- **libvncserver** at upstream master; nine patches. No releases since
   0.9.15. `0006` (as TigerVNC's `0006`) hands a certificate that verified
   against the system's authorities, and is for the name dialled, to
   `GetX509CertFingerprintMismatchDecision` too when it is installed, and
@@ -466,7 +466,10 @@ One commit per upstream, after review, by the lead:
   CA-signed certificate, for the name or not, still reaches the hook.
   `0008` calls `GotCursorShape` with a 0x0 shape for a cursor update of no
   pixels, the server hiding the pointer, which upstream returns from
-  before the callback.
+  before the callback. `0009` waits for the socket between the TLS
+  handshake's retries, at most 15 s each, where it retried at once and
+  logged each time: `0002` took gnutls' own deadline away, and with it the
+  only wait on the non-blocking socket.
 - **tigervnc** master ed951a41, reporting 1.16.80; six patches (the PAM one
   dropped, and the libav context's pixel format fix with that context). The
   client API is upstream's after their October 2026 cleanup: `writer()` is

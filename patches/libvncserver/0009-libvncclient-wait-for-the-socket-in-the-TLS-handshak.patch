@@ -1,0 +1,96 @@
+From 95eeb9771a0ce61a5ddafed7ee8c9bca17a36c58 Mon Sep 17 00:00:00 2001
+From: "Claude Opus 5.5" <noreply@anthropic.com>
+Date: Sun, 25 Oct 2026 17:55:06 -0400
+Subject: [PATCH 9/9] libvncclient: wait for the socket in the TLS handshake
+
+The client's socket is non-blocking, so gnutls_handshake() returns
+GNUTLS_E_AGAIN whenever the server has not sent the next record yet.
+With the handshake deadline gone, gnutls no longer waits on the pull
+timeout function, and HandshakeTLS retried at once and logged each
+retry, which turned every wait for the server into a busy loop: against
+a server that accepted VeNCrypt and then never answered the ClientHello,
+about a million log lines a second at full CPU, with no end.
+
+Wait for the socket in the direction gnutls was interrupted in, for up
+to 15 seconds (the length of the deadline upstream had), and fail the
+handshake if nothing arrives in that time. The bound covers each wait
+for the server, not the certificate question asked from the verify
+callback in between, and shutting the socket down still ends a wait at
+once.
+
+diff --git a/src/libvncclient/tls_gnutls.c b/src/libvncclient/tls_gnutls.c
+index 0d4cc77..6782860 100644
+--- a/src/libvncclient/tls_gnutls.c
++++ b/src/libvncclient/tls_gnutls.c
+@@ -406,9 +406,9 @@ InitializeTLSSession(rfbClient* client, rfbBool anonTLS)
+   /* No deadline on the handshake, because the certificate check inside it
+      asks a person: GetX509CertFingerprintMismatchDecision is called from the
+      verify callback, and any timeout that covers the handshake also covers
+-     however long somebody takes to read a fingerprint and answer. A client
+-     that wants to bound this has to be able to break the socket, which is a
+-     thing it can do and gnutls' clock is not. */
++     however long somebody takes to read a fingerprint and answer. Each wait
++     for the server is bounded instead, in HandshakeTLS, and a client can
++     still end the handshake sooner by shutting the socket down. */
+   gnutls_handshake_set_timeout((gnutls_session_t)client->tlsSession,
+                                GNUTLS_INDEFINITE_TIMEOUT);
+ 
+@@ -436,6 +436,38 @@ SetTLSAnonCredential(rfbClient* client)
+   return TRUE;
+ }
+ 
++/* How long the handshake waits for the server to send or accept anything,
++   the length of the whole-handshake deadline it had before. */
++#define TLS_HANDSHAKE_WAIT_MS 15000
++
++/* Waits until the socket can be read or written, whichever gnutls was
++   interrupted doing. FALSE when the wait failed, with errno set: to
++   ETIMEDOUT when nothing happened for TLS_HANDSHAKE_WAIT_MS. */
++static rfbBool
++WaitForTLSSocket(rfbClient* client)
++{
++  fd_set fds;
++  struct timeval tv;
++  int ret;
++  const int writing = gnutls_record_get_direction((gnutls_session_t)client->tlsSession);
++
++  while (1)
++  {
++    FD_ZERO(&fds);
++    FD_SET(client->sock, &fds);
++    tv.tv_sec = TLS_HANDSHAKE_WAIT_MS / 1000;
++    tv.tv_usec = (TLS_HANDSHAKE_WAIT_MS % 1000) * 1000;
++    ret = select(client->sock + 1, writing ? NULL : &fds, writing ? &fds : NULL, NULL, &tv);
++    if (ret > 0) return TRUE;
++    if (ret == 0)
++    {
++      errno = ETIMEDOUT;
++      return FALSE;
++    }
++    if (errno != EINTR) return FALSE;
++  }
++}
++
+ static rfbBool
+ HandshakeTLS(rfbClient* client)
+ {
+@@ -443,6 +475,19 @@ HandshakeTLS(rfbClient* client)
+ 
+   while ((ret = gnutls_handshake((gnutls_session_t)client->tlsSession)) < 0)
+   {
++    /* The socket is non-blocking, so these mean that it has nothing to read
++       or no room to write: wait for it rather than retrying at once. */
++    if (ret == GNUTLS_E_AGAIN || ret == GNUTLS_E_INTERRUPTED)
++    {
++      if (WaitForTLSSocket(client)) continue;
++      if (errno == ETIMEDOUT)
++        rfbClientLog("TLS handshake failed: the server did not answer for %d seconds.\n",
++                     TLS_HANDSHAKE_WAIT_MS / 1000);
++      else
++        rfbClientLog("TLS handshake failed: %s.\n", strerror(errno));
++      FreeTLS(client);
++      return FALSE;
++    }
+     if (!gnutls_error_is_fatal(ret))
+     {
+       rfbClientLog("TLS handshake got a temporary error: %s.\n", gnutls_strerror(ret));

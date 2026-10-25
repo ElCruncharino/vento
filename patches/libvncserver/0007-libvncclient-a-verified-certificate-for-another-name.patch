@@ -1,7 +1,7 @@
-From 060ad97baeeddd07f1541acd12f108937e0999be Mon Sep 17 00:00:00 2001
+From 49cd25406960dacc0b92cfe7226925054ee878ae Mon Sep 17 00:00:00 2001
 From: "Claude Opus 5.5" <noreply@anthropic.com>
 Date: Sun, 18 Oct 2026 15:55:53 -0400
-Subject: [PATCH 7/8] libvncclient: a verified certificate for another name is
+Subject: [PATCH 7/9] libvncclient: a verified certificate for another name is
  asked about too
 
 A certificate that verified against the system CA (or the CA file
