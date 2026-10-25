@@ -22,7 +22,6 @@ members = [
     "backends/common",
     "backends/session",
     "backends/codegen",
-    "backends/tls",
     "backends/platform/*",
     "backends/modules/rfb",
     "backends/modules/ironrdp",
@@ -43,7 +42,6 @@ publish = false
 [workspace.dependencies]
 remotedesktop-common = { path = "backends/common", version = "0.0.1" }
 remotedesktop-session = { path = "backends/session", version = "0.0.1" }
-remotedesktop-tls = { path = "backends/tls", version = "0.0.1" }
 remotedesktop-platform-android = { path = "backends/platform/android", version = "0.0.1" }
 log = "0.4"
 # One version across the crates: a `Callbacks` built in one is used in another.

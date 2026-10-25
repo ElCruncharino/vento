@@ -4,21 +4,20 @@ The eight remote desktop backends, what they share, and how they are built
 for the phone.
 
 **The rule:** a thing that only one backend needs lives under that backend's
-module, `modules/<name>/`; `common/`, `session/` and `tls/` hold only what
-two or more backends share; and what one platform needs of all of them lives
-under that platform, `platform/<os>/` — its crate, its C, its CMake half
-and, for the phone, its Java and its ports. Inside a module, each language
-has one place: the Rust crate at its root, the C in `cpp/`, the Java in
-`java/`, the options in `catalog.rs`. What is left at the top is what builds
-them all: the Gradle parent, its tasks and the CMake every C backend
-includes.
+module, `modules/<name>/`; `common/` and `session/` hold only what two or
+more backends share; and what one platform needs of all of them lives under
+that platform, `platform/<os>/` — its crate, its C, its CMake half and, for
+the phone, its Java and its ports. Inside a module, each language has one
+place: the Rust crate at its root, the C in `cpp/`, the Java in `java/`, the
+options in `catalog.rs`. What is left at the top is what builds them all:
+the Gradle parent, its tasks and the CMake every C backend includes.
 
     backends/
       claude-notes.md, UPGRADING.md
       build.gradle      the :backends Gradle module, parent of the modules
       buildSrc/         the Gradle tasks its helpers use
       cmake/            warnings.cmake, reproducible.cmake
-      common/  session/  tls/  codegen/  vectors/
+      common/  session/  codegen/  vectors/
       modules/<name>/   one per backend (eight)
       platform/
         android/        crate, java/, javatest/, cpp/, cmake/, ports/
@@ -56,9 +55,11 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
 ## What they share
 
 - `common/` (`remotedesktop-common`) — what a protocol is written against:
-  the session thread, handler and events, video and audio, and the neutral C
-  API in `common/include/vento/` (`backend.h`, `video.h`, `audio.h`, `log.h`,
-  `text.h`; each C backend's own header is in its module).
+  the session thread, handler and events, video and audio, the rustls
+  pinning and shared stream of the Rust backends that speak TLS (`tls`), and
+  the neutral C API in `common/include/vento/` (`backend.h`, `video.h`,
+  `audio.h`, `log.h`, `text.h`; each C backend's own header is in its
+  module).
 - `session/` (`remotedesktop-session`) — what a client holds a session by:
   the `Backend` trait, events, the catalog registry and the shape of an
   option, `Kind`/`Connect`, and the rules every client keeps alike
@@ -66,7 +67,6 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
   adapter over the C vtable and the shared headers' declarations
   (`session::c::ffi`), which each C backend's own declarations are written
   over.
-- `tls/` — rustls pinning, for the Rust backends that speak TLS.
 - `codegen/` (`vento-codegen`) — the phone's Java catalogs and natives
   classes, generated from `session` at build time on the host.
 - `vectors/` — test cases both the Rust and the Java tests read.
