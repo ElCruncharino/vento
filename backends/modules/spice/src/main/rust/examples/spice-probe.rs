@@ -127,6 +127,7 @@ fn main() {
         view_only: false,
         // The picture is what this example is about.
         audio: None,
+        sound: false,
     };
 
     let session = {

@@ -38,16 +38,21 @@ fn create(c: &Connect) -> Result<Arc<dyn Backend>, String> {
         connect_timeout: Duration::from_millis(CONNECT_TIMEOUT_MS as u64),
         compression: compression_of(o.get("Compression")),
         view_only: o.bool("ViewOnly"),
-        // The guest's sound where the option asks for it and there is
-        // somewhere to play it; without either the playback channel is never
-        // opened.
-        audio: c.audio.clone().filter(|_| o.bool("Audio")),
+        // The guest's sound wherever there is somewhere to play it: the
+        // session's switch opens and closes the playback channel, and the
+        // option is whether it starts open.
+        audio: c.audio.clone(),
+        sound: o.bool("Audio"),
     };
     log::info!(
         "connecting to {} ({}, sound {})",
         config.address,
         if tls { "TLS" } else { "plain" },
-        if config.audio.is_some() { "on" } else { "off" }
+        match (&config.audio, config.sound) {
+            (None, _) => "nowhere to play",
+            (Some(_), true) => "on",
+            (Some(_), false) => "off, until switched on",
+        }
     );
     let session = Session::start(
         Arc::new(Client::new()),

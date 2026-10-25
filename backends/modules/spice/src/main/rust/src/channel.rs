@@ -90,6 +90,11 @@ pub struct Ended {
 /// The write half of a channel, plus what a session has to remember about it.
 pub struct Channel {
     writer: Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send>>>,
+    /// The task reading the other half, which is stopped when the channel is
+    /// dropped: with both halves gone the socket closes, and the server sees
+    /// the channel end — which is how the sound is turned off — with no
+    /// `Ended` from a reader nobody is waiting for.
+    reader: tokio::task::JoinHandle<()>,
     /// The server stops sending after this many unacknowledged messages, so a
     /// client that never acks gets one screenful and then silence that looks
     /// exactly like a server with nothing to say.
@@ -171,15 +176,14 @@ impl Channel {
         // added up before they mean anything are four chances to add them up
         // differently.
         let (received, sent) = traffic;
-        {
-            tokio::spawn(async move {
-                let error = read_messages(kind, read, &queue, &received).await.err();
-                let _ = ended.send(Ended { kind, error }).await;
-            });
-        }
+        let reader = tokio::spawn(async move {
+            let error = read_messages(kind, read, &queue, &received).await.err();
+            let _ = ended.send(Ended { kind, error }).await;
+        });
 
         Ok(Channel {
             writer: Arc::new(Mutex::new(Box::new(write))),
+            reader,
             ack_window: 0,
             since_ack: 0,
             paused: false,
@@ -234,6 +238,12 @@ impl Channel {
         Ok(())
     }
 
+}
+
+impl Drop for Channel {
+    fn drop(&mut self) {
+        self.reader.abort();
+    }
 }
 
 /// The link handshake, with capabilities of this client's own.

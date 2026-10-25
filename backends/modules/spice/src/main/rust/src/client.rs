@@ -63,10 +63,14 @@ pub struct Config {
     /// it does by itself — which for QEMU is `auto_glz`.
     pub compression: Option<u8>,
     pub view_only: bool,
-    /// Where the guest's sound goes, or `None` for a session that does not
-    /// open the playback channel at all — which is what keeps a server from
+    /// Where the guest's sound goes, or `None` for a session that never
+    /// opens the playback channel — which is what keeps a server from
     /// encoding sound nobody hears.
     pub audio: Option<Arc<dyn Outputs>>,
+    /// Whether the playback channel is opened at the start, where the server
+    /// has one: where the session's Enable switch starts. The switch opens
+    /// and closes the channel from then on.
+    pub sound: bool,
 }
 
 /// Everything the connection panel can be told about a live session.
@@ -101,6 +105,9 @@ enum Command {
     /// head, in the order of the heads' ids; one of no size is a head asked
     /// to be off.
     Monitors(Vec<(i32, i32, u32, u32)>),
+    /// The session's sound switch, turned: the playback channel opened, or
+    /// closed.
+    Sound(bool),
     Close,
 }
 
@@ -292,12 +299,29 @@ impl Client {
         // being one more thing the session listens for: dropping the session
         // is what ends a dial, a handshake or a read wherever it has got to,
         // and the runtime going with it ends the channels' reader tasks.
-        runtime.block_on(async {
+        let ended = runtime.block_on(async {
             tokio::select! {
                 ended = self.session(config, handler, inbox) => ended,
                 () = self.closing.notified() => Err(Error::Closed),
             }
-        })
+        });
+        // No switch past the session, and nothing more for it to ask.
+        if let Some(audio) = &config.audio {
+            audio.controls().withdraw();
+        }
+        ended
+    }
+
+    /// The session's sound switch as an Enable switch, `on` or not: turned,
+    /// it asks the session's loop to open or close the playback channel.
+    fn offer_sound(&self, audio: &Arc<dyn Outputs>, on: bool) {
+        let commands = self.commands.clone();
+        audio.controls().offer_enable(
+            on,
+            Box::new(move |on| {
+                let _ = commands.send(Command::Sound(on));
+            }),
+        );
     }
 
     async fn session(
@@ -337,7 +361,7 @@ impl Client {
             connected: false,
             described: (0, 0, 0),
             ticket: config.password.clone(),
-            playback: config.audio.clone().map(Playback::new),
+            playback: None,
         };
 
         // The main channel first, and everything else with the id its INIT
@@ -361,25 +385,19 @@ impl Client {
                 .await?;
             session.channels.insert(kind, channel);
         }
-        // The guest's sound, where the server has some and this session plays
-        // it. A channel that will not open costs the sound and not the
-        // session, as one that ends later does.
-        if !sound {
-            session.playback = None;
-        }
-        if let Some(caps) = session.playback.as_ref().map(Playback::caps) {
-            match session
-                .connect(Kind::Playback, caps, config, connector.as_ref(), session_id, handler, &queue, &ends)
-                .await
-            {
-                Ok(channel) => {
-                    session.channels.insert(Kind::Playback, channel);
-                }
-                Err(e) => {
-                    log::warn!("playback: the channel did not open ({e}); the guest's sound is not played");
-                    session.playback = None;
-                }
-            }
+        // The guest's sound, where the server has some and this session has
+        // somewhere to play it: the session's switch is an Enable switch from
+        // here on, since the channel can be closed and opened again at any
+        // time, and the option says whether it opens now. A channel that will
+        // not open costs the sound and not the session, as one that ends
+        // later does.
+        let audio = config.audio.clone().filter(|_| sound);
+        if let Some(audio) = &audio {
+            let on = config.sound
+                && session
+                    .open_playback(audio, config, connector.as_ref(), session_id, handler, &queue, &ends)
+                    .await;
+            self.offer_sound(audio, on);
         }
 
         // What the display channel is told before it says anything: how much of
@@ -399,15 +417,7 @@ impl Client {
         }
 
         session.describe(config, connector.as_ref());
-        {
-            let mut info = self.info.lock().unwrap();
-            info.channels = session
-                .channels
-                .keys()
-                .map(|kind| kind.name())
-                .collect::<Vec<_>>()
-                .join(", ");
-        }
+        session.describe_channels();
         loop {
             // A stream that has gone quiet is closed after whichever turn of
             // the loop finds it so, and the half-second wake below finds it
@@ -435,6 +445,31 @@ impl Client {
                 command = inbox.recv() => {
                     match command {
                         None | Some(Command::Close) => return Err(Error::Closed),
+                        // The switch, which needs what the channels were
+                        // opened with, so it is answered here rather than
+                        // among the input.
+                        Some(Command::Sound(on)) => {
+                            let Some(audio) = &audio else { continue };
+                            if on && session.playback.is_none() {
+                                log::info!("playback: opening the channel");
+                                if !session
+                                    .open_playback(audio, config, connector.as_ref(), session_id, handler, &queue, &ends)
+                                    .await
+                                {
+                                    self.offer_sound(audio, false);
+                                }
+                                session.describe_channels();
+                            } else if !on && session.playback.is_some() {
+                                // Closing the channel is the whole of asking
+                                // the server to stop: it sends a channel that
+                                // is not there nothing, and the stream goes
+                                // with what is queued.
+                                log::info!("playback: closing the channel");
+                                session.channels.remove(&Kind::Playback);
+                                session.playback = None;
+                                session.describe_channels();
+                            }
+                        }
                         Some(command) => session.command(command, handler).await?,
                     }
                 }
@@ -442,10 +477,16 @@ impl Client {
                     if let Some(end) = end {
                         // Except for the sound, which the session can do
                         // without.
+                        // The switch goes off with it, so that turning it on
+                        // again tries the channel again.
                         if end.kind == Kind::Playback {
                             log::warn!("playback ended ({:?}); the guest's sound is not played", end.error);
                             session.channels.remove(&Kind::Playback);
                             session.playback = None;
+                            session.describe_channels();
+                            if let Some(audio) = &audio {
+                                self.offer_sound(audio, false);
+                            }
                             continue;
                         }
                         // Any other channel ending ends the session: three of
@@ -530,8 +571,9 @@ struct Session<'a> {
     /// the main channel has to be the one the others present too — or each
     /// of them is refused and asks again.
     ticket: Option<String>,
-    /// The guest's sound, while the session plays it: `None` where it was
-    /// not asked for, the server has none, or its channel has ended.
+    /// The guest's sound, while the session plays it: `None` where the
+    /// server has none, there is nowhere to play it, the switch is off, or
+    /// its channel has ended.
     playback: Option<Playback>,
 }
 
@@ -605,6 +647,43 @@ impl Session<'_> {
                     return Ok(channel);
                 }
                 other => return other,
+            }
+        }
+    }
+
+    /// The panel's channels row, which the sound switch changes.
+    fn describe_channels(&self) {
+        let mut kinds: Vec<Kind> = self.channels.keys().copied().collect();
+        kinds.sort_by_key(|kind| kind.channel_type() as u8);
+        self.client.info.lock().unwrap().channels =
+            kinds.iter().map(|kind| kind.name()).collect::<Vec<_>>().join(", ");
+    }
+
+    /// Opens the playback channel, playing on `audio`; whether it opened.
+    #[allow(clippy::too_many_arguments)]
+    async fn open_playback(
+        &mut self,
+        audio: &Arc<dyn Outputs>,
+        config: &Config,
+        connector: Option<&tls::Connector>,
+        session_id: u32,
+        handler: &mut dyn Handler,
+        queue: &mpsc::Sender<Message>,
+        ends: &mpsc::Sender<Ended>,
+    ) -> bool {
+        let playback = Playback::new(Arc::clone(audio));
+        match self
+            .connect(Kind::Playback, playback.caps(), config, connector, session_id, handler, queue, ends)
+            .await
+        {
+            Ok(channel) => {
+                self.channels.insert(Kind::Playback, channel);
+                self.playback = Some(playback);
+                true
+            }
+            Err(e) => {
+                log::warn!("playback: the channel did not open ({e}); the guest's sound is not played");
+                false
             }
         }
     }
