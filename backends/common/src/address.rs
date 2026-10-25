@@ -51,9 +51,12 @@ pub fn split(address: &str, default_port: u16, ports: Ports) -> Result<(String, 
         return host_and(host.trim(), port);
     }
     // `host::port` before the split below, since it is the one form where the
-    // last colon is not where the port starts.
+    // last colon is not where the port starts. Not with no host before it:
+    // `::1` is IPv6's loopback unbracketed, and is told so below rather than
+    // that it has no host.
     if ports == Ports::Display
         && let Some((host, tail)) = address.split_once("::")
+        && !host.is_empty()
         && !host.contains(':')
         && !tail.contains(':')
     {
@@ -140,7 +143,7 @@ mod tests {
     /// The whole of the reason the brackets are not optional.
     #[test]
     fn a_bare_literal_is_refused_in_words() {
-        for address in ["2001:db8::1", "fdb7:aebd:7160:0:cfb9:d78:95a7:251e", "::1:1"] {
+        for address in ["2001:db8::1", "fdb7:aebd:7160:0:cfb9:d78:95a7:251e", "::1:1", "::1"] {
             assert!(vnc(address).unwrap_err().contains("bracketed"), "{address}");
             assert!(rdp(address).unwrap_err().contains("bracketed"), "{address}");
         }
