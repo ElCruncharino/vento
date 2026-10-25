@@ -252,6 +252,8 @@
     <string name="panel_connected">Connected · %1$s</string>
     <string name="option_follow_window">Follow local window size changes</string>
     <string name="option_follow_window_summary">When local resolution is supported and enabled, update it whenever the orientation or size of the window changes.</string>
+    <string name="option_direct_touch">Direct touch</string>
+    <string name="option_direct_touch_summary">Send each finger to the point it touches, for a remote app that takes touch, instead of moving a cursor like a touchpad. Only for backends that support it (RDP).</string>
     <string name="panel_connected_size">Connected · %1$s · %2$d × %3$d</string>
     <!-- Not a plural: the line above is used for one monitor, and this one only
          for two or more. -->

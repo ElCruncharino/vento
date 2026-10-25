@@ -183,8 +183,12 @@ public final class SessionActivity extends Activity
         // is not part of a backend's schema, so `Options.forConnection` drops
         // it. A session from the command line reads it from the same --es
         // options as every other setting.
-        view.setFollowWindow(AppOptions.followWindow(
-                connection != null ? connection.options() : optionsFromIntent()));
+        final Map<String, String> appOptions =
+                connection != null ? connection.options() : optionsFromIntent();
+        view.setFollowWindow(AppOptions.followWindow(appOptions));
+        // The touchpad unless this connection asks for direct touch; the view
+        // ignores the ask for a backend that cannot take it.
+        view.setDirectTouch(AppOptions.directTouch(appOptions));
         // The setting, or --ez hud true for a session started from the command
         // line.
         view.setHudVisible(hudWanted());
