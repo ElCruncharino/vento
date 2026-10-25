@@ -47,6 +47,10 @@ typedef struct vento_freerdp_config {
        without one. A HOME already set is left as it is. */
     const char *config_path;
     int connect_timeout_ms;  /* 0 or less for the library's default */
+    /* The person's hardware decoding, as `vento_video_decoders.mode` numbers
+       it (0 off, 1 VAAPI, 2 auto), at connect. The phone's MediaCodec decodes
+       where the platform puts it. */
+    int hardware;
 } vento_freerdp_config;
 
 /* "FreeRDP x.y.z" — the one call that proves the whole path. */

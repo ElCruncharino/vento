@@ -65,8 +65,10 @@ fn codec(number: c_int) -> Option<Codec> {
     })
 }
 
-/// The mode as the header numbers it: [`Hardware`] in declaration order.
-fn mode_number(hardware: Hardware) -> c_int {
+/// The mode as the header numbers it: [`Hardware`] in declaration order —
+/// also how a backend whose library decodes for itself is told it
+/// (`vento_freerdp_config.hardware`).
+pub fn mode_number(hardware: Hardware) -> c_int {
     Hardware::ALL.iter().position(|h| *h == hardware).unwrap_or(0) as c_int
 }
 
