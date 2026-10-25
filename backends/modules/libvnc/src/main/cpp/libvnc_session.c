@@ -68,7 +68,6 @@ enum {
     CMD_KEY_UP,
     CMD_RELEASE_KEYS,
     CMD_CLIPBOARD,
-    CMD_ENCODINGS,
     CMD_RESIZE,
     CMD_DISCONNECT,
 };
@@ -79,6 +78,10 @@ typedef struct {
     int64_t id;  /* the key's identity, which is the seam's and not the keysym */
     char *text;  /* owned by the queue */
 } Cmd;
+
+static char *dupOrNull(const char *s) {
+    return s ? strdup(s) : NULL;
+}
 
 typedef struct {
     int x, y, w, h;
@@ -149,9 +152,24 @@ typedef struct {
     char addressError[160];
     int shared;
     int anonymousTls;
+    /* The encodings as last asked for, under `lock`; vento_libvnc_set_encodings
+       replaces and frees it there, and raises `encodingsChanged` for the
+       protocol thread, which sends them the next time it drains the queue.
+       A flag rather than a command in the queue, since a full queue drops
+       its oldest entry and a change of encodings is not one to lose. */
     char *encodings;
     int compressLevel;
     int qualityLevel;
+    int encodingsChanged;
+    /* The protocol thread's own copy of `encodings`, which is the string
+       libvncclient holds in appData.encodingsString and reads at every
+       SetFormatAndEncodings, as op_info does under the framebuffer lock. Kept
+       apart because the library holds it for the whole session and nothing
+       tells this file when it is done with it: the string set_encodings
+       replaces cannot be the one the library still has. Replaced, and the
+       previous one freed, only on the protocol thread and under the writer
+       lock. */
+    char *applied;
     int colorLevel;
     int connectTimeoutMs;
 
@@ -745,17 +763,35 @@ static char *utf8ToLatin1(const char *utf8) {
     return out;
 }
 
+/* The encodings as asked for into the client's appData, as a copy of the
+   protocol thread's own (`applied`). Protocol thread only. */
+static void takeEncodings(Session *s, rfbClient *cl) {
+    pthread_mutex_lock(&s->lock);
+    char *fresh = dupOrNull(s->encodings);
+    const int compressLevel = s->compressLevel;
+    const int qualityLevel = s->qualityLevel;
+    s->encodingsChanged = 0;
+    pthread_mutex_unlock(&s->lock);
+
+    pthread_rwlock_wrlock(&s->fbLock);
+    char *old = s->applied;
+    s->applied = fresh;
+    cl->appData.encodingsString = fresh;
+    cl->appData.compressLevel = compressLevel;
+    cl->appData.qualityLevel = qualityLevel < 0 ? 9 : qualityLevel;
+    /* Not a nicety: the quality pseudo-encoding is what lets Tight send JPEG at
+       all, so "lossless" is the absence of it rather than a value of it. */
+    cl->appData.enableJPEG = (qualityLevel >= 0);
+    pthread_rwlock_unlock(&s->fbLock);
+    free(old);
+}
+
 static void applyEncodings(Session *s) {
     rfbClient *cl = s->cl;
     if (!cl) {
         return;
     }
-    cl->appData.encodingsString = s->encodings;
-    cl->appData.compressLevel = s->compressLevel;
-    cl->appData.qualityLevel = s->qualityLevel < 0 ? 9 : s->qualityLevel;
-    /* Not a nicety: the quality pseudo-encoding is what lets Tight send JPEG at
-       all, so "lossless" is the absence of it rather than a value of it. */
-    cl->appData.enableJPEG = (s->qualityLevel >= 0);
+    takeEncodings(s, cl);
     SetFormatAndEncodings(cl);
 }
 
@@ -825,9 +861,6 @@ static void runCmd(Session *s, Cmd *c) {
                 }
             }
             break;
-        case CMD_ENCODINGS:
-            applyEncodings(s);
-            break;
         case CMD_RESIZE:
             /* SendExtDesktopSize stops asking for updates until the server's
                answer arrives, which is what keeps a screenful of the old size
@@ -855,8 +888,13 @@ static int drain(Session *s) {
         Cmd c;
         pthread_mutex_lock(&s->lock);
         if (s->tail == s->head) {
+            const int quit = s->quit;
+            const int encodings = s->encodingsChanged;
             pthread_mutex_unlock(&s->lock);
-            return s->quit;
+            if (encodings && !quit) {
+                applyEncodings(s);
+            }
+            return quit;
         }
         c = s->ring[s->tail];
         s->ring[s->tail].text = NULL;
@@ -1052,10 +1090,7 @@ static void *protocolThread(void *arg) {
        original DesktopSize pseudo-encoding is never asked for and only a
        server that speaks the extended one can say it has resized. */
     cl->canHandleNewFBSize = TRUE;
-    cl->appData.encodingsString = s->encodings;
-    cl->appData.compressLevel = s->compressLevel;
-    cl->appData.qualityLevel = s->qualityLevel < 0 ? 9 : s->qualityLevel;
-    cl->appData.enableJPEG = (s->qualityLevel >= 0);
+    takeEncodings(s, cl);
     cl->connectTimeout = (unsigned) (s->connectTimeoutMs > 0 ? (s->connectTimeoutMs + 999) / 1000 : 20);
 
     cl->MallocFrameBuffer = onMallocFrameBuffer;
@@ -1265,10 +1300,6 @@ static Session *sessionOfBase(vento_session *base) {
     return (Session *) base;
 }
 
-static char *dupOrNull(const char *s) {
-    return s ? strdup(s) : NULL;
-}
-
 static void freeSession(Session *s) {
     for (int i = 0; i < 2; i++) {
         if (s->wake[i] >= 0) {
@@ -1285,6 +1316,7 @@ static void freeSession(Session *s) {
     free(s->storedUser);
     free(s->storedPass);
     free(s->encodings);
+    free(s->applied);
     free(s->credUser);
     free(s->credPass);
     pthread_mutex_destroy(&s->lock);
@@ -1488,12 +1520,17 @@ void vento_libvnc_set_encodings(vento_session *base, const char *encoding, int c
     s->encodings = e;
     s->compressLevel = compressLevel;
     s->qualityLevel = qualityLevel;
+    s->encodingsChanged = 1;
+    const int quit = s->quit;
     pthread_mutex_unlock(&s->lock);
-    /* The old string may still be the one libvncclient is holding in appData,
-       so it is freed only after the command that replaces it has run — which
-       is what the queue's ordering gives for nothing. */
-    Cmd c = {CMD_ENCODINGS, 0, 0, 0, 0, old};
-    post(s, &c);
+    /* Freed here and now, since libvncclient never holds this one: it holds
+       the protocol thread's copy, which is replaced when the protocol thread
+       next drains — at once if it is waiting, and after the handshake if it
+       is still in one. */
+    free(old);
+    if (!quit) {
+        wake(s);
+    }
 }
 
 /* The wording TigerVNC's PixelFormat::print uses, because the panel shows one
@@ -1557,8 +1594,7 @@ static bool op_info(vento_session *base, vento_strings *out) {
         /* What was asked for, not what arrived: libvncclient tells nobody which
            encoding decoded a rectangle, so this row is the offer and its label
            says so. Every other backend here reports the encoding in use. */
-        snprintf(encoding, sizeof(encoding), "%s",
-                 cl->appData.encodingsString ? cl->appData.encodingsString : "");
+        snprintf(encoding, sizeof(encoding), "%s", s->applied ? s->applied : "");
         describeFormat(serverPixels, sizeof(serverPixels), &cl->si.format);
         describeFormat(viewerPixels, sizeof(viewerPixels), &cl->format);
     }
