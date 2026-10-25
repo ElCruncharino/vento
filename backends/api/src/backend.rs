@@ -311,6 +311,13 @@ pub fn thumbnail_step(width: usize, height: usize, max_width: usize, max_height:
         .max(1)
 }
 
+/// The phases of a [`Backend::touch`] contact, as `Backend.TOUCH_*` in Java.
+pub const TOUCH_DOWN: i32 = 0;
+pub const TOUCH_MOVE: i32 = 1;
+pub const TOUCH_UP: i32 = 2;
+/// Taken away by the phone rather than lifted.
+pub const TOUCH_CANCEL: i32 = 3;
+
 /// One remote desktop connection, whatever protocol is underneath.
 ///
 /// Starts connecting when created (there is no `connect()`, since nothing
@@ -327,6 +334,20 @@ pub trait Backend: Send + Sync {
     /// [`Facts::pointer_relative`]; other backends ignore it.
     fn pointer_relative(&self, dx: i32, dy: i32, button_mask: i32) {
         let _ = (dx, dy, button_mask);
+    }
+
+    /// Whether [`touch`](Backend::touch) can reach the far end. A backend
+    /// that says yes may still find the far end does not take touch, in which
+    /// case the contact is dropped.
+    fn supports_touch(&self) -> bool {
+        false
+    }
+
+    /// A touch contact at a desktop pixel, as a finger rather than a cursor.
+    /// `contact` is a small id, stable while the finger is down; `phase` is
+    /// one of the `TOUCH_*` constants.
+    fn touch(&self, contact: i32, phase: i32, x: i32, y: i32) {
+        let _ = (contact, phase, x, y);
     }
 
     /// `keysym` is an X11 keysym; `key_id` is a stable identity for the

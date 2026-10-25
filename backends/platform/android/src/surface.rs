@@ -98,6 +98,16 @@ pub const NATIVES: &[Native] = &[
         params: &["handle", "dx", "dy", "buttonMask"],
     },
     Native {
+        name: "touch",
+        descriptor: "(JIIII)V",
+        params: &["handle", "contact", "phase", "x", "y"],
+    },
+    Native {
+        name: "supportsTouch",
+        descriptor: "(J)Z",
+        params: &["handle"],
+    },
+    Native {
         name: "keyDown",
         descriptor: "(JIJ)V",
         params: &["handle", "keysym", "keyId"],
