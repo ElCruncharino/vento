@@ -1343,7 +1343,9 @@ impl Client {
             return;
         }
         let Some(key) = keymap::key(keysym) else {
-            log::info!("nothing in this protocol says keysym {keysym:#x}");
+            // At trace: a keysym is what was typed, and a log is no place
+            // for that.
+            log::trace!("nothing in this protocol says keysym {keysym:#x}");
             return;
         };
         if let Some(modifier) = keymap::modifier(keysym) {
