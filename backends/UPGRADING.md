@@ -185,22 +185,23 @@ under the host locale (`export LC_ALL=C`).
 
 ## Options
 
-A backend's settings are its table in `backends/session/src/options.rs`, one
-`Spec` per row, and the one copy: on the phone `vento-codegen` writes it into
-the module's generated `<Name>Catalog` at build time, which the provider answers
-from. When an upstream change adds something a person would switch (a new
-encoding or codec, a security type, a behaviour toggle), add a row in the shape,
-wording and scope of its neighbours, read it in the adapter (`o.get`, `o.bool`,
-`o.int`) into the config — for a C backend a new field in `vento_<name>_config`,
-which `session/build.rs` reads into Rust with bindgen — and default it to
-upstream's answer, and add its key to the test
-`the_keys_are_the_ones_records_hold`, which is there because a stored key
-renamed is a setting forgotten. The value reaches a session in the options it is
-created with, every key and value as strings, so nothing in Java or JNI changes
-for a row. Where the phone's words are wrong on a desktop ("this phone"), give
-the row a `desktop_summary` or the choice a `desktop_label`. Do not add rows for
-what the app already decides, what nobody would set, or what cannot be exercised
-here (an H.264 path with no decoder behind it).
+A backend's settings are its table, `OPTIONS` in
+`backends/modules/<name>/catalog.rs` (compiled by the session crate, which
+names the file by path), one `Spec` per row, and the one copy: on the phone
+`vento-codegen` writes it into the module's generated `<Name>Catalog` at build
+time, which the provider answers from. When an upstream change adds something a
+person would switch (a new encoding or codec, a security type, a behaviour
+toggle), add a row in the shape, wording and scope of its neighbours, read it in
+the adapter (`o.get`, `o.bool`, `o.int`) into the config — for a C backend a new
+field in `vento_<name>_config`, which `session/build.rs` reads into Rust with
+bindgen — and default it to upstream's answer, and add its key to the test
+`the_keys_are_the_ones_records_hold` in the same file, which is there because a
+stored key renamed is a setting forgotten. The value reaches a session in the
+options it is created with, every key and value as strings, so nothing in Java
+or JNI changes for a row. Where the phone's words are wrong on a desktop ("this
+phone"), give the row a `desktop_summary` or the choice a `desktop_label`. Do
+not add rows for what the app already decides, what nobody would set, or what
+cannot be exercised here (an H.264 path with no decoder behind it).
 
 The user-facing strings in this app are hand-written by its owner. A new
 row's label and summary are a draft; name them in the report so they get
@@ -216,10 +217,15 @@ line or one file somewhere that already has seven:
   "cdylib"]`), or a C shim in `src/main/cpp` over `vento/backend.h` with its
   config in `backends/common/include/vento/<name>.h` (added to
   `session/build.rs`'s bindgen header), and a small crate in `src/main/rust`
-  beside it (`remotedesktop-session` with the `c` feature; `session::c::start`
-  and a `Behaviour` do the rest).
-- **The session crate.** An `About` in `catalog.rs` (and in `ALL`), its
-  options table in `options.rs`, and in the backend's own crate a `Kind`:
+  beside it (`remotedesktop-session` with the `c` feature;
+  `session::c::start` and a `Behaviour` do the rest).
+- **The catalog.** `modules/<name>/catalog.rs`: the backend's `About` (its
+  pinning and whether its user name carries a domain are data there, which
+  the shared rules read) and its `OPTIONS` table, with their tests; one
+  `#[path]` module, a `pub use` and a place in `ALL` in
+  `backends/session/src/catalog.rs`. The file is in `codegenSources`
+  (`backends/build.gradle`) by being there.
+- **The adapter.** In the backend's own crate a `Kind` (`session::kind`):
   the `About`, the version, and `create`, which turns a `Connect` into an
   `Arc<dyn Backend>`. Credentials prompts, the trust decision
   (`session::trust::decide` over each client's `Store`), the bell and the
@@ -369,7 +375,7 @@ One commit per upstream, after review, by the lead:
 - **ironrdp** master 9b151c4c. No patches. A submodule rather than crates.io
   because the bitmap stride fix (80bb81b3) is still unreleased; revisit at
   the next ironrdp-session release. EGFX is deliberately off; the doc
-  comment on `session::options::IRONRDP` says why.
+  comment on IronRDP's `OPTIONS` (`modules/ironrdp/catalog.rs`) says why.
 - **hbb_common** 3d6fb2c, and terminal there: the next upstream commit moved
   `message.proto` into rustdesk's own repository
   (`libs/base/protos/message.proto`). Moving further means a second source

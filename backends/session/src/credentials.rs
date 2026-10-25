@@ -6,7 +6,7 @@
 //! `backends/vectors/credentials.json` holds them to their cases.
 
 use crate::Credentials;
-use crate::catalog::{About, FREERDP, IRONRDP};
+use crate::catalog::About;
 
 /// `DOMAIN\user`, `user@domain` or a bare name, as `(domain, user)`. Both
 /// forms, because both are typed: the backslash is what Windows shows and
@@ -62,11 +62,12 @@ pub fn rdp_identity(answer: &Credentials, domain: &str, user: &str) -> (String, 
 }
 
 /// The user name the phone's credentials prompt starts with, from the
-/// record's: as written, except for RDP's, whose prompt has no box for a
-/// domain and so starts with it in the name, `DOMAIN\user` — the form
-/// Windows shows — whichever way the record wrote it.
+/// record's: as written, except for a backend whose user name carries a
+/// domain ([`About::user_has_domain`], RDP's), whose prompt has no box for
+/// one and so starts with it in the name, `DOMAIN\user` — the form Windows
+/// shows — whichever way the record wrote it.
 pub fn prompt_user(about: &About, user: &str) -> String {
-    if about.id != FREERDP.id && about.id != IRONRDP.id {
+    if !about.user_has_domain {
         return user.to_string();
     }
     match split_domain(user) {
@@ -106,11 +107,15 @@ mod tests {
     }
 
     #[test]
-    fn an_rdp_prompt_starts_with_the_domain_in_the_name() {
-        use crate::catalog::{FREERDP, IRONRDP, RFB};
-        assert_eq!(prompt_user(&IRONRDP, "proto@corp.example"), "corp.example\\proto");
-        assert_eq!(prompt_user(&FREERDP, "CORP\\proto"), "CORP\\proto");
-        assert_eq!(prompt_user(&FREERDP, " proto "), "proto");
-        assert_eq!(prompt_user(&RFB, "proto@corp.example"), "proto@corp.example");
+    fn a_prompt_with_a_domain_starts_with_it_in_the_name() {
+        use crate::catalog::FIXTURE;
+        let domain = About {
+            user_has_domain: true,
+            ..FIXTURE
+        };
+        assert_eq!(prompt_user(&domain, "proto@corp.example"), "corp.example\\proto");
+        assert_eq!(prompt_user(&domain, "CORP\\proto"), "CORP\\proto");
+        assert_eq!(prompt_user(&domain, " proto "), "proto");
+        assert_eq!(prompt_user(&FIXTURE, "proto@corp.example"), "proto@corp.example");
     }
 }

@@ -92,40 +92,63 @@ pub fn verdict(pins: &[(&str, &str)], address: &str, fingerprint: &str) -> Verdi
     }
 }
 
+/// How a backend's identities are filed and first taken, as its
+/// [`About`] says.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Pinning {
+    /// Where an address alone does not name one machine — it means
+    /// something only on a network an option chooses — that option, and
+    /// the key is `address@network`; `None` files a pin under the address
+    /// as written.
+    pub network: Option<Network>,
+    /// Whether a fingerprint never seen is pinned without asking: for a
+    /// backend whose first key arrives vouched for by something other than
+    /// the far end itself, so that a question would have nothing to check
+    /// it by.
+    pub first_sight_silent: bool,
+}
+
+/// The option that names the network an address is on, and the network an
+/// empty one means.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Network {
+    pub option: &'static str,
+    pub default: &'static str,
+}
+
+impl Pinning {
+    /// What every backend but one has: the address as written, and a first
+    /// fingerprint asked about.
+    pub const ADDRESS: Pinning = Pinning {
+        network: None,
+        first_sight_silent: false,
+    };
+}
+
 /// What a backend's identities are pinned against, and how a first one is
 /// taken.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Pinned {
-    /// The address as written for all but RustDesk, whose key says which
-    /// network the id is on.
+    /// The address as written, or `address@network` where the backend's
+    /// [`Pinning`] names a network.
     pub key: String,
-    /// Whether a fingerprint never seen is pinned without asking: RustDesk's
-    /// alone, since its key arrives signed by the rendezvous server for the
-    /// id that was dialled and a question would have nothing to check it by.
+    /// [`Pinning::first_sight_silent`], for this backend.
     pub first_sight_silent: bool,
 }
 
-/// The rendezvous server an empty `RendezvousServer` means, which names the
-/// public network in a RustDesk pin's key.
-pub const RUSTDESK_PUBLIC_NETWORK: &str = "rs-ny.rustdesk.com";
-
 pub fn pinned_as(about: &About, address: &str, options: &Options) -> Pinned {
-    if about.id == crate::catalog::RUSTDESK.id {
-        // The id and the network it means something on. An id is handed out
-        // by a rendezvous server and re-issued when a machine's
-        // configuration is wiped, so the same digits on two networks are two
-        // machines, and one entry under the bare id would have them
-        // overwriting each other's identity.
-        let server = options.get("RendezvousServer").trim();
-        let network = if server.is_empty() { RUSTDESK_PUBLIC_NETWORK } else { server };
-        return Pinned {
-            key: format!("{address}@{network}"),
-            first_sight_silent: true,
-        };
-    }
+    let pinning = about.pinning;
+    let key = match pinning.network {
+        Some(network) => {
+            let named = options.get(network.option).trim();
+            let network = if named.is_empty() { network.default } else { named };
+            format!("{address}@{network}")
+        }
+        None => address.to_string(),
+    };
     Pinned {
-        key: address.to_string(),
-        first_sight_silent: false,
+        key,
+        first_sight_silent: pinning.first_sight_silent,
     }
 }
 
@@ -218,7 +241,7 @@ fn pin(store: &dyn Store, address: &str, fingerprint: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::catalog::{IRONRDP, RUSTDESK};
+    use crate::catalog::FIXTURE;
 
     const FP: &str = "66:cc:ed:01:02";
 
@@ -247,16 +270,26 @@ mod tests {
     }
 
     #[test]
-    fn a_pin_is_the_address_as_written_except_for_a_rustdesk_id() {
-        let rdp = pinned_as(&IRONRDP, "Host:3389", &Options::defaults(IRONRDP.options));
-        assert_eq!(rdp.key, "Host:3389");
-        assert!(!rdp.first_sight_silent);
-        let mut o = Options::defaults(RUSTDESK.options);
-        let id = pinned_as(&RUSTDESK, "123456789", &o);
-        assert_eq!(id.key, "123456789@rs-ny.rustdesk.com");
+    fn a_pin_is_the_address_as_written_unless_the_backend_names_a_network() {
+        let plain = pinned_as(&FIXTURE, "Host:3389", &Options::default());
+        assert_eq!(plain.key, "Host:3389");
+        assert!(!plain.first_sight_silent);
+        let networked = About {
+            pinning: Pinning {
+                network: Some(Network {
+                    option: "Server",
+                    default: "public.example",
+                }),
+                first_sight_silent: true,
+            },
+            ..FIXTURE
+        };
+        let mut o = Options::default();
+        let id = pinned_as(&networked, "123456789", &o);
+        assert_eq!(id.key, "123456789@public.example");
         assert!(id.first_sight_silent);
-        o.set("RendezvousServer", " hbbs.example ");
-        assert_eq!(pinned_as(&RUSTDESK, "123456789", &o).key, "123456789@hbbs.example");
+        o.set("Server", " own.example ");
+        assert_eq!(pinned_as(&networked, "123456789", &o).key, "123456789@own.example");
     }
 
     /// Pins in memory, in the order they were filed.
@@ -310,7 +343,7 @@ mod tests {
     fn a_vouched_first_sight_is_pinned_silently_and_a_change_still_asked() {
         let store = Memory::default();
         let id = Pinned {
-            key: "123456789@rs-ny.rustdesk.com".into(),
+            key: "123456789@public.example".into(),
             first_sight_silent: true,
         };
         assert_eq!(decide(&store, &id, FP), Decision::FirstSight);

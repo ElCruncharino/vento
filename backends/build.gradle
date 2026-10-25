@@ -74,12 +74,16 @@ ext {
  * constant — and the module's provider answers from it. A generated source
  * directory, one per variant, decided by AGP: nothing of it is in the tree,
  * and `codegenSources` is everything it can depend on, so the task is out of
- * date exactly when the catalog may have changed.
+ * date exactly when the catalog may have changed. That includes each
+ * backend's own entry, `modules/<name>/catalog.rs`, which the session crate
+ * compiles by path from outside its own directory: left out, a changed
+ * option would be a stale Java catalog.
  */
 ext.codegenSources = files(
         '../Cargo.toml', '../Cargo.lock', '../rust-toolchain.toml',
         'codegen/Cargo.toml', 'codegen/src',
         'session/Cargo.toml', 'session/build.rs', 'session/src',
+        file('modules').listFiles().findAll { it.isDirectory() }.sort().collect { new File(it, 'catalog.rs') },
         'platform/android/Cargo.toml', 'platform/android/src',
         'common/Cargo.toml', 'common/src')
 

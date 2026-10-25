@@ -5,21 +5,22 @@
 //!
 //! [`backend::Backend`] is the seam: what a client calls, whatever protocol
 //! is underneath. A session says what happens through a [`events::Mailbox`],
-//! as [`events::Event`]s. [`options`] is what each backend can be told and
-//! [`catalog`] what each is called; [`kind::Kind`] puts those beside a
-//! backend's constructor, and [`kind::Connect`] is what a session is started
-//! with. [`credentials`] and [`trust`] are the rules every client keeps alike
-//! — how a prompt's answer is read, and how a far end's identity meets the
-//! pins — applied here for the phone, and held to their cases by
-//! `backends/vectors/`.
+//! as [`events::Event`]s. [`catalog`] is what each backend is called and can
+//! be told — each entry its backend's own file under `backends/modules/`,
+//! compiled here — and [`options`] the shape of what it can be told;
+//! [`kind::Kind`] puts an entry beside a backend's constructor, and
+//! [`kind::Connect`] is what a session is started with. [`credentials`] and
+//! [`trust`] are the rules every client keeps alike — how a prompt's answer
+//! is read, and how a far end's identity meets the pins — applied here for
+//! the phone, and held to their cases by `backends/vectors/`.
 //!
 //! The adapters themselves are each in its backend's own crate: the protocol
 //! crate for RFB, IronRDP, RustDesk and SPICE, and a small crate beside the C
 //! library for libvncclient, TigerVNC and FreeRDP, which fill in [`c`] — the
 //! one adapter over `vento/backend.h`'s vtable, behind the `c` feature.
 //!
-//! Nothing in it knows a platform, and what a session needs of one — where to
-//! keep things, what decodes video, what this machine is called — arrives
+//! Nothing in it knows a platform, and what a session needs of one — where
+//! to keep things, what decodes video, what this machine is called — arrives
 //! through [`kind::Connect`].
 
 pub mod backend;

@@ -192,7 +192,7 @@ mod tests {
     #[test]
     fn a_session_says_its_sound_and_its_switch() {
         static KIND: Kind = Kind {
-            about: &crate::catalog::TIGERVNC,
+            about: &crate::catalog::FIXTURE,
             version: String::new,
             create: |_| Err("not here".into()),
         };
