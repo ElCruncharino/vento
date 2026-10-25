@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// LibVNCServer's libvncclient as a `vento_session`. The parameters are
-// `LibVncNative.nativeCreate`'s, in its order, and that class's javadoc is
-// where each is explained.
+// LibVNCServer's libvncclient as a `vento_session`. The config is filled in
+// from the backend's options by `backends/modules/libvnc/src/main/rust`, the
+// adapter the phone holds it through, and each field is explained below.
 
 #ifndef VENTO_LIBVNC_H
 #define VENTO_LIBVNC_H

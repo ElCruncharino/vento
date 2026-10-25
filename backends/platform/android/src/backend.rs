@@ -2,19 +2,28 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Any `session::Backend` as the natives `NativeBackend.java` calls: the one
-//! JNI layer the Rust backends are reached through on the phone.
+//! JNI layer every backend but RealVNC's is reached through on the phone.
 //!
-//! A backend's library is its protocol crate, its `session::Backend` adapter
-//! (`backend.rs` in that crate) and one line naming the two to this module —
-//! [`natives!`](crate::natives) — which writes the `JNI_OnLoad` that registers
-//! [`METHODS`] on the module's own natives class. Registered rather than
-//! exported, because the natives are the same functions in every library: a
-//! `Java_…` symbol per backend would need a copy of them per backend, and one
-//! class for all of them would be one class every library registers on, the
-//! last answering for all — which the RustDesk backend, a separate APK loaded
-//! into the app, would make a question of load order. So each module has a
-//! class of its own, `vento-codegen natives` writes it from
-//! [`surface`](crate::surface), and the library registers on that.
+//! A backend's library is its protocol, its `session::Backend` adapter and one
+//! line naming the adapter to this module — [`natives!`](crate::natives) —
+//! which writes the `JNI_OnLoad` that registers [`METHODS`] on the module's
+//! own natives class. Registered rather than exported, because the natives are
+//! the same functions in every library: a `Java_…` symbol per backend would
+//! need a copy of them per backend, and one class for all of them would be one
+//! class every library registers on, the last answering for all — which the
+//! RustDesk backend, a separate APK loaded into the app, would make a question
+//! of load order. So each module has a class of its own, `vento-codegen
+//! natives` writes it from [`surface`](crate::surface), and the library
+//! registers on that.
+//!
+//! For the four backends written in Rust the protocol is the crate and the
+//! library is a `cdylib` of it. For the three in C the protocol is a C
+//! library behind the vtable in `vento/backend.h`, the adapter is
+//! `session::c` and a small crate beside the C, and that crate is a static
+//! library CMake links into the C's own `.so` — whose one export is the
+//! `JNI_OnLoad` written here. The questions only the C API asks (a question in
+//! the library's words, a message, RealVNC's security prompt) come through
+//! here like any other event.
 //!
 //! The handle Java holds is a `Box<Handle>`: the backend, and the mailbox its
 //! events go through. Java retires the handle under its own lock before
@@ -73,10 +82,14 @@ static MODULE: OnceLock<Module> = OnceLock::new();
 /// ```
 ///
 /// `decoders = <fn() -> Option<Arc<dyn Decoders>>>` hands the session a video
-/// decoder, for the backend that needs one.
+/// decoder, for the backend that needs one. `on_load = <unsafe fn(*mut RawVm)>`
+/// is run first, with the runtime's `JavaVM`, for a library linked into the
+/// same `.so` that wanted a `JNI_OnLoad` of its own: there can be only one,
+/// and FreeRDP's WinPR keeps the `JavaVM` it reads the time zone through
+/// from its.
 #[macro_export]
 macro_rules! natives {
-    (class = $class:expr, kind = $kind:expr $(, decoders = $decoders:expr)? $(,)?) => {
+    (class = $class:expr, kind = $kind:expr $(, decoders = $decoders:expr)? $(, on_load = $on_load:expr)? $(,)?) => {
         /// Registers this library's natives on its module's class. Called by
         /// the runtime on the thread that loaded the library, which is what
         /// lets `FindClass` see the module's class loader.
@@ -90,7 +103,8 @@ macro_rules! natives {
             #[allow(unused_mut, unused_assignments)]
             let mut decoders: fn() -> Option<::std::sync::Arc<dyn $crate::backend::Decoders>> = || None;
             $(decoders = $decoders;)?
-            // SAFETY: `vm` is the runtime's own, as `on_load` asks.
+            // SAFETY: `vm` is the runtime's own, which is all either asks.
+            $(unsafe { ($on_load)(vm) };)?
             unsafe { $crate::backend::on_load(vm, $class, $crate::backend::Module { kind: &$kind, decoders }) }
         }
     };
@@ -640,6 +654,9 @@ struct Outlet {
     credentials_needed: JMethodID,
     trust_needed: JMethodID,
     unverified: JMethodID,
+    question: JMethodID,
+    message: JMethodID,
+    security_needed: JMethodID,
     closed: JMethodID,
     mailbox: OnceLock<Weak<Mailbox>>,
     /// Held while a thread drains, so that two threads with events never
@@ -672,6 +689,17 @@ impl Outlet {
             credentials_needed: id(env, jni_str!("onCredentialsNeeded"), jni_sig!("(Z)V"))?,
             trust_needed: id(env, jni_str!("onTrustNeeded"), jni_sig!("(Ljava/lang/String;)V"))?,
             unverified: id(env, jni_str!("onUnverified"), jni_sig!("(Ljava/lang/String;)V"))?,
+            question: id(
+                env,
+                jni_str!("onQuestion"),
+                jni_sig!("(Ljava/lang/String;Ljava/lang/String;)V"),
+            )?,
+            message: id(
+                env,
+                jni_str!("onMessage"),
+                jni_sig!("(Ljava/lang/String;IZLjava/lang/String;)V"),
+            )?,
+            security_needed: id(env, jni_str!("onSecurityNeeded"), jni_sig!("(Ljava/lang/String;)V"))?,
             closed: id(env, jni_str!("onClosed"), jni_sig!("(Ljava/lang/String;)V"))?,
             mailbox: OnceLock::new(),
             draining: Mutex::new(()),
@@ -768,12 +796,36 @@ impl Outlet {
                 }
                 Event::TrustNeeded { fingerprint } => self.text(env, self.trust_needed, &fingerprint),
                 Event::Unverified { why } => self.text(env, self.unverified, &why),
-                Event::Closed { detail } => self.text(env, self.closed, &detail),
-                // The C API's three, which no Rust backend asks.
-                other @ (Event::Question { .. } | Event::SecurityNeeded { .. } | Event::Message { .. }) => {
-                    log::warn!("not delivered on Android: {other:?}");
-                    Ok(())
+                Event::Question { title, text } => {
+                    let title = env.new_string(&title)?;
+                    let text = env.new_string(&text)?;
+                    self.call(env, self.question, &[jvalue { l: title.as_raw() }, jvalue { l: text.as_raw() }])
                 }
+                Event::Message {
+                    text,
+                    severity,
+                    question,
+                    confirm_label,
+                } => {
+                    let text = env.new_string(&text)?;
+                    let confirm = env.new_string(&confirm_label)?;
+                    self.call(
+                        env,
+                        self.message,
+                        &[
+                            jvalue { l: text.as_raw() },
+                            jvalue { i: severity as jint },
+                            jvalue { z: question },
+                            jvalue { l: confirm.as_raw() },
+                        ],
+                    )
+                }
+                // RealVNC's, whose Android half is Java over its core and
+                // never comes this way: Java refuses it, so that a backend
+                // that did ask would not leave its protocol thread parked
+                // behind a question nobody here can put.
+                Event::SecurityNeeded { signature, .. } => self.text(env, self.security_needed, &signature),
+                Event::Closed { detail } => self.text(env, self.closed, &detail),
             }
         });
         if let Err(e) = result {

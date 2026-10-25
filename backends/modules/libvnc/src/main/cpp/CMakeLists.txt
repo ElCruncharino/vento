@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Under Gradle this is a root, configured by the NDK toolchain, and makes
-# `libremotedesktop_libvnc.so`: the session and the JNI file over the Android
-# adapter, with the vendored libjpeg-turbo and the GnuTLS port linked in, since
-# a phone has neither.
+# `libremotedesktop_libvnc.so`: the session, with the module's Rust crate linked
+# in as the JNI layer over it, and the vendored libjpeg-turbo and the GnuTLS
+# port, since a phone has neither.
 
 cmake_minimum_required(VERSION 3.30)
 project(remotedesktop_libvnc C)
@@ -20,7 +20,7 @@ endif()
 # matches.
 include("${VENTO_BACKENDS}/cmake/reproducible.cmake")
 include("${VENTO_BACKENDS}/cmake/warnings.cmake")
-include("${VENTO_BACKENDS}/cmake/vento_jni.cmake")
+include("${VENTO_BACKENDS}/cmake/vento_android.cmake")
 
 # One shared library per protocol, as every other backend module does, so a
 # build that drops this protocol drops the whole of it. Everything below is
@@ -103,10 +103,11 @@ set(LIBVNC_INCLUDES
         "${THIRD_PARTY}/libvncserver/include"
         "${CMAKE_CURRENT_BINARY_DIR}/libvncserver/include")
 
-# Two halves: the session, which is the shim over libvncclient and names no
-# platform, and the JNI file, which is `LibVncNative`'s entry points over the
-# shared Android adapter `vento_jni` brings with it.
-add_library(remotedesktop_libvnc SHARED libvnc_session.c libvnc_jni.c)
+# The session, which is the shim over libvncclient and names no platform,
+# and the Rust crate beside it in `src/main/rust`, which is the backend
+# over the session and the JNI layer every backend shares.
+add_library(remotedesktop_libvnc SHARED libvnc_session.c)
+vento_android_library(remotedesktop_libvnc remotedesktop_libvnc)
 remotedesktop_warnings(remotedesktop_libvnc)
 target_include_directories(remotedesktop_libvnc SYSTEM PRIVATE ${LIBVNC_INCLUDES})
-target_link_libraries(remotedesktop_libvnc PRIVATE vncclient vento_jni jnigraphics log)
+target_link_libraries(remotedesktop_libvnc PRIVATE vncclient)

@@ -112,6 +112,39 @@ ext.generateNatives = { Project module, variant, String className, String librar
 }
 
 /*
+ * A C backend's Rust half, for its CMake to link: the module's crate — the
+ * backend as a `session::Backend` over the C library's vtable, and the one JNI
+ * layer in `platform/android` registered on the module's natives class — as a
+ * static library per ABI, under the directory returned, which the module hands
+ * CMake as `VENTO_RUST_LIBRARY_DIR` (`cmake/vento_android.cmake` links it).
+ *
+ * One task for every variant, since each builds the crate `--release` alike,
+ * and before any CMake build, which links what it leaves; CMake itself only
+ * names the file, so configuring needs nothing of it.
+ */
+ext.rustStaticLibrary = { Project module, String crate ->
+    final out = module.layout.buildDirectory.dir('generated/rustStaticLibs')
+    final task = module.tasks.register('cargoBuildStaticNative', CargoBuildTask) {
+        workspaceDir.set(cargoWorkspace)
+        cargoPackage.set(crate)
+        crateType.set('staticlib')
+        ndkDirectory.set(module.androidComponents.sdkComponents.ndkDirectory)
+        rustToolchainFile.set(cargoRustToolchain)
+        cargoNdkVersion.set(project.cargoNdkVersion)
+        abiFilters.set(nativeAbis)
+        minSdkVersion.set(module.provider {
+            final v = module.android.defaultConfig.minSdk
+            (v instanceof com.android.build.api.variant.AndroidVersion) ? v.apiLevel : v
+        })
+        outputDir.set(out)
+    }
+    module.tasks.matching { it.name.startsWith('buildCMake') }.configureEach {
+        dependsOn task
+    }
+    return out.get().asFile.absolutePath
+}
+
+/*
  * The two upstreams that arrive as a release rather than as a submodule, both
  * of them the encryption the borrowed VNC clients reach TLS through. Their git
  * trees have no `configure` — it is an autotools bootstrap output, and gnutls'

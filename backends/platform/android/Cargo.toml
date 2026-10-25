@@ -1,5 +1,5 @@
 # What a backend's native half needs of Android and no protocol owns: the one
-# JNI layer every Rust backend is reached through (any `session::Backend`,
+# JNI layer every backend but RealVNC is reached through (any `session::Backend`,
 # registered on its module's natives class), the locked bitmap, the logger —
 # and MediaCodec, which is the phone's video decoder and is reached through
 # the NDK rather than through Java.
