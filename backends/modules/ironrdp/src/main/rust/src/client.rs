@@ -13,7 +13,7 @@ use crate::error::{Error, Result, describe};
 use crate::framebuffer::Framebuffer;
 use crate::keymap::{self, Key};
 use crate::tls;
-use common::{Credentials, Handler};
+use common::{Credentials, Handler, Hangup};
 
 use ironrdp_blocking::{Framed, connect_begin, connect_finalize, mark_as_upgraded};
 use ironrdp_cliprdr::CliprdrClient;
@@ -239,7 +239,8 @@ struct Shared {
     framebuffer: RwLock<Framebuffer>,
     out: Sender<Out>,
     tasks: Mutex<VecDeque<Task>>,
-    socket: Mutex<Option<TcpStream>>,
+    /// The socket, from the moment it starts dialling: what `close` breaks.
+    hangup: Hangup,
     info: Mutex<Info>,
     /// The keyboard and mouse state IronRDP keeps so that a redundant event is
     /// not sent twice. Locked on whichever thread the input arrived on.
@@ -254,7 +255,6 @@ struct Shared {
     /// carry the ninth.
     buttons: Mutex<u16>,
     running: AtomicBool,
-    closing: AtomicBool,
     view_only: AtomicBool,
     /// The display-control channel is open and its capabilities have arrived,
     /// which is the whole of "can this desktop be reshaped". Nothing before
@@ -295,13 +295,12 @@ impl Client {
                 framebuffer: RwLock::new(Framebuffer::new()),
                 out: tx,
                 tasks: Mutex::new(VecDeque::new()),
-                socket: Mutex::new(None),
+                hangup: Hangup::new(),
                 info: Mutex::new(Info::default()),
                 input: Mutex::new(Database::new()),
                 held: Mutex::new(HashMap::new()),
                 buttons: Mutex::new(0),
                 running: AtomicBool::new(false),
-                closing: AtomicBool::new(false),
                 view_only: AtomicBool::new(false),
                 display_control: AtomicBool::new(false),
                 monitor_count: AtomicU8::new(1),
@@ -534,14 +533,12 @@ impl Client {
         self.push(Task::Focus(focused));
     }
 
-    /// End the session. The protocol thread is blocked on a socket read, so it
-    /// is woken by shutting the socket down rather than by a flag it cannot see.
+    /// End the session. The protocol thread is blocked on a socket read, or
+    /// still in the dial, so it is woken by shutting the socket down rather
+    /// than by a flag it cannot see.
     pub fn close(&self) {
-        self.shared.closing.store(true, Ordering::Release);
+        self.shared.hangup.hang_up();
         let _ = self.shared.out.send(Out::Stop);
-        if let Some(socket) = self.shared.socket.lock().unwrap().as_ref() {
-            let _ = socket.shutdown(std::net::Shutdown::Both);
-        }
     }
 
     fn shift_is_down(&self) -> bool {
@@ -620,7 +617,7 @@ impl Client {
         let result = self.session(config, handler);
         self.shared.running.store(false, Ordering::Release);
         let _ = self.shared.out.send(Out::Stop);
-        if self.shared.closing.load(Ordering::Acquire) {
+        if self.shared.hangup.is_hung_up() {
             return Err(Error::Closed);
         }
         result
@@ -639,10 +636,13 @@ impl Client {
                 .ok_or(Error::Closed)?,
         };
 
-        let socket = connect(&host, port, config.connect_timeout)?;
+        let socket = connect(&self.shared.hangup, &host, port, config.connect_timeout)?;
+        // Held for the rest of the session, the X.224 and TLS exchanges with
+        // it: a server that takes the connection and says nothing is a read
+        // that only a shut-down socket ends.
+        let _holding = self.shared.hangup.hold(&socket)?;
         socket.set_nodelay(true).ok();
         socket.set_read_timeout(Some(config.connect_timeout)).ok();
-        *self.shared.socket.lock().unwrap() = Some(socket.try_clone()?);
         let client_addr = socket.local_addr()?;
 
         let mut connector = ClientConnector::new(connector_config(config, &credentials), client_addr);
@@ -1483,14 +1483,16 @@ fn resolve(address: &str) -> Result<(String, u16)> {
     common::address::split(address, 3389, common::address::Ports::Plain).map_err(Error::Protocol)
 }
 
-fn connect(host: &str, port: u16, timeout: Duration) -> Result<TcpStream> {
+/// Each address in turn, through `hangup` so that a close ends the dial too.
+fn connect(hangup: &Hangup, host: &str, port: u16, timeout: Duration) -> Result<TcpStream> {
     if host.is_empty() {
         return Err(Error::Protocol("no address".into()));
     }
     let mut last = None;
     for addr in (host, port).to_socket_addrs()? {
-        match TcpStream::connect_timeout(&addr, timeout) {
+        match hangup.dial(addr, timeout) {
             Ok(socket) => return Ok(socket),
+            Err(_) if hangup.is_hung_up() => return Err(Error::Closed),
             Err(e) => last = Some(e),
         }
     }
@@ -1516,6 +1518,12 @@ impl common::Client for Client {
 
     fn close(&self) {
         self.close();
+    }
+
+    /// `run` reports a requested close as [`Error::Closed`], which is the
+    /// one ending the screen asked for and wants nothing said of.
+    fn closed_on_request(error: &Error) -> bool {
+        matches!(error, Error::Closed)
     }
 }
 
