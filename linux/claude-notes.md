@@ -344,15 +344,47 @@ cargo run -- rdp 127.0.0.1:3389 --user proto --password protopass \
 ```
 
 `build.rs` runs `backends/CMakeLists.txt` with `-DVENTO_SHARED=ON`, which makes
-each backend a `libvento_<name>.so` under the build tree carrying its vendored
-static dependencies and the stderr logger; the binary links the three open
-backends' by name, and RealVNC's crate opens `libvento_realvnc.so` by name when
-a session first needs it, both through an rpath into the build directory, so
-`cargo run` works from the target directory without anything on
-`LD_LIBRARY_PATH`. The C probes are not built
+each backend a `libvento_<name>.so` carrying its vendored static dependencies
+and the stderr logger; the binary links the three open backends' by name, and
+RealVNC's crate opens `libvento_realvnc.so` by name when a session first needs
+it. Both find them through the binary's rpath, **`$ORIGIN/lib`**: the `lib/`
+directory beside the binary, wherever that is. `build.rs` lays the target
+directory out that way, the libraries hard-linked into
+`target/<profile>/lib/` beside `target/<profile>/vento`, so `cargo run` works
+without anything on `LD_LIBRARY_PATH`; a second entry, `$ORIGIN/../lib`, is
+what the test harness in `target/<profile>/deps/` finds them by. Nothing
+absolute is in the rpath. The C probes are not built
 here: they are a plain `cmake -S backends -B … -DVENTO_PROBES=ON` of their own
 (the root README), static, as before; the option is off by default, so this
 build compiles none of them.
+
+### Installing
+
+An installed client is the same layout as the target directory: the
+`vento` binary with a `lib/` directory beside it holding the
+`libvento_*.so` files (RealVNC's only where the build had clang), and the
+two go together anywhere — `/opt/vento`, a home directory — since the rpath
+is relative to the binary. Making one by hand is three steps:
+
+```sh
+cargo build --release
+mkdir -p /opt/vento/lib
+cp target/release/vento /opt/vento/
+cp target/release/lib/libvento_*.so /opt/vento/lib/
+```
+
+What the tree does not carry is the system's libraries, which a machine
+running it needs installed: glibc as new as the build machine's (it is
+linked against its symbol versions), zlib, libasound, and per backend — **libvnc**
+GnuTLS and libjpeg (`libjpeg.so.62`, libjpeg-turbo's); **tigervnc** GnuTLS,
+Nettle (and hogweed, GMP), libjpeg, pixman and libstdc++; **freerdp**
+OpenSSL 3 (`libssl.so.3`, `libcrypto.so.3`), ICU (`libicuuc` and three
+more, of the build machine's major version); **realvnc** libstdc++ and
+libatomic. A backend's library that cannot be loaded stops the binary from
+starting (RealVNC's excepted, which is opened at run time and says it is not
+available). Loaded at run time where they are there, and not needed
+otherwise: libpipewire-0.3 (sound), libva and libva-drm
+(hardware decoding), and the display stack (Vulkan or GL, Wayland or X11).
 
 The probe answers the first credentials prompt with `--password` and a second
 with a cancel, since a second prompt is the far end refusing the first answer
@@ -1480,8 +1512,8 @@ RealVNC's viewer core is proprietary and nothing of it is in this repository.
 Its adapter is the `remotedesktop-realvnc` crate in `backends/modules/realvnc`,
 and its library, `libvento_realvnc.so` (the session and the hosting layer that
 runs the viewer's Android core in this process), is built only when `clang` is
-on `PATH`. The crate does not link it: it opens it by name, through the rpath,
-the first time a session or `--list` asks, so the binary does not depend on
+on `PATH`. The crate does not link it: it opens it by name, through the rpath
+(`lib/` beside the binary), the first time a session or `--list` asks, so the binary does not depend on
 it. Without clang the build says so in a note, the backend is still listed,
 `--list` shows it as `not available: …` with the reason, and a session on it
 fails to start with that sentence. The next `cargo build` after `PATH` changes

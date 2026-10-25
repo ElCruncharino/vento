@@ -12,9 +12,10 @@
 //! the path, and decides that after this crate is built, so the backend is
 //! always listed and says why it cannot start where the library is not
 //! there ([`library`]). It is found by name, as the other C backends'
-//! libraries are linked by name — through the binary's rpath, which points
-//! at the client's build tree, or `LD_LIBRARY_PATH` — and once open it stays
-//! open, since the core it hosts never lets go of a session.
+//! libraries are linked by name — through the binary's rpath, `$ORIGIN/lib`,
+//! the `lib/` directory beside the binary where the client's build puts every
+//! `libvento_*.so`, or `LD_LIBRARY_PATH` — and once open it stays open, since
+//! the core it hosts never lets go of a session.
 //!
 //! Nothing of RealVNC's is in the tree: the two libraries the session loads
 //! come from the viewer's APK under `library_dir`, hashes verified by the

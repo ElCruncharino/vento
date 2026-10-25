@@ -13,17 +13,31 @@
 //! crate rather than describing it again, with the one switch that makes each
 //! `vento_<name>` a shared library carrying its vendored static dependencies
 //! and the stderr `vento_log`. The probes are left at their default, off:
-//! nothing here runs them. The `.so` files land under `lib/` in the build tree,
-//! the binary links the three open backends' by name and nothing else of
-//! theirs, and an rpath to that directory is baked in so that `cargo run`
-//! finds them from the target directory without being told.
+//! nothing here runs them. The `.so` files land under `lib/` in the CMake
+//! tree and the binary links the three open backends' by name and nothing
+//! else of theirs.
+//!
+//! **Where they are found: `$ORIGIN/lib`.** The installed layout is the
+//! binary with a `lib/` directory beside it holding every `libvento_*.so`,
+//! and the binary's rpath says exactly that, relative to wherever it is, so
+//! the directory can be moved, unpacked anywhere, run from a USB stick.
+//! The target directory is laid out the same way: the libraries are linked
+//! (or copied) into `target/<profile>/lib/` beside the binary, so that `cargo
+//! run` is already an installed tree, and so is `target/release/`, to be
+//! copied out as it is. A second entry, `$ORIGIN/../lib`, is for the test
+//! harness, which cargo puts one directory down in `deps/`; in an installed
+//! tree it is a directory that holds no `libvento_*.so`, and the search goes
+//! on to the system's as it would anyway. No absolute path is baked in, so
+//! nothing of the build machine's is in the binary and nothing is looked
+//! for there.
 //!
 //! RealVNC's hosting layer builds only under clang, so where `clang` is on the
 //! path both compilers are set to it for the whole tree — the three open
 //! backends build under either — and where it is not, the CMake root skips
 //! that module with a message rather than an error. Its library is not linked
 //! either way: `remotedesktop-realvnc` opens it by name when a session asks
-//! for it, through the same rpath, and says the backend is not available where
+//! for it, through the same rpath (a `dlopen` from the binary searches the
+//! binary's), and says the backend is not available where
 //! it is not there — a library this script may or may not make could not be
 //! a feature of a crate built before it runs.
 //!
@@ -81,16 +95,16 @@ fn main() {
 
     let lib = build_c_backends(&backends, &out, &ffmpeg);
     println!("cargo:rustc-link-search=native={}", lib.display());
-    // The rpath, so that the binary and the tests run from where cargo puts
-    // them, and RealVNC's library is opened from there too. Absolute, which
-    // is right for a development tree; a packaged binary would carry the
-    // libraries beside it and `$ORIGIN` instead.
-    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib.display());
+    // The rpath (see the module's comment). Passed to the linker as written,
+    // with no shell between, so `$ORIGIN` reaches the binary as the loader
+    // wants it.
+    println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/lib:$ORIGIN/../lib");
     for name in ["libvnc", "tigervnc", "freerdp"] {
         let path = lib.join(format!("libvento_{name}.so"));
         assert!(path.is_file(), "the C build did not produce {}", path.display());
         println!("cargo:rustc-link-lib=dylib=vento_{name}");
     }
+    beside_the_binary(&lib, &out);
     if lib.join("libvento_realvnc.so").is_file() {
         println!("cargo:warning=RealVNC backend: in (built with clang)");
     } else {
@@ -133,6 +147,33 @@ fn build_c_backends(backends: &Path, out: &Path, ffmpeg: &Path) -> PathBuf {
     // `build()` returns the install prefix; the build tree is `build/` under
     // it, and `lib/` is where vento_linux.cmake sends the libraries.
     dst.join("build").join("lib")
+}
+
+/// The libraries put where the binary's rpath looks: `lib/` in the profile's
+/// directory of the target directory (`target/debug/lib/`), which `OUT_DIR`
+/// is three levels under (`target/debug/build/vento-…/out`), as it is with
+/// `--target` (`target/<triple>/debug/build/…`). Hard links, which cost
+/// nothing, where the two are on one file system; copies where not. Made
+/// afresh on every run of this script, which is every build of the
+/// libraries. A library this build no
+/// longer makes (RealVNC's, after a switch away from clang) goes from there
+/// too, or the binary would open what an earlier build left.
+fn beside_the_binary(lib: &Path, out: &Path) {
+    let profile = out.ancestors().nth(3).expect("OUT_DIR is target/<profile>/build/<crate>/out");
+    let dest = profile.join("lib");
+    fs::create_dir_all(&dest).expect("creating lib/ beside the binary");
+    for name in ["libvnc", "tigervnc", "freerdp", "realvnc"] {
+        let file = format!("libvento_{name}.so");
+        let (from, to) = (lib.join(&file), dest.join(&file));
+        match fs::remove_file(&to) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => panic!("removing the old {}: {e}", to.display()),
+        }
+        if from.is_file() && fs::hard_link(&from, &to).is_err() {
+            fs::copy(&from, &to).unwrap_or_else(|e| panic!("copying {} to {}: {e}", from.display(), to.display()));
+        }
+    }
 }
 
 /// clang and clang++ where both are on the path and run, as the paths `PATH`
