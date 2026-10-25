@@ -39,7 +39,7 @@ cd "$(dirname "$0")/.."   # the build is at the repository root
 MODULES=(
     "rfb:net/pgaskin/remotedesktop/backend/rfb/RfbNatives:remotedesktop_rfb:cargo:registered"
     "libvnc:net/pgaskin/remotedesktop/backend/libvnc/LibVncNatives:remotedesktop_libvnc:cmake:registered"
-    "tigervnc:net/pgaskin/remotedesktop/backend/tigervnc/TigerVncNative:remotedesktop_tigervnc:cmake:exported"
+    "tigervnc:net/pgaskin/remotedesktop/backend/tigervnc/TigerVncNatives:remotedesktop_tigervnc:cmake:registered"
     "ironrdp:net/pgaskin/remotedesktop/backend/ironrdp/IronRdpNatives:remotedesktop_ironrdp:cargo:registered"
     "freerdp:net/pgaskin/remotedesktop/backend/freerdp/FreeRdpNative:remotedesktop_freerdp:cmake:exported"
     "realvnc:net/pgaskin/remotedesktop/backend/realvnc/RealVncTraffic:remotedesktop_realvnc:cmake:exported"

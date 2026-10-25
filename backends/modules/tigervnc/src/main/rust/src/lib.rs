@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! TigerVNC's `vento_tigervnc` as a [`Backend`](session::backend::Backend):
-//! `TigerVncNative.nativeCreate`'s parameters and `TigerVncBackend`'s option
-//! handling and rows. Its certificates are the client's to judge: the session
+//! its config from the options, its live options and its rows — what the
+//! phone's one JNI layer stands in front of, linked into the library CMake
+//! makes of the C. Its certificates are the client's to judge: the session
 //! hands them to `trust_needed`, so they meet the known hosts as every other
-//! backend's do, and TigerVNC's own known-hosts file is never read or written
-//! — which is why no state directory is given it.
+//! backend's do, and TigerVNC's own known-hosts file is never read or written —
+//! which is why no state directory is given it.
 
 use session::c::{Behaviour, CSession, ffi, start};
 use session::backend::{Backend, ConnectionFact, Field, Traffic};
@@ -19,6 +20,14 @@ pub static KIND: Kind = Kind {
     version: || unsafe { session::c::string(ffi::vento_tigervnc_version()) },
     create,
 };
+
+// The phone's library: this backend, registered on the module's generated
+// natives class. Android only.
+#[cfg(target_os = "android")]
+platform_android::natives!(
+    class = c"net/pgaskin/remotedesktop/backend/tigervnc/TigerVncNatives",
+    kind = KIND,
+);
 
 static BEHAVIOUR: Behaviour = Behaviour {
     info,
