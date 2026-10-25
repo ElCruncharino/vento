@@ -5,11 +5,11 @@
 // is TigerVNC's own (`CConnection` asks for it and hands over what arrives),
 // played on the platform's output, which the session is handed in its config
 // as `vento/audio.h`'s table — AAudio on the phone, behind the one queue and
-// policy every backend's sound shares (`runtime::media::audio`). Their
-// viewer's own sinks, PulseAudio and waveOut behind an `AudioOutput` in
-// `vncviewer/`, are not compiled here, and neither is a sink of this module's
-// any more: how far ahead sound is kept, what is dropped when it gets too far
-// ahead, and opening the device off this thread are all the table's.
+// policy every backend's sound shares (`runtime::media::audio`). Their viewer's
+// own sinks, PulseAudio and waveOut behind an `AudioOutput` in `vncviewer/`,
+// are not compiled here, and neither is a sink of this module's any more: how
+// far ahead sound is kept, what is dropped when it gets too far ahead, and
+// opening the device off this thread are all the table's.
 //
 // What CConnection asks every server for — 16-bit signed, stereo, 48 kHz — it
 // keeps to itself in CConnection.cxx, and their viewer restates it in its own
