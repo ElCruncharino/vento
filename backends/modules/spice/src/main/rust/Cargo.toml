@@ -1,7 +1,9 @@
 # The SPICE backend's native half: their protocol and their decoders under a
-# session of ours. The session layer is plain Rust and `src/bindings` is
-# Android-only, so `cargo test` and `cargo run --example spice-probe` exercise
-# it on the host against a real server.
+# session of ours. The session layer is plain Rust, and on Android the library
+# is that session as a `session::Backend` (`src/backend.rs`) registered through
+# the platform crate's one JNI layer, so `cargo test` and
+# `cargo run --example spice-probe` exercise it on the host against a real
+# server.
 [package]
 name = "remotedesktop-spice"
 version.workspace = true
@@ -18,6 +20,9 @@ crate-type = ["lib", "cdylib"]
 [dependencies]
 log.workspace = true
 remotedesktop-common.workspace = true
+# `src/backend.rs`, the protocol as a `session::Backend`: what the phone's JNI
+# layer stands in front of.
+remotedesktop-session.workspace = true
 remotedesktop-tls.workspace = true
 
 # A submodule rather than the published crates, because two things had to
@@ -68,12 +73,7 @@ flate2 = { version = "1", default-features = false, features = ["rust_backend"] 
 # is no logcat to put them in.
 log.workspace = true
 
-# `src/backend.rs`, the protocol as a `session::Backend`.
-[target.'cfg(not(target_os = "android"))'.dependencies]
-remotedesktop-session.workspace = true
-
-# The only part of this crate that knows a phone exists: the JNI entry points
-# in `src/bindings`, and the platform crate they stand on.
+# The only part of this crate that knows a phone exists: the one line in
+# `src/lib.rs` that hands the backend to the platform crate's JNI layer.
 [target.'cfg(target_os = "android")'.dependencies]
-jni.workspace = true
 remotedesktop-platform-android.workspace = true

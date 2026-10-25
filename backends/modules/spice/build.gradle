@@ -5,9 +5,10 @@ plugins {
     id 'com.android.library'
 }
 
-// Both halves of the SPICE backend: `src/main/java` implements `Backend` on
-// `src/main/rust`, which is their protocol and their decoders under a session
-// of ours, and the AAR carries the library it compiles to.
+// Both halves of the SPICE backend: `src/main/rust`, their protocol and their
+// decoders under a session of ours, as the library the AAR carries, and
+// `src/main/java`'s provider, which holds a session on it as a `NativeBackend`
+// through the natives class generated below.
 android {
     namespace = 'net.pgaskin.remotedesktop.backend.spice'
     compileSdk 36
@@ -67,8 +68,10 @@ androidComponents {
         }
         variant.sources.jniLibs?.addGeneratedSourceDirectory(cargoBuild) { it.outputDir }
 
-        // `SpiceCatalog`, what the catalog says this backend is: see :backends.
+        // `SpiceCatalog`, what the catalog says this backend is, and
+        // `SpiceNatives`, what the library registers its natives on: see :backends.
         seam.generateCatalog(project, variant, 'spice', 'SpiceCatalog')
+        seam.generateNatives(project, variant, 'SpiceNatives', 'remotedesktop_spice')
     }
 }
 
