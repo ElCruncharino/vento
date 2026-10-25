@@ -92,25 +92,37 @@ impl Images {
         let kind = ImageType::from_u8(descriptor.image_type);
         self.seen.insert(name(descriptor.image_type));
         // QUIC and LZ4 are handed the descriptor's size and allocate by it, so
-        // a size no desktop could be is refused before they are asked.
+        // a size no desktop could be is refused before they are asked; LZ and
+        // GLZ allocate by their stream's own, which is held to this one.
         let pixels = (descriptor.width as usize).checked_mul(descriptor.height as usize);
-        if pixels.is_none_or(|n| n > common::MAX_DESKTOP_PIXELS) {
+        let Some(pixels) = pixels.filter(|&n| n <= common::MAX_DESKTOP_PIXELS) else {
             log::warn!("display: a {}x{} image", descriptor.width, descriptor.height);
             return None;
-        }
+        };
         let decoded: Option<DecompressedImage> = match kind {
             Some(ImageType::Pixmap) => pixmap(data, descriptor.image_id),
             // The four-byte prefix is the compressed size, which the message
             // framing has already told us.
-            Some(ImageType::LzRgb) => decompress_lz(data.get(4..)?).ok(),
-            Some(ImageType::GlzRgb) => decompress_glz(data.get(4..)?, &self.dictionary).await.ok(),
+            Some(ImageType::LzRgb) => {
+                let lz = data.get(4..)?;
+                lz_fits(lz, Lz::Lz, pixels)?;
+                decompress_lz(lz).ok()
+            }
+            Some(ImageType::GlzRgb) => {
+                let glz = data.get(4..)?;
+                lz_fits(glz, Lz::Glz, pixels)?;
+                decompress_glz(glz, &self.dictionary).await.ok()
+            }
             Some(ImageType::ZlibGlzRgb) => {
                 // A GLZ image with zlib over it: the uncompressed size, the
-                // compressed size, and then the stream.
+                // compressed size, and then the stream. The uncompressed
+                // size is the server's word, as is what the stream inflates
+                // to; what is read is what a GLZ stream of this image could
+                // be.
                 let compressed = u32::from_le_bytes(data.get(4..8)?.try_into().ok()?) as usize;
                 let zlib = data.get(8..8 + compressed.min(data.len() - 8))?;
-                let mut glz = Vec::new();
-                ZlibDecoder::new(zlib).read_to_end(&mut glz).ok()?;
+                let glz = inflate(zlib, pixels)?;
+                lz_fits(&glz, Lz::Glz, pixels)?;
                 decompress_glz(&glz, &self.dictionary).await.ok()
             }
             // The prefix is the compressed size here as well, whatever the
@@ -214,6 +226,55 @@ impl Images {
     }
 }
 
+/// Which of the two LZ headers a stream has: the same fields at different
+/// places, since GLZ has no padding before its type and an id after its size.
+#[derive(Clone, Copy, Debug)]
+enum Lz {
+    Lz,
+    Glz,
+}
+
+/// Whether an LZ or GLZ stream's own size is within its image's, which is
+/// what has to be true before `decompress_lz` or `decompress_glz` sees it:
+/// both allocate width x height x 4 from the stream's header before a pixel
+/// is read, checked for overflow but not for size, so a one-pixel image
+/// whose stream said 65535x65535 was 17 GB. The image's size has been held
+/// to the desktop cap; a stream smaller than it is drawn stretched, as any
+/// small image is.
+fn lz_fits(stream: &[u8], kind: Lz, pixels: usize) -> Option<()> {
+    // Big-endian, unlike the rest of the wire, after the magic and version.
+    let at = match kind {
+        Lz::Lz => 12,
+        Lz::Glz => 9,
+    };
+    let field = |at: usize| Some(u32::from_be_bytes(stream.get(at..at + 4)?.try_into().ok()?) as usize);
+    let (width, height) = (field(at)?, field(at + 4)?);
+    if width.checked_mul(height).is_none_or(|n| n > pixels) {
+        log::warn!("display: a {kind:?} stream of {width}x{height} for an image of {pixels} pixels");
+        return None;
+    }
+    Some(())
+}
+
+/// The most a GLZ stream of `pixels` pixels can be, with room to spare: a
+/// literal is three bytes a pixel plus a control byte for each run of up to
+/// 32, an alpha pass one byte a pixel more, and the header 33 bytes.
+fn glz_bound(pixels: usize) -> usize {
+    pixels.saturating_mul(5).saturating_add(64)
+}
+
+/// The zlib under a `ZLIB_GLZ_RGB` image, inflated no further than a GLZ
+/// stream of its image could be: what a zlib stream inflates to is the
+/// server's to say, a thousand to one, and 64 MiB of message is 64 GB.
+fn inflate(zlib: &[u8], pixels: usize) -> Option<Vec<u8>> {
+    let mut glz = Vec::new();
+    ZlibDecoder::new(zlib)
+        .take(glz_bound(pixels) as u64)
+        .read_to_end(&mut glz)
+        .ok()?;
+    Some(glz)
+}
+
 /// Into the server's cache, as the image's width and height and then its
 /// pixels: one entry, so the size is evicted with the pixels it describes.
 fn keep(cache: &mut ByteBoundedLru, image: &DecompressedImage) {
@@ -303,8 +364,10 @@ fn lz_alpha(data: &[u8], pixels: &mut [u8]) -> bool {
     let width = u32::from_be_bytes(data[12..16].try_into().unwrap()) as usize;
     let height = u32::from_be_bytes(data[16..20].try_into().unwrap()) as usize;
     let top_down = u32::from_be_bytes(data[24..28].try_into().unwrap()) != 0;
+    // Checked twice, as on a 32-bit phone the second product can wrap
+    // where the first did not.
     let count = width.saturating_mul(height);
-    if count == 0 || count * 4 > pixels.len() {
+    if count == 0 || count.checked_mul(4).is_none_or(|n| n > pixels.len()) {
         return false;
     }
 
@@ -417,10 +480,13 @@ fn fit(image: Image, src: (u32, u32, u32, u32), width: usize, height: usize) -> 
         return None;
     };
     let mut pixels = vec![0u8; count * 4];
+    // The scale in 64 bits: a row number times a crop height can pass a
+    // 32-bit phone's `usize` where neither does.
+    let scale = |at: usize, crop: usize, of: usize| (at as u64 * crop as u64 / of as u64) as usize;
     for y in 0..height {
-        let sy = top + y * crop_h / height;
+        let sy = top + scale(y, crop_h, height);
         for x in 0..width {
-            let sx = left + x * crop_w / width;
+            let sx = left + scale(x, crop_w, width);
             let from = (sy * image.width + sx) * 4;
             let to = (y * width + x) * 4;
             pixels[to..to + 4].copy_from_slice(&image.pixels[from..from + 4]);
@@ -589,6 +655,93 @@ mod tests {
         assert!(block_on(images.draw(&keep, &data, (0, 0, 1, 1), 100_000, 100_000)).is_none());
         let (keep, data) = cached_pixel(8);
         assert!(block_on(images.draw(&keep, &data, (0, 0, 1, 1), 1 << 33, 1 << 33)).is_none());
+    }
+
+    /// An LZ (or GLZ) stream whose own header says `width` x `height`,
+    /// behind the four-byte prefix the message puts in front of it, with one
+    /// literal pixel after the header (blue, green, red).
+    fn lz_stream(glz: bool, width: u32, height: u32) -> Vec<u8> {
+        let mut data = vec![0; 4];
+        data.extend_from_slice(b"  ZL");
+        data.extend_from_slice(&1u16.to_be_bytes());
+        data.extend_from_slice(&1u16.to_be_bytes());
+        if glz {
+            data.push(0x18); // RGB32, top-down
+        } else {
+            data.extend_from_slice(&[0, 0, 0, 8]);
+        }
+        data.extend_from_slice(&width.to_be_bytes());
+        data.extend_from_slice(&height.to_be_bytes());
+        data.extend_from_slice(&(width.wrapping_mul(4)).to_be_bytes());
+        if glz {
+            data.extend_from_slice(&9u64.to_be_bytes()); // its id
+            data.extend_from_slice(&0u32.to_be_bytes()); // nothing to refer back to
+        } else {
+            data.extend_from_slice(&1u32.to_be_bytes()); // top-down
+        }
+        data.extend_from_slice(&[0, 0x33, 0x22, 0x11]);
+        data
+    }
+
+    fn lz_descriptor(kind: ImageType) -> ImageDescriptor {
+        ImageDescriptor {
+            image_id: 9,
+            image_type: kind as u8,
+            flags: 0,
+            width: 1,
+            height: 1,
+        }
+    }
+
+    /// An LZ or GLZ stream carries a size of its own, and their decoders
+    /// allocate by it before a pixel is read: a one-pixel image whose stream
+    /// said 65535x65535 asked for 17 GB. The stream's size is held to the
+    /// descriptor's (which is held to the desktop cap) before they are
+    /// called, and a stream that fits still decodes.
+    #[test]
+    fn an_lz_stream_is_no_bigger_than_its_image() {
+        use crate::testing::block_on;
+        for (glz, kind) in [(false, ImageType::LzRgb), (true, ImageType::GlzRgb)] {
+            let mut images = Images::new(1 << 20);
+            let descriptor = lz_descriptor(kind);
+            for (w, h) in [(65535, 65535), (2, 1), (u32::MAX, u32::MAX)] {
+                let data = lz_stream(glz, w, h);
+                let drawn = block_on(images.draw(&descriptor, &data, (0, 0, 1, 1), 1, 1));
+                assert!(drawn.is_none(), "{kind:?} {w}x{h}");
+            }
+            let data = lz_stream(glz, 1, 1);
+            let image = block_on(images.draw(&descriptor, &data, (0, 0, 1, 1), 1, 1)).unwrap();
+            assert_eq!(image.pixels, [0x11, 0x22, 0x33, 0xff], "{kind:?}");
+        }
+    }
+
+    /// The zlib under a GLZ stream is the server's too: what it inflates to
+    /// is read no further than a GLZ stream of the image's size could be.
+    #[test]
+    fn a_zlib_stream_is_inflated_only_as_far_as_its_image() {
+        use flate2::{Compression, write::ZlibEncoder};
+        use std::io::Write;
+        let mut zlib = ZlibEncoder::new(Vec::new(), Compression::default());
+        zlib.write_all(&vec![0; 16 << 20]).unwrap();
+        let zlib = zlib.finish().unwrap();
+        assert_eq!(inflate(&zlib, 1).map(|v| v.len()), Some(glz_bound(1)));
+        assert_eq!(inflate(&zlib, 1 << 20).map(|v| v.len()), Some(glz_bound(1 << 20)));
+        assert_eq!(inflate(&zlib, 8 << 20).map(|v| v.len()), Some(16 << 20));
+    }
+
+    /// The alpha of a JPEG is an LZ stream with a size of its own, held to
+    /// the colour's; on a 32-bit phone the product of the two fields could
+    /// wrap past that check.
+    #[test]
+    fn an_alpha_stream_bigger_than_its_colour_is_refused() {
+        let mut stream = lz_stream(false, 1 << 16, 1 << 15);
+        let mut pixels = vec![0xff; 4];
+        assert!(!lz_alpha(&stream[4..], &mut pixels));
+        stream = lz_stream(false, 1, 1);
+        stream.truncate(stream.len() - 4);
+        stream.extend_from_slice(&[0, 0x80]);
+        assert!(lz_alpha(&stream[4..], &mut pixels));
+        assert_eq!(pixels, [0xff, 0xff, 0xff, 0x80]);
     }
 
     /// An image whose pixels are not the size it says is refused by the one
