@@ -92,6 +92,14 @@ impl Handler for Bridge {
         self.events.frame_end();
     }
 
+    fn takes_video(&self) -> bool {
+        self.events.takes_video()
+    }
+
+    fn video(&mut self, x: usize, y: usize, width: usize, height: usize, color_mode: i32, nv12: &[u8]) {
+        self.events.video(x, y, width, height, color_mode, nv12);
+    }
+
     fn cursor(&mut self, pixels: &[u32], width: usize, height: usize, hot_x: i32, hot_y: i32) {
         self.events.cursor(pixels, width, height, hot_x, hot_y);
     }

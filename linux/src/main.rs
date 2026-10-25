@@ -631,6 +631,8 @@ mod host {
                 Event::Bell => say("bell"),
                 Event::Status(Some(text)) => say(&format!("status: {text}")),
                 Event::Status(None) => say("status cleared"),
+                // Only a window that asks for video is sent any, and this one does not.
+                Event::Video { .. } => {}
                 Event::Sound(sound) => {
                     let before = self.sound.replace(*sound);
                     if (sound.switch, sound.enabled, sound.muted) != (before.switch, before.enabled, before.muted) {
