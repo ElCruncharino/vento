@@ -19,16 +19,18 @@
 
 use crate::error::{Error, Result};
 use std::sync::{Arc, Mutex};
-use runtime::tls::pinning::{self, Pinning};
+use runtime::tls::pinning;
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 use tokio_rustls::client::TlsStream;
 
-/// A configured connector, and the verifier to ask afterwards what it saw.
+/// A configured connector, and the certificate the session's person accepted.
 pub struct Connector {
     connector: TlsConnector,
     host: String,
-    verifier: Arc<Pinning>,
+    /// The fingerprint accepted on the session's first channel, which every
+    /// channel after it has to present again (see [`Connector::admit`]).
+    accepted: Mutex<Option<String>>,
     /// What the handshake settled on, for the panel's Connection row. Taken
     /// off the connection while it is still in hand, because it goes into the
     /// channel's stream immediately afterwards.
@@ -42,17 +44,21 @@ impl Connector {
         // is about — so this install is what decides that both halves of the
         // session use `ring`.
         let _ = rustls::crypto::ring::default_provider().install_default();
-        let (config, verifier) =
-            pinning::client_config().map_err(|e| Error::Protocol(e.to_string()))?;
+        // The verifier is not asked what it saw: it remembers the last
+        // handshake of the four or five this connector makes, where each
+        // connection's own peer certificate is that connection's.
+        let (config, _) = pinning::client_config().map_err(|e| Error::Protocol(e.to_string()))?;
         Ok(Connector {
             connector: TlsConnector::from(Arc::new(config)),
             host: host.to_string(),
-            verifier,
+            accepted: Mutex::new(None),
             negotiated: Mutex::new(None),
         })
     }
 
-    pub async fn connect(&self, tcp: TcpStream) -> Result<TlsStream<TcpStream>> {
+    /// The handshake, and the SHA-256 of the leaf certificate it presented:
+    /// what the app pins, and what a person is asked about when it changes.
+    pub async fn connect(&self, tcp: TcpStream) -> Result<(TlsStream<TcpStream>, Option<String>)> {
         let name = pinning::server_name(&self.host);
         let stream = self.connector.connect(name, tcp).await?;
         let (_, conn) = stream.get_ref();
@@ -60,17 +66,73 @@ impl Connector {
             conn.protocol_version(),
             conn.negotiated_cipher_suite(),
         ));
-        Ok(stream)
+        let fingerprint = conn.peer_certificates().and_then(|certs| certs.first()).map(pinning::fingerprint);
+        Ok((stream, fingerprint))
     }
 
-    /// The leaf certificate's SHA-256, once a handshake has presented one. What
-    /// the app pins, and what a person is asked about when it changes.
-    pub fn fingerprint(&self) -> Option<String> {
-        self.verifier.fingerprint()
+    /// Whether a connection that presented `fingerprint` may carry the session
+    /// on, before its ticket goes out.
+    ///
+    /// The session's first channel asks `trust`, and what it accepts is
+    /// remembered. Every channel after it — the other three, the sound
+    /// channel opened later, and the main channel dialled again after a
+    /// refused ticket — reaches the same server moments later and is not
+    /// asked about again, so it must present that same certificate: one that
+    /// is different is refused without a question, since the person was asked
+    /// about one server and a channel that reaches another is not it (and its
+    /// ticket would go to whoever that is).
+    pub fn admit(&self, fingerprint: Option<&str>, trust: Option<&mut dyn FnMut(&str) -> bool>) -> Result<()> {
+        // rustls finishes no handshake without a server certificate, so this
+        // is not one of theirs.
+        let Some(fingerprint) = fingerprint else {
+            return Err(Error::Protocol("the TLS handshake presented no certificate".into()));
+        };
+        let mut accepted = self.accepted.lock().unwrap();
+        match (trust, accepted.as_deref()) {
+            (Some(ask), _) => {
+                if !ask(fingerprint) {
+                    return Err(Error::Cancelled);
+                }
+                *accepted = Some(fingerprint.to_string());
+                Ok(())
+            }
+            (None, Some(first)) if first == fingerprint => Ok(()),
+            (None, _) => Err(Error::Protocol(format!(
+                "a channel presented a certificate ({fingerprint}) that is not the one accepted for this session"
+            ))),
+        }
     }
 
     /// `TLSv1_3 · TLS13_AES_256_GCM_SHA384`, for the panel.
     pub fn negotiated(&self) -> Option<String> {
         self.negotiated.lock().unwrap().clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The first channel's answer is the session's: a later channel with the
+    /// same certificate goes on unasked, one with another is refused unasked,
+    /// and a refused first one is Cancelled and accepts nothing.
+    #[test]
+    fn later_channels_present_the_accepted_certificate() {
+        let connector = Connector::new("127.0.0.1").unwrap();
+        let mut asked = Vec::new();
+        let mut yes = |fp: &str| {
+            asked.push(fp.to_string());
+            true
+        };
+        assert!(connector.admit(Some("AA"), Some(&mut yes)).is_ok());
+        assert!(connector.admit(Some("AA"), None).is_ok());
+        assert!(matches!(connector.admit(Some("BB"), None), Err(Error::Protocol(_))));
+        assert!(matches!(connector.admit(None, None), Err(Error::Protocol(_))));
+        assert_eq!(asked, ["AA"]);
+
+        let refused = Connector::new("127.0.0.1").unwrap();
+        let mut no = |_: &str| false;
+        assert!(matches!(refused.admit(Some("AA"), Some(&mut no)), Err(Error::Cancelled)));
+        assert!(matches!(refused.admit(Some("AA"), None), Err(Error::Protocol(_))));
     }
 }

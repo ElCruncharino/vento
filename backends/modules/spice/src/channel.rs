@@ -118,7 +118,8 @@ impl Channel {
     /// every other one. `trust` is asked once, on the first channel of a TLS
     /// session, in the one moment where the answer is worth anything: after the
     /// handshake, which is when there is a certificate to judge, and before the
-    /// link, which is when the ticket goes out.
+    /// link, which is when the ticket goes out. Every other channel must
+    /// present the certificate accepted then (`tls::Connector::admit`).
     ///
     /// **The deadline is around each step and never around the question.** A
     /// person reading a fingerprint takes longer than a server does to answer,
@@ -149,11 +150,14 @@ impl Channel {
 
         let mut stream = match tls {
             Some(connector) => {
-                let stream = within(deadline, connector.connect(tcp)).await??;
-                if let (Some(ask), Some(fingerprint)) = (trust, connector.fingerprint())
-                    && !ask(&fingerprint)
-                {
-                    return Err(Error::Cancelled);
+                let (stream, fingerprint) = within(deadline, connector.connect(tcp)).await??;
+                match connector.admit(fingerprint.as_deref(), trust) {
+                    Err(Error::Cancelled) => return Err(Error::Cancelled),
+                    Err(e) => {
+                        log::warn!("{}: {e}", kind.name());
+                        return Err(e);
+                    }
+                    Ok(()) => {}
                 }
                 SpiceStream::Tls(stream)
             }
