@@ -3,10 +3,10 @@
 #
 # Under Gradle this is a root, configured by the NDK toolchain, and makes
 # `libremotedesktop_freerdp.so`: the session, with the module's Rust crate
-# linked in as the JNI layer over it, and the OpenSSL port. Its H.264 is vento's
-# decoders, the phone's MediaCodec, through the subsystem in h264_vento.c; and
-# its sound is vento's output and vento's AAC and Opus decoders, AAudio and
-# MediaCodec, through the rdpsnd device in rdpsnd_vento.c.
+# linked in as the JNI layer over it, and the OpenSSL port. Its H.264 is
+# vento's decoders, the phone's MediaCodec, through the subsystem in
+# h264_vento.c; and its sound is vento's output and vento's AAC and Opus
+# decoders, AAudio and MediaCodec, through the rdpsnd device in rdpsnd_vento.c.
 
 cmake_minimum_required(VERSION 3.30)
 project(remotedesktop_freerdp C)
@@ -22,7 +22,7 @@ endif()
 # matches.
 include("${VENTO_BACKENDS}/cmake/reproducible.cmake")
 include("${VENTO_BACKENDS}/cmake/warnings.cmake")
-include("${VENTO_BACKENDS}/cmake/vento_android.cmake")
+include("${VENTO_BACKENDS}/platform/android/cmake/vento_android.cmake")
 
 # One shared library per protocol, as every other backend module does, so a
 # build that drops this protocol drops the whole of it. Everything below is
@@ -40,9 +40,10 @@ endmacro()
 
 string(APPEND CMAKE_C_FLAGS_DEBUG " -O2 -DNDEBUG")
 
-# Answers find_package(OpenSSL) with the port in backends/ports/openssl instead
-# of the copy CMake ships, which would either fail against a sysroot that has no
-# OpenSSL or find the host's. An override of the command rather than a module on
+# Answers find_package(OpenSSL) with the port in
+# backends/platform/android/ports/openssl instead of the copy CMake ships,
+# which would either fail against a sysroot that has no OpenSSL or find the
+# host's. An override of the command rather than a module on
 # CMAKE_MODULE_PATH, because winpr *replaces* that path with FreeRDP's own — and
 # it is winpr, in the scope where a module of ours is invisible, that looks for
 # OpenSSL a second time and fails the configure when it is not there.

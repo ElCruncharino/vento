@@ -5,7 +5,7 @@
 # generated config.h describes the platform it was probed on, so a gen/ made
 # against a different NDK or API level is a lie the compiler cannot catch — and
 # a copy that has to be kept in step by hand is how that lie gets written.
-gradle=$(cd "$(dirname "${BASH_SOURCE:-$0}")/.." && pwd)/build.gradle
+gradle=$(cd "$(dirname "${BASH_SOURCE:-$0}")/../../.." && pwd)/build.gradle
 ndk_version=$(sed -n "s/.*nativeNdkVersion *= *'\([^']*\)'.*/\1/p" "$gradle" | head -1)
 api=$(sed -n "s/^ *minSdk *\([0-9]*\).*/\1/p" "$gradle" | head -1)
 [ -n "$ndk_version" ] && [ -n "$api" ] || {

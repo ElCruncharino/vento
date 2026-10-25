@@ -26,7 +26,7 @@ endforeach()
 # matches.
 include("${VENTO_BACKENDS}/cmake/reproducible.cmake")
 include("${VENTO_BACKENDS}/cmake/warnings.cmake")
-include("${VENTO_BACKENDS}/cmake/vento_android.cmake")
+include("${VENTO_BACKENDS}/platform/android/cmake/vento_android.cmake")
 
 # One shared library per protocol, as every other backend module does, so a
 # build that drops this protocol drops the whole of it. Everything below is
@@ -86,7 +86,7 @@ set(BUILD_TIMESTAMP "0")
 # find_package, which sets the four variables below, and then HAVE_NETTLE for
 # config.h; this build has it as a subdirectory, so it answers all five
 # directly and skips the search.
-add_subdirectory("${VENTO_BACKENDS}/ports/nettle" nettle)
+add_subdirectory("${VENTO_BACKENDS}/platform/android/ports/nettle" nettle)
 set(NETTLE_FOUND TRUE)
 set(NETTLE_LIBRARIES nettle)
 set(HOGWEED_LIBRARIES hogweed)
@@ -96,7 +96,7 @@ set(HAVE_NETTLE 1)
 # GnuTLS, which is the only thing their VeNCrypt is written against, answered
 # the same way. Their find module also sets GNUTLS_INCLUDE_DIR, which the
 # target carries for us.
-add_subdirectory("${VENTO_BACKENDS}/ports/gnutls" gnutls)
+add_subdirectory("${VENTO_BACKENDS}/platform/android/ports/gnutls" gnutls)
 set(GNUTLS_FOUND TRUE)
 set(GNUTLS_LIBRARIES gnutls)
 set(GNUTLS_INCLUDE_DIR "")

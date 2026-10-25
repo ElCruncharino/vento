@@ -34,9 +34,9 @@ Nothing runs in parallel: every step needs a clean tree to commit from.
 
 1. libjpeg-turbo (libvnc, tigervnc)
 2. pixman (tigervnc)
-3. openssl (freerdp), via `backends/ports/openssl/gen.sh`
+3. openssl (freerdp), via `backends/platform/android/ports/openssl/gen.sh`
 4. nettle, then gnutls (libvnc, tigervnc), via the tarball pins and
-   `backends/ports/{nettle,gnutls}/gen.sh`
+   `backends/platform/android/ports/{nettle,gnutls}/gen.sh`
 5. libvncserver, tigervnc, freerdp, ironrdp, hbb_common, ryll
 
 A shared library can be blocked by a consumer: nettle 4 could not move until
@@ -139,9 +139,9 @@ under the host locale (`export LC_ALL=C`).
   backend's `vento_<name>_config` from the options and words its rows; on the
   phone it is linked into the module's library as a static library
   (`rustStaticLibrary` in `backends/build.gradle`,
-  `backends/cmake/vento_android.cmake`) with the one JNI layer in
-  `backends/platform/android`. An upstream change reaches the session file; the
-  crate changes only when the config does.
+  `backends/platform/android/cmake/vento_android.cmake`) with the one JNI layer
+  in `backends/platform/android`. An upstream change reaches the session file;
+  the crate changes only when the config does.
 - A Rust backend's shim is its protocol crate, and its adapter is that
   crate's `src/backend.rs`: the `Kind`, the config read from the options, and
   the rows. An upstream change (IronRDP, hbb_common, ryll) reaches the
@@ -247,7 +247,7 @@ line or one file somewhere that already has seven:
   `jniLibs` (rfb's, copied); a C module's builds the crate as a static library
   (`rustStaticLibrary`), passes CMake `-DVENTO_RUST_LIBRARY_DIR`, and its
   CMakeLists calls `vento_android_library(<target> <crate>)` from
-  `backends/cmake/vento_android.cmake` in its Android half.
+  `backends/platform/android/cmake/vento_android.cmake` in its Android half.
 - **The phone's Java.** The module's `build.gradle` registers
   `generateCatalog` and `generateNatives` from `:backends`; its
   `<Name>Provider` answers from `<Name>Catalog` and creates a

@@ -20,7 +20,7 @@ endif()
 # matches.
 include("${VENTO_BACKENDS}/cmake/reproducible.cmake")
 include("${VENTO_BACKENDS}/cmake/warnings.cmake")
-include("${VENTO_BACKENDS}/cmake/vento_android.cmake")
+include("${VENTO_BACKENDS}/platform/android/cmake/vento_android.cmake")
 
 # One shared library per protocol, as every other backend module does, so a
 # build that drops this protocol drops the whole of it. Everything below is
@@ -69,7 +69,7 @@ include_directories(
 # GnuTLS, which is one of the two libraries libvncclient reaches TLS through
 # and the one TigerVNC's client requires — so the port is built once and used
 # by both. `find_package(GnuTLS)` above finds the shim beside FindJPEG's.
-add_subdirectory("${VENTO_BACKENDS}/ports/gnutls" gnutls)
+add_subdirectory("${VENTO_BACKENDS}/platform/android/ports/gnutls" gnutls)
 
 # LibVNCServer, of which we build the client half only.
 set(WITH_LIBVNCSERVER OFF CACHE BOOL "" FORCE)

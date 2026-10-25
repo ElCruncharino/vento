@@ -22,7 +22,7 @@ export LC_ALL=C
 
 cd "$(dirname "$0")"
 port=$PWD
-root=$(cd ../../.. && pwd)
+root=$(cd ../../../../.. && pwd)
 src=$root/third_party/openssl
 . ../ndk.sh
 

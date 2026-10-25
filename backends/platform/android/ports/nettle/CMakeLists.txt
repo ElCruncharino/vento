@@ -8,7 +8,7 @@
 # dozen of the 382 objects — the rest cost link time and nothing in the APK,
 # since a static archive contributes only the members something references.
 
-set(NETTLE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/nettle")
+set(NETTLE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../third_party/nettle")
 if(NOT EXISTS "${NETTLE_DIR}/nettle-types.h")
     message(FATAL_ERROR "third_party/nettle is empty — run `./gradlew :backends:fetchNettleSources`")
 endif()

@@ -7,7 +7,7 @@
 # `openssl` is the one a consumer links: an interface over the lot of them, with
 # the public headers — a quarter of which are generated — on its include path.
 
-set(OPENSSL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/openssl")
+set(OPENSSL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../third_party/openssl")
 if(NOT EXISTS "${OPENSSL_DIR}/Configure")
     message(FATAL_ERROR "third_party/openssl is empty — run `git submodule update --init`")
 endif()

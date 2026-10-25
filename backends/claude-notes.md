@@ -58,7 +58,11 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
 - `platform/android/` — the phone's platform: the one JNI layer, MediaCodec
   and AAudio (the crate), and, in `java/`, the `:backends` module's Java —
   the seam every backend's provider is written against, the files with no
-  package directories over them — with its tests in `javatest/`.
+  package directories over them — with its tests in `javatest/`; `c/`, the
+  logcat logger and the export map a C backend's library is linked with;
+  `cmake/vento_android.cmake`, a C backend's Android half
+  (`vento_android_library`); and `ports/`, the generated Android builds of
+  openssl, nettle and gnutls (`gen.sh` in each regenerates its `gen/`).
 - `vectors/` — test cases both the Rust and the Java tests read.
 
 ## Building them
@@ -69,9 +73,9 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
   `codegenSources`).
 - `buildSrc/` — the Gradle tasks those helpers use (cargo, codegen, tarballs,
   patch check), pulled in by the root `buildSrc`.
-- `cmake/` — what a C backend's CMake includes; `cmake/vento_android.cmake`
-  is the phone's half.
-- `ports/` — the generated Android builds of openssl, nettle and gnutls.
+- `cmake/` — what a C backend's CMake includes, `warnings.cmake` and
+  `reproducible.cmake`; the phone's half of a C backend is in
+  `platform/android/cmake/`.
 - `UPGRADING.md` — how the upstreams behind the backends are moved, and what
   adding a backend touches.
 

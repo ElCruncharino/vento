@@ -1,4 +1,4 @@
-# The port in backends/ports/openssl, answered as a find_package: FreeRDP asks
+# The port in backends/platform/android/ports/openssl, answered as a find_package: FreeRDP asks
 # for OpenSSL through its own find_feature, and CMake's own FindOpenSSL would
 # either fail against a sysroot that has none or — worse — find the host's.
 #
@@ -6,7 +6,7 @@
 # because a find module is expected to define them, not because anything in this
 # build uses them.
 if(NOT TARGET openssl)
-    add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../../ports/openssl" openssl)
+    add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../../platform/android/ports/openssl" openssl)
 endif()
 
 set(OPENSSL_FOUND TRUE)
