@@ -351,9 +351,6 @@ pub struct Decoder {
     /// The last frame's planes and the vectorised conversion's verdict, which
     /// between them are how little of this one is converted.
     output: Output,
-    /// Buffers released without being converted, because a newer whole picture
-    /// was already waiting behind them.
-    pub skipped: u64,
     /// Frames fed for their planes whose pictures have not come out yet.
     owed: u32,
 }
@@ -402,7 +399,6 @@ impl Decoder {
             bt709: false,
             full_range: false,
             output: Output::new(),
-            skipped: 0,
             owed: 0,
         })
     }
@@ -582,7 +578,6 @@ impl Decoder {
             unsafe { AMediaCodec_releaseOutputBuffer(self.codec.raw(), index as usize, false) };
             index = next;
             info = newer;
-            self.skipped += 1;
         }
         self.take_buffer(index as usize, &info, &mut |frame, output| {
             output.write(frame, out, width, height, changed)
@@ -606,7 +601,6 @@ impl Decoder {
             self.owed = self.owed.saturating_sub(1);
             if self.owed > 0 {
                 unsafe { AMediaCodec_releaseOutputBuffer(self.codec.raw(), index as usize, false) };
-                self.skipped += 1;
                 continue;
             }
             return self.take_buffer(index as usize, &info, &mut |frame, _| planes(frame));
