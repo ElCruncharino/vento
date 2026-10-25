@@ -430,13 +430,13 @@ workspace not shown); `patches/winit/0002` makes winit report it as
 `Occluded`, as winit 0.30 did not. Where the compositor does not send it —
 sway 1.11 and niri do not — a session never pauses there; a hidden window's
 frames stop with its frame callbacks while the backend keeps receiving.
-Checked on Xvfb with a window manager for tigervnc, libvnc, rfb and freerdp:
-live with another window focused, paused minimised or covered, live again
-restored; on Openbox, paused on another desktop and live again back on this
-one; on an Xvfb split into two monitors under i3 with tigervnc (the socket's
-receive queue filling to 15 KB within a second against an animated far end, 0
-live): live on the other monitor's workspace with the focus elsewhere and with
-a fullscreen window on the focused monitor, paused with its workspace switched
+Checked on `scripts/testx11` for tigervnc, libvnc, rfb and freerdp: live with
+another window focused, paused minimised or covered, live again restored;
+on Openbox, paused on another desktop and live again back on this one; on
+an Xvfb split into two monitors under i3 with tigervnc (the socket's receive
+queue filling to 15 KB within a second against an animated far end, 0 live):
+live on the other monitor's workspace with the focus elsewhere and with a
+fullscreen window on the focused monitor, paused with its workspace switched
 away, in the scratchpad, as an inactive tab, under the server's screen saver
 window and with its monitor gone, live again the moment each was undone; and
 on Wayland with tigervnc in a headless tinywl (wlroots 0.20) made to suspend
@@ -815,7 +815,7 @@ were on it, and the window reads which output it is on again when it moves
 or changes scale. **Follow window size** follows every window, a monitor
 each, where the far end takes a layout (see the panel, below).
 
-Proven on Xvfb under Openbox against a private `scripts/testvnc` given two
+Proven on `scripts/testx11` against a private `scripts/testvnc` given two
 1280×800 heads with `heads.sh 2`: two windows each showing its own monitor,
 typing into the pop-out reaching the far end, a far end's window dragged from
 the pop-out into the main window and landing on the other monitor under the
@@ -823,33 +823,33 @@ pointer, Return and the window manager's close each giving the monitor back,
 `heads.sh 1` closing the pop-out of the monitor that went with the notice in
 the main window, one window minimised leaving the session live and both
 minimised pausing it, and the disconnect and the main window's close each
-closing the pop-out first; and FreeRDP against `scripts/testrdp` with `-o
-Monitors=2`. On a headless sway, a drag from the pop-out into the main window
-carried the far end's window across, typing reached the far end through the
-pop-out, Pop out gave a plain tiled window (not fullscreen), and Return and
-the compositor's close (`swaymsg kill`) each gave the monitor back. On Xvfb at
-2560×800 split into two monitors of 1280×800 with `xrandr
---setmonitor` (Openbox), against the same two-head far end: Pop out from the
-whole desktop opened one plain window for the far end's second monitor,
-without `_NET_WM_STATE_FULLSCREEN`; moved onto the right monitor, its
-Fullscreen made it exactly that monitor, 1280×800 at 1280,0, where winit
+closing the pop-out first; and FreeRDP against `scripts/testrdp` with
+`-o Monitors=2`. On a headless sway, a drag from the pop-out into the main
+window carried the far end's window across, typing reached the far end
+through the pop-out, Pop out gave a plain tiled window (not fullscreen), and
+Return and the compositor's close (`swaymsg kill`) each gave the monitor
+back. On `scripts/testx11` at 2560×800 split into two monitors of 1280×800
+with `xrandr --setmonitor` (Openbox), against the same two-head far end: Pop
+out from the whole desktop opened one plain window for the far end's second
+monitor, without `_NET_WM_STATE_FULLSCREEN`; moved onto the right monitor,
+its Fullscreen made it exactly that monitor, 1280×800 at 1280,0, where winit
 without the two patches made it the left one, 1280×800 at 0,0, over the main
-window; leaving fullscreen put it back where it was; and with the screen whole
-again Fullscreen still filled the 2560×800. The capture's hand-over between
-windows is unit-tested only: no rig here has a far end of several monitors in
-relative mode.
+window; leaving fullscreen put it back where it was; and with the screen
+whole again Fullscreen still filled the 2560×800. The capture's hand-over
+between windows is unit-tested only: no rig here has a far end of several
+monitors in relative mode.
 
 Following, with **Follow window size** on and every monitor in a window of
-its own: on Xvfb under Openbox against the two-head `scripts/testvnc` with
+its own: on `scripts/testx11` against the two-head `scripts/testvnc` with
 TigerVNC, the two windows set to 1000×700 and 900×600 with `xdotool
 windowsize` made the far end `1900x700, id=1 1000x700+0+0, id=2
 900x600+1000+0` (`heads.sh`), one layout for the two, and the pop-out alone
 set to 1100×650 then changed only screen 2; on a headless sway with two
 outputs, `swaymsg resize set` on the two floating windows did the same, the
-far end following the windows' 996×671 and 896×571 to the pixel with ids 1 and
-2 kept; and FreeRDP against `scripts/testrdp` with `-o Monitors=2` went from
-two monitors of 1280×800 to 1000×700 and 900×600, a desktop of 1900×700, as
-xrdp's own reset of the graphics pipeline stated them.
+far end following the windows' 996×671 and 896×571 to the pixel with ids 1
+and 2 kept; and FreeRDP against `scripts/testrdp` with `-o Monitors=2`
+went from two monitors of 1280×800 to 1000×700 and 900×600, a desktop of
+1900×700, as xrdp's own reset of the graphics pipeline stated them.
 
 ### Why RealVNC and RustDesk have no monitors to pick
 
@@ -1290,11 +1290,12 @@ What the window uses beyond `xdg_wm_base`:
 
 #### X11
 
-Proven on Xvfb and Openbox, a plain X server and a real window manager with
-global keybindings of its own, with the client on the host as an ordinary X
-client of it, against `scripts/testvnc` and `scripts/testqemu`. Xvfb has no
-DRI3, so wgpu takes llvmpipe there; on an X server with a GPU it takes the
-hardware's Vulkan or GL through the Xlib handles.
+Proven on `scripts/testx11` — Xvfb and Openbox, a plain X server and a real
+window manager with global keybindings of its own, and the client on the
+host as an ordinary X client of it — against `scripts/testvnc` and
+`scripts/testqemu`. Xvfb has no DRI3, so wgpu takes llvmpipe there; on an X
+server with a GPU it takes the hardware's Vulkan or GL through the Xlib
+handles.
 
 - **The keyboard is grabbed** in place of the inhibitor: an active
   `GrabKeyboard` on the window while it has focus and a session takes input,
@@ -1380,11 +1381,11 @@ hardware's Vulkan or GL through the Xlib handles.
 - **The native cursor is an Xcursor, premultiplied.** winit copies the
   pixels it is given into a Render cursor as they are, which wants them
   premultiplied, so `cursor.rs` premultiplies them for X11 (Wayland's side
-  does that itself). Read back through XFixes, each shape had the size and
-  hotspot the log said, and no pixel had a colour above its alpha. There is no
-  buffer scale: the cursor is in device pixels, so the resampling is right at
-  any scale factor (×2 at `WINIT_X11_SCALE_FACTOR=2` in a fill mode, ×1 at
-  1:1).
+  does that itself). Read back through XFixes (`scripts/testx11/cursor.py`),
+  each shape had the size and hotspot the log said, and no pixel had a
+  colour above its alpha. There is no buffer scale: the cursor is in device
+  pixels, so the resampling is right at any scale factor (×2 at
+  `WINIT_X11_SCALE_FACTOR=2` in a fill mode, ×1 at 1:1).
 - **The clipboard is the window's own** (`src/gui/clipboard/x11.rs`), which
   reads and serves `CLIPBOARD` from a thread of its own over a connection of
   its own. Proven both ways with `xclip`, every advertised target converting.
