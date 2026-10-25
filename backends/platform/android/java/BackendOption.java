@@ -201,7 +201,7 @@ public record BackendOption(String key, String label, String summary, Type type,
      * Every {@link #stranded} choice in {@code options} put back to its
      * {@link #fallback}, through {@code set}; the keys that moved, in the
      * options' order. The one rule every screen keeps whenever a switch moves;
-     * its cases are in {@code backends/vectors/options.json}.
+     * its cases are in {@code backends/api/tests/options.json}.
      *
      * @param value what an option says now
      * @param on    whether the {@code BOOL} option with that key is on

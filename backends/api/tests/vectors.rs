@@ -4,7 +4,7 @@
 //! The rules every client keeps alike, held to their cases. The credentials
 //! and known-hosts cases are written out here, since the phone applies
 //! those rules from this crate and nothing else reads them. The options
-//! cases are in `backends/vectors/options.json`, which the Java tests in
+//! cases are in `options.json` beside this file, which the Java tests in
 //! `backends/platform/android/javatest` read too, for the one rule with a
 //! Java copy (`BackendOption.settle`, which the option screens run as
 //! somebody edits), so that the copy cannot drift from this one without one
@@ -175,9 +175,7 @@ fn known_hosts_verdicts_agree_with_the_vectors() {
 }
 
 fn vectors(name: &str) -> Value {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../vectors")
-        .join(name);
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests").join(name);
     let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     serde_json::from_str(&text).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }

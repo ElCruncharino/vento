@@ -283,7 +283,7 @@ Always `./patch.sh check`. After an options change, `cargo test --locked -p
 remotedesktop-api` and `./gradlew :backends:testDebugUnitTest`: the
 first checks every table's defaults against its own rows and the keys
 records hold, and both hold `settle`, and its Java copy, to
-`backends/vectors/options.json`. After
+`backends/api/tests/options.json`. After
 any change to a native surface — `platform_android`'s `surface.rs`,
 `NativeBackend`, or a module's natives class or library —
 `scripts/check-jni-symbols.sh`. At the end of the round: `./gradlew :app:assembleDebug
