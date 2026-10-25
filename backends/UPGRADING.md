@@ -49,13 +49,6 @@ when that crate's winit does (a `cargo update` there, its own job): the pin to
 the new release's tag, `patches/winit/` rebased onto it, and any patch
 upstream has taken dropped.
 
-`third_party/sspi` moves with IronRDP rather than in this round: it is
-sspi-rs, pinned at the tag of the release both lock files name and taken in
-through `[patch.crates-io]` in the root `Cargo.toml` and `linux/Cargo.toml`.
-When a moved IronRDP needs another sspi release, the pin goes to that
-release's tag, `patches/sspi/` is rebased onto it (or dropped once upstream
-has the fix), and both lock files are updated.
-
 `third_party/ffmpeg` and `third_party/dav1d` are the Linux client's too, and
 not in this round either: the static FFmpeg `backends/platform/linux/build.rs`
 builds for every desktop decoder (the Rust ones, which TigerVNC's and
@@ -557,11 +550,12 @@ One commit per upstream, after review, by the lead:
   A server redirection, at connection or mid-session, ends the session with
   a message rather than being followed. EGFX is deliberately off; the doc
   comment on IronRDP's `OPTIONS` (`modules/ironrdp/catalog.rs`) says why.
-- **sspi** sspi-v0.23.0 (b21f458), the release ironrdp-connector 0.11
-  requires. No patches: the one carried at sspi-v0.21.3 (a down-level logon
-  name's account name may contain `@`, so `MicrosoftAccount\user@example.com`
-  reaches NTLM as that user and domain) is upstream's 4878c50, first
-  released in sspi-v0.22.0.
+  sspi, its NTLM and CredSSP, comes from crates.io at the release
+  ironrdp-connector requires (0.23.0 for 0.11), and moves in both lock files
+  with it. It needs to be 0.22.0 or later: from that release a down-level
+  logon name's account name may contain `@`
+  (Devolutions/sspi-rs@4878c50503b204bba95def66ca7d45e6d396f898), so
+  `MicrosoftAccount\user@example.com` reaches NTLM as that user and domain.
 - **hbb_common** 3d6fb2c, and terminal there: the next upstream commit moved
   `message.proto` into rustdesk's own repository
   (`libs/base/protos/message.proto`). Moving further means a second source

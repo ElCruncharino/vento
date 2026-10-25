@@ -115,8 +115,6 @@ ttf-parser = "0.25"
 # `dpi` comes along as winit's path dependency, from the same tag.
 [patch.crates-io]
 winit = { path = "../third_party/winit" }
-# sspi-rs from the submodule, as in the root Cargo.toml.
-sspi = { path = "../third_party/sspi" }
 
 # The conversion every decoded frame goes through
 # (`runtime::media::video::convert`), optimised even in a debug build, which is
