@@ -1,0 +1,49 @@
+From e021c85e61f4b9ef2412619b868179d11fcc8e8e Mon Sep 17 00:00:00 2001
+From: "Claude Opus 5.5" <noreply@anthropic.com>
+Date: Mon, 19 Oct 2026 00:54:37 -0400
+Subject: [PATCH 8/8] libvncclient: an empty cursor shape is reported, not
+ dropped
+
+A cursor update of no pixels (width or height 0) is how a server hides
+the pointer under the Cursor and XCursor pseudo-encodings. HandleCursorShape
+returned at once for one, before GotCursorShape, so a client that draws
+the pointer itself was never told and went on drawing the last shape.
+
+It now calls GotCursorShape with a 0x0 shape (and the hotspot as sent),
+with nothing in rcSource to read, and the header says what that means.
+There is nothing of such an update to read off the wire either way.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/include/rfb/rfbclient.h b/include/rfb/rfbclient.h
+index 87027ad..ee8c285 100644
+--- a/include/rfb/rfbclient.h
++++ b/include/rfb/rfbclient.h
+@@ -253,6 +253,7 @@ typedef void (*BellProc)(struct _rfbClient* client);
+     into a viewer's window. If you want the server to draw the cursor into the framebuffer, be
+     careful not to announce remote cursor support, i.e. not include rfbEncodingXCursor or
+     rfbEncodingRichCursor in SetFormatAndEncodings().
++    A shape of 0x0, with nothing in client->rcSource to read, is the server hiding the cursor.
+ */
+ typedef void (*GotCursorShapeProc)(struct _rfbClient* client, int xhot, int yhot, int width, int height, int bytesPerPixel);
+ typedef void (*GotCopyRectProc)(struct _rfbClient* client, int src_x, int src_y, int w, int h, int dest_x, int dest_y);
+diff --git a/src/libvncclient/cursor.c b/src/libvncclient/cursor.c
+index 1694378..cdcf02e 100644
+--- a/src/libvncclient/cursor.c
++++ b/src/libvncclient/cursor.c
+@@ -53,8 +53,14 @@ rfbBool HandleCursorShape(rfbClient* client,int xhot, int yhot, int width, int h
+   bytesPerRow = (width + 7) / 8;
+   bytesMaskData = bytesPerRow * height;
+ 
+-  if (width * height == 0)
++  /* A shape with no pixels is how a server hides the pointer, and there is
++     nothing more of it to read; a client that draws the pointer itself is
++     still told, with no shape, or it goes on drawing the last one. */
++  if (width * height == 0) {
++    if (client->GotCursorShape != NULL)
++      client->GotCursorShape(client, xhot, yhot, 0, 0, bytesPerPixel);
+     return TRUE;
++  }
+ 
+   if (width >= MAX_CURSOR_SIZE || height >= MAX_CURSOR_SIZE)
+     return FALSE;
