@@ -15,6 +15,7 @@ import net.pgaskin.remotedesktop.backend.CursorCache;
 import net.pgaskin.remotedesktop.backend.Monitor;
 import net.pgaskin.remotedesktop.backend.KnownHosts;
 import net.pgaskin.remotedesktop.backend.Prompt;
+import net.pgaskin.remotedesktop.backend.RdpIdentity;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -92,7 +93,7 @@ public final class IronRdpBackend implements Backend, IronRdpNative.Callbacks {
                       Map<String, String> extraOptions) {
         this.context = context.getApplicationContext();
         this.address = address;
-        final String[] split = splitDomain(userName);
+        final String[] split = RdpIdentity.split(userName);
         this.domain = split[0];
         this.userName = split[1];
         // Empty is not a password, for the reason the RealVNC backend found
@@ -106,28 +107,6 @@ public final class IronRdpBackend implements Backend, IronRdpNative.Callbacks {
         if (extraOptions != null) {
             options.putAll(extraOptions);
         }
-    }
-
-    /**
-     * {@code DOMAIN&#92;user}, {@code user@domain} or a bare name, as
-     * {@code {domain, user}}.
-     *
-     * <p>Both forms, because both are typed: the backslash is what Windows
-     * shows and the {@code @} is what a UPN looks like. A bare name means the
-     * machine's own accounts, which is the ordinary case for anything not in a
-     * domain.
-     */
-    static String[] splitDomain(String value) {
-        final String name = value == null ? "" : value.trim();
-        final int slash = name.indexOf('\\');
-        if (slash >= 0) {
-            return new String[]{name.substring(0, slash), name.substring(slash + 1)};
-        }
-        final int at = name.indexOf('@');
-        if (at > 0) {
-            return new String[]{name.substring(at + 1), name.substring(0, at)};
-        }
-        return new String[]{"", name};
     }
 
     // ---- lifecycle ---------------------------------------------------------
@@ -489,7 +468,8 @@ public final class IronRdpBackend implements Backend, IronRdpNative.Callbacks {
             final Prompt.Handler h = prompts;
             final String shown = domain.isEmpty() ? userName : domain + "\\" + userName;
             final Prompt.Credentials prompt = new Prompt.Credentials(address,
-                    "Use DOMAIN\\user for a domain account.", needsUserName, shown,
+                    "Use DOMAIN\\user for another domain, .\\user for a local account.",
+                    needsUserName, shown,
                     true, "", "") {
                 @Override
                 protected void deliver(boolean ok, String user, String secret) {
@@ -497,8 +477,10 @@ public final class IronRdpBackend implements Backend, IronRdpNative.Callbacks {
                     if (session == 0) {
                         return;
                     }
-                    final String[] split = splitDomain(
-                            user == null || user.isEmpty() ? shown : user);
+                    // A bare name keeps the session's domain: the box has
+                    // none of its own, so retyping the user is not leaving
+                    // the domain.
+                    final String[] split = RdpIdentity.answer(user, domain, userName);
                     IronRdpNative.nativeAnswerCredentials(session, split[1], split[0],
                             ok ? secret : null);
                 }
