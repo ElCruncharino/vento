@@ -541,15 +541,28 @@ One commit per upstream, after review, by the lead:
   silences their tree.
 - **ironrdp** e899a826 (October 2026), the commit tagged
   ironrdp-session-v0.12.0, ironrdp-connector-v0.11.0,
-  ironrdp-blocking-v0.11.0 and the other crates' releases. No patches.
+  ironrdp-blocking-v0.11.0 and the other crates' releases. One patch,
+  `patches/ironrdp/0001`, egfx: a per-surface H.264 decoder interface
+  (`decode_for_surface`, `decode_yuv420_for_surface`, `delete_surface` on
+  `H264Decoder`, defaulting to the surface-agnostic methods), because each
+  EGFX surface is its own AVC stream and a decoder that keeps per-surface
+  state was fed every surface's frames. Check it still applies if the egfx
+  crate's decode paths move.
   IronRDP versions each crate separately and tags a set of releases together
   on one `chore(release)` commit; that commit is the pin to take. Every
   crate's minor version moves in the same release, so expect API changes;
   the protocol crate's compile errors list them. The bitmap stride fix
   (80bb81b3), unreleased at the previous pin, is in ironrdp-session 0.12.0.
   A server redirection, at connection or mid-session, ends the session with
-  a message rather than being followed. EGFX is deliberately off; the doc
-  comment on IronRDP's `OPTIONS` (`modules/ironrdp/catalog.rs`) says why.
+  a message rather than being followed. EGFX is the Graphics option's third
+  choice, `egfx` (off by default, experimental): the graphics pipeline over
+  a dynamic channel, with its H.264 (AVC420/AVC444) decoded by the app's own
+  video decoders (`modules/ironrdp/src/pipeline.rs`, one platform decoder per
+  surface, the same `vento/video.h` path FreeRDP's H.264 uses). Check
+  `ironrdp-egfx`'s `GraphicsPipelineClient`, `GraphicsPipelineHandler` and
+  `H264Decoder`/`Yuv420Frame` still mean the same. The pipeline acknowledges
+  frames eagerly, so a focused idle session to Windows is sent frames
+  continuously; it is fine on a GPU but backs up a software renderer.
   sspi, its NTLM and CredSSP, comes from crates.io at the release
   ironrdp-connector requires (0.23.0 for 0.11), and moves in both lock files
   with it. It needs to be 0.22.0 or later: from that release a down-level

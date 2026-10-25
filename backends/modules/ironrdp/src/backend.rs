@@ -56,7 +56,10 @@ fn create(c: &Connect) -> Result<Arc<dyn Backend>, String> {
         } else {
             None
         }),
-        remote_fx: o.get("Graphics") != "bitmap",
+        graphics: crate::graphics(Some(o.get("Graphics"))),
+        // The platform's video decoders, for the pipeline's H.264; the
+        // other two paths have no use for them.
+        decoders: c.decoders.clone(),
         experience: crate::experience(Some(o.get("Experience"))),
         monitors: monitor_count(o),
         client_name: c.client_name.to_string(),
@@ -73,7 +76,7 @@ fn create(c: &Connect) -> Result<Arc<dyn Backend>, String> {
         audio: c.audio.clone().filter(|_| o.get("Sound") == "local"),
     };
     log::info!(
-        "connecting to {} as {:?} ({}x{} × {}, nla {:?}, compression {:?}, remotefx {}, experience {:?}, platform {:?}, sound {})",
+        "connecting to {} as {:?} ({}x{} × {}, nla {:?}, compression {:?}, graphics {:?}, experience {:?}, platform {:?}, sound {}, video decoders {})",
         config.address,
         config.user_name,
         config.desktop_size.0,
@@ -81,10 +84,11 @@ fn create(c: &Connect) -> Result<Arc<dyn Backend>, String> {
         config.monitors,
         config.nla,
         config.compression,
-        config.remote_fx,
+        config.graphics,
         config.experience,
         config.platform,
-        if config.audio.is_some() { "here" } else { "off" }
+        if config.audio.is_some() { "here" } else { "off" },
+        if config.decoders.is_some() { "yes" } else { "none" }
     );
     let session = Runner::start(
         Arc::new(Client::new()),
@@ -188,9 +192,10 @@ impl Backend for IronRdp {
         }
     }
 
-    /// Two of the panel's rows are missing: RDP has no desktop name, and no
-    /// encoding that can be named outside the codec negotiation. They are
-    /// always omitted, not only when empty.
+    /// One of the panel's rows is always missing, since RDP has no desktop
+    /// name, and the encoding row is there only with the graphics pipeline,
+    /// whose channel names its version and codec; on the other two paths
+    /// the codec changes per update and is not named.
     fn info(&self) -> Vec<ConnectionFact> {
         if !self.mailbox.connected() {
             return Vec::new();
@@ -200,8 +205,11 @@ impl Backend for IronRdp {
             ConnectionFact::of(Field::Protocol, "Protocol", &i.protocol),
             ConnectionFact::of(Field::Connection, "Connection", &i.connection),
             ConnectionFact::of(Field::Security, "Security", &i.security),
-            ConnectionFact::of(Field::LineSpeed, "Line speed", &i.line_speed),
         ];
+        if !i.encoding.is_empty() {
+            facts.push(ConnectionFact::of(Field::Encoding, "Encoding", &i.encoding));
+        }
+        facts.push(ConnectionFact::of(Field::LineSpeed, "Line speed", &i.line_speed));
         if let Some(traffic) = self.traffic() {
             facts.push(ConnectionFact::data(traffic));
         }

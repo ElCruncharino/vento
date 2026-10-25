@@ -14,7 +14,7 @@
 //! RDP_PIN=AB:CD:… cargo run --features probe --example ironrdp-probe -- …    # refuse anything else
 //! RDP_NLA=off RDP_SIZE=1280x800 cargo run --features probe --example ironrdp-probe -- …
 //! RDP_CLIP='hello' cargo run --features probe --example ironrdp-probe -- …    # offer it, print the remote's
-//! RDP_RFX=off RDP_COMPRESSION=rdp61 cargo run --features probe --example ironrdp-probe -- …
+//! RDP_GRAPHICS=bitmap RDP_COMPRESSION=rdp61 cargo run --features probe --example ironrdp-probe -- …
 //! ```
 
 use remotedesktop_ironrdp::{Client, Config, Credentials, Handler, Nla};
@@ -131,7 +131,7 @@ fn main() {
         compression: remotedesktop_ironrdp::compression(
             std::env::var("RDP_COMPRESSION").ok().as_deref(),
         ),
-        remote_fx: std::env::var("RDP_RFX").as_deref() != Ok("off"),
+        graphics: remotedesktop_ironrdp::graphics(std::env::var("RDP_GRAPHICS").ok().as_deref()),
         ..Config::default()
     };
 

@@ -12,9 +12,11 @@ use crate::clipboard::{Clipboard, Want};
 use crate::error::{Error, Result, describe};
 use crate::framebuffer::Framebuffer;
 use crate::keymap::{self, Key};
+use crate::pipeline::{self, State as PipelineState};
 use crate::sound::{QUIET, Sound};
 use crate::tls;
 use runtime::media::audio::{Outputs, Player};
+use runtime::media::video::Decoders;
 use runtime::rate::Rate;
 use runtime::{Credentials, Handler, Hangup};
 
@@ -29,7 +31,8 @@ use ironrdp_connector::{
 use ironrdp_core::WriteBuf;
 use ironrdp_displaycontrol::client::DisplayControlClient;
 use ironrdp_displaycontrol::pdu::{DisplayControlMonitorLayout, DisplayControlPdu, MonitorLayoutEntry};
-use ironrdp_dvc::{DrdynvcClient, encode_dvc_messages};
+use ironrdp_dvc::{DrdynvcClient, DvcMessage, encode_dvc_messages};
+use ironrdp_egfx::client::GraphicsPipelineClient;
 use ironrdp_rdpdr::{NoopRdpdrBackend, Rdpdr};
 use ironrdp_svc::ChannelFlags;
 use ironrdp_input::{Database, MouseButton, MousePosition, Operation, Scancode, WheelRotations};
@@ -87,9 +90,12 @@ pub struct Config {
     /// data, the pointer). `None` tells the server not to compress, as a
     /// client that cannot decompress must.
     pub compression: Option<CompressionType>,
-    /// Whether to offer RemoteFX. Off leaves the server with plain bitmap
-    /// updates, which change the picture quality rather than the speed.
-    pub remote_fx: bool,
+    /// How the picture is to arrive.
+    pub graphics: Graphics,
+    /// The platform's video decoders, for the graphics pipeline's H.264, or
+    /// `None` for a pipeline that offers no H.264 and gets the server's other
+    /// codecs.
+    pub decoders: Option<Arc<dyn Decoders>>,
     /// Which visual effects the remote machine may spend bandwidth on.
     pub experience: Experience,
     /// How many monitors to ask the far end for, each of
@@ -121,7 +127,8 @@ impl Default for Config {
             desktop_size: (1920, 1200),
             nla: Nla::Prefer,
             compression: None,
-            remote_fx: true,
+            graphics: Graphics::RemoteFx,
+            decoders: None,
             experience: Experience::Balanced,
             monitors: 1,
             client_name: "remotedesktop".to_string(),
@@ -189,6 +196,32 @@ pub enum Nla {
     Off,
 }
 
+/// How the picture arrives: which of the three ways an RDP server has of
+/// sending a desktop this client offers it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Graphics {
+    /// The graphics pipeline (MS-RDPEGFX), over a dynamic channel: what
+    /// Windows 8 and later prefer, and the only path that carries H.264
+    /// (`pipeline`). RemoteFX is offered beside it for a server without the
+    /// pipeline.
+    Pipeline,
+    /// RemoteFX in the legacy surface commands, and the client's default:
+    /// the codec every server here supports.
+    RemoteFx,
+    /// Plain bitmap updates, which change the picture quality rather than
+    /// the speed.
+    Bitmap,
+}
+
+/// The `Graphics` option value, as named in the catalog.
+pub fn graphics(value: Option<&str>) -> Graphics {
+    match value {
+        Some("egfx") => Graphics::Pipeline,
+        Some("bitmap") => Graphics::Bitmap,
+        _ => Graphics::RemoteFx,
+    }
+}
+
 /// How much of the remote machine's own visual effects to spend bandwidth on.
 ///
 /// RDP expresses this as a set of "disable" flags plus a connection-type hint
@@ -238,6 +271,10 @@ pub struct Info {
     pub protocol: String,
     pub connection: String,
     pub security: String,
+    /// The graphics pipeline's version and codec, as `pipeline::State`
+    /// words it, and empty on the other two paths, where the codec changes
+    /// per update and is not named.
+    pub encoding: String,
     pub line_speed: String,
     pub server_pixels: String,
     pub viewer_pixels: String,
@@ -325,6 +362,8 @@ struct Shared {
     bytes_out: Arc<AtomicU64>,
     /// Shared with the CLIPRDR channel, which the active stage owns.
     clipboard: Arc<Clipboard>,
+    /// Shared with the graphics pipeline's channel, likewise.
+    pipeline: Arc<PipelineState>,
 }
 
 /// A connection. Created first, connected second: the framebuffer exists from
@@ -356,6 +395,7 @@ impl Client {
                 bytes_in: Arc::new(AtomicU64::new(0)),
                 bytes_out: Arc::new(AtomicU64::new(0)),
                 clipboard: Arc::new(Clipboard::default()),
+                pipeline: Arc::new(PipelineState::default()),
             }),
             rx: Mutex::new(Some(rx)),
         }
@@ -367,7 +407,14 @@ impl Client {
     }
 
     pub fn info(&self) -> Info {
-        self.shared.info.lock().unwrap().clone()
+        let mut info = self.shared.info.lock().unwrap().clone();
+        info.encoding = self.shared.pipeline.encoding();
+        info
+    }
+
+    /// The graphics pipeline's state, for a probe's report of what arrived.
+    pub fn pipeline(&self) -> &PipelineState {
+        &self.shared.pipeline
     }
 
     /// Bytes received and sent since the socket was opened.
@@ -752,13 +799,22 @@ impl Client {
         // server's capabilities arrive, which is when the channel becomes
         // usable; it sends no messages of its own.
         let display_control = Arc::clone(&self.shared);
-        connector.attach_static_channel(DrdynvcClient::new().with_dynamic_channel(
-            DisplayControlClient::new(move |caps| {
-                log::info!("display control: {caps:?}");
-                display_control.display_control.store(true, Ordering::Relaxed);
-                Ok(Vec::new())
-            }),
-        ));
+        let mut drdynvc = DrdynvcClient::new().with_dynamic_channel(DisplayControlClient::new(move |caps| {
+            log::info!("display control: {caps:?}");
+            display_control.display_control.store(true, Ordering::Relaxed);
+            Ok(Vec::new())
+        }));
+        // The graphics pipeline, when offered: the server opens its channel
+        // once the capabilities say so, and Windows closes and reopens it,
+        // so each opening gets a client of its own.
+        if config.graphics == Graphics::Pipeline {
+            let state = Arc::clone(&self.shared.pipeline);
+            let decoders = config.decoders.clone();
+            drdynvc = drdynvc.with_dynamic_channel_factory(ironrdp_egfx::CHANNEL_NAME, move || {
+                pipeline::client(Arc::clone(&state), decoders.clone())
+            });
+        }
+        connector.attach_static_channel(drdynvc);
         self.shared
             .monitor_count
             .store(config.monitors.clamp(1, 16), Ordering::Relaxed);
@@ -860,6 +916,9 @@ impl Client {
             .write()
             .unwrap()
             .resize(desktop.width, desktop.height);
+        self.shared
+            .pipeline
+            .set_output(usize::from(desktop.width), usize::from(desktop.height));
         self.shared.running.store(true, Ordering::Release);
         handler.connected(usize::from(desktop.width), usize::from(desktop.height));
 
@@ -1076,6 +1135,24 @@ impl Client {
                             _ => {}
                         }
                     }
+                    // The graphics pipeline's output reset resizes the image
+                    // itself, inside `process`; after a reactivation it is
+                    // the size the reactivation already set, and any other
+                    // size is followed here.
+                    let size = {
+                        let fb = self.shared.framebuffer.read().unwrap();
+                        (fb.width(), fb.height())
+                    };
+                    if size != (usize::from(desktop.width), usize::from(desktop.height)) {
+                        log::info!("the graphics output is {}x{}", size.0, size.1);
+                        desktop = DesktopSize {
+                            width: size.0.min(usize::from(u16::MAX)) as u16,
+                            height: size.1.min(usize::from(u16::MAX)) as u16,
+                        };
+                        self.shared.info.lock().unwrap().server_pixels =
+                            format!("{}×{}, 32 bpp", desktop.width, desktop.height);
+                        handler.desktop_size(size.0, size.1);
+                    }
                     if drew {
                         let total = self.shared.bytes_in.load(Ordering::Relaxed);
                         if let Some(speed) = rate.sample(total.saturating_sub(counted)) {
@@ -1092,6 +1169,12 @@ impl Client {
             // At least every poll, so a stream closes on an idle desktop too.
             if let Some(player) = player {
                 player.lock().unwrap().close_if_quiet(QUIET);
+            }
+
+            // The pipeline's decoders asking for new streams (see
+            // `pipeline::H264`).
+            if self.shared.pipeline.take_restart() {
+                self.restart_pipeline(framed, &mut stage)?;
             }
 
             // The clipboard, in both directions. The channel's decisions while
@@ -1208,6 +1291,33 @@ impl Client {
         let frame = stage.encode_dvc_messages(messages).map_err(session)?;
         framed.write_all(&frame)?;
         self.shared.layout.lock().unwrap().asked = flat;
+        Ok(())
+    }
+
+    /// Advertise the graphics pipeline's capabilities again, which makes the
+    /// server reset the pipeline: new surfaces and new H.264 streams, each
+    /// starting with a key frame, which is what a decoder that lost its
+    /// pictures needs and what a Refresh Rect does not bring (FreeRDP's
+    /// backend does the same). Not possible below version 10.3, where the
+    /// protocol allows no reset in the channel; then logged, and the
+    /// picture stays as it is until the server starts a stream by itself.
+    fn restart_pipeline<S: Read + Write>(&self, framed: &mut Framed<S>, stage: &mut ActiveStage) -> Result<()> {
+        let Some((channel_id, pdu)) = stage
+            .get_dvc_mut::<GraphicsPipelineClient>()
+            .map(|mut dvc| (dvc.channel_id(), dvc.processor_mut().request_protocol_reset()))
+        else {
+            log::warn!("graphics pipeline: no channel to restart");
+            return Ok(());
+        };
+        let Some(pdu) = pdu else {
+            log::warn!("graphics pipeline: the version in use cannot be restarted in the channel");
+            return Ok(());
+        };
+        let messages = encode_dvc_messages(channel_id, vec![Box::new(pdu) as DvcMessage], ChannelFlags::empty())
+            .map_err(|e| Error::Protocol(e.to_string()))?;
+        let frame = stage.encode_dvc_messages(messages).map_err(session)?;
+        framed.write_all(&frame)?;
+        log::info!("graphics pipeline: capabilities advertised again");
         Ok(())
     }
 
@@ -1481,10 +1591,12 @@ fn connector_config(
 
     // The only codec worth a choice. Everything else the list can hold is
     // either always on or IronRDP's own, which no server here supports.
-    let codecs = client_codecs_capabilities(if config.remote_fx {
-        &[]
-    } else {
+    // RemoteFX stays offered with the graphics pipeline, for a server that
+    // does not open the pipeline's channel.
+    let codecs = client_codecs_capabilities(if config.graphics == Graphics::Bitmap {
         &["remotefx:off"]
+    } else {
+        &[]
     })
     .expect("a fixed codec list");
 
@@ -1553,9 +1665,9 @@ fn connector_config(
         compression_type: config.compression,
         pointer_software_rendering: false,
         multitransport_flags: None,
-        // The graphics pipeline is deliberately not offered; see `OPTIONS` in
-        // this module's catalog.rs.
-        support_dyn_vc_gfx_protocol: false,
+        // The graphics pipeline, which the server opens as a dynamic
+        // channel once the client says it may (`pipeline`).
+        support_dyn_vc_gfx_protocol: config.graphics == Graphics::Pipeline,
         performance_flags: match config.experience {
             Experience::Full => {
                 PerformanceFlags::ENABLE_FONT_SMOOTHING | PerformanceFlags::ENABLE_DESKTOP_COMPOSITION
@@ -1890,6 +2002,35 @@ mod tests {
         client.key_up(2);
         let input = client.shared.input.lock().unwrap();
         assert!(input.is_key_pressed(SHIFT), "still held by the row");
+    }
+
+    /// The three ways the picture may arrive, as the connector is told
+    /// them: the pipeline flag only for the pipeline, and RemoteFX in the
+    /// codec list for everything but bitmaps.
+    #[test]
+    fn the_graphics_row_reaches_the_connector() {
+        use ironrdp_pdu::rdp::capability_sets::CodecProperty;
+        let of = |graphics: Graphics| {
+            let config = Config {
+                graphics,
+                ..Config::default()
+            };
+            let c = connector_config(&config, &Credentials::default());
+            let remote_fx = c.bitmap.as_ref().is_some_and(|b| {
+                b.codecs
+                    .0
+                    .iter()
+                    .any(|codec| matches!(codec.property, CodecProperty::RemoteFx(_)))
+            });
+            (c.support_dyn_vc_gfx_protocol, remote_fx)
+        };
+        assert_eq!(of(Graphics::Pipeline), (true, true));
+        assert_eq!(of(Graphics::RemoteFx), (false, true));
+        assert_eq!(of(Graphics::Bitmap), (false, false));
+        assert_eq!(graphics(Some("egfx")), Graphics::Pipeline);
+        assert_eq!(graphics(Some("bitmap")), Graphics::Bitmap);
+        assert_eq!(graphics(Some("rfx")), Graphics::RemoteFx);
+        assert_eq!(graphics(None), Graphics::RemoteFx);
     }
 
     /// The capabilities report the client's own platform, not always the

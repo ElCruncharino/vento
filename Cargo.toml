@@ -101,6 +101,7 @@ ironrdp-connector = { path = "third_party/ironrdp/crates/ironrdp-connector" }
 ironrdp-core = { path = "third_party/ironrdp/crates/ironrdp-core" }
 ironrdp-displaycontrol = { path = "third_party/ironrdp/crates/ironrdp-displaycontrol" }
 ironrdp-dvc = { path = "third_party/ironrdp/crates/ironrdp-dvc" }
+ironrdp-egfx = { path = "third_party/ironrdp/crates/ironrdp-egfx" }
 ironrdp-graphics = { path = "third_party/ironrdp/crates/ironrdp-graphics" }
 ironrdp-input = { path = "third_party/ironrdp/crates/ironrdp-input" }
 ironrdp-pdu = { path = "third_party/ironrdp/crates/ironrdp-pdu" }

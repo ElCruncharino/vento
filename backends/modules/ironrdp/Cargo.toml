@@ -35,6 +35,9 @@ ironrdp-blocking.workspace = true
 ironrdp-connector.workspace = true
 ironrdp-displaycontrol.workspace = true
 ironrdp-dvc.workspace = true
+# The graphics pipeline (MS-RDPEGFX), with its H.264 decoded by the
+# platform's video decoders (`src/pipeline.rs`).
+ironrdp-egfx.workspace = true
 ironrdp-core.workspace = true
 ironrdp-graphics.workspace = true
 ironrdp-input.workspace = true

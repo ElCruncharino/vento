@@ -18,7 +18,7 @@ pub static IRONRDP: About = About {
     id: "rdp",
     name: "RDP (IronRDP)",
     short_name: "IronRDP",
-    description: "Rust RDP implementation. Uses less CPU than FreeRDP, but drops more frames and does not properly support EGFX",
+    description: "Rust RDP implementation. Uses less CPU than FreeRDP, but drops more frames",
     order: 25,
     pinning: Pinning::ADDRESS,
     // The prompt has no domain field, so it starts with the domain in the
@@ -36,7 +36,7 @@ pub static IRONRDP: About = About {
 /// compression, the colour depth), and an option that overrides what the
 /// two ends already agreed on can only make a session worse.
 ///
-/// Five things are deliberately **not** here:
+/// Four things are deliberately **not** here:
 ///
 /// - **The keyboard layout.** RDP sends key *positions*, and this crate's
 ///   `keymap` maps keysyms onto a US layout, so the layout named at connect
@@ -52,28 +52,16 @@ pub static IRONRDP: About = About {
 /// - **The colour depth**, which three of the VNC backends offer. There it
 ///   is a wire format the server encodes into; here the picture arrives as
 ///   RemoteFX or as bitmaps, and the codec has already decided what a pixel
-///   costs. 16-bit would apply to only one of those two paths, save nothing
+///   costs. 16-bit would apply to only one of those paths, save nothing
 ///   where the codec is on, and add a conversion in front of a framebuffer
 ///   that is 32 bits either way.
-/// - **The graphics pipeline (MS-RDPEGFX)**, which Windows 8 and later
-///   prefer for sending a desktop, and the only path that carries H.264. It
-///   was built, tested against both servers and removed again, because
-///   IronRDP's implementation was then incomplete and, where complete,
-///   wrong. Nothing in the library set the capability flag a server needs
-///   before it opens the channel; the client received RFX Progressive and
-///   discarded it, though a finished decoder for it sat unused one crate
-///   away; and the ClearCodec that Windows sends for most of an interface
-///   was rejected outright: fifteen ClearCodec and twelve progressive
-///   failures in one short session, leaving solid rectangles of the wrong
-///   colour across the desktop. With patches, it worked against xrdp and
-///   no further. The library has since added all three missing pieces (the
-///   flag, both decoders, and a session that composites what the pipeline
-///   draws), and since October 2026 upstream's own client offers the
-///   pipeline by default when it has an H.264 decoder. Without one, a still
-///   desktop over the pipeline drew correctly on xrdp and on Windows 10
-///   here, but no interactive session has been run over it, and H.264 would
-///   need IronRDP's decoder interface implemented over the app's own video
-///   decoders. Until both are done, it is not offered.
+///
+/// The graphics pipeline (MS-RDPEGFX), which Windows 8 and later prefer for
+/// sending a desktop and the only path that carries H.264, is the Graphics
+/// row's third choice and not its default: RemoteFX is the path every
+/// server here has always drawn correctly over, and the pipeline, with its
+/// H.264 decoded by the app's own video decoders (the crate's `pipeline`),
+/// has been tested against xrdp and Windows 10 but for less long.
 pub static OPTIONS: &[Spec] = &[
     choices(
         "Nla",
@@ -109,11 +97,15 @@ pub static OPTIONS: &[Spec] = &[
     choices(
         "Graphics",
         "Graphics",
-        Some("EGFX is not supported, RemoteFX is older, and Bitmap sends raw images."),
+        Some("EGFX is preferred by Windows and supports H.264, RemoteFX is older, and Bitmaps sends raw images."),
         "rfx",
         Scope::Layered,
         false,
-        &[choice("rfx", "RemoteFX"), choice("bitmap", "Bitmaps")],
+        &[
+            choice("egfx", "EGFX (experimental)"),
+            choice("rfx", "RemoteFX"),
+            choice("bitmap", "Bitmaps"),
+        ],
     ),
     choices(
         "Experience",
@@ -183,6 +175,16 @@ mod tests {
                 "ViewOnly"
             ]
         );
+    }
+
+    /// The graphics default stays RemoteFX: EGFX is offered but not the
+    /// default, so an existing connection's picture does not change.
+    #[test]
+    fn the_graphics_default_is_remotefx() {
+        let graphics = OPTIONS.iter().find(|s| s.key == "Graphics").unwrap();
+        assert_eq!(graphics.default, "rfx");
+        let values: Vec<&str> = graphics.choices.iter().map(|c| c.value).collect();
+        assert_eq!(values, ["egfx", "rfx", "bitmap"]);
     }
 
     #[test]

@@ -15,7 +15,7 @@
 //! | | |
 //! |---|---|
 //! | Security | TLS, with or without CredSSP (NLA); never the legacy RC4 one |
-//! | Graphics | fast-path and slow-path bitmaps, RemoteFX, NSCodec: whatever IronRDP decodes |
+//! | Graphics | the graphics pipeline (MS-RDPEGFX) with its H.264 decoded by the platform (`pipeline`), or fast-path and slow-path bitmaps, RemoteFX, NSCodec: whatever IronRDP decodes |
 //! | Pointer | the server's own shape and hotspot, as a bitmap drawn locally |
 //! | Input | fast-path, scancodes from a US layout with Unicode for the rest |
 //! | Trust | the certificate pinned per address, as `rfb` does it (`runtime::tls::pinning`) |
@@ -37,13 +37,15 @@ pub const PROTOCOL_VERSION: &str = "RDP 5.x (IronRDP)";
 pub mod backend;
 
 // The library the app loads: this backend, registered on the module's
-// generated natives class, with AAudio for the server's sound (and MediaCodec
-// for its AAC, through the same object). Android only; everything else is the
-// protocol, which builds, tests and runs an example on the host without this.
+// generated natives class, with MediaCodec for the graphics pipeline's H.264
+// and AAudio for the server's sound (and MediaCodec for its AAC, through the
+// same object). Android only; everything else is the protocol, which builds,
+// tests and runs an example on the host without this.
 #[cfg(target_os = "android")]
 platform_android::natives!(
     class = c"net/pgaskin/remotedesktop/backend/ironrdp/IronRdpNatives",
     kind = backend::KIND,
+    decoders = || Some(std::sync::Arc::new(platform_android::mediacodec::MediaCodec)),
     audio = || Some(std::sync::Arc::new(platform_android::aaudio::AAudio::new())),
 );
 
@@ -52,10 +54,11 @@ mod clipboard;
 mod error;
 mod framebuffer;
 mod keymap;
+mod pipeline;
 mod sound;
 mod tls;
 
-pub use client::{Client, Config, Experience, Info, Nla, Platform, compression, experience};
+pub use client::{Client, Config, Experience, Graphics, Info, Nla, Platform, compression, experience, graphics};
 pub use runtime::{Credentials, Handler};
 pub use error::{Error, Result};
 pub use framebuffer::Framebuffer;

@@ -1,0 +1,95 @@
+From 7600c230f76068a9bce051a9980793189e2257a4 Mon Sep 17 00:00:00 2001
+From: "Claude Fable 5.1" <noreply@anthropic.com>
+Date: Sun, 25 Oct 2026 13:11:28 -0400
+Subject: [PATCH 1/1] feat(egfx): decode AVC per surface through a per-surface
+ decoder interface
+
+The graphics pipeline fed every surface's AVC stream into one H264Decoder.
+Each surface is its own H.264 stream, so a decoder that keeps per-stream
+state (a hardware decoder's reference pictures) was corrupted by frames from
+another surface.
+
+Add decode_for_surface, decode_yuv420_for_surface and delete_surface to the
+H264Decoder trait, each defaulting to the existing surface-agnostic method,
+and call them from the AVC420 and AVC444 paths and from DeleteSurface. A
+decoder that keeps one decode context per surface dispatches on the id; a
+stateless one is unaffected.
+
+diff --git a/crates/ironrdp-egfx/src/client.rs b/crates/ironrdp-egfx/src/client.rs
+index 2d710ac3..5e2cbe0e 100644
+--- a/crates/ironrdp-egfx/src/client.rs
++++ b/crates/ironrdp-egfx/src/client.rs
+@@ -955,6 +955,9 @@ impl GraphicsPipelineClient {
+ 
+     fn handle_delete_surface(&mut self, surface_id: u16) {
+         self.progressive_decoder.delete_surface(surface_id);
++        if let Some(decoder) = self.h264_decoder.as_mut() {
++            decoder.delete_surface(surface_id);
++        }
+         self.release_avc444_frame(surface_id);
+         if self.surfaces.remove(&surface_id).is_some() {
+             self.compositor.delete_surface(surface_id);
+@@ -1201,9 +1204,11 @@ impl GraphicsPipelineClient {
+         // A decoder returning YUV planes is converted with the transform MS-RDPEGFX
+         // specifies, whatever matrix it would convert with itself.
+         let frame = if decoder.supports_yuv420() {
+-            decoder.decode_yuv420(stream.data).map(|picture| picture.to_rgba())
++            decoder
++                .decode_yuv420_for_surface(surface_id, stream.data)
++                .map(|picture| picture.to_rgba())
+         } else {
+-            decoder.decode(stream.data)
++            decoder.decode_for_surface(surface_id, stream.data)
+         }
+         .map_err(|e| pdu_other_err!("H.264 decode", source: e))?;
+ 
+@@ -1357,11 +1362,11 @@ impl GraphicsPipelineClient {
+         // pair a main view with the previous auxiliary view; the tests use a decoder that cannot
+         // delay. Check a Windows server's AVC444 output with the decoder in use when changing this.
+         let main_view = main
+-            .map(|main| decoder.decode_yuv420(main.data))
++            .map(|main| decoder.decode_yuv420_for_surface(surface_id, main.data))
+             .transpose()
+             .map_err(|e| pdu_other_err!("H.264 decode", source: e))?;
+         let auxiliary_view = auxiliary
+-            .map(|auxiliary| decoder.decode_yuv420(auxiliary.data))
++            .map(|auxiliary| decoder.decode_yuv420_for_surface(surface_id, auxiliary.data))
+             .transpose()
+             .map_err(|e| pdu_other_err!("H.264 decode", source: e))?;
+ 
+diff --git a/crates/ironrdp-egfx/src/decode.rs b/crates/ironrdp-egfx/src/decode.rs
+index 1adc2fed..0820ddb0 100644
+--- a/crates/ironrdp-egfx/src/decode.rs
++++ b/crates/ironrdp-egfx/src/decode.rs
+@@ -333,6 +333,31 @@ pub trait H264Decoder: Send {
+         false
+     }
+ 
++    /// [`H264Decoder::decode`] for an update of surface `surface_id`.
++    ///
++    /// Each surface's AVC updates are an H.264 stream of their own: a server encodes every
++    /// surface separately (Windows sends one per monitor), so their pictures refer back only
++    /// to pictures of the same surface. A decoder keeping one stream's state per surface
++    /// dispatches on the id here; the default feeds every surface to [`H264Decoder::decode`].
++    fn decode_for_surface(&mut self, surface_id: u16, data: &[u8]) -> DecoderResult<DecodedFrame> {
++        let _ = surface_id;
++        self.decode(data)
++    }
++
++    /// [`H264Decoder::decode_yuv420`] for an update of surface `surface_id`, as
++    /// [`H264Decoder::decode_for_surface`] is for [`H264Decoder::decode`].
++    fn decode_yuv420_for_surface(&mut self, surface_id: u16, data: &[u8]) -> DecoderResult<Yuv420Frame> {
++        let _ = surface_id;
++        self.decode_yuv420(data)
++    }
++
++    /// Called when the server deletes surface `surface_id`, whose stream ends with it.
++    ///
++    /// A decoder keeping state per surface drops that surface's here. The default does nothing.
++    fn delete_surface(&mut self, surface_id: u16) {
++        let _ = surface_id;
++    }
++
+     /// Finishes starting the decoder, and reports whether it can decode.
+     ///
+     /// The graphics pipeline calls this when its channel opens, before it advertises its
