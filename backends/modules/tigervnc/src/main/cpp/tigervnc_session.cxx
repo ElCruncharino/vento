@@ -1614,7 +1614,10 @@ void Session::run() {
         shadowW_ = shadowH_ = 0;
     }
 
-    closed(asked && detail.empty() ? "" : (detail.empty() ? "The connection was lost" : detail));
+    // A requested ending says nothing, whatever it was caught as: disconnect
+    // shuts the socket down under the read, so the stream's end — or a
+    // half-read message's error — is this side's own doing and not a reason.
+    closed(asked ? "" : (detail.empty() ? "The connection was lost" : detail));
 }
 
 // ---- pixels, from whichever thread is drawing ----------------------------
