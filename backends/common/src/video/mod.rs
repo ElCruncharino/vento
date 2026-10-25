@@ -15,6 +15,7 @@
 //! ([`convert`]). That is the expensive half of a frame on a phone whose
 //! decode is hardware.
 
+pub mod bitstream;
 pub mod convert;
 pub mod diff;
 pub mod i420;
@@ -153,8 +154,9 @@ pub trait Decoder {
 
     /// True, once, after the decoder lost the pictures the stream refers back
     /// to — a hardware decoder that failed mid-stream and was replaced by a
-    /// software one — so that the caller asks the far end for a key frame
-    /// rather than waiting for the next one. Polled after [`decode`].
+    /// software one, or MediaCodec dropping a frame too large for its input
+    /// buffers — so that the caller asks the far end for a key frame rather
+    /// than waiting for the next one. Polled after [`decode`].
     ///
     /// [`decode`]: Decoder::decode
     fn take_key_frame_request(&mut self) -> bool {

@@ -216,8 +216,9 @@ static int vento_h264_subsystem_decompress(H264_CONTEXT *WINPR_RESTRICT h264,
     const bool picture = t->decode_planes(c->decoder, data, size, &planes);
     if (t->take_key_frame_request != NULL && t->take_key_frame_request(c->decoder)) {
         // A hardware decoder failed mid-stream and was replaced by a software
-        // one, which has none of the pictures the stream refers back to; and
-        // a server sends a key frame only when it starts a stream.
+        // one, which has none of the pictures the stream refers back to (or
+        // the phone's dropped a frame too large for it); and a server sends a
+        // key frame only when it starts a stream.
         LOGW("H.264: the decoder lost its reference pictures, restarting the graphics pipeline");
         atomic_store(&v->failed, true);
         atomic_store(&v->restart, true);
