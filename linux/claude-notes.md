@@ -363,9 +363,10 @@ cargo run -- rustdesk 127.0.0.1 -o ConnectBy=address --hw-decode
 cargo run -- rustdesk 127.0.0.1 -o ConnectBy=address --hw-decode --video vaapi
 cargo run -- tigervnc 127.0.0.1::5903 -o H264=true -o Encoding=h264 --hw-decode
 
-# Session options of this run: the main window's first scale (fit-width by
-# default; none is 1:1, none-resize 1:1 with the window made the desktop's
-# size once it is known), and view only forced, its toolbar button and panel
+# Session options of this run: the main window's first scale (auto by
+# default; fit, fill and the rest as the Scale button names them; none is
+# 1:1, none-resize 1:1 with the window made the desktop's size once it is
+# known), and view only forced, its toolbar button and panel
 # row disabled. --trust accepts every trust, security and message prompt
 # without showing it, reading the known hosts and writing nothing.
 cargo run -- tigervnc 127.0.0.1:5901 --password vncpass -c --scale none-resize
@@ -866,19 +867,27 @@ It has no shadow, and its buttons are flat: an icon (Material Symbols
 Outlined, unfilled) and no frame at rest, egui's frame while the pointer is
 on one or pressing it. A button with a state shows it in its icon, and its
 tooltip names the button, its state and, for Scale and Monitor, what a
-click goes to ("Scale: fit width (next: fit height)"). View only and Info while on,
+click goes to ("Scale: auto (next: fit)"). View only and Info while on,
 and Sound while off or muted, keep a frame at rest, a dim fill of the selection's
 blue with the icon in the selection's colour. There are no words on it: which monitor or display
 is showing is in the tooltip too. On it:
 
-- **Scale** cycles fit width → fit height → fill width → fill height → 1:1,
-  its icon `fit_page_width`, `fit_page_height`, `width` (↔), `height` (↕)
-  and `view_real_size` (1:1) in turn.
-  *Fit* never enlarges the desktop past a device pixel per desktop pixel;
-  *fill* does; 1:1 is a desktop pixel per device pixel. A desktop that is
-  smaller than the window in an axis is centred in it; one that is bigger is
-  panned — move the pointer within 48 points of a window edge, over the
-  desktop, and it moves that way, faster the nearer the edge.
+- **Scale** cycles auto → fit → fill → fit width → fit height → fill
+  width → fill height → 1:1, its icon `desktop_portrait`, `aspect_ratio`,
+  `open_in_full`, `fit_page_width`, `fit_page_height`, `width` (↔),
+  `height` (↕) and `view_real_size` (1:1) in turn. Auto is the default
+  (`--scale` sets another). The aspect ratio is always kept.
+  *Fit* shows the whole desktop, shrunk or enlarged, with bars where the
+  aspect ratios differ; *fill* covers the whole window, shrunk or enlarged,
+  the overflow panned; *auto* is fill's scale but never past a device pixel
+  per desktop pixel, so a desktop smaller than the window is shown 1:1.
+  *Fit width* and *fit height* never enlarge the desktop past a device pixel
+  per desktop pixel; *fill width* and *fill height* do; 1:1 is a desktop
+  pixel per device pixel. A desktop that is smaller than the window in an
+  axis is centred in it; one that is bigger starts at its top left (with two
+  monitors side by side under auto or fill, the first) and is panned: move
+  the pointer within 48 points of a window edge, over the desktop, and it
+  moves that way, faster the nearer the edge.
 - **Resize** (`resize`, beside Scale at 1:1 when not fullscreen) asks for
   the window to be the size of what it shows, the desktop or its monitor,
   in device pixels, so that nothing is panned or left over; a maximised

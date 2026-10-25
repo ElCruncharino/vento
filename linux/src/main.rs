@@ -432,6 +432,9 @@ mod host {
     fn scale(value: &str) -> Result<(gui::ScaleMode, bool), String> {
         use gui::ScaleMode;
         Ok(match value {
+            "auto" => (ScaleMode::Auto, false),
+            "fit" => (ScaleMode::Fit, false),
+            "fill" => (ScaleMode::Fill, false),
             "fit-width" => (ScaleMode::FitWidth, false),
             "fit-height" => (ScaleMode::FitHeight, false),
             "fill-width" => (ScaleMode::FillWidth, false),
@@ -440,8 +443,8 @@ mod host {
             "none-resize" => (ScaleMode::Original, true),
             _ => {
                 return Err(format!(
-                    "--scale: {value:?} is not one of fit-height, fit-width, fill-width, fill-height, none, or \
-                     none-resize"
+                    "--scale: {value:?} is not one of auto, fit, fill, fit-height, fit-width, fill-width, \
+                     fill-height, none, or none-resize"
                 ));
             }
         })
@@ -1056,8 +1059,12 @@ mod host {
                 let settings = launch(args).settings;
                 (settings.scale, settings.fit_window)
             };
-            assert_eq!(scale(&[]), (ScaleMode::FitWidth, false));
+            assert_eq!(scale(&[]), (ScaleMode::Auto, false));
             assert_eq!(scale(&["--scale", cli::SCALE]), scale(&[]));
+            assert_eq!(scale(&["--scale=fit"]), (ScaleMode::Fit, false));
+            assert_eq!(scale(&["--scale", "fill"]), (ScaleMode::Fill, false));
+            assert_eq!(scale(&["--scale=fill", "--scale=auto"]), (ScaleMode::Auto, false));
+            assert_eq!(scale(&["--scale=fit-width"]), (ScaleMode::FitWidth, false));
             assert_eq!(scale(&["--scale=fit-height"]), (ScaleMode::FitHeight, false));
             assert_eq!(scale(&["--scale=fill-width"]), (ScaleMode::FillWidth, false));
             assert_eq!(scale(&["--scale=fill-height"]), (ScaleMode::FillHeight, false));

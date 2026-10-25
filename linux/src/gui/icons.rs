@@ -69,6 +69,8 @@ macro_rules! symbols {
 }
 
 symbols! {
+    ASPECT_RATIO = "aspect_ratio" "\u{e85b}";
+    DESKTOP_PORTRAIT = "desktop_portrait" "\u{f45d}";
     FIT_PAGE_HEIGHT = "fit_page_height" "\u{f397}";
     FIT_PAGE_WIDTH = "fit_page_width" "\u{f396}";
     FULLSCREEN = "fullscreen" "\u{e5d0}";
@@ -78,6 +80,7 @@ symbols! {
     LINK_OFF = "link_off" "\u{e16f}";
     MONITOR = "monitor" "\u{ef5b}";
     MOUSE = "mouse" "\u{e323}";
+    OPEN_IN_FULL = "open_in_full" "\u{f1ce}";
     OPEN_IN_NEW = "open_in_new" "\u{e89e}";
     PIP_EXIT = "pip_exit" "\u{f70d}";
     RESIZE = "resize" "\u{f707}";

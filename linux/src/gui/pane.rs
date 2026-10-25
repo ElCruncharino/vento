@@ -1060,13 +1060,17 @@ fn icon(symbol: &'static str) -> RichText {
     icons::text(symbol).size(TOOLBAR_ICON)
 }
 
-/// The Scale button's icon for a mode: Material Symbols' own fit page
-/// width and height for the fit modes, arrows kept within a page as fit
-/// keeps the desktop within 1:1; the bare width and height arrows for the
-/// fill modes, which stretch the desktop along that axis however far the
-/// window asks; and the symbol that reads "1:1" for 1:1.
+/// The Scale button's icon for a mode: `desktop_portrait` for Auto,
+/// `aspect_ratio` for Fit and `open_in_full` for Fill; Material Symbols'
+/// own fit page width and height for the fit modes, arrows kept within a
+/// page as fit keeps the desktop within 1:1; the bare width and height
+/// arrows for the fill modes, which stretch the desktop along that axis
+/// however far the window asks; and the symbol that reads "1:1" for 1:1.
 fn scale_icon(mode: ScaleMode) -> &'static str {
     match mode {
+        ScaleMode::Auto => icons::DESKTOP_PORTRAIT,
+        ScaleMode::Fit => icons::ASPECT_RATIO,
+        ScaleMode::Fill => icons::OPEN_IN_FULL,
         ScaleMode::FitWidth => icons::FIT_PAGE_WIDTH,
         ScaleMode::FitHeight => icons::FIT_PAGE_HEIGHT,
         ScaleMode::FillWidth => icons::WIDTH,
@@ -1186,15 +1190,15 @@ mod tests {
 
     #[test]
     fn every_scale_mode_has_its_own_icon() {
-        let mut mode = ScaleMode::FitWidth;
+        let mut mode = ScaleMode::Auto;
         let mut seen = Vec::new();
-        for _ in 0..5 {
+        for _ in 0..8 {
             let codepoint = scale_icon(mode);
             assert!(!seen.contains(&codepoint), "{} shares its icon", mode.label());
             seen.push(codepoint);
             mode = mode.next();
         }
-        assert_eq!(mode, ScaleMode::FitWidth);
+        assert_eq!(mode, ScaleMode::Auto);
     }
 
     #[test]

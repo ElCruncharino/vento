@@ -73,7 +73,7 @@ impl Default for Settings {
             hw_decode: false,
             video: Hardware::Auto,
             audio_output: AudioOutput::Auto,
-            scale: ScaleMode::FitWidth,
+            scale: ScaleMode::Auto,
             fit_window: false,
             view_only: false,
             trust: false,

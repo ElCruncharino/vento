@@ -18,10 +18,19 @@
 
 use egui::{Pos2, Rect, Vec2, vec2};
 
-/// How the desktop is scaled to the window. The five cycle in this order
-/// from the toolbar.
+/// How the desktop is scaled to the window. The eight cycle in this order
+/// from the toolbar, starting from the default, `Auto`. The aspect ratio is
+/// always kept.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScaleMode {
+    /// `Fill`, but never enlarged past 1:1: a desktop bigger than the window
+    /// covers it and pans, a smaller one is shown 1:1 and centred.
+    Auto,
+    /// The whole desktop inside the window, shrunk or enlarged, with bars
+    /// where the aspect ratios differ.
+    Fit,
+    /// The whole window covered, shrunk or enlarged; the overflow pans.
+    Fill,
     /// The desktop's width is the window's, never enlarged; the height may
     /// overflow and pan.
     FitWidth,
@@ -37,16 +46,22 @@ pub enum ScaleMode {
 impl ScaleMode {
     pub fn next(self) -> ScaleMode {
         match self {
+            ScaleMode::Auto => ScaleMode::Fit,
+            ScaleMode::Fit => ScaleMode::Fill,
+            ScaleMode::Fill => ScaleMode::FitWidth,
             ScaleMode::FitWidth => ScaleMode::FitHeight,
             ScaleMode::FitHeight => ScaleMode::FillWidth,
             ScaleMode::FillWidth => ScaleMode::FillHeight,
             ScaleMode::FillHeight => ScaleMode::Original,
-            ScaleMode::Original => ScaleMode::FitWidth,
+            ScaleMode::Original => ScaleMode::Auto,
         }
     }
 
     pub fn label(self) -> &'static str {
         match self {
+            ScaleMode::Auto => "Auto",
+            ScaleMode::Fit => "Fit",
+            ScaleMode::Fill => "Fill",
             ScaleMode::FitWidth => "Fit width",
             ScaleMode::FitHeight => "Fit height",
             ScaleMode::FillWidth => "Fill width",
@@ -62,11 +77,15 @@ impl ScaleMode {
         if source.x <= 0.0 || source.y <= 0.0 || window.x <= 0.0 || window.y <= 0.0 {
             return native;
         }
+        let (x, y) = (window.x / source.x, window.y / source.y);
         match self {
-            ScaleMode::FitWidth => (window.x / source.x).min(native),
-            ScaleMode::FitHeight => (window.y / source.y).min(native),
-            ScaleMode::FillWidth => window.x / source.x,
-            ScaleMode::FillHeight => window.y / source.y,
+            ScaleMode::Auto => x.max(y).min(native),
+            ScaleMode::Fit => x.min(y),
+            ScaleMode::Fill => x.max(y),
+            ScaleMode::FitWidth => x.min(native),
+            ScaleMode::FitHeight => y.min(native),
+            ScaleMode::FillWidth => x,
+            ScaleMode::FillHeight => y,
             ScaleMode::Original => native,
         }
     }
@@ -83,7 +102,7 @@ pub struct View {
 impl Default for View {
     fn default() -> View {
         View {
-            mode: ScaleMode::FitWidth,
+            mode: ScaleMode::Auto,
             pan: Vec2::ZERO,
         }
     }
@@ -124,7 +143,9 @@ impl View {
         let scaled = source.size() * scale;
         let overflow = (scaled - window.size()).max(Vec2::ZERO);
         self.pan = self.pan.clamp(Vec2::ZERO, overflow);
-        // Centred in an axis where it fits, panned in one where it does not.
+        // Centred in an axis where it fits, panned in one where it does not,
+        // from the top left: a pan of zero shows the far end's first monitor
+        // of a desktop of several side by side.
         let slack = (window.size() - scaled).max(Vec2::ZERO) / 2.0;
         let origin = window.min + slack - self.pan;
         // On device pixels. Half the slack of an odd window, or a pan that
@@ -268,6 +289,91 @@ mod tests {
         // 1:1 is a device pixel, so on a 2x screen it is half a point.
         assert_eq!(ScaleMode::Original.scale(big, window, 2.0), 0.5);
         assert_eq!(ScaleMode::FitWidth.scale(small, window, 2.0), 0.5);
+    }
+
+    #[test]
+    fn fit_shows_it_all_fill_covers_the_window_and_auto_never_enlarges() {
+        let window = vec2(1600.0, 900.0);
+        let small = vec2(800.0, 600.0);
+        assert_eq!(ScaleMode::Fit.scale(small, window, 1.0), 1.5);
+        assert_eq!(ScaleMode::Fill.scale(small, window, 1.0), 2.0);
+        assert_eq!(ScaleMode::Auto.scale(small, window, 1.0), 1.0);
+        let big = vec2(1920.0, 1200.0);
+        assert_eq!(ScaleMode::Fit.scale(big, window, 1.0), 0.75);
+        assert_eq!(ScaleMode::Fill.scale(big, window, 1.0), 1600.0 / 1920.0);
+        assert_eq!(ScaleMode::Auto.scale(big, window, 1.0), 1600.0 / 1920.0);
+        let wide = vec2(3840.0, 1080.0);
+        assert_eq!(ScaleMode::Fit.scale(wide, window, 1.0), 1600.0 / 3840.0);
+        assert_eq!(ScaleMode::Fill.scale(wide, window, 1.0), 900.0 / 1080.0);
+        assert_eq!(ScaleMode::Auto.scale(wide, window, 1.0), 900.0 / 1080.0);
+        // 1:1 is a device pixel, here as for the other modes.
+        assert_eq!(ScaleMode::Auto.scale(small, window, 2.0), 0.5);
+        assert_eq!(ScaleMode::Fit.scale(small, window, 2.0), 1.5);
+
+        // Fit leaves bars where the aspect ratios differ, and nothing pans.
+        let mut view = View {
+            mode: ScaleMode::Fit,
+            ..View::default()
+        };
+        let layout = view.layout(rect(0.0, 0.0, 3840.0, 1080.0), rect(0.0, 0.0, 1920.0, 1080.0), 1.0);
+        assert_eq!(layout.rect, rect(0.0, 270.0, 1920.0, 540.0));
+        assert_eq!(layout.overflow, Vec2::ZERO);
+        // Auto shows a smaller desktop 1:1, centred.
+        let mut view = View::default();
+        let layout = view.layout(rect(0.0, 0.0, 1024.0, 768.0), rect(0.0, 0.0, 1280.0, 800.0), 1.0);
+        assert_eq!(layout.rect, rect(128.0, 16.0, 1024.0, 768.0));
+    }
+
+    #[test]
+    fn auto_starts_on_the_first_of_two_monitors_and_pans_at_the_edges() {
+        // One local monitor, and a far end of two of the same size side by
+        // side: Auto is the default, and shows the first one 1:1.
+        let mut view = View::default();
+        assert_eq!(view.mode, ScaleMode::Auto);
+        let desktop = rect(0.0, 0.0, 3840.0, 1080.0);
+        let window = rect(0.0, 0.0, 1920.0, 1080.0);
+        let layout = view.layout(desktop, window, 1.0);
+        assert_eq!(layout.scale, 1.0);
+        assert_eq!(layout.rect, rect(0.0, 0.0, 3840.0, 1080.0));
+        assert_eq!(layout.overflow, vec2(1920.0, 0.0));
+        assert_eq!(layout.desktop_at(pos2(0.0, 0.0)), (0, 0));
+        assert_eq!(layout.desktop_at(pos2(1919.0, 1079.0)), (1919, 1079));
+        // The left edge and the top and bottom ask for nothing; the right
+        // edge pans towards the second monitor.
+        assert_eq!(layout.edge_velocity(pos2(0.0, 540.0)), Vec2::ZERO);
+        assert_eq!(layout.edge_velocity(pos2(960.0, 0.0)), Vec2::ZERO);
+        assert_eq!(layout.edge_velocity(pos2(960.0, 1080.0)), Vec2::ZERO);
+        assert_eq!(layout.edge_velocity(pos2(1920.0, 540.0)), vec2(EDGE_SPEED, 0.0));
+        // Panned all the way: the second monitor, and the left edge pans back.
+        view.pan = vec2(1e6, 0.0);
+        let layout = view.layout(desktop, window, 1.0);
+        assert_eq!(layout.pan, vec2(1920.0, 0.0));
+        assert_eq!(layout.desktop_at(pos2(0.0, 0.0)), (1920, 0));
+        assert_eq!(layout.edge_velocity(pos2(1920.0, 540.0)), Vec2::ZERO);
+        assert_eq!(layout.edge_velocity(pos2(0.0, 540.0)), vec2(-EDGE_SPEED, 0.0));
+
+        // A window shorter than the monitor (a title bar, a panel): a little
+        // under 1:1, still from the top left, and still panning only across.
+        let mut view = View::default();
+        let layout = view.layout(desktop, rect(0.0, 0.0, 1920.0, 1040.0), 1.0);
+        assert_eq!(layout.scale, 1040.0 / 1080.0);
+        assert_eq!(layout.rect.min, pos2(0.0, 0.0));
+        assert_eq!(layout.overflow.y, 0.0);
+        assert!(layout.overflow.x > 1700.0, "{:?}", layout.overflow);
+        assert_eq!(layout.desktop_at(pos2(0.0, 0.0)), (0, 0));
+        // Fill does the same, and enlarges where Auto would not.
+        let mut view = View {
+            mode: ScaleMode::Fill,
+            ..View::default()
+        };
+        let layout = view.layout(desktop, rect(0.0, 0.0, 2560.0, 1440.0), 1.0);
+        assert_eq!(layout.scale, 1440.0 / 1080.0);
+        assert_eq!(layout.rect.min, pos2(0.0, 0.0));
+        assert_eq!(layout.overflow, vec2(2560.0, 0.0));
+        let mut view = View::default();
+        let layout = view.layout(desktop, rect(0.0, 0.0, 2560.0, 1440.0), 1.0);
+        assert_eq!(layout.scale, 1.0);
+        assert_eq!(layout.rect, rect(0.0, 180.0, 3840.0, 1080.0));
     }
 
     #[test]

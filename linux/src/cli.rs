@@ -140,7 +140,7 @@ pub struct Defaults {
 }
 
 /// The default `--scale`, `--connect-timeout` and `--thumb-step`.
-pub const SCALE: &str = "fit-width";
+pub const SCALE: &str = "auto";
 pub const CONNECT_TIMEOUT: u64 = 30;
 pub const THUMB_STEP: usize = 8;
 
@@ -179,7 +179,7 @@ options:
       --verbose              show debug logs
 
 session options (also see backends below):
-      --scale MODE           initial window scale (fit-height, fit-width, fill-width, fill-height, none, none-resize) (default: <scale>)
+      --scale MODE           initial window scale (auto, fit, fill, fit-height, fit-width, fill-width, fill-height, none, none-resize) (default: <scale>)
       --view-only            force view-only mode
       --hw-decode            enable hardware decoding for video where supported
       --no-send-clipboard    do not send locally copied text to the server
@@ -387,7 +387,7 @@ mod tests {
         });
         assert!(help.contains("(default: /opt/vento/lib)\n"), "{help}");
         assert!(help.contains("(default: /home/u/.local/state/vento)\n"), "{help}");
-        assert!(help.contains("(default: fit-width)\n"), "{help}");
+        assert!(help.contains("none-resize) (default: auto)\n"), "{help}");
         assert!(help.contains("(default: 30)\n"), "{help}");
         assert!(help.contains("1/N (default: 8)\n"), "{help}");
         for placeholder in ["<extlib-dir>", "<state-dir>", "<scale>", "<connect-timeout>", "<thumb-step>"] {
