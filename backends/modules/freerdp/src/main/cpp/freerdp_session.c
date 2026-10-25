@@ -197,6 +197,7 @@ struct Session {
     char *graphics;
     char *sound;
     char *clientName;
+    UINT32 osMajorType;
     char *configPath;
     int width, height, monitors, keyboardLayout;
     int scale; /* percent; what the far end is asked to draw its own interface at */
@@ -1339,6 +1340,14 @@ static void applySettings(Session *s, rdpSettings *settings) {
         freerdp_settings_set_string(settings, FreeRDP_Password, s->password);
     }
     freerdp_settings_set_string(settings, FreeRDP_ClientHostname, s->clientName);
+    /* The major type says what this end runs on, as FreeRDP's X11 and Wayland
+       clients and the other RDP backend send it. The minor type stays
+       unspecified, which is IronRDP's too: FreeRDP's own clients name their
+       display stack there (an X server, Wayland, SDL), and this library draws
+       into a buffer for whichever window system the client has, while the
+       phone has no minor type at all. */
+    freerdp_settings_set_uint32(settings, FreeRDP_OsMajorType, s->osMajorType);
+    freerdp_settings_set_uint32(settings, FreeRDP_OsMinorType, OSMINORTYPE_UNSPECIFIED);
     freerdp_settings_set_uint32(settings, FreeRDP_KeyboardLayout, (UINT32) s->keyboardLayout);
     freerdp_settings_set_uint32(settings, FreeRDP_DesktopWidth, (UINT32) s->width);
     freerdp_settings_set_uint32(settings, FreeRDP_DesktopHeight, (UINT32) s->height);
@@ -1686,6 +1695,12 @@ vento_session *vento_freerdp_create(const vento_freerdp_config *cfg, const vento
     s->experience = dupOrNull(cfg->experience);
     s->sound = dupOrNull(cfg->sound);
     s->clientName = dupOrNull(cfg->client_name);
+    s->osMajorType = OSMAJORTYPE_UNSPECIFIED;
+    if (cfg->platform && strcmp(cfg->platform, "android") == 0) {
+        s->osMajorType = OSMAJORTYPE_ANDROID;
+    } else if (cfg->platform && strcmp(cfg->platform, "linux") == 0) {
+        s->osMajorType = OSMAJORTYPE_UNIX;
+    }
     s->configPath = dupOrNull(cfg->config_path);
     s->compression = cfg->compression;
     /* Out of the protocol's range is a scale both ends ignore, so a bad value

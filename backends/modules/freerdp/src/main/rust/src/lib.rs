@@ -12,7 +12,7 @@
 use session::c::{Behaviour, CSession, ffi, start};
 use session::backend::{Backend, ConnectionFact, Field, Traffic};
 use session::rdp::{desktop_size, monitor_count};
-use session::kind::{CONNECT_TIMEOUT_MS, Connect, Kind};
+use session::kind::{CONNECT_TIMEOUT_MS, Connect, Kind, Platform};
 use session::options::Options;
 use std::ffi::CString;
 
@@ -78,6 +78,12 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
     let experience = CString::new(o.get("Experience")).unwrap_or_default();
     let sound = CString::new(o.get("Sound")).unwrap_or_default();
     let name = CString::new(c.client_name).unwrap_or_default();
+    // The C sends ANDROID or UNIX as the general capability set's major type
+    // from these, as the other RDP backend does.
+    let platform = match c.platform {
+        Platform::Android => c"android",
+        Platform::Linux => c"linux",
+    };
     let config_path = CString::new(store.to_string_lossy().into_owned()).unwrap_or_default();
     let config = ffi::vento_freerdp_config {
         address: address.as_ptr(),
@@ -96,6 +102,7 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
         monitors: monitor_count(o) as i32,
         keyboard_layout: session::rdp::KEYBOARD_LAYOUT as i32,
         client_name: name.as_ptr(),
+        platform: platform.as_ptr(),
         config_path: config_path.as_ptr(),
         connect_timeout_ms: CONNECT_TIMEOUT_MS,
     };
