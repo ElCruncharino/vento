@@ -37,7 +37,9 @@
 //      questions in the same words, and a person upgrading the app keeps every
 //      exception they had made. That is why this backend asks `question`
 //      rather than `trust_needed`: the decision is taken here, and what
-//      crosses the seam is the question and a yes or a no.
+//      crosses the seam is the question and a yes or a no. A caller with a pin
+//      store of its own (`caller_pins`) gets the other
+//      backends' `trust_needed` instead, and their file is not touched.
 //
 // Their DecodeManager decodes on one thread per core up to four, which is not a
 // parameter and is unique here: the other clients in this repository decode on
@@ -368,12 +370,12 @@ extern const vento_session_ops OPS;
 class Session : public vento_session {
 public:
     Session(const vento_callbacks &cb, std::string address, std::string userName,
-            std::string password, bool shared, bool anonymousTls, int encoding,
-            int compressLevel, int qualityLevel, int colorLevel, bool h264,
+            std::string password, bool shared, bool anonymousTls, bool callerPins,
+            int encoding, int compressLevel, int qualityLevel, int colorLevel, bool h264,
             bool audio, int connectTimeoutMs)
             : cb_(cb), address_(std::move(address)), userName_(std::move(userName)),
               password_(std::move(password)), shared_(shared),
-              anonymousTls_(anonymousTls), encoding_(encoding),
+              anonymousTls_(anonymousTls), callerPins_(callerPins), encoding_(encoding),
               compressLevel_(compressLevel), qualityLevel_(qualityLevel),
               colorLevel_(colorLevel), h264_(h264), audio_(audio),
               connectTimeoutMs_(connectTimeoutMs) {
@@ -569,6 +571,18 @@ public:
         return questionYes_ && !quit_;
     }
 
+    /** The same wait again, for a fingerprint the caller's pins decide. */
+    bool askTrust(const char *fingerprint) {
+        {
+            const std::lock_guard<std::mutex> guard(lock_);
+            questionAnswered_ = false;
+        }
+        cb_.trust_needed(cb_.user, fingerprint);
+        std::unique_lock<std::mutex> guard(lock_);
+        answered_.wait(guard, [this] { return questionAnswered_ || quit_; });
+        return questionYes_ && !quit_;
+    }
+
     /** The same wait again, for a far end with no identity to show at all. */
     bool askUnverified(const char *why) {
         {
@@ -582,6 +596,8 @@ public:
     }
 
     bool anonymousTls() const { return anonymousTls_; }
+
+    bool callerPins() const { return callerPins_; }
 
     bool audio() const { return audio_; }
 
@@ -741,6 +757,7 @@ private:
     std::string password_;
     const bool shared_;
     const bool anonymousTls_;
+    const bool callerPins_;
     int encoding_;
     int compressLevel_;
     int qualityLevel_;
@@ -1109,7 +1126,8 @@ std::string describeCertificate(const gnutls_datum_t *certificate) {
 // an exception is a certificate pinned to a name in their known-hosts file,
 // one that is there already is accepted without a word, and a new one is
 // asked about once per problem and written there only when every answer was
-// yes.
+// yes. With `caller_pins`, everything past the refusal of what cannot be
+// excused is the caller's instead.
 bool Conn::verifyCertificate(unsigned int status, const uint8_t *certificate,
                              size_t length) {
     unsigned allowed = 0;
@@ -1131,6 +1149,26 @@ bool Conn::verifyCertificate(unsigned int status, const uint8_t *certificate,
         return false;
     }
 
+    gnutls_datum_t cert = {const_cast<uint8_t *>(certificate), (unsigned int) length};
+    if (s->callerPins()) {
+        // The caller's store is the judge, as it is for every other backend
+        // it has: the fingerprint, in the form libvnc's prints, so that one
+        // server reached through either is one pin rather than two. Their
+        // file is neither consulted nor written.
+        uint8_t digest[32];
+        size_t size = sizeof(digest);
+        const int err = gnutls_fingerprint(GNUTLS_DIG_SHA256, &cert, digest, &size);
+        if (err != GNUTLS_E_SUCCESS || size != sizeof(digest)) {
+            throw rdr::tls_error("Failed to fingerprint the server certificate", err);
+        }
+        char hex[sizeof(digest) * 3 + 1];
+        for (size_t i = 0; i < sizeof(digest); i++) {
+            snprintf(hex + i * 3, 4, "%02X:", digest[i]);
+        }
+        hex[sizeof(digest) * 3 - 1] = '\0';
+        return s->askTrust(hex);
+    }
+
     // Found the way their viewer finds it, which is what
     // vento_tigervnc_set_state_dir arranges and what forgetHosts deletes.
     const char *stateDir = core::getvncstatedir();
@@ -1139,7 +1177,6 @@ bool Conn::verifyCertificate(unsigned int status, const uint8_t *certificate,
     }
     const std::string knownHosts = std::string(stateDir) + "/x509_known_hosts";
 
-    gnutls_datum_t cert = {const_cast<uint8_t *>(certificate), (unsigned int) length};
     const int known = gnutls_verify_stored_pubkey(knownHosts.c_str(), nullptr, getServerName(),
                                                   nullptr, GNUTLS_CRT_X509, &cert, 0);
     if (known == GNUTLS_E_SUCCESS) {
@@ -1853,7 +1890,7 @@ vento_session *vento_tigervnc_create(const vento_tigervnc_config *cfg,
     Session *s = new Session(*cb, cfg->address ? cfg->address : "",
                              cfg->user_name ? cfg->user_name : "",
                              cfg->password ? cfg->password : "", cfg->shared,
-                             cfg->anonymous_tls, cfg->encoding, cfg->compress_level,
+                             cfg->anonymous_tls, cfg->caller_pins, cfg->encoding, cfg->compress_level,
                              cfg->quality_level, cfg->color_level, cfg->h264, cfg->audio,
                              cfg->connect_timeout_ms);
     if (!s->start()) {
