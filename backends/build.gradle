@@ -5,10 +5,11 @@ plugins {
     id 'com.android.library'
 }
 
-// The seam and nothing else: no androidx, no app class, no protocol. A
-// protocol is a module under this one, depending on this and on nothing else
-// of the app's, so the compiler checks that each implementation needs nothing
-// beyond the seam.
+// The interfaces the app holds a backend by (`Backend`, `BackendProvider` and
+// the types around them) and nothing else: no androidx, no app class, no
+// protocol. A protocol is a module under this one, depending on this and on
+// nothing else of the app's, so the compiler checks that each implementation
+// needs nothing beyond these interfaces.
 android {
     namespace = 'net.pgaskin.remotedesktop.backend'
     compileSdk 36

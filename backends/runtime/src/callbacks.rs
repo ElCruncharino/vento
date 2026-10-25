@@ -11,8 +11,8 @@
 /// arrives later through the runner, which is how a dialog on another thread
 /// has to work, and how a C caller would want it too. The C API's
 /// `vento_callbacks` is the same list, method for method, with three more; on
-/// Android the calls reach the Java seam's `NativeBackend` as its `on…`
-/// methods, by way of the `api` crate's mailbox rather than one for one.
+/// Android the calls reach the Java `NativeBackend` as its `on…` methods, by
+/// way of the `api` crate's mailbox rather than one for one.
 ///
 /// Every method is called from the protocol thread, through a shared
 /// reference, and must not block on anything the protocol thread is waiting

@@ -105,9 +105,10 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
 
 - `platform/android/` (`remotedesktop-platform-android`) — the phone's
   platform: the one JNI layer, MediaCodec and AAudio (the crate), and, in
-  `java/`, the `:backends` module's Java — the seam every backend's provider
-  is written against, the files with no package directories over them — with
-  its tests in `javatest/`; `codegen/` (`vento-codegen`, a crate of its
+  `java/`, the `:backends` module's Java — `Backend`, `BackendProvider` and
+  the types around them, which every backend's provider is written against,
+  the files with no package directories over them — with its tests in
+  `javatest/`; `codegen/` (`vento-codegen`, a crate of its
   own), the host tool that writes each module's generated Java — its catalog
   and its natives class — at build time, out of `api` and this crate's JNI
   table alone, so that it needs none of the backends' crates, bindgen or

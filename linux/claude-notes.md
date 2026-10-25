@@ -8,12 +8,13 @@ SPDX-License-Identifier: GPL-3.0-or-later
 A native Linux client for the backends under `backends/`. One process that can
 hold a session on any of the eight protocols — the four Rust ones directly, the
 four C/C++ ones through the shared libraries this crate's `build.rs` has CMake
-build — written against the same seam the Android app is. It is an egui window
-over that seam, and a headless probe for proving a backend without one.
+build — written against the same `Backend` trait the Android app is. It is an
+egui window over that trait, and a headless probe for proving a backend
+without one.
 
 ## What is here
 
-The seam itself is not this crate's: it is `backends/api`
+The `Backend` trait is not this crate's: it is in `backends/api`
 (`remotedesktop-api`), which the phone holds every session but RealVNC's
 through too, and every backend's adapter to it is in that backend's own
 crate. On the phone the same adapters sit behind one JNI layer

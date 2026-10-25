@@ -363,7 +363,7 @@ Rust modules:
     cargo clippy --locked --workspace
     ./gradlew :backends:<module>:assembleRelease
 
-Every backend through the seam, on the host: the Linux client (`linux/`,
+Every backend through `api::Backend`, on the host: the Linux client (`linux/`,
 its own workspace; see its claude-notes.md) builds all eight (RealVNC's library
 under clang only; without it the backend is listed as not available), and its headless probe connects one, writes the picture out and
 exits — the run that goes through the same adapters the phone does, RealVNC's

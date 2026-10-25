@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // RealVNC's viewer core as a `vento_session`: `RealVncBackend`, `RealVncCore`,
-// `RealVncPrompts` and `RealVncTraffic` reimplemented in C++, against the
-// seam in `HostedCore.h` instead of the core's Java surface, so that the
-// phone's Java and this file are two clients of the same core with the same
-// rules. Those rules come from the library, and the Java files are where each
-// was found; this file has the structure they force:
+// `RealVncPrompts` and `RealVncTraffic` reimplemented in C++, against
+// `HostedCore.h` instead of the core's Java surface, so that the phone's Java
+// and this file are two clients of the same core with the same rules. Those
+// rules come from the library, and the Java files are where each was found;
+// this file has the structure they force:
 //
 //   1. One thread, for the process, owns every call into the core and
 //      delivers every callback: the core registers its sockets on the looper
@@ -692,7 +692,7 @@ public:
        writes the region to the front of a buffer the core owns, at that
        buffer's row stride. So the buffer is kept exactly the region's width,
        and the rows are copied out into place, with the alpha byte filled in
-       as the seam requires. */
+       as `vento/backend.h` requires. */
     bool readRegion(int x, int y, int w, int h, void *dst, size_t stride, int dstX, int dstY) {
         if (w <= 0 || h <= 0 || x < 0 || y < 0 || dstX < 0 || dstY < 0) {
             return false;
@@ -976,7 +976,7 @@ public:
                           const std::string &name, const std::string &matchingName) {
         // The identity is the first argument and the encryption the second,
         // the opposite of what the names in a decompiled signature suggest
-        // (see SecurityDlgBindings). The numbers are the seam's.
+        // (see SecurityDlgBindings). The numbers are `vento/backend.h`'s.
         LOGI("promptSecurity id=%d enc=%d name=%s", identityState, encryptionState,
              name.c_str());
         const int identity = identityState >= VENTO_IDENTITY_OK && identityState <= VENTO_IDENTITY_ARD

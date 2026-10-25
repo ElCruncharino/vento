@@ -19,8 +19,8 @@ android {
         minSdk 34
         targetSdk 36
         // Checked for equality against the app's before this APK's dex is
-        // loaded: the seam between the two is a set of Java interfaces with no
-        // stability guarantee across releases, so they ship together.
+        // loaded: the `:backends` interfaces the two share have no stability
+        // guarantee across releases, so they ship together.
         versionCode 6
         versionName "6"
 
@@ -80,8 +80,8 @@ android {
 }
 
 dependencies {
-    // The seam, which the app also has: loaded parent-first, so both sides use
-    // the same `Backend` class.
+    // The backend interface, which the app also has: loaded parent-first, so
+    // both sides use the same `Backend` class.
     implementation project(':backends')
 
     // The add-on side of the arrangement: the setup screen's shape, the

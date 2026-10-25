@@ -132,12 +132,13 @@ constexpr size_t CMD_QUEUE_MAX = 512;
 // The backend API's framebuffer format: four bytes per pixel, red first in
 // memory. A little-endian pixel with red at shift 0 puts them in that order,
 // which is what makes every read from the framebuffer a memcpy.
-const rfb::PixelFormat seamPF(32, 24, false, true, 255, 255, 255, 0, 8, 16);
+const rfb::PixelFormat fullColourPF(32, 24, false, true, 255, 255, 255, 0, 8, 16);
 
 // The two reduced formats, which are their own viewer's low and very low
 // colour and the same 64 and 8 colours the other backends' rows call rgb222 and
 // rgb111. Only the wire changes: the decoders convert into the framebuffer,
-// which stays seamPF, so nothing downstream of a decode knows about this.
+// which stays fullColourPF, so nothing downstream of a decode knows about
+// this.
 const rfb::PixelFormat lowColourPF(8, 6, false, true, 3, 3, 3, 4, 2, 0);
 const rfb::PixelFormat veryLowColourPF(8, 3, false, true, 1, 1, 1, 2, 1, 0);
 
@@ -152,9 +153,9 @@ const rfb::PixelFormat &colourPF(int level, unsigned bps) {
         case 2:
             return veryLowColourPF;
         case LEVEL_AUTO:
-            return bps > 256000 ? seamPF : lowColourPF;
+            return bps > 256000 ? fullColourPF : lowColourPF;
         default:
-            return seamPF;
+            return fullColourPF;
     }
 }
 
@@ -244,7 +245,7 @@ void installSecurityTypes() {
 class Framebuffer : public vento::VideoPixelBuffer {
 public:
     Framebuffer(int w, int h, vento::Video *video)
-            : vento::VideoPixelBuffer(seamPF, w, h, video) {}
+            : vento::VideoPixelBuffer(fullColourPF, w, h, video) {}
 
     // Called by whichever thread decoded the rectangle, which with more than
     // one decoder thread is not the protocol thread.

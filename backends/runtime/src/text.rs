@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Line ends in a clipboard's text: LF on this side of the seam, and CRLF on
-//! the wire of a protocol whose far end is Windows' idea of text (RDP's, and
-//! TigerVNC's extended clipboard). The C session files keep the same rule in
-//! `vento/text.h` (`vento_text_to_lf`, `vento_text_to_crlf`), and both are
-//! tested against the same cases.
+//! Line ends in a clipboard's text: LF through `Handler::clipboard` and
+//! `Callbacks::clipboard`, and CRLF on the wire of a protocol whose far end is
+//! Windows' idea of text (RDP's, and TigerVNC's extended clipboard). The C
+//! session files keep the same rule in `vento/text.h` (`vento_text_to_lf`,
+//! `vento_text_to_crlf`), and both are tested against the same cases.
 
 /// CRLF, and a lone CR, to LF: what text is everywhere above a protocol.
 pub fn to_lf(text: &str) -> String {

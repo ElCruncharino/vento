@@ -10,7 +10,7 @@
 //! with a [`Bridge`] in between that turns the two questions a protocol can
 //! ask (credentials, trust) into an event and a wait on a [`Slot`]. The shape
 //! of `Callbacks` is the shape of the C API's `vento_callbacks` and of the
-//! Java seam's `NativeBackend` `on…` methods: it is the one interface every
+//! Java `NativeBackend`'s `on…` methods: it is the one interface every
 //! platform has to fit, so it is the one place this crate prescribes a shape.
 //!
 //! A protocol that uses TLS uses it through [`tls`]: the certificate pinned

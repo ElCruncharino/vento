@@ -71,7 +71,8 @@ android {
 }
 
 dependencies {
-    // The seam, and the only part of the app this module may depend on.
+    // `Backend` and the interfaces around it: the only part of the app this
+    // module may depend on.
     api project(':backends')
 
     // RealVNC's JNI declarations, and the pin on the build they bind to.

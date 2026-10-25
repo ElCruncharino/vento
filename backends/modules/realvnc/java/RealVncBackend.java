@@ -539,7 +539,8 @@ public final class RealVncBackend implements Backend,
     // ---- pixels ------------------------------------------------------------
 
     /**
-     * The only method here that cannot do what the seam asks for directly.
+     * The only method here that cannot do what {@link Backend} asks for
+     * directly.
      *
      * <p>All pixels from this library come through {@code copyScaledRegion},
      * which writes to the front of a buffer <em>the library</em> owns, and
@@ -620,8 +621,8 @@ public final class RealVncBackend implements Backend,
         // own tile pyramid uses powers of two, presumably for the same reason.
         // Tested against what is allocated below rather than against the floor
         // of the same division: at w = 1001 and maxWidth = 500, 1001 / 2 is not
-        // greater than 500 and the bitmap is 501 wide, which the seam's "no
-        // bigger than" does not allow.
+        // greater than 500 and the bitmap is 501 wide, which
+        // `Backend.thumbnail`'s "no bigger than" does not allow.
         int step = 1;
         while ((w + step - 1) / step > maxWidth || (h + step - 1) / step > maxHeight) {
             step <<= 1;

@@ -20,8 +20,8 @@ namespace {
 
 // What the decoder writes: four bytes a pixel, R, G, B, A in memory, which
 // is a little-endian word with red at shift 0 on any host. It is also the
-// session's framebuffer format (seamPF), which is what lets a picture go
-// straight in.
+// session's framebuffer format (`fullColourPF` in `tigervnc_session.cxx`),
+// which is what lets a picture go straight in.
 const PixelFormat pfRGBA(32, 24, false, true, 255, 255, 255, 0, 8, 16);
 
 // How often a context asks its decoder for the overlay's line: it is a

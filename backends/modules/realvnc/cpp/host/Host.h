@@ -4,7 +4,7 @@
 // Shared by the files in this directory: the logging macros, the Java
 // stand-ins every translation unit has to agree on, and the way back from a
 // `jobject` to the C++ object behind it. Internal to the hosting layer; the
-// seam the session sees is `HostedCore.h`, one directory up.
+// session sees only `HostedCore.h`, one directory up.
 //
 // How the hosting layer works: RealVNC's `libvncviewer.so` is a bionic
 // library that talks to Android only through JNI, `liblog`, `libandroid`'s

@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// The seam between the RealVNC session and the code hosting the viewer core:
-// `realvnc_session.cxx` is written against this and nothing below it, and
-// `host/` beside it is the only implementation so far, which runs the Android
-// library in a glibc process. It is the core's JNI surface
+// The interface between the RealVNC session and the code hosting the viewer
+// core: `realvnc_session.cxx` is written against this and nothing below it,
+// and `host/` beside it is the only implementation so far, which runs the
+// Android library in a glibc process. It is the core's JNI surface
 // (`realvnc/src/main/java/com/realvnc/vncviewer/jni`) in C++, method for
 // method where the session needs one, with the Java objects the core resolves
 // by name replaced by a listener the host calls.

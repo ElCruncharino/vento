@@ -50,15 +50,15 @@ dependencies {
 androidComponents {
     onVariants(selector().all()) { variant ->
         final cap = variant.name.substring(0, 1).toUpperCase(Locale.ROOT) + variant.name.substring(1)
-        final seam = project(':backends')
+        final backends = project(':backends')
 
         final cargoBuild = tasks.register("cargoBuild${cap}Native", CargoBuildTask) {
-            workspaceDir.set(seam.cargoWorkspace)
+            workspaceDir.set(backends.cargoWorkspace)
             cargoPackage.set('remotedesktop-rfb')
             ndkDirectory.set(androidComponents.sdkComponents.ndkDirectory)
-            rustToolchainFile.set(seam.cargoRustToolchain)
-            cargoNdkVersion.set(seam.cargoNdkVersion)
-            abiFilters.set(seam.nativeAbis)
+            rustToolchainFile.set(backends.cargoRustToolchain)
+            cargoNdkVersion.set(backends.cargoNdkVersion)
+            abiFilters.set(backends.nativeAbis)
             minSdkVersion.set(provider {
                 final v = android.defaultConfig.minSdk
                 (v instanceof com.android.build.api.variant.AndroidVersion) ? v.apiLevel : v
@@ -69,8 +69,8 @@ androidComponents {
 
         // Generates `RfbCatalog` (this backend's catalog entry) and `RfbNatives`
         // (the class the library registers its natives on): see :backends.
-        seam.generateCatalog(project, variant, 'rfb', 'RfbCatalog')
-        seam.generateNatives(project, variant, 'RfbNatives', 'remotedesktop_rfb')
+        backends.generateCatalog(project, variant, 'rfb', 'RfbCatalog')
+        backends.generateNatives(project, variant, 'RfbNatives', 'remotedesktop_rfb')
     }
 }
 
