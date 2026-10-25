@@ -162,6 +162,13 @@ const MEDIA_IMAGE_TYPE_YUV: u32 = 1;
 const FIRST_FRAME_TIMEOUT_US: i64 = 200_000;
 const FRAME_TIMEOUT_US: i64 = 30_000;
 
+/// How long a decode of a frame's planes waits for its picture, which is
+/// longer: a caller that asked for planes pairs each picture with its frame
+/// (FreeRDP's AVC444), so a picture that misses is a frame lost rather than
+/// one drawn late, and upstream's own MediaCodec decoder for it waits for as
+/// long as it takes.
+const PICTURE_TIMEOUT_US: i64 = 500_000;
+
 /// The phone's decoders, as a session is handed them.
 pub struct MediaCodec;
 
@@ -233,6 +240,8 @@ pub struct Decoder {
     /// Buffers released without being converted, because a newer whole picture
     /// was already waiting behind them.
     pub skipped: u64,
+    /// Frames fed for their planes whose pictures have not come out yet.
+    owed: u32,
 }
 
 impl Decoder {
@@ -293,6 +302,7 @@ impl Decoder {
             full_range: false,
             output: Output::new(),
             skipped: 0,
+            owed: 0,
         })
     }
 
@@ -385,8 +395,44 @@ impl Decoder {
             info = newer;
             self.skipped += 1;
         }
-        let index = index as usize;
+        self.take_buffer(index as usize, &info, &mut |frame, output| {
+            output.write(frame, out, width, height, changed)
+        });
+        true
+    }
 
+    /// The next decoded buffer in the order they were fed, for
+    /// [`decode_planes`](common::video::Decoder::decode_planes): one picture
+    /// a frame, none passed over. A wait that runs out leaves its picture
+    /// owed, and an owed picture is the frame before's, so it is released
+    /// unread when it comes rather than handed over as this frame's.
+    fn planes_next(&mut self, planes: &mut dyn FnMut(&Frame<'_>)) -> bool {
+        loop {
+            let mut info = BufferInfo::default();
+            let index = self.next_buffer(&mut info, PICTURE_TIMEOUT_US);
+            if index < 0 {
+                log::warn!("no picture after {} ms", PICTURE_TIMEOUT_US / 1000);
+                return false;
+            }
+            self.owed = self.owed.saturating_sub(1);
+            if self.owed > 0 {
+                unsafe { AMediaCodec_releaseOutputBuffer(self.codec, index as usize, false) };
+                self.skipped += 1;
+                continue;
+            }
+            return self.take_buffer(index as usize, &info, &mut |frame, _| planes(frame));
+        }
+    }
+
+    /// The decoded buffer at `index`, its format read and its planes handed
+    /// to `picture` with the decoder's [`Output`], and then released. True
+    /// when there was a picture to hand over.
+    fn take_buffer(
+        &mut self,
+        index: usize,
+        info: &BufferInfo,
+        picture: &mut dyn FnMut(&Frame<'_>, &mut Output),
+    ) -> bool {
         let format = unsafe { AMediaCodec_getBufferFormat(self.codec, index) };
         if !format.is_null() {
             self.read_format(format);
@@ -401,17 +447,28 @@ impl Decoder {
         // in place. Every no-surface `getOutputBuffer` user prints it.
         let mut size = 0usize;
         let buffer = unsafe { AMediaCodec_getOutputBuffer(self.codec, index, &mut size) };
-        if !buffer.is_null() && info.size > 0 {
+        let readable = !buffer.is_null() && info.size > 0 && self.have_layout;
+        if readable {
             let bytes = unsafe {
                 std::slice::from_raw_parts(
                     buffer.add(info.offset.max(0) as usize),
                     size.saturating_sub(info.offset.max(0) as usize),
                 )
             };
-            self.convert(bytes, out, width, height, changed);
+            // One buffer with all three planes in it, which is the shape the
+            // descriptor describes.
+            let frame = Frame::one(
+                bytes,
+                self.planes,
+                self.frame_width.max(0) as usize,
+                self.frame_height.max(0) as usize,
+                self.bt709,
+                self.full_range,
+            );
+            picture(&frame, &mut self.output);
         }
         unsafe { AMediaCodec_releaseOutputBuffer(self.codec, index, false) };
-        true
+        readable
     }
 
     fn read_format(&mut self, format: *mut AMediaFormat) {
@@ -481,32 +538,6 @@ impl Decoder {
             self.have_layout = true;
         }
     }
-
-    /// The buffer's planes into `out`, and what moved in them into `changed` —
-    /// which is also what decides how much of the buffer is converted at all.
-    fn convert(
-        &mut self,
-        base: &[u8],
-        out: &mut [u32],
-        width: usize,
-        height: usize,
-        changed: &mut Changes,
-    ) {
-        if !self.have_layout {
-            return;
-        }
-        // One buffer with all three planes in it, which is the shape the
-        // descriptor describes.
-        let frame = Frame::one(
-            base,
-            self.planes,
-            self.frame_width.max(0) as usize,
-            self.frame_height.max(0) as usize,
-            self.bt709,
-            self.full_range,
-        );
-        self.output.write(&frame, out, width, height, changed);
-    }
 }
 
 impl common::video::Decoder for Decoder {
@@ -530,6 +561,18 @@ impl common::video::Decoder for Decoder {
             FIRST_FRAME_TIMEOUT_US
         };
         if !self.draw_next(out, width, height, timeout, changed) {
+            return false;
+        }
+        self.saw_frame = true;
+        true
+    }
+
+    fn decode_planes(&mut self, data: &[u8], planes: &mut dyn FnMut(&Frame<'_>)) -> bool {
+        if self.failed || data.is_empty() || !self.feed(data) {
+            return false;
+        }
+        self.owed += 1;
+        if !self.planes_next(planes) {
             return false;
         }
         self.saw_frame = true;

@@ -17,6 +17,7 @@
 
 pub mod convert;
 pub mod diff;
+pub mod i420;
 
 pub use diff::Changes;
 
@@ -157,6 +158,22 @@ pub trait Decoder {
     ///
     /// [`decode`]: Decoder::decode
     fn take_key_frame_request(&mut self) -> bool {
+        false
+    }
+
+    /// One frame decoded and handed to `planes` as the decoder's own planes,
+    /// unconverted: for a caller that does what comes after the decoder
+    /// itself, as FreeRDP does, whose AVC444 makes one picture of two
+    /// decoded ones before it converts anything. True when a picture came
+    /// out and was handed over; the frame is lent for that call alone.
+    ///
+    /// Unlike [`decode`](Decoder::decode), **every** picture is handed
+    /// over, one for each frame that makes one and in the order they were
+    /// fed: none is passed over for a newer one, since such a caller pairs
+    /// each picture with the frame that made it. False, always, for a
+    /// decoder that cannot (the default).
+    fn decode_planes(&mut self, data: &[u8], planes: &mut dyn FnMut(&Frame<'_>)) -> bool {
+        let _ = (data, planes);
         false
     }
 

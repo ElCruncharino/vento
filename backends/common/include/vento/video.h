@@ -7,10 +7,10 @@
 // rather than symbols, so that a backend library links nothing of the process
 // it is loaded into.
 //
-// TigerVNC is the one user: its H.264 rectangles are decoded through this
-// rather than through a decoder of the library's own, so that the hardware
-// decoding, its fallback and the facts about it are the same code as
-// RustDesk's.
+// TigerVNC's H.264 rectangles and FreeRDP's H.264 surface commands are
+// decoded through this rather than through a decoder of either library's
+// own, so that the hardware decoding, its fallback and the facts about it are
+// the same code as RustDesk's.
 
 #ifndef VENTO_VIDEO_H
 #define VENTO_VIDEO_H
@@ -34,6 +34,17 @@ extern "C" {
    threads at once; from one thread after another is what it is for. */
 typedef struct vento_video_decoder vento_video_decoder;
 
+/* A picture as 8-bit 4:2:0 planes, Y then U then V, each its own: `width`
+   by `height` samples of Y and half that, rounded up, of each of the other
+   two, rows `stride` bytes apart. Every plane has 32 bytes more on each row
+   and 32 rows more below it than the picture covers, for whatever reads the
+   planes a vector at a time. The decoder's until its next call. */
+typedef struct vento_video_planes {
+    const uint8_t *data[3];
+    int32_t stride[3];
+    int width, height;
+} vento_video_planes;
+
 typedef struct vento_video_decoders {
     /* The decoders themselves, handed to `open`, `mode` and `release`. */
     void *user;
@@ -54,6 +65,14 @@ typedef struct vento_video_decoders {
        where nothing did. */
     bool (*decode)(vento_video_decoder *d, const uint8_t *data, size_t len, uint32_t *out,
                    int width, int height, bool whole, int32_t changed[4]);
+    /* One frame into `out` as planes rather than converted: for a backend that
+       converts them itself (FreeRDP, whose AVC444 makes one picture of two).
+       Every picture comes out, one for each frame that makes one and in the
+       order they went in, none passed over for a newer one. True when one
+       did; false where it did not, which includes a picture that is not
+       4:2:0. */
+    bool (*decode_planes)(vento_video_decoder *d, const uint8_t *data, size_t len,
+                          vento_video_planes *out);
     /* Whether the last picture was decoded in hardware: 1, 0, or -1 where the
        decoder does not know or has had no picture yet. */
     int (*hardware)(vento_video_decoder *d);
