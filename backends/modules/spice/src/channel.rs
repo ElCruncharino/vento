@@ -277,7 +277,10 @@ where
         // Only what the caller adds: the volume, and Opus where the
         // platform decodes it. Without the Opus bit a server sends PCM.
         Kind::Playback => 0,
-        _ => cap::DEFAULT_MAIN,
+        // Neither has a capability this client uses. The inputs channel's only
+        // one is the scancode message, which this client does not send; the
+        // cursor channel has none.
+        Kind::Inputs | Kind::Cursor => 0,
     };
     let message = SpiceLinkMess::new(
         session_id,
