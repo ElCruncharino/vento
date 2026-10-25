@@ -35,7 +35,7 @@ use super::super::hud::{self, Rate};
 use super::super::icons;
 use super::super::toolbar::{self, Placement};
 use super::super::view::{Layout, ScaleMode, View};
-use super::super::Host;
+use super::super::{BACKDROP, Host};
 use super::{BACK, Capture, FORWARD, LEFT, MIDDLE, NOTCH_POINTS, RIGHT, Session, WindowOp, on_off};
 use crate::backend::Monitor;
 use runtime::media::audio::Switch;
@@ -287,7 +287,7 @@ impl Pane {
         let mut layout = None;
         let mut response = None;
         egui::CentralPanel::default()
-            .frame(Frame::NONE.fill(Color32::from_gray(24)))
+            .frame(Frame::NONE.fill(BACKDROP))
             .show(root, |ui| {
                 let window = ui.max_rect();
                 let Some((width, height)) = s.desktop.as_ref().map(Desktop::size) else {
@@ -552,12 +552,7 @@ impl Pane {
         // with the margin keeping the stroke's width so that the buttons sit
         // where they did.
         let edge = style.visuals.window_stroke();
-        let edge_width = edge.width.round() as i8;
-        let frame = Frame::popup(&style)
-            .corner_radius(0)
-            .shadow(egui::Shadow::NONE)
-            .stroke(Stroke::NONE)
-            .inner_margin(Margin::symmetric(8 + edge_width, 6 + edge_width));
+        let frame = toolbar_frame(&style);
         // Hidden, it peeks in a window always and in fullscreen while the
         // pointer is on the screen's top row anywhere along it; the slide
         // to and from the peek is the same slide, the same 0.2 s.
@@ -1128,6 +1123,28 @@ fn over_button(ctx: &egui::Context, area: &egui::Response) -> bool {
                 .read_response(id)
                 .is_some_and(|r| r.layer_id == area.layer_id && r.sense.senses_click())
     })
+}
+
+/// The toolbar's frame (see [`Pane::toolbar`]).
+fn toolbar_frame(style: &egui::Style) -> Frame {
+    let edge_width = style.visuals.window_stroke().width.round() as i8;
+    Frame::popup(style)
+        .corner_radius(0)
+        .shadow(egui::Shadow::NONE)
+        .stroke(Stroke::NONE)
+        .inner_margin(Margin::symmetric(8 + edge_width, 6 + edge_width))
+}
+
+/// The most buttons the toolbar has at once: the main window's nine (see
+/// [`Pane::toolbar_items`]).
+const TOOLBAR_MOST: usize = 9;
+
+/// The width of the toolbar with all of its buttons, in points.
+pub fn toolbar_width(style: &egui::Style) -> f32 {
+    let buttons = TOOLBAR_MOST as f32;
+    buttons * TOOLBAR_BUTTON
+        + (buttons - 1.0) * style.spacing.item_spacing.x
+        + toolbar_frame(style).total_margin().sum().x
 }
 
 /// A toolbar button of an icon alone, square, and flat: no frame at rest,

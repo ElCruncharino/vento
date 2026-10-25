@@ -145,13 +145,16 @@ impl Form {
     }
 }
 
+/// The width of a prompt's content, in points.
+pub const WIDTH: f32 = 380.0;
+
 /// Draws `prompt` as a modal and returns its answer on the frame it is
 /// given. `address` titles the dialogs that are about the far end; `user`
 /// is what the credentials form starts with.
 pub fn show(ctx: &egui::Context, prompt: &Prompt, form: &mut Form, address: &str, user: &str) -> Option<Answer> {
     form.prepare(prompt, user);
     let modal = Modal::new(Id::new("prompt")).show(ctx, |ui| {
-        ui.set_width(380.0);
+        ui.set_width(WIDTH);
         match prompt {
             Prompt::Credentials { needs_user } => credentials(ui, form, address, *needs_user),
             Prompt::Trust {

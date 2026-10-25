@@ -12,13 +12,40 @@
 //! answer for every connection, so they are drawn once, apart, and not
 //! filled in from a request. Nothing is saved: there are no connections to
 //! keep and no file to keep them in.
+//!
+//! It is drawn as a panel in the connection panel's frame, centred across
+//! the window over the [`BACKDROP`], and scrolls where the window is too
+//! short for it.
 
+use super::panel::{self, MARGIN};
 use super::settings::Settings;
-use super::Request;
+use super::{BACKDROP, Request};
 use crate::backends::{self, Kind, Platform};
 use crate::options::{self, Options, Spec, Type};
-use egui::{Align, ComboBox, Grid, Layout, RichText, ScrollArea, TextEdit, Ui};
+use egui::{Align, ComboBox, Frame, Grid, Id, Layout, Pos2, RichText, ScrollArea, TextEdit, Ui, Vec2, pos2, vec2};
 use std::collections::BTreeMap;
+
+/// The dialog's width, its frame included, in points, where the window has
+/// room for it.
+const WIDTH: f32 = 520.0;
+
+/// Its least width, in a window too narrow for [`WIDTH`]: the connection
+/// panel's, which the window's minimum size is made for.
+const MIN_WIDTH: f32 = panel::WIDTH;
+
+/// The most space left above the dialog, in points: less in a window too
+/// short for it, where the dialog is centred in what room there is.
+const TOP: f32 = 40.0;
+
+/// Where a dialog of `size` goes in `window`: its top left corner, centred
+/// across, and [`TOP`] down or centred, at least [`MARGIN`] from the edges.
+fn left_top(size: Vec2, window: egui::Rect) -> Pos2 {
+    let free = window.shrink(MARGIN).size() - size;
+    pos2(
+        window.min.x + MARGIN + (free.x / 2.0).max(0.0),
+        window.min.y + MARGIN + (free.y / 2.0).clamp(0.0, TOP),
+    )
+}
 
 pub struct Dialog {
     kinds: Vec<&'static Kind>,
@@ -76,22 +103,40 @@ impl Dialog {
     /// a request on the frame "Connect" is pressed with something that
     /// passes the checks.
     pub fn ui(&mut self, root: &mut Ui, settings: &mut Settings) -> Option<Request> {
+        let ctx = root.ctx().clone();
+        egui::CentralPanel::default()
+            .frame(Frame::NONE.fill(BACKDROP))
+            .show(root, |_| {});
+        let screen = ctx.content_rect();
+        let frame = panel::frame(&ctx.global_style());
+        let margin = frame.total_margin().sum();
+        let bounds = screen.shrink(MARGIN);
+        let width = bounds.width().clamp(MIN_WIDTH, WIDTH);
+        let id = Id::new("connection-dialog");
+        // Placed by last frame's size; the first frame is egui's sizing
+        // pass, which is not drawn.
+        let size = ctx.memory(|m| m.area_rect(id)).map_or(vec2(width, 0.0), |r| r.size());
         let mut connect = false;
-        egui::CentralPanel::default().show(root, |ui| {
-            ui.vertical_centered(|ui| {
-                ui.set_max_width(520.0);
-                ui.add_space(12.0);
-                ui.heading("Connect to a desktop");
-                ui.add_space(8.0);
-                if let Some(notice) = &self.notice {
-                    ui.label(RichText::new(notice).color(ui.visuals().warn_fg_color));
-                    ui.add_space(8.0);
-                }
-                ScrollArea::vertical().show(ui, |ui| {
-                    connect = self.form(ui, settings);
+        egui::Area::new(id)
+            .fixed_pos(left_top(size, screen))
+            .show(&ctx, |ui| {
+                frame.show(ui, |ui| {
+                    ui.set_width(width - margin.x);
+                    ui.set_max_height(bounds.height() - margin.y);
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(4.0);
+                        ui.heading("Connect to a desktop");
+                        ui.add_space(8.0);
+                        if let Some(notice) = &self.notice {
+                            ui.label(RichText::new(notice).color(ui.visuals().warn_fg_color));
+                            ui.add_space(8.0);
+                        }
+                    });
+                    ScrollArea::vertical().show(ui, |ui| {
+                        connect = self.form(ui, settings);
+                    });
                 });
             });
-        });
         if !connect {
             return None;
         }
@@ -216,7 +261,6 @@ impl Dialog {
                 connect = true;
             }
         });
-        ui.add_space(12.0);
         connect
     }
 
@@ -313,4 +357,21 @@ fn option_row(ui: &mut Ui, spec: &'static Spec, values: &mut BTreeMap<&'static s
         }
     }
     ui.end_row();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_dialog_is_centred_across_and_near_the_top() {
+        let window = egui::Rect::from_min_size(pos2(0.0, 0.0), vec2(1280.0, 800.0));
+        assert_eq!(left_top(vec2(520.0, 580.0), window), pos2(380.0, 48.0));
+        // Too short for the space above it: centred in what room there is.
+        let short = egui::Rect::from_min_size(pos2(0.0, 0.0), vec2(1280.0, 640.0));
+        assert_eq!(left_top(vec2(520.0, 580.0), short), pos2(380.0, 30.0));
+        // Too small for it at all: a margin from the top left corner.
+        let small = egui::Rect::from_min_size(pos2(0.0, 0.0), vec2(300.0, 200.0));
+        assert_eq!(left_top(vec2(360.0, 580.0), small), pos2(8.0, 8.0));
+    }
 }

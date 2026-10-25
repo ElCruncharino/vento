@@ -167,8 +167,13 @@ pub struct Panel {
 const INSET: f32 = 16.0;
 
 /// The least distance kept between the panel and each edge of the window,
-/// wherever it is dragged or placed and however small the window is.
-const MARGIN: f32 = 8.0;
+/// wherever it is dragged or placed and however small the window is. The
+/// connection dialog keeps the same.
+pub const MARGIN: f32 = 8.0;
+
+/// The panel's width, its frame included, in points. The window's minimum
+/// size is made to fit it.
+pub const WIDTH: f32 = 360.0;
 
 /// The middle of the room the panel has to move in on either axis, as a
 /// fraction of it: a panel there is placed by its centre on that axis.
@@ -276,7 +281,7 @@ impl Panel {
         // is placed by and a drag would jump if that changed during it. Its
         // size is the last frame's, which is egui's too; the first frame
         // is egui's sizing pass, which is not drawn.
-        let size = ctx.memory(|m| m.area_rect(id)).map_or(vec2(360.0, 0.0), |r| r.size());
+        let size = ctx.memory(|m| m.area_rect(id)).map_or(vec2(WIDTH, 0.0), |r| r.size());
         let left_top = match self.anchor {
             Some(anchor) => anchor.left_top(size, screen),
             None => pos2(screen.max.x - INSET - size.x, screen.min.y + INSET),
@@ -300,8 +305,8 @@ impl Panel {
             // window was last offered and only grows it to fit its content:
             // one squeezed by a small window would stay that small once the
             // window was larger again.
-            .default_width(360.0)
-            .min_width(360.0)
+            .default_width(WIDTH)
+            .min_width(WIDTH)
             .default_height(room)
             .min_height(room)
             .max_height(room)
@@ -310,7 +315,7 @@ impl Panel {
             // window when it is clicked, but only among those of its order.
             .order(Order::Middle)
             .constrain_to(bounds)
-            .frame(Frame::window(&ctx.global_style()).shadow(Shadow::NONE))
+            .frame(frame(&ctx.global_style()))
             .show(ctx, |ui| {
                 // Nothing on it is text to copy, and a drag that starts on
                 // a label moves the panel instead.
@@ -501,6 +506,12 @@ impl Panel {
         }
         ui.end_row();
     }
+}
+
+/// The panel's frame, an egui window's without the shadow; the connection
+/// dialog's too.
+pub fn frame(style: &egui::Style) -> Frame {
+    Frame::window(style).shadow(Shadow::NONE)
 }
 
 /// An egui window's close button, the cross its title bar draws, as a

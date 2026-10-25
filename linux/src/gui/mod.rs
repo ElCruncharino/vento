@@ -408,6 +408,26 @@ impl Surface {
     }
 }
 
+/// What a window shows where nothing else is drawn: behind the connection
+/// dialog, and a session's around and before its desktop.
+const BACKDROP: egui::Color32 = egui::Color32::from_gray(0x11);
+
+/// The least height of a window, in points. The dialog and the panel
+/// scroll, so this is what is kept in view rather than what their content
+/// needs: the dialog's heading, a notice, and its connection fields.
+const MIN_HEIGHT: f32 = 360.0;
+
+/// The smallest a window may be made, in points: wide enough for the
+/// connection panel and the connection dialog at its narrowest, which is
+/// the panel's width, with [`panel::MARGIN`] at both sides; a prompt with
+/// its frame; and the toolbar with all of its buttons.
+fn min_size(style: &egui::Style) -> winit::dpi::LogicalSize<f32> {
+    let panel = panel::WIDTH + 2.0 * panel::MARGIN;
+    let prompt = prompts::WIDTH + egui::Frame::popup(style).total_margin().sum().x;
+    let width = panel.max(prompt).max(session::toolbar_width(style));
+    winit::dpi::LogicalSize::new(width.ceil(), MIN_HEIGHT)
+}
+
 enum Screen {
     Dialog(Dialog),
     Session(Box<Session>),
@@ -535,7 +555,8 @@ impl App {
     fn open(&mut self, event_loop: &ActiveEventLoop) {
         let attributes = Window::default_attributes()
             .with_title("Vento")
-            .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 800.0));
+            .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 800.0))
+            .with_min_inner_size(min_size(&self.egui.global_style()));
         let id = match self.add_window(event_loop, attributes, ViewportId::ROOT) {
             Ok(id) => id,
             Err(e) => {
@@ -1066,7 +1087,8 @@ impl App {
                 WindowOp::Open { pane, title, size } => {
                     let attributes = Window::default_attributes()
                         .with_title(title)
-                        .with_inner_size(winit::dpi::LogicalSize::new(size.0, size.1));
+                        .with_inner_size(winit::dpi::LogicalSize::new(size.0, size.1))
+                        .with_min_inner_size(min_size(&self.egui.global_style()));
                     match self.add_window(event_loop, attributes, pane) {
                         Ok(id) => self.windows[&id].window.request_redraw(),
                         Err(e) => {

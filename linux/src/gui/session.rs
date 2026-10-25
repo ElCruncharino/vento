@@ -83,6 +83,7 @@ use runtime::media::audio::{Outputs, Playback, Sound, Switch};
 use crate::options::{self, Options};
 use egui::{CursorIcon, TextureHandle, TextureOptions, Vec2, ViewportId, vec2};
 use pane::{MonitorKey, Pane, PaneId, Rebound};
+pub use pane::toolbar_width;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant};

@@ -581,6 +581,23 @@ an ellipsis; a name of nothing but control characters is none, and the
 address stands in. A typed or pasted address is cleaned the same way
 before it is a title.
 
+The connection dialog is a panel in the connection panel's frame (`panel::frame`:
+an egui window's, no shadow), 520 points wide or the window's width less 8 points
+(`panel::MARGIN`) at each side, down to the connection panel's 360. It is centred
+across the window and 40 points below the margin at the top, or centred in what
+room there is in a window too short for that, so switching backends does not move
+it unless the window is crowded; it scrolls where it is taller than the window
+allows. Why the last session ended is shown under its heading. Behind it, and in a
+session's window around and before its desktop (the "Connecting to …" screen),
+the backdrop is #111111 (`gui::BACKDROP`); the panels, the prompts and the toolbar
+keep egui's fills. Every window, pop-outs included, has a minimum inner size
+(`gui::min_size`, logical points, set with `with_min_inner_size`): its width is the
+largest of the connection panel's width plus a margin at both sides (376), a
+prompt's width with its frame (394) and the toolbar with all nine of its buttons
+(334), so 394 with egui's default style; its height is 360, which keeps the
+dialog's heading, a notice and its connection fields in view (the panels scroll,
+so their content sets no height).
+
 Nothing in the interface fades or folds: egui's own animations are off
 (`animation_time` and the programmatic scroll's, both zero), so a dropdown, a
 tooltip, a prompt or the panel is there at full opacity the frame it is
