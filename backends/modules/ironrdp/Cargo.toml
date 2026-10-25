@@ -22,14 +22,14 @@ remotedesktop-runtime.workspace = true
 # `ironrdp-blocking` rather than the async one: this client owns its threads and
 # blocks on a socket, which keeps a tokio runtime out of the app.
 #
-# A submodule pinned to a commit rather than the published versions, and not by
-# preference:
-# `ironrdp-session` 0.11.0 chunks a decoded bitmap by the *rectangle's* width
-# where the protocol pads the bitmap's own width up to a multiple of four, so
-# every update whose width is not a multiple of four shears each row one step
-# further left than the last. On xrdp that is most of them. Fixed upstream but
-# unreleased; revisit at the next release. The paths are in the root
-# `Cargo.toml`'s `[workspace.dependencies]`.
+# From the submodule, at the commit IronRDP tagged these crates' releases on
+# (`ironrdp-session` 0.12.0 and the rest). It was pinned to an unreleased
+# commit while `ironrdp-session` 0.11.0 chunked a decoded bitmap by the
+# *rectangle's* width where the protocol pads the bitmap's own width up to a
+# multiple of four, so every update whose width was not a multiple of four
+# sheared each row one step further left than the last (on xrdp, most of
+# them); 0.12.0 has the fix. The paths are in the root `Cargo.toml`'s
+# `[workspace.dependencies]`.
 ironrdp-cliprdr.workspace = true
 ironrdp-blocking.workspace = true
 ironrdp-connector.workspace = true

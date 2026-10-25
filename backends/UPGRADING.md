@@ -155,6 +155,11 @@ With patches:
     git update-index --cacheinfo 160000,<TARGET>,third_party/<name>
     ./patch.sh <name> && ./patch.sh check
 
+When upstream has taken every patch, the rebase leaves the submodule at
+`<TARGET>`, and `./patch.sh` would apply the old files again (it saves only
+when the submodule is ahead of `base`), so delete `patches/<name>/` by hand
+before running it.
+
 Without patches: `checkout --detach`, `tag -f base`, `update-index`,
 `./patch.sh check`. A submodule with no `base` tag yet gets one at the
 target.
@@ -533,14 +538,22 @@ One commit per upstream, after review, by the lead:
   `unicode_android.c`, Java's String.
   `LegacyTls` row for TLS 1.0 at level 0; `remotedesktop_vendored_warnings`
   silences their tree.
-- **ironrdp** master 9b151c4c. No patches. A submodule rather than crates.io
-  because the bitmap stride fix (80bb81b3) is still unreleased; revisit at
-  the next ironrdp-session release. EGFX is deliberately off; the doc
+- **ironrdp** e899a826 (October 2026), the commit tagged
+  ironrdp-session-v0.12.0, ironrdp-connector-v0.11.0,
+  ironrdp-blocking-v0.11.0 and the other crates' releases. No patches.
+  IronRDP versions each crate separately and tags a set of releases together
+  on one `chore(release)` commit; that commit is the pin to take. Every
+  crate's minor version moves in the same release, so expect API changes;
+  the protocol crate's compile errors list them. The bitmap stride fix
+  (80bb81b3), unreleased at the previous pin, is in ironrdp-session 0.12.0.
+  A server redirection, at connection or mid-session, ends the session with
+  a message rather than being followed. EGFX is deliberately off; the doc
   comment on IronRDP's `OPTIONS` (`modules/ironrdp/catalog.rs`) says why.
-- **sspi** sspi-v0.21.3 (09088ac), the release IronRDP's crates resolve to;
-  one patch, not yet upstream: a down-level logon name's account name may
-  contain `@`, so `MicrosoftAccount\user@example.com` reaches NTLM as that
-  user and domain instead of failing as a mixed username format.
+- **sspi** sspi-v0.23.0 (b21f458), the release ironrdp-connector 0.11
+  requires. No patches: the one carried at sspi-v0.21.3 (a down-level logon
+  name's account name may contain `@`, so `MicrosoftAccount\user@example.com`
+  reaches NTLM as that user and domain) is upstream's 4878c50, first
+  released in sspi-v0.22.0.
 - **hbb_common** 3d6fb2c, and terminal there: the next upstream commit moved
   `message.proto` into rustdesk's own repository
   (`libs/base/protos/message.proto`). Moving further means a second source

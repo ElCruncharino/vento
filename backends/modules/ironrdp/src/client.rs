@@ -24,7 +24,7 @@ use ironrdp_cliprdr::pdu::OwnedFormatDataResponse;
 use ironrdp_connector::connection_activation::{ConnectionActivationSequence, ConnectionActivationState};
 use ironrdp_connector::sspi::network_client::NetworkClient;
 use ironrdp_connector::{
-    ClientConnector, ConnectionResult, DesktopSize, Sequence as _, ServerName,
+    ClientConnector, ConnectionOutcome, ConnectionResult, DesktopSize, Sequence as _, ServerName,
 };
 use ironrdp_core::WriteBuf;
 use ironrdp_displaycontrol::client::DisplayControlClient;
@@ -40,6 +40,7 @@ use ironrdp_pdu::rdp::headers::ShareDataPdu;
 use ironrdp_pdu::rdp::suppress_output::SuppressOutputPdu;
 use ironrdp_pdu::gcc::{Monitor, MonitorFlags};
 use ironrdp_pdu::geometry::InclusiveRectangle;
+use ironrdp_pdu::rdp::server_redirection::ServerRedirectionPdu;
 use ironrdp_session::{ActiveStage, ActiveStageBuilder, ActiveStageOutput};
 
 use std::collections::HashMap;
@@ -791,7 +792,7 @@ impl Client {
         let public_key = peer.public_key.clone();
         let mut framed = Framed::new(Counting::new(wire.clone_handle(), &self.shared));
         let mut network = NoNetworkClient;
-        let result = connect_finalize(
+        let outcome = connect_finalize(
             upgraded,
             connector,
             &mut framed,
@@ -808,6 +809,10 @@ impl Client {
                 protocol(e)
             }
         })?;
+        let result = match outcome {
+            ConnectionOutcome::Connected(result) => result,
+            ConnectionOutcome::Redirected(pdu) => return Err(redirected(&pdu)),
+        };
 
         let desktop = result.desktop_size;
         {
@@ -960,7 +965,9 @@ impl Client {
                         // a blit as in the RFB client: IronRDP's decoders write
                         // straight into the destination, and adding a scratch
                         // copy would not make this cheaper.
-                        stage.process(image, action, &payload).map_err(session)?
+                        stage
+                            .process(image, action, &payload, framed.last_read_at())
+                            .map_err(session)?
                     };
                     let mut drew = false;
                     for output in outputs {
@@ -1018,6 +1025,9 @@ impl Client {
                             }
                             ActiveStageOutput::Terminate(reason) => {
                                 return Err(Error::Protocol(reason.description()));
+                            }
+                            ActiveStageOutput::ServerRedirection(pdu) => {
+                                return Err(redirected(&pdu));
                             }
                             ActiveStageOutput::DeactivateAll => {
                                 // Logged at info because a stalled session
@@ -1234,28 +1244,34 @@ impl Client {
         let mut buf = WriteBuf::new();
         loop {
             step(framed, sequence, &mut buf)?;
-            if let ConnectionActivationState::Finalized {
-                desktop_size,
-                share_id,
-                enable_server_pointer,
-                static_channel_chunk_size,
-                ..
-            } = *ironrdp_connector::state_downcast::<ConnectionActivationState>(sequence.state())
+            match ironrdp_connector::state_downcast::<ConnectionActivationState>(sequence.state())
                 .ok_or_else(|| Error::Protocol("reactivation lost its state".into()))?
             {
-                if !stage.reactivate(
-                    io_channel_id,
-                    user_channel_id,
+                ConnectionActivationState::Redirected { redirection } => {
+                    return Err(redirected(redirection));
+                }
+                &ConnectionActivationState::Finalized {
+                    desktop_size,
                     share_id,
                     enable_server_pointer,
-                    false,
                     static_channel_chunk_size,
-                ) {
-                    return Err(Error::Protocol(
-                        "the server offered an invalid virtual channel chunk size".into(),
-                    ));
+                    ..
+                } => {
+                    if !stage.reactivate(
+                        io_channel_id,
+                        user_channel_id,
+                        share_id,
+                        enable_server_pointer,
+                        false,
+                        static_channel_chunk_size,
+                    ) {
+                        return Err(Error::Protocol(
+                            "the server offered an invalid virtual channel chunk size".into(),
+                        ));
+                    }
+                    return Ok(desktop_size);
                 }
-                return Ok(desktop_size);
+                _ => {}
             }
         }
     }
@@ -1362,6 +1378,23 @@ fn protocol(e: ironrdp_connector::ConnectorError) -> Error {
 
 fn session(e: ironrdp_session::SessionError) -> Error {
     Error::Protocol(describe(&e))
+}
+
+/// A Server Redirection PDU, during the connection, a reactivation or the
+/// session: the server asks the client to reconnect to another host or
+/// session, as a connection broker does. This client does not follow it, and
+/// sends no Client Cluster Data (REDIRECTION_SUPPORTED), so a broker should
+/// not redirect it.
+fn redirected(pdu: &ServerRedirectionPdu) -> Error {
+    log::info!(
+        "server redirection to session {} at {}",
+        pdu.session_id,
+        pdu.target_fqdn
+            .as_deref()
+            .or(pdu.target_net_address.as_deref())
+            .unwrap_or("the same address")
+    );
+    Error::Protocol("The server redirected the connection, which this client does not support.".into())
 }
 
 fn stored(config: &Config) -> Option<Credentials> {
@@ -1599,9 +1632,10 @@ fn arranged(screens: &[(i32, i32, u32, u32)]) -> Vec<(i32, i32, u32, u32)> {
 }
 
 /// `screens` (see `arranged`) as display-control entries, the first the
-/// primary. Only the library's own layout check can still fail.
+/// primary. Fails for a layout the library refuses: overlapping monitors,
+/// or a monitor touching none of the others.
 fn layout_of(screens: &[(i32, i32, u32, u32)]) -> Result<Vec<MonitorLayoutEntry>> {
-    arranged(screens)
+    let entries = arranged(screens)
         .into_iter()
         .enumerate()
         .map(|(i, (x, y, w, h))| {
@@ -1612,7 +1646,9 @@ fn layout_of(screens: &[(i32, i32, u32, u32)]) -> Result<Vec<MonitorLayoutEntry>
             }
             .map_err(|e| Error::Protocol(e.to_string()))
         })
-        .collect()
+        .collect::<Result<Vec<_>>>()?;
+    DisplayControlMonitorLayout::new(&entries).map_err(|e| Error::Protocol(e.to_string()))?;
+    Ok(entries)
 }
 
 /// Whether monitors, four ints each, divide a desktop this size, i.e. their
@@ -1902,6 +1938,15 @@ mod tests {
             arranged(&[(1024, 0, 800, 600), (0, 0, 1024, 768)]),
             vec![(0, 0, 800, 600), (-1024, 0, 1024, 768)]
         );
+    }
+
+    #[test]
+    fn a_layout_the_library_refuses_is_an_error() {
+        assert_eq!(layout_of(&[(0, 0, 800, 600), (800, 0, 800, 600)]).unwrap().len(), 2);
+        assert_eq!(layout_of(&[(0, 0, 800, 600), (0, 600, 800, 600)]).unwrap().len(), 2);
+        // A gap between them, and an overlap.
+        assert!(layout_of(&[(0, 0, 800, 600), (1000, 0, 800, 600)]).is_err());
+        assert!(layout_of(&[(0, 0, 800, 600), (400, 0, 800, 600)]).is_err());
     }
 
     #[test]

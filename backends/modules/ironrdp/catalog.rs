@@ -68,11 +68,12 @@ pub static IRONRDP: About = About {
 ///   colour across the desktop. With patches, it worked against xrdp and
 ///   no further. The library has since added all three missing pieces (the
 ///   flag, both decoders, and a session that composites what the pipeline
-///   draws), but upstream's own client still ships with the flag off, and
-///   none of it has been tested against a Windows host here since. Until
-///   it has, offering it would be the same bet as before: a choice known to
-///   work on one server and not known to work on the one the protocol
-///   belongs to.
+///   draws), and since October 2026 upstream's own client offers the
+///   pipeline by default when it has an H.264 decoder. Without one, a still
+///   desktop over the pipeline drew correctly on xrdp and on Windows 10
+///   here, but no interactive session has been run over it, and H.264 would
+///   need IronRDP's decoder interface implemented over the app's own video
+///   decoders. Until both are done, it is not offered.
 pub static OPTIONS: &[Spec] = &[
     choices(
         "Nla",
