@@ -124,7 +124,7 @@ dependencies {
 
     implementation 'androidx.recyclerview:recyclerview:1.4.0'
     implementation 'androidx.preference:preference:1.2.1'
-    implementation 'com.google.android.material:material:1.13.0'
+    implementation 'com.google.android.material:material:1.14.0'
 }
 
 // The licence page, as an asset: what this build is made of and what that means
