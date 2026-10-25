@@ -22,9 +22,14 @@ use std::collections::HashMap;
 /// gets a cursor that goes blank the second time a window is resized.
 ///
 /// Bounded by count rather than by bytes, unlike the image cache: a cursor is
-/// at most 256×256 and a guest has a few dozen, so the bound is there to stop
-/// a hostile server rather than to fit a real one.
+/// at most [`MAX_SIDE`] square and a guest has a few dozen, so the bound is
+/// there to stop a hostile server rather than to fit a real one.
 const MAX_SHAPES: usize = 64;
+
+/// The widest and tallest cursor taken, which is the largest a Windows guest
+/// draws. The header's two 16-bit fields would allow four billion pixels, and
+/// a shape past this is refused before anything is allocated for it.
+const MAX_SIDE: usize = 256;
 
 pub struct Cursors {
     shapes: HashMap<u64, Shape>,
@@ -57,9 +62,20 @@ impl Cursors {
     ) -> Result<()> {
         match message_type {
             // Both carry a SpiceCursor; INIT has nine bytes of its own in front
-            // of it and SET has five.
-            cursor_server::INIT => self.cursor(&body[CursorInit::SIZE..], handler),
-            cursor_server::SET => self.cursor(&body[CursorSet::SIZE..], handler),
+            // of it and SET has five. A body too short for those is dropped,
+            // as one too short for the cursor's own header is: the pointer
+            // keeps the shape it had, which is what a lost shape costs.
+            cursor_server::INIT | cursor_server::SET => {
+                let fields = if message_type == cursor_server::INIT {
+                    CursorInit::SIZE
+                } else {
+                    CursorSet::SIZE
+                };
+                match body.get(fields..) {
+                    Some(cursor) => self.cursor(cursor, handler),
+                    None => log::warn!("cursor: a {} byte message {message_type}", body.len()),
+                }
+            }
             cursor_server::HIDE => handler.cursor(&[], 0, 0, 0, 0),
             cursor_server::INVALIDATE_ALL => {
                 self.shapes.clear();
@@ -119,29 +135,39 @@ impl Default for Cursors {
 /// are two bitplanes rather than pixels, which is a different shape of work
 /// for a cursor nothing here has produced.
 fn pixels(header: &SpiceCursorHeader, data: &[u8]) -> Option<Vec<u32>> {
-    let count = (header.width as usize).checked_mul(header.height as usize)?;
+    let (width, height) = (header.width as usize, header.height as usize);
+    if width > MAX_SIDE || height > MAX_SIDE {
+        log::warn!("cursor: {width}x{height} is bigger than any cursor");
+        return None;
+    }
+    let count = width.checked_mul(height)?;
     if count == 0 {
         return None;
     }
-    let mut out = Vec::with_capacity(count);
+    // The bytes are taken before the pixels are made, so what is allocated is
+    // what arrived rather than what the header said would.
+    let mut out = Vec::new();
     match header.cursor_type {
         // ALPHA: BGRA, and the alpha is the cursor's own shape.
         0 => {
-            let bytes = data.get(..count * 4)?;
+            let bytes = data.get(..count.checked_mul(4)?)?;
+            out.reserve_exact(count);
             for px in bytes.chunks_exact(4) {
                 out.push(u32::from_le_bytes([px[2], px[1], px[0], px[3]]));
             }
         }
         // COLOR24: BGR, every pixel opaque.
         5 => {
-            let bytes = data.get(..count * 3)?;
+            let bytes = data.get(..count.checked_mul(3)?)?;
+            out.reserve_exact(count);
             for px in bytes.chunks_exact(3) {
                 out.push(u32::from_le_bytes([px[2], px[1], px[0], 0xff]));
             }
         }
         // COLOR32: BGRX, where the fourth byte is padding rather than alpha.
         6 => {
-            let bytes = data.get(..count * 4)?;
+            let bytes = data.get(..count.checked_mul(4)?)?;
+            out.reserve_exact(count);
             for px in bytes.chunks_exact(4) {
                 out.push(u32::from_le_bytes([px[2], px[1], px[0], 0xff]));
             }
@@ -190,5 +216,33 @@ mod tests {
     #[test]
     fn a_cursor_shorter_than_its_header_says_is_refused() {
         assert!(pixels(&header(0, 4, 4), &[0; 8]).is_none());
+    }
+
+    /// INIT and SET carry fields of their own in front of the cursor, and a
+    /// body too short to hold them is the server's mistake: the message is
+    /// dropped, as one too short for the cursor's header is, rather than read
+    /// past.
+    #[test]
+    fn a_cursor_message_shorter_than_its_own_fields_is_dropped() {
+        let mut cursors = Cursors::new();
+        for (kind, size) in [
+            (cursor_server::INIT, CursorInit::SIZE),
+            (cursor_server::SET, CursorSet::SIZE),
+        ] {
+            for len in 0..size {
+                let body = vec![0u8; len];
+                assert!(cursors.message(kind, &body, &mut crate::testing::Nothing).is_ok());
+            }
+        }
+    }
+
+    /// The header's size is two 16-bit fields, which is four billion pixels:
+    /// a cursor bigger than any cursor is refused before anything is
+    /// allocated for it, whatever arrived behind it.
+    #[test]
+    fn a_cursor_bigger_than_any_cursor_is_refused() {
+        assert!(pixels(&header(0, 65535, 65535), &[0; 64]).is_none());
+        assert!(pixels(&header(0, 257, 1), &[0; 257 * 4]).is_none());
+        assert!(pixels(&header(0, 256, 256), &[0; 256 * 256 * 4]).is_some());
     }
 }

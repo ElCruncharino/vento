@@ -18,7 +18,7 @@
 //! counted and logged once, so a guest that does use them says so rather than
 //! quietly painting nothing.
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::framebuffer::Framebuffer;
 use crate::images::Images;
 use common::Handler;
@@ -112,13 +112,13 @@ impl Display {
                 if body.len() >= 12 {
                     let width = u32::from_le_bytes(body[0..4].try_into().unwrap()) as usize;
                     let height = u32::from_le_bytes(body[4..8].try_into().unwrap()) as usize;
-                    self.reset_surface(width, height, handler);
+                    self.reset_surface(width, height, handler)?;
                 }
             }
             display_server::SURFACE_CREATE => {
                 let create = SurfaceCreate::read(body)?;
                 if create.surface_id == 0 {
-                    self.reset_surface(create.width as usize, create.height as usize, handler);
+                    self.reset_surface(create.width as usize, create.height as usize, handler)?;
                 }
             }
             display_server::SURFACE_DESTROY => {}
@@ -229,15 +229,29 @@ impl Display {
 
     /// A new screen: the framebuffer is thrown away and the server draws the
     /// whole of the new one.
-    fn reset_surface(&mut self, width: usize, height: usize, handler: &mut dyn Handler) {
+    ///
+    /// The size is two 32-bit fields of the server's and the framebuffer is
+    /// allocated by it here, so one past [`common::MAX_DESKTOP_PIXELS`] (or
+    /// past what a `usize` holds, on a 32-bit phone) ends the session as a
+    /// protocol error rather than asking for gigabytes.
+    fn reset_surface(
+        &mut self,
+        width: usize,
+        height: usize,
+        handler: &mut dyn Handler,
+    ) -> Result<()> {
         if width == 0 || height == 0 {
-            return;
+            return Ok(());
+        }
+        if width.checked_mul(height).is_none_or(|n| n > common::MAX_DESKTOP_PIXELS) {
+            return Err(Error::Protocol(format!("a desktop of {width}x{height}")));
         }
         self.framebuffer.write().unwrap().resize(width, height);
         self.streams.clear();
         self.ready = true;
         self.dirty = true;
         handler.desktop_size(width, height);
+        Ok(())
     }
 
     pub fn ready(&self) -> bool {
@@ -441,6 +455,7 @@ fn read_u32(data: &[u8], at: usize) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::{Nothing, block_on};
 
     /// The framebuffer's word is the bitmap's, so a brush colour has to come
     /// out with red where red goes rather than where SPICE puts it.
@@ -449,5 +464,52 @@ mod tests {
         // SPICE's 0x00RRGGBB, and the word we store is R, G, B, A in memory.
         let word = argb(0x00_11_22_33);
         assert_eq!(word.to_le_bytes(), [0x11, 0x22, 0x33, 0xff]);
+    }
+
+    fn surface_create(id: u32, width: u32, height: u32) -> Vec<u8> {
+        // surface_id, width, height, format (32-bit xRGB), flags (primary)
+        [id, width, height, 32, 1].iter().flat_map(|v| v.to_le_bytes()).collect()
+    }
+
+    fn mode(width: u32, height: u32) -> Vec<u8> {
+        [width, height, 32].iter().flat_map(|v| v.to_le_bytes()).collect()
+    }
+
+    fn display() -> (Arc<RwLock<Framebuffer>>, Display) {
+        let framebuffer = Arc::new(RwLock::new(Framebuffer::new()));
+        (framebuffer.clone(), Display::new(framebuffer, 1 << 20))
+    }
+
+    #[test]
+    fn an_ordinary_surface_is_the_desktop() {
+        let (framebuffer, mut display) = display();
+        let body = surface_create(0, 1920, 1080);
+        block_on(display.message(display_server::SURFACE_CREATE, &body, &mut Nothing)).unwrap();
+        assert!(display.ready());
+        assert_eq!(framebuffer.read().unwrap().width(), 1920);
+    }
+
+    /// Two 32-bit fields of the server's are allocated the moment they
+    /// arrive, four bytes a pixel: a surface no desktop could be is refused,
+    /// and ends the session saying so, before any of it is allocated.
+    #[test]
+    fn a_surface_bigger_than_any_desktop_is_refused() {
+        let (framebuffer, mut display) = display();
+        let body = surface_create(0, 65535, 65535);
+        let ended = block_on(display.message(display_server::SURFACE_CREATE, &body, &mut Nothing));
+        assert!(matches!(ended, Err(Error::Protocol(_))), "{ended:?}");
+        assert!(!display.ready());
+        assert_eq!(framebuffer.read().unwrap().width(), 0);
+    }
+
+    /// The same for `MODE`, where a width times a height is more than a
+    /// `u32` holds (and on a 32-bit phone more than a `usize` does).
+    #[test]
+    fn a_mode_whose_size_overflows_is_refused() {
+        let (framebuffer, mut display) = display();
+        let body = mode(u32::MAX, u32::MAX);
+        let ended = block_on(display.message(display_server::MODE, &body, &mut Nothing));
+        assert!(matches!(ended, Err(Error::Protocol(_))), "{ended:?}");
+        assert_eq!(framebuffer.read().unwrap().width(), 0);
     }
 }

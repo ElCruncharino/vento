@@ -815,15 +815,10 @@ impl Shared {
     }
 }
 
-/// The most pixels a server may say its desktop has. Not a judgement about what
-/// a phone can draw — it is three times the largest desktop this client has been
-/// measured against — but about what a pair of 16-bit fields may cost before the
-/// claim is treated as a protocol error: the framebuffer is four bytes a pixel
-/// and is allocated the moment the size arrives.
-const MAX_PIXELS: usize = 32 << 20;
-
+/// A desktop size within [`common::MAX_DESKTOP_PIXELS`]. Two 16-bit fields
+/// here, so the product cannot overflow.
 fn check_desktop(width: usize, height: usize) -> Result<()> {
-    if width * height > MAX_PIXELS {
+    if width * height > common::MAX_DESKTOP_PIXELS {
         return Err(Error::Protocol(format!("desktop of {width}x{height}")));
     }
     Ok(())
