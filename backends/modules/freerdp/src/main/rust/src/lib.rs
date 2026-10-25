@@ -23,7 +23,9 @@ pub static KIND: Kind = Kind {
 };
 
 // The phone's library: this backend, registered on the module's generated
-// natives class. Android only.
+// natives class. Android only. The session is handed AAudio as its sound
+// output, which rdpsnd is still to be moved onto (it plays through upstream's
+// OpenSL ES device until then).
 //
 // WinPR has a `JNI_OnLoad` of its own, which keeps the `JavaVM` it reads the
 // time zone through, and a library has room for one: the module's CMake
@@ -34,6 +36,7 @@ platform_android::natives!(
     class = c"net/pgaskin/remotedesktop/backend/freerdp/FreeRdpNatives",
     kind = KIND,
     decoders = || Some(std::sync::Arc::new(platform_android::mediacodec::MediaCodec)),
+    audio = || Some(std::sync::Arc::new(platform_android::aaudio::AAudio::new())),
     on_load = winpr_on_load,
 );
 
