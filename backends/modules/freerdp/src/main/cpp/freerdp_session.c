@@ -1676,13 +1676,22 @@ vento_session *vento_freerdp_create(const vento_freerdp_config *cfg, const vento
     s->keyboardLayout = cfg->keyboard_layout;
     s->connectTimeoutMs = cfg->connect_timeout_ms;
 
-    /* WinPR reads $HOME through GetKnownPath, and an app's process has no HOME
-       at all — which is not a missing feature but a session that cannot start:
-       freerdp_settings_new fails outright when the home path comes back null,
-       so the context below is never allocated. Process-global, as every session
-       here wants the same answer, and set before anything of FreeRDP's runs. */
-    if (s->configPath) {
-        setenv("HOME", s->configPath, 1);
+    /* WinPR reads $HOME through GetKnownPath, and an app's process on Android
+       has no HOME at all — which is not a missing feature but a session that
+       cannot start: freerdp_settings_new fails outright when the home path
+       comes back null, so the context below is never allocated. Only there,
+       where it is unset, does it become the config directory, before anything
+       of FreeRDP's runs: the environment is the whole process's, and a
+       desktop's HOME is the person's, which other threads may be reading and
+       which nothing here has the right to move. Set, the library uses it only
+       for paths the session then states for itself (FreeRDP_ConfigPath is
+       set from the same directory before the connection is made) or never
+       reaches (drive redirection, the user config of Azure AD and FFmpeg's
+       decoder, neither of which this build has). The
+       first session sets it, and every later one finds it set to the same
+       directory. */
+    if (s->configPath && !getenv("HOME")) {
+        setenv("HOME", s->configPath, 0);
     }
 
     /* ContextSize is what the library allocates and the client layer keeps
