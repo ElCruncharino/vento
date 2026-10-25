@@ -164,7 +164,7 @@ commands:
 
 options:
   -c, --connect              automatically connect, and quit on disconnect
-  -u, --user NAME            username (can also include domain for RDP, overridden by --domain)
+  -u, --user NAME            username (can also include domain for RDP, overriding --domain)
       --domain NAME          domain (RDP only)
   -p, --password TEXT        password
   -o, --option KEY=VALUE     backend option (see backends below)

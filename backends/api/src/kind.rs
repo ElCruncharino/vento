@@ -43,7 +43,8 @@ pub enum Platform {
 pub struct Connect<'a> {
     pub address: &'a str,
     /// Empty for none. For the RDP backends, `DOMAIN\user` and `user@domain`
-    /// are split by [`Connect::domain_and_user`] unless `domain` is set.
+    /// are split by [`Connect::domain_and_user`], and a domain given this way
+    /// overrides `domain`.
     pub user: &'a str,
     pub domain: &'a str,
     /// `None` prompts. Callers pass `None` rather than an empty password,
@@ -89,13 +90,14 @@ pub struct Connect<'a> {
 }
 
 impl Connect<'_> {
-    /// `DOMAIN\user`, `user@domain` or a bare name, as `(domain, user)`,
-    /// with an explicit domain winning over one in the name.
+    /// `DOMAIN\user`, `user@domain` or a bare name, as `(domain, user)`.
+    /// A domain in the name overrides `domain`, which applies to a bare
+    /// name.
     pub fn domain_and_user(&self) -> (String, String) {
-        if !self.domain.is_empty() {
-            return (self.domain.to_string(), self.user.to_string());
+        match crate::credentials::split_domain(self.user) {
+            (named, user) if named.is_empty() => (self.domain.to_string(), user),
+            split => split,
         }
-        crate::credentials::split_domain(self.user)
     }
 }
 
@@ -238,5 +240,41 @@ mod tests {
         assert_eq!(mailbox.take(), playing(false));
         audio.controls().offer_enable(false, Box::new(|_| {}));
         assert!(matches!(mailbox.take(), Some(Event::Sound(s)) if s.switch == Some(runtime::media::audio::Switch::Enable) && !s.enabled));
+    }
+
+    #[test]
+    fn a_domain_in_the_user_name_overrides_the_domain() {
+        let options = Options::default();
+        let dirs = Dirs {
+            config: PathBuf::new(),
+            state: PathBuf::new(),
+            realvnc_libs: PathBuf::new(),
+        };
+        let split = |user: &str, domain: &str| {
+            Connect {
+                address: "",
+                user,
+                domain,
+                password: None,
+                options: &options,
+                mailbox: Mailbox::new(None),
+                dirs: &dirs,
+                screen: None,
+                last_size: None,
+                identity: None,
+                client_name: "",
+                platform: Platform::Linux,
+                decoders: None,
+                audio: None,
+            }
+            .domain_and_user()
+        };
+        assert_eq!(split("alice", ""), ("".into(), "alice".into()));
+        assert_eq!(split("alice", "CORP"), ("CORP".into(), "alice".into()));
+        assert_eq!(split("LAB\\alice", ""), ("LAB".into(), "alice".into()));
+        assert_eq!(split("LAB\\alice", "CORP"), ("LAB".into(), "alice".into()));
+        assert_eq!(split("alice@lab.example", "CORP"), ("lab.example".into(), "alice".into()));
+        assert_eq!(split(".\\alice", "CORP"), (".".into(), "alice".into()));
+        assert_eq!(split("", "CORP"), ("CORP".into(), "".into()));
     }
 }
