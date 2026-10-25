@@ -125,6 +125,8 @@ fn main() {
             .ok()
             .and_then(|name| remotedesktop_spice::compression_of(&name)),
         view_only: false,
+        // The picture is what this example is about.
+        audio: None,
     };
 
     let session = {

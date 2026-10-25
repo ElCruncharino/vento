@@ -908,6 +908,17 @@ pub static SPICE: &[Spec] = &[
             choice("off", "None"),
         ],
     ),
+    // The playback channel, TigerVNC's key and words for QEMU's other way of
+    // sending a guest's sound: on unless turned off, since a guest that
+    // plays nothing sends nothing.
+    bool(
+        "Audio",
+        "Sound",
+        "Play audio sent by the server, if it offers any.",
+        true,
+        Scope::Layered,
+        false,
+    ),
     bool(
         "ViewOnly",
         "View only",
@@ -1467,7 +1478,7 @@ mod tests {
                 "ViewOnly"
             ]
         );
-        assert_eq!(keys(SPICE), ["Security", "Compression", "ViewOnly"]);
+        assert_eq!(keys(SPICE), ["Security", "Compression", "Audio", "ViewOnly"]);
         assert_eq!(
             keys(RUSTDESK),
             [

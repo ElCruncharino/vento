@@ -4,10 +4,11 @@
 //! One channel of a session: its own TCP connection, its own link handshake,
 //! its own ticket and its own ack accounting.
 //!
-//! A SPICE session is four of these — main, display, inputs, cursor — and what
+//! A SPICE session is four of these — main, display, inputs, cursor — and a
+//! fifth, playback, where the server has sound and the session plays it; what
 //! ties them together is the session id the main channel's `INIT` hands out.
-//! Everything below the session layer is the same for all four, which is why
-//! it is here rather than four times over.
+//! Everything below the session layer is the same for all of them, which is
+//! why it is here rather than five times over.
 //!
 //! **Reading is a task of its own and writing is not.** Every channel's reader
 //! is spawned onto the session's runtime and pushes whole messages into one
@@ -37,6 +38,7 @@ pub enum Kind {
     Display,
     Inputs,
     Cursor,
+    Playback,
 }
 
 impl Kind {
@@ -46,17 +48,30 @@ impl Kind {
             Kind::Display => "display",
             Kind::Inputs => "inputs",
             Kind::Cursor => "cursor",
+            Kind::Playback => "playback",
         }
     }
 
-    fn channel_type(self) -> ChannelType {
+    pub fn channel_type(self) -> ChannelType {
         match self {
             Kind::Main => ChannelType::Main,
             Kind::Display => ChannelType::Display,
             Kind::Inputs => ChannelType::Inputs,
             Kind::Cursor => ChannelType::Cursor,
+            Kind::Playback => ChannelType::Playback,
         }
     }
+}
+
+/// The playback channel's capabilities (`SPICE_PLAYBACK_CAP_*` in
+/// spice-protocol's `enums.h`), which their protocol crate does not name.
+/// CELT, bit 0, is a codec nobody has shipped since 2013.
+pub mod playback_caps {
+    /// The guest's volume and mute, as messages rather than in the samples.
+    pub const VOLUME: u32 = 1 << 1;
+    /// Opus rather than PCM: a tenth of the bytes, and what a server with
+    /// libopus picks for a client that offers it.
+    pub const OPUS: u32 = 1 << 3;
 }
 
 /// One message off the wire, and which channel it came from.
@@ -84,7 +99,7 @@ pub struct Channel {
     /// session that has left the screen stops answering and the server stops
     /// sending. See `Client::set_focused`.
     paused: bool,
-    /// The session's own counter, shared by all four channels — the received
+    /// The session's own counter, shared by all its channels — the received
     /// half of the pair belongs to the reader task and is only ever added to
     /// there.
     sent: Arc<AtomicU64>,
@@ -105,9 +120,14 @@ impl Channel {
     /// and a timeout that covers both kills the session while the dialog is
     /// still on screen — which is what it did here, at twenty seconds, until
     /// this was three deadlines rather than one.
+    ///
+    /// `caps` are channel capabilities beyond the ones this client always
+    /// offers on a channel of this kind: what the playback channel offers
+    /// depends on what the platform decodes.
     #[allow(clippy::too_many_arguments)]
     pub async fn open(
         kind: Kind,
+        caps: u32,
         address: (&str, u16),
         session_id: u32,
         password: Option<&str>,
@@ -135,7 +155,7 @@ impl Channel {
             None => SpiceStream::Plain(tcp),
         };
 
-        let reply = within(deadline, link(&mut stream, session_id, kind)).await??;
+        let reply = within(deadline, link(&mut stream, session_id, kind, caps)).await??;
         // The link reply carries a public key, and 46a asked whether it is an
         // identity: it is not. QEMU generates an RSA-1024 key per *connection*
         // for the sole purpose of encrypting this ticket, so there is nothing
@@ -228,7 +248,7 @@ impl Channel {
 /// The rest is what makes the picture work and is theirs unchanged — chiefly
 /// `COMPOSITE`, without which the guest's QXL driver falls back to a software
 /// path and sends far fewer updates.
-async fn link<S>(stream: &mut S, session_id: u32, kind: Kind) -> Result<SpiceLinkReply>
+async fn link<S>(stream: &mut S, session_id: u32, kind: Kind, caps: u32) -> Result<SpiceLinkReply>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -249,6 +269,9 @@ where
                 | cap::DISPLAY_MULTI_CODEC
                 | cap::DISPLAY_CODEC_MJPEG
         }
+        // Only what the caller adds: the volume, and Opus where the
+        // platform decodes it. Without the Opus bit a server sends PCM.
+        Kind::Playback => 0,
         _ => cap::DEFAULT_MAIN,
     };
     let message = SpiceLinkMess::new(
@@ -256,7 +279,7 @@ where
         kind.channel_type(),
         0,
         cap::DEFAULT_COMMON,
-        channel_caps,
+        channel_caps | caps,
     );
     stream.write_all(&message.serialize()).await?;
     stream.flush().await?;
