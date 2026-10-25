@@ -15,8 +15,8 @@
 # up as an ELF with dynamic symbols in it — so the only per-module difference is
 # the task that makes it and where it lands.
 #
-#   backends/check-jni-symbols.sh            # builds if needed
-#   NOBUILD=1 backends/check-jni-symbols.sh  # against whatever is already there
+#   scripts/check-jni-symbols.sh            # builds if needed
+#   NOBUILD=1 scripts/check-jni-symbols.sh  # against whatever is already there
 set -euo pipefail
 cd "$(dirname "$0")/.."   # the build is at the repository root
 
@@ -49,8 +49,8 @@ for entry in "${MODULES[@]}"; do
     IFS=: read -r module class lib built <<<"$entry"
 
     case "$built" in
-        cargo) root="backends/$module/build/generated/rustNativeLibs" ;;
-        cmake) root="backends/$module/build/intermediates/cxx" ;;
+        cargo) root="backends/modules/$module/build/generated/rustNativeLibs" ;;
+        cmake) root="backends/modules/$module/build/intermediates/cxx" ;;
     esac
     # The newest, not the first: a CMake module's build tree keeps a directory
     # per configuration, so `find | head -1` can hand back a library from an
@@ -69,7 +69,7 @@ for entry in "${MODULES[@]}"; do
     # ELF dynamic symbols and no cross toolchain is needed to read them.
     symbols="$(readelf -W --dyn-syms "$so" | awk '$4=="FUNC"{print $NF}')"
 
-    java="backends/$module/src/main/java/$class.java"
+    java="backends/modules/$module/src/main/java/$class.java"
     prefix="Java_$(dirname "$class" | tr / _)_$(basename "$class")"
     while read -r method; do
         [ -n "$method" ] || continue

@@ -28,6 +28,15 @@ include ':backends:freerdp'
 include ':backends:realvnc'
 include ':backends:rustdesk'
 include ':backends:spice'
+// Protocol modules live in backends/modules/ but keep their short project paths.
+project(':backends:rfb').projectDir = file('backends/modules/rfb')
+project(':backends:libvnc').projectDir = file('backends/modules/libvnc')
+project(':backends:tigervnc').projectDir = file('backends/modules/tigervnc')
+project(':backends:ironrdp').projectDir = file('backends/modules/ironrdp')
+project(':backends:freerdp').projectDir = file('backends/modules/freerdp')
+project(':backends:realvnc').projectDir = file('backends/modules/realvnc')
+project(':backends:rustdesk').projectDir = file('backends/modules/rustdesk')
+project(':backends:spice').projectDir = file('backends/modules/spice')
 include ':control'
 
 include ':plugins'

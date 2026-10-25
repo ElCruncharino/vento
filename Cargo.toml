@@ -1,12 +1,13 @@
 # Every crate is under `backends/`, inside the Gradle module that packages it,
 # but the workspace root is here because that is where cargo and rust-analyzer
-# look for one. Members are globs: adding a protocol is adding a directory.
+# look for one. Members are globs: adding a protocol is adding a directory under
+# `backends/modules/`.
 [workspace]
 resolver = "2"
 members = [
     "backends/common",
     "backends/tls",
-    "backends/*/src/main/rust",
+    "backends/modules/*/src/main/rust",
 ]
 exclude = ["third_party"]
 

@@ -215,8 +215,8 @@ One commit per upstream, after review, by the lead:
   `main` is the 3.2 line; `3.1.x` is ESR. arm64 SIMD is Neon intrinsics;
   x86 SIMD stays off (needs NASM).
 - **pixman** 0.46.4. No patches. Hand-written source list in
-  `backends/tigervnc/src/main/cpp/cmake/pixman.cmake`; only the region API
-  is reached. The checkout's origin is freedesktop's gitlab while
+  `backends/modules/tigervnc/src/main/cpp/cmake/pixman.cmake`; only the region
+  API is reached. The checkout's origin is freedesktop's gitlab while
   `.gitmodules` names the X11Libre mirror; they match.
 - **openssl** 3.5.8, LTS to 2030. No patches. Moving to 4.x needs `no-ech`,
   and the engine references in `gen.sh` and the port's CMakeLists go.
