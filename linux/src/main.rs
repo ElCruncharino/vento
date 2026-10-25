@@ -426,20 +426,6 @@ headless, any of which selects the probe instead of the window:
             })));
         }
 
-        // The window's clipboard settings mean the same here: what the far
-        // end copies is not shown under --no-clipboard-in, and --clipboard is
-        // text to send, which --no-clipboard-out says not to.
-        if clipboard.is_some() && !settings.clipboard_out {
-            return Err("--clipboard sends text to the far end, which --no-clipboard-out says not to".into());
-        }
-        // Nor can input be requested in view only, where every backend drops
-        // it silently: the probe would report a click it never sent.
-        if options.bool("ViewOnly") && (click.is_some() || key.is_some() || clipboard.is_some()) {
-            return Err("-o ViewOnly=true sends no input or clipboard, so --click, --key and --clipboard cannot happen".into());
-        }
-        if resize.is_some() && layout.is_some() {
-            return Err("--resize and --layout are two answers to one question; give one".into());
-        }
         Ok(Mode::Probe(Box::new(Probe {
             kind,
             address: positional.remove(1),

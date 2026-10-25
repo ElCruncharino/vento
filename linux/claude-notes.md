@@ -478,8 +478,7 @@ with a cancel, since a second prompt is the far end refusing the first answer
 (SPICE and RustDesk ask again for every refused password); it then says the
 authentication failed and leaves with 1. The clipboard settings hold in the
 probe too: under `--no-clipboard-in` what the far end copies is printed as its
-size alone, and `--clipboard` with `--no-clipboard-out` is refused as a
-contradiction (status 2). So does `--hw-decode`: the facts then say the
+size alone. So does `--hw-decode`: the facts then say the
 codec with `(hardware)` or `(software)`, and a `decoder` line after them is
 the overlay's `dec` line, with the reason where hardware was asked for and
 the picture is software.
@@ -489,16 +488,16 @@ stayed connected for the time asked, wrote the framebuffer and the thumbnail
 where `--out` asked for them, and closed within 10 s of disconnecting; it is 1
 otherwise, and 2 for a command line it refused. `--click`, `--key` and
 `--clipboard` are sent, not confirmed: no protocol here says input arrived, so
-0 says they went out on a live session and nothing more. What can be known in
-advance is refused (status 2): any of the three under `-o ViewOnly=true`,
-where every backend drops input. And `--clipboard` fails the run (1) where the
+0 says they went out on a live session and nothing more; under `-o
+ViewOnly=true` every backend drops them. `--clipboard` fails the run (1) where the
 backend can tell the text went nowhere, which today is SPICE without a guest
 agent that takes a clipboard.
 
 `--resize WxH` asks for a desktop of that size, as the window does when it is
 resized, and `--layout WxH,WxH,…` asks for that many screens side by side,
 handing the far end's own screens back by position (their ids kept) and
-numbering any past them afresh. Both go out a second after connecting, and
+numbering any past them afresh. Both go out a second after connecting (the
+layout after the size, where both are given), and
 like input they are sent, not confirmed: the facts printed at the end, which
 list each monitor as `id=N WxH+X+Y`, say what the far end made of them, and
 `scripts/testvnc/heads.sh` says the same from the server's side.
