@@ -156,6 +156,9 @@ public final class NativeBackend implements Backend {
 
         void requestDisplay(long handle, int index);
 
+        /** The session's sound muted or heard, at once; see {@link Backend#setMuted}. */
+        void setMuted(long handle, boolean muted);
+
         /**
          * {@link Facts} in one crossing: width, height, display, flags (1 can
          * resize, 2 view only, 4 pointer relative), the monitor count, then
@@ -254,6 +257,9 @@ public final class NativeBackend implements Backend {
     private volatile int desktopWidth;
     private volatile int desktopHeight;
     private volatile boolean dead;
+    /** What {@link #onAudio} last said, and what {@link #setMuted} was told. */
+    private volatile boolean soundPlaying;
+    private volatile boolean muted;
 
     /**
      * @param tag     what this backend logs under, here and in its library
@@ -451,6 +457,25 @@ public final class NativeBackend implements Backend {
     }
 
     @Override
+    public boolean soundPlaying() {
+        return soundPlaying;
+    }
+
+    @Override
+    public boolean muted() {
+        return muted;
+    }
+
+    @Override
+    public void setMuted(boolean muted) {
+        this.muted = muted;
+        final long h = handle;
+        if (h != 0 && !dead) {
+            natives.setMuted(h, muted);
+        }
+    }
+
+    @Override
     public void setOption(String key, String value) {
         options.put(key, value == null ? "" : value);
         final long h = handle;
@@ -627,6 +652,19 @@ public final class NativeBackend implements Backend {
         main.post(() -> {
             if (listener != null) {
                 listener.pointerMode(relative);
+            }
+        });
+    }
+
+    /**
+     * The session's sound started or stopped: the first stream written to, or
+     * the last one closed. Kept here as well, for a screen that attaches later.
+     */
+    void onAudio(boolean playing) {
+        soundPlaying = playing;
+        main.post(() -> {
+            if (listener != null) {
+                listener.soundPlaying(playing);
             }
         });
     }

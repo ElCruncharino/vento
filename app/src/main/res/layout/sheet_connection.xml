@@ -116,6 +116,18 @@
             android:layout_marginBottom="@dimen/group_spacing"
             android:orientation="vertical" />
 
+        <!--
+            Muting the far end's sound, a switch while it plays and gone
+            otherwise: a fact about the live session rather than an option,
+            built by ConnectionPanel.
+        -->
+        <LinearLayout
+            android:id="@+id/sound"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="@dimen/group_spacing"
+            android:orientation="vertical" />
+
         <LinearLayout
             android:id="@+id/facts"
             android:layout_width="match_parent"

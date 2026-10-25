@@ -103,6 +103,7 @@ final class ConnectionPanel {
     private final ViewGroup controls;
     private final ViewGroup displayRow;
     private final ViewGroup resize;
+    private final ViewGroup soundRow;
     private final ViewGroup facts;
     private final ViewGroup diagnostics;
     private final MaterialButton action;
@@ -130,6 +131,7 @@ final class ConnectionPanel {
 
     /** The same again for the far end's displays, where it sends one at a time. */
     private PanelOptions displayOptions;
+    private PanelOptions soundOptions;
     private List<BackendOption.Choice> displayChoices = List.of();
 
     /** The fact rows on screen: what they are, and where their values go. */
@@ -180,6 +182,7 @@ final class ConnectionPanel {
         controls = content.findViewById(R.id.controls);
         displayRow = content.findViewById(R.id.display);
         resize = content.findViewById(R.id.resize);
+        soundRow = content.findViewById(R.id.sound);
         facts = content.findViewById(R.id.facts);
         diagnostics = content.findViewById(R.id.diagnostics);
         action = content.findViewById(R.id.action);
@@ -233,6 +236,7 @@ final class ConnectionPanel {
         refreshDisplays();
         screenshot.setEnabled(connected());  // ... and the same for this one
         refreshResize();
+        refreshSound();
         setFacts(List.of());
 
         dialog.setOnDismissListener(d -> pause());
@@ -390,6 +394,43 @@ final class ConnectionPanel {
         // by a toast after the fact.
         screenshot.setEnabled(enabled);
         refreshResize();
+        refreshSound();
+    }
+
+    // ---- the far end's sound -------------------------------------------------
+
+    /**
+     * A switch to mute the far end's sound. A fact about the live session for
+     * {@link #refreshResize}'s reason — there only while the far end's sound
+     * plays — and not an option: the mute is the session's, at once, and not
+     * remembered (see {@link Backend#setMuted}).
+     */
+    private void refreshSound() {
+        final boolean playing = !session.isClosed() && session.backend().soundPlaying();
+        soundRow.setVisibility(playing ? View.VISIBLE : View.GONE);
+        if (!playing) {
+            soundOptions = null;
+            soundRow.removeAllViews();
+            return;
+        }
+        if (soundOptions != null) {
+            soundOptions.refresh();
+            return;
+        }
+        final BackendOption option = BackendOption.bool("", // no backend owns this one
+                activity.getString(R.string.panel_mute), null, false,
+                BackendOption.Scope.CONNECTION, true);
+        soundOptions = new PanelOptions(soundRow, List.of(option), new PanelOptions.Values() {
+            @Override
+            public String get(BackendOption o) {
+                return Boolean.toString(session.backend().muted());
+            }
+
+            @Override
+            public void set(BackendOption o, String value) {
+                session.backend().setMuted(Boolean.parseBoolean(value));
+            }
+        });
     }
 
     // ---- the far end's displays ----------------------------------------------

@@ -85,6 +85,15 @@ public interface Backend {
         /** Main thread. */
         void bell();
 
+        /**
+         * Main thread. Whether the far end's sound is playing: from its first
+         * sound until its last stream closes, which a backend does a couple of
+         * seconds after the sound ends. A default, since only the backends
+         * with sound ever say it.
+         */
+        default void soundPlaying(boolean playing) {
+        }
+
         /** Main thread. The remote's clipboard changed. */
         void clipboardFromRemote(String text);
 
@@ -142,6 +151,31 @@ public interface Backend {
      * per backend and the question does not.
      */
     boolean viewOnly();
+
+    /**
+     * Whether the far end's sound is playing right now: {@link
+     * Listener#soundPlaying} as of this instant, for a screen that attaches to
+     * a session already playing.
+     */
+    default boolean soundPlaying() {
+        return false;
+    }
+
+    /** Whether this session's sound is muted ({@link #setMuted}). */
+    default boolean muted() {
+        return false;
+    }
+
+    /**
+     * Mute the session's sound, or let it be heard again — at once, and on
+     * the running session: the mute is applied where the samples go to the
+     * device, so what is queued keeps draining under it, and a stream the far
+     * end opens later starts muted. Not an option and not remembered: the next
+     * session starts with its sound on, and the connection's own option (Audio,
+     * Sound) is what keeps a far end quiet for good.
+     */
+    default void setMuted(boolean muted) {
+    }
 
     /**
      * Whatever the backend can say about the live connection, in display order:
