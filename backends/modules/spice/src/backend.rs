@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The SPICE client as a [`Backend`](api::backend::Backend), with this
-//! backend's option handling and its rows: what the phone reaches through
-//! `platform_android`'s JNI layer.
+//! backend's option handling and its rows: what the Linux client holds, and
+//! what the phone reaches through `platform_android`'s JNI layer.
 
 use crate::{Client, Config, compression_of};
 use runtime::{Bridge, Runner};

@@ -6,7 +6,8 @@
 //!
 //! The hash is a contract with the other side — it is `CursorCache`'s
 //! identity, and the Java has its own copy (`CursorCache.hash`) — so it is
-//! written down once, here.
+//! written down once, here; the Linux client converts a cursor for its own
+//! window and needs neither.
 
 /// `0xAA_BB_GG_RR` (memory order R, G, B, A) to `0xAA_RR_GG_BB`, which is
 /// Android's `Color` packing and the one `Bitmap.setPixels` takes.

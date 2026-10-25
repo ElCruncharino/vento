@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // The platform's video decoders, as a C backend is handed them: a table of
-// calls over `runtime::media::video::Decoders` (MediaCodec on the phone,
-// FFmpeg on Linux with its opt-in VAAPI), filled in by `api::c::video` and
-// passed in a backend's config. Function pointers rather than symbols, so
-// that a backend library links nothing of the process it is loaded into.
+// calls over `runtime::media::video::Decoders` (MediaCodec on the phone, the
+// Linux client's FFmpeg with its opt-in VAAPI), filled in by `api::c::video`
+// and passed in a backend's config. Function pointers rather than symbols, so
+// that a backend library links nothing of the process it is loaded into — the
+// Linux client's `libvento_tigervnc.so` is one, and has no Rust in it.
 //
 // TigerVNC's H.264 rectangles and FreeRDP's H.264 surface commands are
 // decoded through this rather than through a decoder of either library's

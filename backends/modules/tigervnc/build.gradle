@@ -8,10 +8,10 @@ plugins {
 // The three parts of the TigerVNC backend: `cpp/`, a shim over TigerVNC's own
 // client code that names no platform but the two media sinks beside it; the
 // crate at this directory's root (`Cargo.toml`, `src/`), the backend as an
-// `api::Backend` over it and the JNI layer every backend shares, registered on
-// the generated natives class; and `java/`'s provider, which holds a session
-// as a `NativeBackend`. The AAR carries the one library CMake links the first
-// two into.
+// `api::Backend` over it — the one the Linux client holds — and the JNI
+// layer every backend shares, registered on the generated natives class; and
+// `java/`'s provider, which holds a session as a `NativeBackend`. The AAR
+// carries the one library CMake links the first two into.
 //
 // As with libvncclient, the native half is not in this directory: it is
 // `third_party/tigervnc`, a submodule at the repository root, pinned by its

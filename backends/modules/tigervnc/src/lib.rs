@@ -3,15 +3,17 @@
 
 //! TigerVNC's `vento_tigervnc` as a [`Backend`](api::backend::Backend):
 //! its config from the options, its live options and its rows — what the
-//! phone's one JNI layer stands in front of, linked into the library CMake
-//! makes of the C. Its certificates are the client's to judge: the session
+//! Linux client holds, and on the phone what the one JNI layer stands in front
+//! of, linked into the library CMake makes of the C. Its certificates are the client's to judge: the session
 //! hands them to `trust_needed`, so they meet the known hosts as every other
-//! backend's do, and TigerVNC's own known-hosts file is never read or written —
-//! which is why no state directory is given it. Its H.264 is decoded by the
-//! platform's decoders, handed to the C as `vento/video.h`'s table
-//! (`api::c::video`): the phone's MediaCodec. Its sound — QEMU's audio
-//! extension — is played on the platform's output the same way, handed to the C
-//! as `vento/audio.h`'s table (`api::c::audio`): AAudio on the phone.
+//! backend's do, and TigerVNC's own known-hosts file is never read or written
+//! — which is why no state directory is given it. Its H.264 is decoded by
+//! the platform's decoders, handed to the C as `vento/video.h`'s table
+//! (`api::c::video`): the Linux client's FFmpeg, with the person's
+//! hardware choice, and the phone's MediaCodec. Its sound — QEMU's audio
+//! extension — is played on the platform's output the same way, handed to
+//! the C as `vento/audio.h`'s table (`api::c::audio`): a PipeWire stream
+//! (or ALSA's default device) on the Linux client, AAudio on the phone.
 
 use api::c::{Behaviour, CSession, start};
 use api::backend::{Backend, ConnectionFact, Field, Traffic};
@@ -36,8 +38,9 @@ pub static KIND: Kind = Kind {
 
 // The phone's library: this backend, registered on the module's generated
 // natives class. Android only — the host links the C as a library of its own.
-// MediaCodec is what decodes its H.264 there (see `create`), and AAudio is what
-// plays its sound.
+// MediaCodec is what decodes its H.264 there, through the same table as the
+// Linux client's FFmpeg (see `create`), and AAudio is what plays its sound,
+// through the same table as the Linux client's PipeWire or ALSA.
 #[cfg(target_os = "android")]
 platform_android::natives!(
     class = c"net/pgaskin/remotedesktop/backend/tigervnc/TigerVncNatives",

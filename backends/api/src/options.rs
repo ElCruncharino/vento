@@ -14,9 +14,9 @@
 //!
 //! The values are strings, because that is what the backends' own
 //! configuration layers take; [`Type`] says how to ask for one, not how to
-//! store it. An option, wherever it is set, is a key checked against a
-//! backend's list and a value checked against the type, which is what keeps
-//! it generic.
+//! store it. A `-o key=value` on the command line and a row in a dialog are
+//! the same thing here — a key checked against a backend's list, a value
+//! checked against the type — which is what keeps both of them generic.
 //!
 //! The lists are `static` and the descriptions are `&'static str`, so a
 //! dialog can hold a reference to a row without owning anything; the
@@ -427,8 +427,9 @@ impl Options {
         changed
     }
 
-    /// The first choice given without its switch, in words, rather than a
-    /// guess at which of the two was meant.
+    /// The first choice given without its switch, in words: the command line
+    /// refuses `-o Encoding=h264` without `-o H264=true` rather than guess
+    /// which of the two was meant.
     pub fn check_requirements(&self, specs: &[Spec]) -> Result<(), String> {
         for spec in specs {
             if let Some(choice) = spec.stranded(self.get(spec.key), |key| self.bool(key)) {
@@ -455,8 +456,8 @@ impl Options {
     }
 }
 
-/// `key=value`. The first `=` splits, so a value may hold one; a missing one
-/// is an error in words.
+/// `key=value`, as `-o` takes it. The first `=` splits, so a value may hold
+/// one; a missing one is an error in words.
 pub fn parse_assignment(text: &str) -> Result<(&str, &str), String> {
     match text.split_once('=') {
         Some((key, value)) if !key.trim().is_empty() => Ok((key.trim(), value)),

@@ -8,8 +8,8 @@
 
 use crate::options::Options;
 
-/// US English, and not a choice: the scancode tables the phone sends are a
-/// US layout, so the layout the server is told to use has to be the same
+/// US English, and not a choice: the scancode tables both clients send are
+/// a US layout, so the layout the server is told to use has to be the same
 /// one.
 pub const KEYBOARD_LAYOUT: u32 = 0x0409;
 

@@ -39,8 +39,8 @@ sha2 = "0.11"
 # in here: it builds under the NDK without being asked anything.
 zstd = "0.13"
 
-# `src/backend.rs`, the protocol as an `api::Backend`: what the phone's JNI
-# layer stands in front of.
+# `src/backend.rs`, the protocol as an `api::Backend`: what the Linux
+# client holds, and what the phone's JNI layer stands in front of.
 remotedesktop-api.workspace = true
 
 # The only part of this crate that knows a phone exists: the one line in

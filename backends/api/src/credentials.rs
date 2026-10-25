@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! How a credentials prompt's answer is read, the same for every client:
-//! the adapters apply these to what the phone's prompts deliver, and
-//! `tests/vectors.rs` holds them to their cases.
+//! the adapters apply these to what the phone's prompts and the Linux
+//! client's deliver, and `tests/vectors.rs` holds them to their cases.
 
 use crate::Credentials;
 use crate::catalog::About;
@@ -44,9 +44,9 @@ pub fn fill_user(mut credentials: Credentials, user: &str) -> Credentials {
 /// session's own `domain` and `user` (already split). An empty name is the
 /// session's, domain and all; a name typed with a domain, or a domain given
 /// beside it, is that one; and a bare name keeps the session's domain, since
-/// the prompt has no box for one and a session domain of `CORP` answered
-/// with `alice` means `CORP\alice`. A local account on a machine with a
-/// domain is `.\alice`, as Windows writes it.
+/// the prompt has no box for one and `--domain CORP` answered with `alice`
+/// means `CORP\alice`. A local account on a machine with a domain is
+/// `.\alice`, as Windows writes it.
 pub fn rdp_identity(answer: &Credentials, domain: &str, user: &str) -> (String, String) {
     let typed = trim(&answer.user);
     if typed.is_empty() {
@@ -65,7 +65,8 @@ pub fn rdp_identity(answer: &Credentials, domain: &str, user: &str) -> (String, 
 /// record's: as written, except for a backend whose user name carries a
 /// domain ([`About::user_has_domain`], RDP's), whose prompt has no box for
 /// one and so starts with it in the name, `DOMAIN\user` — the form Windows
-/// shows — whichever way the record wrote it.
+/// shows — whichever way the record wrote it. (The Linux client's session
+/// has a domain of its own, `--domain`, and starts with the user as given.)
 pub fn prompt_user(about: &About, user: &str) -> String {
     if !about.user_has_domain {
         return user.to_string();

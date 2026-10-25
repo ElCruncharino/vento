@@ -13,9 +13,10 @@
 // latency is. All of it is the table's (vento/audio.h): the queue, the
 // device opened off this thread, the drop past a quarter of a second, the
 // session's gain and mute — and the decoding, where the server sends AAC or
-// Opus, which the platform's decoders do (MediaCodec on the phone) rather
-// than the library's own DSP. Every call into a device comes from the
-// channel's one thread at a time, and none waits on the platform's device.
+// Opus, which the platform's decoders do (libavcodec on the Linux client,
+// MediaCodec on the phone) rather than the library's own DSP. Every call into
+// a device comes from the channel's one thread at a time, and none waits on
+// the platform's device.
 //
 // What the channel does not do is say when the sound has stopped: the
 // server's Close PDU is logged and nothing more, so a device it opened stays
@@ -59,10 +60,12 @@
 /* What this device plays of a format, and how: as it comes, widened from 8
    bits, or decoded by the platform's decoders, which the session's table
    says it has (`VentoSound`). Windows picks AAC whenever it is offered, and
-   it is offered wherever the platform decodes it. What none of these is, the
-   channel decodes before the device sees it where the library can — which
-   without its FFmpeg is PCM alone, so nothing — and offers back otherwise. The
-   one place a format is decided. */
+   it is offered wherever the platform decodes it: both platforms, now that
+   it is vento's to decode rather than the library's FFmpeg's, which only the
+   Linux client had. What none of these is, the channel decodes before the
+   device sees it where the library can — which without its FFmpeg is PCM
+   alone, so nothing — and offers back otherwise. The one place a format is
+   decided. */
 typedef enum {
     KIND_NONE = 0,
     KIND_S16,

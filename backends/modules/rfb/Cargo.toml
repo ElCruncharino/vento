@@ -38,8 +38,8 @@ rustls = { version = "0.23", default-features = false, features = [
     "logging",
 ] }
 
-# `src/backend.rs`, the protocol as an `api::Backend`: what the phone's JNI
-# layer stands in front of.
+# `src/backend.rs`, the protocol as an `api::Backend`: what the Linux
+# client holds, and what the phone's JNI layer stands in front of.
 remotedesktop-api.workspace = true
 
 # The probe is a development tool, built only when asked for: `cargo run

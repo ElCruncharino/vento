@@ -1,0 +1,91 @@
+// SPDX-FileCopyrightText: 2026 Patrick Gaskin
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+//! The eight backends, each as a [`Kind`]: what the picker and `--list` show,
+//! the options it takes, and how to start a session on it.
+//!
+//! None of them is this client's own. The four Rust protocols each carry
+//! their adapter in their own crate (`backend.rs` beside the protocol), the
+//! four C libraries in a small crate beside their C sources, over the one
+//! adapter for `vento/backend.h` in `remotedesktop-api`. The order is the
+//! catalog's, which is the picker's on the phone too.
+
+pub use api::kind::{CONNECT_TIMEOUT_MS, Connect, Dirs, Kind, Platform};
+pub use api::trust::{Pinned, pinned_as};
+
+pub use platform_linux::audio::{Audio, Output as AudioOutput};
+pub use platform_linux::ffmpeg::{FFmpeg, Hardware, hardware_name, hardware_named};
+use std::sync::Arc;
+
+/// What the far end lists this machine as, where a phone says its model.
+pub fn client_name() -> String {
+    std::fs::read_to_string("/etc/hostname")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "vento".to_string())
+}
+
+/// What decodes video here: libavcodec, for RustDesk's picture, where the
+/// phone hands over MediaCodec — decoding as `hardware` says, which is off
+/// unless the person asked.
+///
+/// One a session, and held by it as well as handed to its backend in
+/// [`Connect::decoders`]: switching the way of decoding under a running
+/// session is [`FFmpeg::set_hardware`] on this, which every backend decoding
+/// through it takes at its next picture: RustDesk's video, and TigerVNC's
+/// and FreeRDP's H.264, which ask `api::c::video`'s table for the mode.
+///
+/// [`FFmpeg::set_hardware`]: platform_linux::ffmpeg::FFmpeg::set_hardware
+pub fn decoders(hardware: Hardware) -> Arc<FFmpeg> {
+    Arc::new(FFmpeg::new(hardware))
+}
+
+/// Where the far end's sound goes here: a PipeWire stream of the session's
+/// own, or ALSA's default device where there is no PipeWire (`output` picks,
+/// `--audio-output`), where the phone hands over AAudio. One a session, as
+/// [`Connect::audio`], so that its controls (the gain and mute, which a
+/// window sets while the session plays) are that session's alone, and its
+/// streams are listed under its name (`title`) in a mixer.
+pub fn audio(title: &str, output: AudioOutput) -> Arc<Audio> {
+    Arc::new(Audio::new(title, output))
+}
+
+/// Every backend this binary has, in the picker's order. RealVNC's is
+/// always among them; where `build.rs` had no clang to build its library
+/// with, its version says it is not available and a session on it fails to
+/// start with the same sentence.
+pub fn all() -> Vec<&'static Kind> {
+    vec![
+        &remotedesktop_rfb::backend::KIND,
+        &remotedesktop_libvnc::KIND,
+        &remotedesktop_tigervnc::KIND,
+        &remotedesktop_freerdp::KIND,
+        &remotedesktop_ironrdp::backend::KIND,
+        &remotedesktop_realvnc::KIND,
+        &remotedesktop_spice::backend::KIND,
+        &remotedesktop_rustdesk::backend::KIND,
+    ]
+}
+
+pub fn find(id: &str) -> Option<&'static Kind> {
+    all().into_iter().find(|k| k.id == id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The catalog's order, which `all` has to keep by hand: the kinds are
+    /// in eight crates and the list is written out here. Every one of them,
+    /// RealVNC's too, whatever the build found.
+    #[test]
+    fn the_kinds_are_in_the_catalogs_order() {
+        assert_eq!(all().len(), api::catalog::ALL.len());
+        let orders: Vec<i32> = all().iter().map(|k| k.order).collect();
+        assert!(orders.windows(2).all(|w| w[0] < w[1]), "{orders:?}");
+        for kind in all() {
+            assert!(api::catalog::ALL.iter().any(|a| std::ptr::eq(*a, kind.about)));
+        }
+    }
+}

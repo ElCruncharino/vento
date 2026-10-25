@@ -167,7 +167,7 @@ public record BackendOption(String key, String label, String summary, Type type,
      * null. Such a value is left standing after its switch went, and is not
      * what the backend would do either — TigerVNC's {@code h264} without
      * {@code H264} negotiates something else — so a screen must not keep it
-     * selected.
+     * selected. The Linux client's {@code Spec::stranded} is the same rule.
      *
      * @param on whether the {@code BOOL} option with that key is on
      */
@@ -200,8 +200,9 @@ public record BackendOption(String key, String label, String summary, Type type,
     /**
      * Every {@link #stranded} choice in {@code options} put back to its
      * {@link #fallback}, through {@code set}; the keys that moved, in the
-     * options' order. The one rule every screen keeps whenever a switch moves;
-     * its cases are in {@code backends/api/tests/options.json}.
+     * options' order. The one rule every screen keeps whenever a switch moves,
+     * and the Linux client's {@code Options::settle}: the two are held to the
+     * same cases by {@code backends/api/tests/options.json}.
      *
      * @param value what an option says now
      * @param on    whether the {@code BOOL} option with that key is on

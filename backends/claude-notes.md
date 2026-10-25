@@ -1,19 +1,20 @@
 # backends/
 
 The eight remote desktop backends, what they share, and how they are built
-for the phone.
+for the phone and for the Linux client.
 
 **The rule:** a thing that only one backend needs lives under that backend's
 module, `modules/<name>/`; `runtime/` and `api/` hold only what two or more
-backends share — `runtime/` what a protocol client is written against and a
-platform is written to, its picture and sound (`runtime::media`) included,
-and `api/` what a client holds a session by; and what one platform needs of
-all of them lives under that platform, `platform/<os>/` — its crate, its C,
-its CMake half and, for the phone, its Java, the generator of the Java each
-module compiles, and its ports. Inside a module, each language has one place:
-the Rust crate at its root, the C in `cpp/`, the Java in `java/`, the options
-in `catalog.rs`. What is left at the top is what builds them all: the Gradle
-parent, its tasks, the host CMake root and the CMake both builds include.
+backends, or both clients, share — `runtime/` what a protocol client is
+written against and a platform is written to, its picture and sound
+(`runtime::media`) included, and `api/` what a client holds a session by;
+and what one platform needs of all of them lives under that platform,
+`platform/<os>/` — its crate, its C, its CMake half and, for the phone, its
+Java, the generator of the Java each module compiles, and its ports. Inside
+a module, each language has one place: the Rust crate at its root, the C in
+`cpp/`, the Java in `java/`, the options in `catalog.rs`. What is left at
+the top is what builds them all: the Gradle parent, its tasks, the host
+CMake root and the CMake both builds include.
 
     backends/
       claude-notes.md, UPGRADING.md
@@ -50,10 +51,11 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
   `probe` feature), or the small adapter over the C library for the other
   four, whose `build.rs` reads the backend's header into Rust with bindgen.
   Every backend's adapter is in its module; no client holds one of its own.
-  RealVNC's crate is the host's alone (the phone's RealVNC backend is its
-  Java) and empty on any other target, and it opens its library,
+  RealVNC's crate is the Linux client's alone (the phone's RealVNC backend
+  is its Java) and empty on any other target, and it opens its library,
   `libvento_realvnc.so`, at run time rather than linking it: the library is
-  built only under clang, so the backend is always listed and says it is not
+  built only under clang, which the client's build finds out after the
+  crate is compiled, so the backend is always listed and says it is not
   available where the library was not built.
 - `cpp/` (the four C backends) — the C/C++ session over the upstream
   library, its CMake for both builds, the host probe's `main`
@@ -84,17 +86,17 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
   `runtime/` for the traits it implements.
 - `api/` (`remotedesktop-api`) — what a client holds a session by:
   the `Backend` trait, events, the catalog registry and the shape of an
-  option, `Kind`/`Connect`, and the rules every client keeps alike
+  option, `Kind`/`Connect`, and the rules both clients keep alike
   (credentials, trust), held to their cases (`tests/vectors.rs`). The
   options' cases are a file beside it, `tests/options.json`, since the one
   rule with a Java copy (`settle`) is held to them by the Java tests in
   `platform/android/javatest/` too; the rest are written in the test. With
   the `c` feature, the one adapter over the C vtable and the shared headers'
-  declarations (`api::c::ffi`), which each C backend's own declarations are
-  written over. The neutral C API it adapts is in `api/include/vento/`
-  (`backend.h`, `video.h`, `audio.h`, `log.h`, `text.h`; each C backend's own
-  header is in its module): with the crate that reads them into Rust, as each
-  backend's header is with its own.
+  declarations (`api::c::ffi`), which each C backend's own declarations
+  are written over. The neutral C API it adapts is in `api/include/vento/`
+  (`backend.h`, `video.h`, `audio.h`, `log.h`, `text.h`; each C backend's
+  own header is in its module): with the crate that reads them into Rust,
+  as each backend's header is with its own.
 
 ## The platforms: `platform/<os>/`
 
@@ -111,10 +113,10 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
   backend's Android half (`vento_android_library`); and `ports/`, the
   generated Android builds of openssl, nettle and gnutls (`gen.sh` in each
   regenerates its `gen/`).
-- `platform/linux/` (`remotedesktop-platform-linux`) — the platform for Linux:
-  FFmpeg, built statically from `third_party/` by `build.rs`, and the decoders
-  and the PipeWire/ALSA outputs over it (the crate); `cpp/`, the C those
-  decoders call and the stderr logger a C backend links;
+- `platform/linux/` (`remotedesktop-platform-linux`) — the Linux client's
+  platform: FFmpeg, built statically from `third_party/` by `build.rs`, and
+  the decoders and the PipeWire/ALSA outputs over it (the crate); `cpp/`, the
+  C those decoders call and the stderr logger a C backend links;
   `cmake/vento_linux.cmake`, a C backend's host half (`vento_backend_library`,
   `vento_backend_probe`, `VENTO_SHARED`, `VENTO_PROBES`,
   `VENTO_FFMPEG_PREFIX`); `probe/`, the development tools — the C probes'
@@ -129,11 +131,13 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
   `codegenSources`).
 - `buildSrc/` — the Gradle tasks those helpers use (cargo, codegen, tarballs,
   patch check), pulled in by the root `buildSrc`.
-- `CMakeLists.txt` — the host CMake build of the C backends, which builds the
-  C probes with `-DVENTO_PROBES=ON`. Each platform's half of a C backend's
-  CMake is that platform's (`platform/<os>/cmake/`); `cmake/` holds what both
-  builds include, `warnings.cmake` and `reproducible.cmake`.
+- `CMakeLists.txt` — the host CMake build of the C backends, which
+  `linux/build.rs` runs (`VENTO_SHARED=ON`) and which builds the C probes
+  with `-DVENTO_PROBES=ON`. Each platform's half of a C backend's CMake is
+  that platform's (`platform/<os>/cmake/`); `cmake/` holds what both builds
+  include, `warnings.cmake` and `reproducible.cmake`.
 - `UPGRADING.md` — how the upstreams behind the backends are moved, and what
   adding a backend touches.
 
-The crates are members of the root `Cargo.toml`'s workspace.
+The crates are members of the root `Cargo.toml`'s workspace; `linux/` is a
+workspace of its own that reaches them by path.

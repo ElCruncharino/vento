@@ -63,7 +63,7 @@ impl Codec {
 }
 
 /// How a desktop's decoders may decode: on the GPU or not. The person's
-/// choice, off unless asked for.
+/// choice (a setting, `--hw-decode`), off unless asked for.
 ///
 /// Here rather than beside the desktop's decoder because it is what a
 /// session is started with, whichever backend it is: RustDesk's picture is
@@ -79,8 +79,8 @@ pub enum Hardware {
     /// Software, and nothing of a device opened or loaded: the default.
     #[default]
     Off,
-    /// The platform's hardware decoder, by name, and software for a stream it
-    /// cannot take.
+    /// The platform's hardware decoder, by name — on the Linux client
+    /// VAAPI, through libva — and software for a stream it cannot take.
     On,
     /// Per stream: the GPU where it takes the stream, whatever decodes
     /// there, else software. The same as [`On`](Self::On) where a platform
@@ -143,8 +143,9 @@ pub trait Decoder {
 
     /// A line for an overlay about how this decoder is decoding — the codec,
     /// the method and what a frame costs, and why it is software where
-    /// hardware was asked for (a phone's `H.264 c2.exynos.h264.decoder`) — or
-    /// `None` where it has nothing to say.
+    /// hardware was asked for (the Linux client's `H.264 vaapi map 2.1 ms`,
+    /// `H.264 sw 3.4 ms (vaapi: no device)`; a phone's `H.264
+    /// c2.exynos.h264.decoder`) — or `None` where it has nothing to say.
     fn status(&self) -> Option<String> {
         None
     }
@@ -214,8 +215,9 @@ pub enum Decoded {
 /// A decoded picture left in the memory the hardware decoded it into, for
 /// whoever draws on the same GPU to import and convert there. What that
 /// memory is, and how it is imported, are the platform's alone
-/// ([`platform`](Self::platform)). Everything else here is what any holder
-/// may ask.
+/// ([`platform`](Self::platform)): on the Linux client a VAAPI surface,
+/// which `platform_linux` exports as DMA-BUFs for the window's Vulkan
+/// device. Everything else here is what any holder may ask.
 ///
 /// Holding one holds the surface: the decoder will not decode into it again
 /// until every holder has let go, so a holder lets go once the GPU has
@@ -298,10 +300,11 @@ pub trait Decoders: Send + Sync {
 
     /// Whether whoever draws the session can take pictures on the GPU
     /// ([`Decoder::decode_picture`]), which it says by setting it where the
-    /// platform's decoders can be told. A caller that can hand such a picture
-    /// on asks this every frame, as it asks [`hardware`](Decoders::hardware):
-    /// it can change under a running session, to off, where an import failed.
-    /// No by default.
+    /// platform's decoders can be told (the desktop's window, when its
+    /// device can import them). A caller that can hand such a picture on
+    /// asks this every frame, as it asks [`hardware`](Decoders::hardware):
+    /// it can change under a running session, to off, where an import
+    /// failed. No by default.
     fn gpu_pictures(&self) -> bool {
         false
     }

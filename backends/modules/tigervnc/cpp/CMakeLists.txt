@@ -145,14 +145,14 @@ endif()
 # Windows' Media Foundation — and this one has a third, on both platforms: the
 # context beside this file, which hands each rectangle to vento's own video
 # decoders (the platform's, through `vento/video.h`: MediaCodec on the phone,
-# FFmpeg with its opt-in hardware decoding on a desktop). Their
-# `common/rfb/CMakeLists.txt` compiles the decoder itself whenever ENABLE_H264
-# is on and adds either of theirs only where it found FFmpeg or is building for
-# Windows, neither of which is asked for here; H264_VENTO is what selects ours,
-# and the six lines that do are the one patch it takes. HAVE_LIBAV stays unset,
-# since that is what would compile FFmpeg's — and with it a second FFmpeg into
-# this library — and so do the three results their build compiles the libav
-# context on, whatever a cache left behind.
+# the Linux client's FFmpeg with its opt-in hardware decoding on a desktop).
+# Their `common/rfb/CMakeLists.txt` compiles the decoder itself whenever
+# ENABLE_H264 is on and adds either of theirs only where it found FFmpeg or is
+# building for Windows, neither of which is asked for here; H264_VENTO is what
+# selects ours, and the six lines that do are the one patch it takes.
+# HAVE_LIBAV stays unset, since that is what would compile FFmpeg's — and
+# with it a second FFmpeg into this library — and so do the three results
+# their build compiles the libav context on, whatever a cache left behind.
 set(ENABLE_H264 ON)
 set(HAVE_H264 1)
 add_definitions(-DH264_VENTO)
@@ -196,10 +196,11 @@ remotedesktop_vendored_warnings("${THIRD_PARTY}/tigervnc/common")
 
 # The H.264 context goes into their library, beside their own two, because it
 # is their factory that names it: inside `rfbclient`, the reference resolves
-# however the library ends up linked — the phone's shared library or the static
-# one a probe is built on, where an object of ours that only their archive
-# refers to would be dropped before it was looked for. Compiled as a target of
-# ours, with our warnings, and only its objects handed over.
+# however the library ends up linked — the phone's shared library, the Linux
+# client's, or the static one a probe is built on, where an object of ours
+# that only their archive refers to would be dropped before it was looked
+# for. Compiled as a target of ours, with our warnings, and only its objects
+# handed over.
 add_library(vento_tigervnc_h264 OBJECT H264VentoDecoderContext.cxx)
 remotedesktop_warnings(vento_tigervnc_h264)
 target_sources(rfbclient PRIVATE $<TARGET_OBJECTS:vento_tigervnc_h264>)
@@ -222,9 +223,10 @@ else()
     # directory is the interface, and `vento_log` is left to the platform —
     # the probe's `vento_linux`, or the library's own copy of it under
     # VENTO_SHARED (vento_linux.cmake). The H.264 context is inside
-    # `rfbclient`, and decodes with whatever the process hands the session, and
-    # the sound plays on whatever output it hands over. The probe, which is C
-    # and hands it neither, never offers H.264 and never asks for sound.
+    # `rfbclient`, and decodes with whatever the process hands the session —
+    # the Linux client's FFmpeg — and the sound plays on whatever output it
+    # hands over: the Linux client's ALSA. The probe, which is C and hands it
+    # neither, never offers H.264 and never asks for sound.
     vento_backend_library(vento_tigervnc tigervnc_session.cxx)
     target_link_libraries(vento_tigervnc ${VENTO_BACKEND_LINK} rfbclient rfb network rdr core
             ${GNUTLS_LIBRARIES})

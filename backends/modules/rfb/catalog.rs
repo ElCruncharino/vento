@@ -5,8 +5,8 @@
 //! in a picker, how its identities are pinned, and every option it takes.
 //! Compiled by `remotedesktop-api`, which names this file by path
 //! (`backends/api/src/catalog.rs`), and not by this module's crate: the
-//! phone's generated Java (`vento-codegen`) reads it without building the
-//! backend.
+//! Linux client's picker and the phone's generated Java (`vento-codegen`)
+//! read it without building the backend.
 
 use crate::catalog::About;
 use crate::options::{Scope, Spec, VIEW_ONLY, BELL, SHARED, COMPRESSION_LEVELS, choice, choices};

@@ -74,15 +74,20 @@
 	url = https://github.com/ChristopherHX/libjnivm.git
 	shallow = true
 	ignore = all
+# The Linux client's only (linux/, a workspace of its own, through its
+# [patch.crates-io]): winit, at the tag of the release linux/Cargo.lock
+# would otherwise take from crates.io, so that a fix of ours to it can be a
+# patch here like every other. Nothing of it is in an APK.
 [submodule "third_party/winit"]
 	path = third_party/winit
 	url = https://github.com/rust-windowing/winit.git
 	shallow = true
 	ignore = all
-# The FFmpeg every desktop consumer of a video or sound codec links (the Rust
-# decoder, TigerVNC's H.264, FreeRDP's H.264, sound and scaling), built
-# statically by backends/platform/linux/build.rs with --disable-everything and
-# the decoders those use, and dav1d for its AV1. Each at a release tag (FFmpeg
+# The Linux client's only, as winit is: the FFmpeg every desktop consumer of a
+# video or sound codec links (the Rust decoder, TigerVNC's H.264, FreeRDP's
+# H.264, sound and scaling), built statically by
+# backends/platform/linux/build.rs with --disable-everything and the
+# decoders those use, and dav1d for its AV1. Each at a release tag (FFmpeg
 # n8.1.3, the newest release; dav1d 1.5.4). The phone decodes with MediaCodec
 # and builds neither. FFmpeg as configured is LGPL 2.1 or later, dav1d
 # BSD-2-Clause.

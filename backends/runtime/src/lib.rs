@@ -49,11 +49,12 @@ pub use slot::Slot;
 
 /// The most pixels a server may say its desktop has, for a backend whose
 /// framebuffer is its own to allocate (RFB's and SPICE's). Not a judgement
-/// about what a client can draw — this is three times the largest desktop
-/// measured against, with an 8K screen under it — but about what a pair of
-/// fields off the wire may cost before the claim is treated as a protocol
-/// error: a framebuffer is four bytes a pixel, 128 MiB at this bound, and is
-/// allocated the moment the size arrives.
+/// about what a client can draw — the Linux client tiles a desktop past its
+/// GPU's texture limit, and this is three times the largest desktop measured
+/// against, with an 8K screen under it — but about what a pair of fields off
+/// the wire may cost before the claim is treated as a protocol error: a
+/// framebuffer is four bytes a pixel, 128 MiB at this bound, and is allocated
+/// the moment the size arrives.
 pub const MAX_DESKTOP_PIXELS: usize = 32 << 20;
 
 /// The widest and tallest cursor a backend takes from the far end, which is

@@ -36,8 +36,9 @@
 /// that proves the whole native path.
 pub const PROTOCOL_VERSION: &str = "RFB 3.8";
 
-// The protocol as the phone holds it: an `api::Backend`, with this backend's
-// options read into its config and its rows, through the one JNI layer below.
+// The protocol as the clients hold it: an `api::Backend`, with this
+// backend's options read into its config and its rows — the window's on
+// Linux, and the phone's through the one JNI layer below.
 pub mod backend;
 
 // The library the app loads: this backend, registered on the module's

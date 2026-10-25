@@ -20,6 +20,10 @@ silence is played until `pactl` has shown the stream on the null sink.
 ./record.sh out.wav [secs]  # record the sink's monitor
 ./analyse.py summary out.wav           # pitch, level, gaps per half second
 ./analyse.py rig OUT_DIR               # what rig.sh measures
+./bursts.py OUT_DIR --port 5956 [--seconds 60] [--marks FILE]
+                                       # a QEMU guest's tone bursts, end to end
+./winbursts.py OUT_DIR [--seconds 60] [--check PID] [--marks FILE]
+                                       # a Windows RDP session's, the same way
 ```
 
 `rig.sh` needs NASM on `PATH` the first time it builds the platform crate
@@ -28,15 +32,16 @@ silence is played until `pactl` has shown the stream on the null sink.
 ## Routing a stream to the sink
 
 vento plays on a PipeWire stream of its own, and libpipewire reads
-`PIPEWIRE_NODE` from the environment: a program started with
-`PIPEWIRE_NODE=vento_test` plays into the null sink. So does ALSA's `default`
-device here, PipeWire's ALSA plugin, which is where vento's sound goes with
-`VENTO_AUDIO_OUTPUT=alsa` (which the rig and every other program built on the
-platform crate read) and where there is no PipeWire daemon. `sink.sh check`
-finds vento's own streams by their process id (node `vento`) and the plugin's,
-which carry no process id, by its node name `alsa_playback.<program name>`; it
-says which output each came through (`PipeWire` or `ALSA`), and fails unless
-every one is on the sink. The safe order, which `rig.sh` follows:
+`PIPEWIRE_NODE` from the environment: `PIPEWIRE_NODE=vento_test vento ...`
+plays into the null sink. So does ALSA's `default` device here, PipeWire's
+ALSA plugin, which is where vento's sound goes with `--audio-output=alsa`
+(or `VENTO_AUDIO_OUTPUT=alsa`; the rig and every other program built on the
+platform crate read that) and where there is no PipeWire daemon. `sink.sh
+check` finds vento's own streams by their process id (node `vento`) and the
+plugin's, which carry no process id, by its node name `alsa_playback.<program
+name>`; it says which output each came through (`PipeWire` or `ALSA`), and
+fails unless every one is on the sink. The safe order, which `rig.sh`
+follows:
 
 1. `sink.sh load`, keeping the id.
 2. Start the program with `PIPEWIRE_NODE=vento_test`, playing silence (or
@@ -132,3 +137,74 @@ before: 84, 75, 68, 65, 200, 68 with 8 underruns); `qemu` stalled for
 64 busy loops beside it, `qemu` and `rdp` did not run dry in a minute (with
 10 ms from the start each did once, 41 and 63 ms late, and played 58 and
 75 ms behind from then on rather than 20 and 22).
+
+## A backend end to end: bursts.py
+
+For a backend whose far end can be made to play on cue — the QEMU audio
+guest (`scripts/testqemu`, `AUDIO=1` for TigerVNC, `AUDIO=spice` for SPICE)
+and the RustDesk desktop's sound (`scripts/testrustdesk`, `AUDIO=1`, whose
+tone answers on `TONE_PORT` 5957 the same way) — `bursts.py` measures the
+whole path.
+With the client already playing into the sink (steps 1-3 above; the guest
+plays silence until asked), it sends the guest's serial port a `t` every
+`--every` seconds (2), each a half-second burst of 440 Hz at half scale,
+records the monitor, and finds each burst in the recording. Per burst: the
+latency from the guest's card playing its first tone frame to the sink
+capturing it (the guest's own share, which it answers on the serial port,
+taken out; late by the capture path's least delay, as with the rig), how
+much was heard, pitch, level against the source (1.0 is as sent), 5 ms gaps
+and discontinuities; then the latency over the first and the last minute,
+which is what a lag that grows shows up in. `--marks FILE` prints lines of
+`<time.time()> <words>` (e.g. a script minimising the window) on the same
+clock, which is how a pause and a restore are lined up with the bursts.
+`--analyse` reads a previous run's directory again without recording.
+
+```sh
+id=$(./sink.sh load)
+PIPEWIRE_NODE=vento_test vento tigervnc 127.0.0.1::5962 --password vncpass \
+    -o Audio=true --probe 330 & pid=$!
+./sink.sh check $pid && ./bursts.py out --port 5956 --seconds 300
+kill $pid; ./sink.sh unload $id
+```
+
+## An RDP session end to end: winbursts.py
+
+The same measurement against a real Windows machine (the one in
+`scripts/testwin`, 10.33.0.208), whose sound reaches an RDP client only from
+the RDP session itself. An ssh command runs in session 0, whose sound goes
+nowhere; so `winbursts.py` writes `scripts/testwin/tone.ps1` over there and
+runs it as a scheduled task with an Interactive principal, which Windows runs
+in the session the client is connected to, and removes the task and the file
+again before it returns (also when it fails). The tone is one WAV through
+`System.Media.SoundPlayer`: `--lead` seconds of silence (5), then half a
+second of 440 Hz at half scale every `--every` seconds.
+
+Latency is absolute, by the clocks: the task stamps the moment just before it
+hands the sound to the player with `GetSystemTimePreciseAsFileTime`, and the
+offset between the machine's clock and this one is measured over the LAN
+before and after (a loopback listener there reached through `ssh -L`; the
+shortest of 40 round trips, about 1.5 ms, bounds the error to under 1 ms).
+Windows' time service steps its clock now and then — by 1.8 s once, in the
+middle of a run — and the task's start and end stamps say whether the step
+fell inside the sound (`place` in the script explains). So each burst's
+latency is Windows' player and audio engine, the RDP sound channel, the
+client and the capture; Windows' share is the same in every burst of a run,
+and what varies over a run is the client's. `--check PID` stops the task
+during the silence unless PID's stream is on the null sink: an RDP client
+opens its stream only when the server starts sending, so the silence is what
+the check sees.
+
+```sh
+id=$(./sink.sh load)
+PIPEWIRE_NODE=vento_test vento freerdp 10.33.0.208 --user user --password password \
+    --trust --state-dir <scratch> -o Sound=local --probe 400 & pid=$!
+sleep 10   # connected and logged on
+WIN_SSH='ssh user@10.33.0.208' ./winbursts.py out --seconds 300 --check $pid
+kill $pid; ./sink.sh unload $id
+```
+
+`WIN_SSH` is any command that runs a command there and takes ssh's `-L`
+(a wrapper around `sshpass` with a scratch known-hosts file, say). What
+Windows 10 22H2 offers and picks is in the client's log (`sound: the server
+offers ...`, `sound: the server sends ...`): with AAC among what the client
+takes, it sends AAC at 44.1 kHz stereo.

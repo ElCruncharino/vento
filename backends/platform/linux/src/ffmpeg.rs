@@ -85,9 +85,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 use runtime::media::video::convert::{Frame, Plane};
 use runtime::media::video::{Changes, Codec, Decoded, Decoders, GpuPicture, Output};
 /// How a decoder may decode, which whoever starts a session asks for (a
-/// setting): `runtime`'s, since it is handed to every backend. Here
-/// [`Hardware::On`] is VAAPI, and the modes are named as [`hardware_name`]
-/// says.
+/// setting, `--hw-decode`): `runtime`'s, since it is handed to every backend.
+/// Here [`Hardware::On`] is VAAPI, and the modes are named as
+/// [`hardware_name`] says.
 pub use runtime::media::video::Hardware;
 
 /// `cpp/vento_video.h`, declared by hand: the whole of what this crate calls.

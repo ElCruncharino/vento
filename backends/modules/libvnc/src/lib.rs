@@ -3,8 +3,8 @@
 
 //! libvncclient's `vento_libvnc` as a [`Backend`](api::backend::Backend):
 //! its config from the options, its live options and its rows — what the
-//! phone's one JNI layer stands in front of, linked into the library CMake
-//! makes of the C.
+//! Linux client holds, and on the phone what the one JNI layer stands in front
+//! of, linked into the library CMake makes of the C.
 
 use api::c::{Behaviour, CSession, start};
 use api::backend::{Backend, ConnectionFact, Field, Traffic};

@@ -12,9 +12,9 @@
 //! item wanted is named `vento_` or `VENTO_`.
 //!
 //! Only the shared headers: each C backend's own, `vento/<name>.h` in its
-//! module, is read by that backend's crate, over the declarations generated
-//! here, so that one `vento_session` is one Rust type whichever crate names
-//! it.
+//! module, is read by that backend's crate (RealVNC's by the Linux client,
+//! which holds its adapter), over the declarations generated here, so that
+//! one `vento_session` is one Rust type whichever crate names it.
 
 fn main() {
     #[cfg(feature = "c")]

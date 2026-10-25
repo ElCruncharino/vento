@@ -8,7 +8,8 @@
 //! plus the three the C API has over it (`question`, `security_needed`,
 //! `message`) — and a [`Mailbox`] is where a session puts them: a queue
 //! behind a mutex, a condition variable for a thread that wants to block on
-//! it, and an optional wake hook for one that cannot.
+//! it, and an optional wake hook for one that cannot, which is an egui window
+//! asking to be repainted.
 //!
 //! Damage is the one thing not delivered a message at a time. `damaged` runs
 //! hundreds of times a frame on a busy screen, so it marks a rectangle into a

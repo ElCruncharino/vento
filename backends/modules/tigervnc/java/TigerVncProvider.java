@@ -18,9 +18,9 @@ import java.util.Map;
 
 /**
  * This module's entry in a build's list of backends. What the TigerVNC backend
- * is called and what it can be told are the catalog's: {@link
- * TigerVncCatalog}, generated from {@code backends/api} at build time, holds
- * the words and the option keys.
+ * is called and what it can be told are the catalog's, which the Linux client
+ * reads too: {@link TigerVncCatalog}, generated from {@code backends/api}
+ * at build time, holds the words and the option keys.
  *
  * <p>A session is a {@link NativeBackend} on {@link TigerVncNatives}, generated
  * too: the shim over TigerVNC's client in {@code cpp/}, with the module's

@@ -184,9 +184,10 @@ final class OptionScreen {
     /**
      * The choices that need a switch, offered only while it is on, and one
      * already chosen taken back when it goes off — {@link
-     * BackendOption#settle}, the rule the connection panel keeps too. Taken
-     * back to unanswered rather than to a stored fallback: the fallback is
-     * nobody's choice, and an unanswered row is one a later default reaches.
+     * BackendOption#settle}, the rule the connection panel keeps and the Linux
+     * client's too. Taken back to unanswered rather than to a stored fallback:
+     * the fallback is nobody's choice, and an unanswered row is one a later
+     * default reaches.
      *
      * <p>The switch may be in another group of the same screen — a backend's
      * own switches are above its connection defaults — so it is looked for

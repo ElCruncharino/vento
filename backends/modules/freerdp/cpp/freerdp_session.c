@@ -1898,8 +1898,8 @@ static void applySettings(Session *s, rdpSettings *settings) {
     /* The picture. The graphics pipeline is what a machine since Windows 8
        would rather send a desktop over, and the only path that carries H.264 —
        which this build decodes with the platform's decoders (h264_vento.h),
-       on the phone's MediaCodec. RemoteFX is the older codec, and bitmaps are
-       what is left when a server has neither. */
+       on the phone's MediaCodec or the Linux client's FFmpeg. RemoteFX is the
+       older codec, and bitmaps are what is left when a server has neither. */
     const char *g = s->graphics ? s->graphics : "gfx";
     const int gfx = strcmp(g, "gfx") == 0 || strcmp(g, "gfx-novideo") == 0;
     /* No decoders, which is the probe, and nothing is offered that would need

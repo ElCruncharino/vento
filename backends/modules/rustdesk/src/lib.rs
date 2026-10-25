@@ -39,8 +39,9 @@
 //! is the far end's choice out of that list, so the same protocol code is a VP9
 //! session on one platform and an H.265 one on another.
 
-// The protocol as the phone holds it: an `api::Backend`, with this backend's
-// options read into its config and its rows, through the one JNI layer below.
+// The protocol as the clients hold it: an `api::Backend`, with this
+// backend's options read into its config and its rows — the window's on
+// Linux, and the phone's through the one JNI layer below.
 pub mod backend;
 
 // The library the add-on carries: this backend, registered on the module's

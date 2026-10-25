@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! How a far end's identity meets the pins, the same for every client: the
-//! phone decides here, over a [`Store`] of its own, and `tests/vectors.rs`
-//! holds the rule to its cases.
+//! phone and the Linux client both decide here, each over a [`Store`] of its
+//! own, and `tests/vectors.rs` holds the rule to its cases.
 //!
 //! A remote desktop server's certificate is one it made for itself on first
 //! start, and no authority vouches for it — so, as over SSH, the identity is
@@ -11,14 +11,15 @@
 //! somebody accepts it and says to remember it, a connection is silent while
 //! it matches, and loud when it does not.
 //!
-//! The key is the address as written, folded for case: a session may have no
-//! record, two records may name one machine, and the thing identified is the
-//! machine. A fingerprint is kept as the backend handed it over and compared
-//! as its hex digits alone, since one library prints `66:CC:…` and another
-//! `66:cc:…`. Where pins are kept is each client's own business — the phone's
-//! `known_hosts` preferences — and what they mean is this module's:
-//! [`decide`] when an identity arrives, [`answered`] when a person has said
-//! what to do about one.
+//! The key is the address as written, folded for case: a session opened from
+//! a command line has no record, two records may name one machine, and the
+//! thing identified is the machine. A fingerprint is kept as the backend
+//! handed it over and compared as its hex digits alone, since one library
+//! prints `66:CC:…` and another `66:cc:…`. Where pins are kept is each
+//! client's own business — the phone's `known_hosts` preferences, the Linux
+//! client's `$XDG_CONFIG_HOME/vento/known_hosts` — and what they mean is this
+//! module's: [`decide`] when an identity arrives, [`answered`] when a person
+//! has said what to do about one.
 
 use crate::catalog::About;
 use crate::events::Identity;
@@ -46,9 +47,9 @@ pub fn canonical(fingerprint: &str) -> String {
 }
 
 /// Whether `stored`, a key some store files a server under, names the server
-/// `asked` names, for forgetting it. Keys carry no backend, so neither does
-/// this, and where it is unsure it says yes: what is forgotten is asked about
-/// again, never trusted. Three ways:
+/// `asked` names, for forgetting it (`vento --forget`). Keys carry no
+/// backend, so neither does this, and where it is unsure it says yes: what is
+/// forgotten is asked about again, never trusted. Three ways:
 ///
 /// - the two are one [`key`] (the address as written, folded for case);
 /// - `stored` is that key filed under a network, `<address>@<network>` (a
@@ -82,8 +83,8 @@ pub fn same_server(stored: &str, asked: &str) -> bool {
     })
 }
 
-/// The host of a key, where it reads as an address: what the entries kept
-/// for being another port are listed by when one is forgotten.
+/// The host of a key, where it reads as an address: what `vento --forget`
+/// lists the other entries of, those kept for being another port.
 pub fn host_of(stored: &str) -> Option<String> {
     let stored = key(stored);
     let address = stored.rsplit_once('@').map_or(stored.as_str(), |(a, _)| a);
@@ -213,8 +214,8 @@ pub trait Store {
     fn put(&self, key: &str, fingerprint: &str) -> Result<(), String>;
 }
 
-/// A store read and never written, for a session whose trust is for the one
-/// run and leaves the pins as it found them.
+/// A store read and never written: the Linux probe's, whose `--trust` is
+/// for the one run and leaves the pins as it found them.
 pub struct ReadOnly<'a>(pub &'a dyn Store);
 
 impl Store for ReadOnly<'_> {

@@ -38,9 +38,9 @@
 //      own known-hosts file and ask in its own words; here nothing of the sort
 //      is kept or asked. What cannot be excused is refused, and everything
 //      else goes to `trust_needed` as its fingerprint, like every other
-//      backend's, so that the caller's store — the phone's KnownHosts — is
-//      the one place a server is pinned, and one server reached through
-//      libvnc or this is one pin.
+//      backend's, so that the caller's store — the phone's KnownHosts, the
+//      Linux client's known_hosts — is the one place a server is pinned, and
+//      one server reached through libvnc or this is one pin.
 //
 // Their DecodeManager decodes on one thread per core up to four, which is not a
 // parameter and is unique here: the other clients in this repository decode on

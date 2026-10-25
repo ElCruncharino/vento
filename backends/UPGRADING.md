@@ -39,17 +39,26 @@ Nothing runs in parallel: every step needs a clean tree to commit from.
    `backends/platform/android/ports/{nettle,gnutls}/gen.sh`
 5. libvncserver, tigervnc, freerdp, ironrdp, hbb_common, ryll
 
-`third_party/ffmpeg` and `third_party/dav1d` are not a backend's and not in this
-round either: the static FFmpeg `backends/platform/linux/build.rs` builds for
-every desktop decoder (the Rust ones, which TigerVNC's and FreeRDP's H.264 and
-FreeRDP's AAC and Opus sound go through too, and FreeRDP's scaling, which links
-libswscale alone), each pinned at a release tag. FFmpeg moves to a newer
-release's tag with `patches/ffmpeg/` rebased onto it; the decoders it is
-configured with are `DECODERS` and `HWACCELS` in that build script, so a
+`third_party/winit` is not a backend's and not in this round: it is the
+Linux client's winit, pinned at the tag of the release `linux/Cargo.lock`
+names and taken in through `linux/Cargo.toml`'s `[patch.crates-io]`. It moves
+when that crate's winit does (a `cargo update` there, its own job): the pin to
+the new release's tag, `patches/winit/` rebased onto it, and any patch
+upstream has taken dropped.
+
+`third_party/ffmpeg` and `third_party/dav1d` are the Linux client's too, and
+not in this round either: the static FFmpeg `backends/platform/linux/build.rs`
+builds for every desktop decoder (the Rust ones, which TigerVNC's and
+FreeRDP's H.264 and FreeRDP's AAC and Opus sound go through too, and
+FreeRDP's scaling, which links libswscale alone), each pinned at a release
+tag. FFmpeg moves
+to a newer release's tag with `patches/ffmpeg/` rebased onto it; the decoders it
+is configured with are `DECODERS` and `HWACCELS` in that build script, so a
 consumer that starts using another codec adds it there. Proven by the desktop
-crate's fixture tests (`tests/decode.rs` for the video, `tests/sound.rs` for AAC
-and Opus), the RustDesk probe with each codec, and the TigerVNC H.264 and
-FreeRDP AVC probes. Android builds neither.
+crate's fixture tests (`tests/decode.rs` for the video, `tests/sound.rs` for
+AAC and Opus), the RustDesk probe with each codec, the TigerVNC H.264 and
+FreeRDP AVC probes, and `scripts/testaudio/winbursts.py` for FreeRDP's AAC.
+Android builds neither.
 
 `third_party/libva` goes with FFmpeg: headers only, for its VAAPI decoders
 (`HWACCELS` in the same build script). Nothing of it is compiled or linked;
@@ -163,31 +172,32 @@ under the host locale (`export LC_ALL=C`).
   is declared in the backend's own header beside it,
   `include/vento/<name>.h`. Above it is the crate at the module's root, which
   reads that header into Rust (its `build.rs`, with bindgen), fills the
-  backend's `vento_<name>_config` from the options and words its rows; on the
-  phone it is linked into the module's library as a static library
-  (`rustStaticLibrary` in `backends/build.gradle`,
-  `backends/platform/android/cmake/vento_android.cmake`) with the one JNI layer
-  in `backends/platform/android`. RealVNC's crate is the host's alone (the
-  phone's RealVNC backend is its Java over the viewer's JNI) and opens
+  backend's `vento_<name>_config` from the options and words its rows; it is what the Linux client holds,
+  and on the phone it is linked into the module's library as a static
+  library (`rustStaticLibrary` in `backends/build.gradle`,
+  `backends/platform/android/cmake/vento_android.cmake`) with the one JNI layer in
+  `backends/platform/android`. RealVNC's crate is the Linux client's alone
+  (the phone's RealVNC backend is its Java over the viewer's JNI) and opens
   `libvento_realvnc.so` at run time through the loader its `build.rs` has
   bindgen generate, since the library is built only under clang; a function
-  added to `vento/realvnc.h` is one more the loader requires. An upstream change
-  reaches the session file; the crate changes only when the config does, and so
-  does `<name>_probe.c`, the host probe's `main` beside them. The module's
-  CMakeLists is one file for both builds, `if(ANDROID)` and `else()` around a
-  shared middle: a vendored tree's new option goes in the middle, a new port or
-  NDK library in the Android half, a new system library in the host half (see
-  `backends/CMakeLists.txt`).
+  added to `vento/realvnc.h` is one more the loader requires. An upstream
+  change reaches the session file;
+  the crate changes only when the config does, and so does `<name>_probe.c`,
+  the host probe's `main` beside them. The module's
+  CMakeLists is one file for both builds, `if(ANDROID)` and `else()` around
+  a shared middle: a vendored tree's new option goes in the middle, a new
+  port or NDK library in the Android half, a new system library in the host
+  half (see `backends/CMakeLists.txt`).
 - A Rust backend's shim is its protocol crate, and its adapter is that
   crate's `src/backend.rs`: the `Kind`, the config read from the options, and
   the rows. An upstream change (IronRDP, hbb_common, ryll) reaches the
   protocol code; `backend.rs` changes only when an option or a row does.
 - Next to nothing about a protocol is in Java or JNI any more. The phone
   reaches every backend but RealVNC through one JNI layer,
-  `backends/platform/android`, over its `api::Backend`; what a module's Java
-  keeps is its provider and, for RDP and the two borrowed VNC clients, a
-  `NativeBackend.Hooks`. An upgrade that keeps the adapter's `Kind` building
-  has nothing to change on that side.
+  `backends/platform/android`, over the same `api::Backend` the Linux
+  client holds; what a module's Java keeps is its provider and, for RDP and
+  the two borrowed VNC clients, a `NativeBackend.Hooks`. An upgrade that
+  keeps the adapter's `Kind` building has nothing to change on that side.
 - TigerVNC's H.264 decoder context is the shim's own on both platforms
   (`H264VentoDecoderContext`, selected by `H264_VENTO` in their factory; their
   libav one is not built, `HAVE_LIBAV` unset), and hands each rectangle to
@@ -227,22 +237,22 @@ under the host locale (`export LC_ALL=C`).
 
 A backend's settings are its table, `OPTIONS` in
 `backends/modules/<name>/catalog.rs` (compiled by the `api` crate, which
-names the file by path), one `Spec` per row, and the one copy: on the phone
-`vento-codegen` writes it into the module's generated `<Name>Catalog` at build
-time, which the provider answers from. When an upstream change adds something a
-person would switch (a new encoding or codec, a security type, a behaviour
-toggle), add a row in the shape, wording and scope of its neighbours, read it in
-the adapter (`o.get`, `o.bool`, `o.int`) into the config — for a C backend a new
-field in `vento_<name>_config`, which the backend crate's `build.rs` reads into
+names the file by path), one `Spec` per row, and the one copy: the Linux client builds its dialog and
+`-o key=value` from it, and on the phone `vento-codegen` writes it into the
+module's generated `<Name>Catalog` at build time, which the provider answers
+from. When an upstream change adds something a person would switch (a new
+encoding or codec, a security type, a behaviour toggle), add a row in the
+shape, wording and scope of its neighbours, read it in the adapter (`o.get`,
+`o.bool`, `o.int`) into the config — for a C backend a new field in
+`vento_<name>_config`, which the backend crate's `build.rs` reads into
 Rust with bindgen — and default it to upstream's answer, and add its key to the
 test `the_keys_are_the_ones_records_hold` in the same file, which is there
 because a stored key renamed is a setting forgotten. The value reaches a session
-in the options it is created with, every key and value as strings, so nothing in
-Java or JNI changes for a row. Where the phone's words are wrong on a desktop
-("this phone"), give the row a `desktop_summary` or the choice a
-`desktop_label`. Do not add rows for what the app already decides, what nobody
-would set, or what cannot be exercised here (an H.264 path with no decoder
-behind it).
+in the options it is created with, every key and value as strings, so
+nothing in Java or JNI changes for a row. Where the phone's words are wrong
+on a desktop ("this phone"), give the row a `desktop_summary` or the choice
+a `desktop_label`. Do not add rows for what the app already decides, what nobody would set, or
+what cannot be exercised here (an H.264 path with no decoder behind it).
 
 The user-facing strings in this app are hand-written by its owner. A new
 row's label and summary are a draft; name them in the report so they get
@@ -279,6 +289,10 @@ line or one file somewhere that already has seven:
   events are the `api` crate's and are not written again.
 - **The workspace.** The crate's directory in the root `Cargo.toml`'s
   `members` and `default-members`, which name each one.
+- **The Linux client.** The crate in `linux/Cargo.toml` and its `KIND` in
+  `linux/src/backends/mod.rs`'s `all()`; a C module also goes into
+  `backends/CMakeLists.txt`, which `linux/build.rs` builds, and into the
+  lists of directories and libraries there that it watches and links.
 - **The phone's library.** One `platform_android::natives!` line in the
   crate's `lib.rs` under `cfg(target_os = "android")`, naming the module's
   natives class and the `Kind` (`decoders =` for a backend whose picture is
@@ -330,6 +344,16 @@ Rust modules:
     cargo test --locked -p <crate>
     cargo clippy --locked --workspace
     ./gradlew :backends:<module>:assembleRelease
+
+Every backend through the seam, on the host: the Linux client (`linux/`,
+its own workspace; see its claude-notes.md) builds all eight (RealVNC's library
+under clang only; without it the backend is listed as not available), and its headless probe connects one, writes the picture out and
+exits — the run that goes through the same adapters the phone does, RealVNC's
+aside:
+
+    (cd linux && cargo build && cargo test && cargo clippy --all-targets)
+    linux/target/debug/vento <backend> <address> --password ... --trust \
+        --probe 3 --out build/scratch/<backend>.ppm
 
 Always `./patch.sh check`. After an options change, `cargo test --locked -p
 remotedesktop-api` and `./gradlew :backends:testDebugUnitTest`: the

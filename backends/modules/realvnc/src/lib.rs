@@ -2,23 +2,26 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! RealVNC's viewer core as a [`Backend`](api::backend::Backend):
-//! `vento_realvnc_config` and `RealVncBackend`'s option handling and rows.
-//! The phone's RealVNC backend is the module's Java over the viewer's own
-//! JNI, so on any other target than Linux this crate is empty.
+//! `vento_realvnc_config` and `RealVncBackend`'s option handling and rows —
+//! what the Linux client holds. The phone's RealVNC backend is the module's
+//! Java over the viewer's own JNI, so on any other target than Linux this
+//! crate is empty.
 //!
 //! The library, `libvento_realvnc.so`, is opened when it is first needed
-//! rather than linked: the host build makes it only under clang, and decides
-//! that after this crate is built, so the backend is always listed and says
-//! why it cannot start where the library is not there ([`library`]). It is
-//! found by name, as the other C backends' libraries are linked by name —
-//! through the binary's rpath or `LD_LIBRARY_PATH` — and once open it stays
+//! rather than linked: the client's build makes it only where clang is on
+//! the path, and decides that after this crate is built, so the backend is
+//! always listed and says why it cannot start where the library is not
+//! there ([`library`]). It is found by name, as the other C backends'
+//! libraries are linked by name — through the binary's rpath, which points
+//! at the client's build tree, or `LD_LIBRARY_PATH` — and once open it stays
 //! open, since the core it hosts never lets go of a session.
 //!
 //! Nothing of RealVNC's is in the tree: the two libraries the session loads
 //! come from the viewer's APK under `library_dir`, hashes verified by the
 //! session, and what the core persists goes under `state_dir` — both from
-//! [`Dirs`](api::kind::Dirs), with XDG defaults. The identity the core asks
-//! to have remembered is the caller's to keep, handed out through
+//! [`Dirs`](api::kind::Dirs), with XDG defaults, and overridable from the
+//! client's command line. The identity the core asks to have remembered is
+//! the client's to keep, handed out through
 //! [`Backend::saved_identity`](api::backend::Backend::saved_identity) and
 //! back in as [`Connect::identity`].
 
@@ -60,7 +63,7 @@ fn open(name: &str) -> Result<ffi::Library, String> {
     // the library is one the client's own build made.
     unsafe {
         let library = Library::open(Some(name), RTLD_NOW | RTLD_GLOBAL)
-            .map_err(|e| format!("{e} (the host build makes it only with clang on the path)"))?;
+            .map_err(|e| format!("{e} (the Linux client's build makes it only with clang on the path)"))?;
         ffi::Library::from_library(library)
             .map_err(|e| format!("{name} is not the library vento/realvnc.h describes: {e}"))
     }

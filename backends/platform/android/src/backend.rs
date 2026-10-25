@@ -4,17 +4,18 @@
 //! Any `api::Backend` as the natives `NativeBackend.java` calls: the one
 //! JNI layer every backend but RealVNC's is reached through on the phone.
 //!
-//! A backend's library is its protocol, its `api::Backend` adapter and one
-//! line naming the adapter to this module — [`natives!`](crate::natives) —
-//! which writes the `JNI_OnLoad` that registers [`METHODS`] on the module's
-//! own natives class. Registered rather than exported, because the natives are
-//! the same functions in every library: a `Java_…` symbol per backend would
-//! need a copy of them per backend, and one class for all of them would be one
+//! A backend's library is its protocol, its `api::Backend` adapter (the
+//! same one the Linux client holds) and one line naming the adapter to this
+//! module — [`natives!`](crate::natives) — which
+//! writes the `JNI_OnLoad` that registers [`METHODS`] on the module's own
+//! natives class. Registered rather than exported, because the natives are the
+//! same functions in every library: a `Java_…` symbol per backend would need
+//! a copy of them per backend, and one class for all of them would be one
 //! class every library registers on, the last answering for all — which the
 //! RustDesk backend, a separate APK loaded into the app, would make a question
-//! of load order. So each module has a class of its own, `vento-codegen
-//! natives` writes it from [`surface`](crate::surface), and the library
-//! registers on that.
+//! of load order. So each module has a class of its own,
+//! `vento-codegen natives` writes it from [`surface`](crate::surface), and
+//! the library registers on that.
 //!
 //! For the four backends written in Rust the protocol is the crate and the
 //! library is a `cdylib` of it. For the three in C the protocol is a C
@@ -25,11 +26,12 @@
 //! the library's words, a message, RealVNC's security prompt) come through
 //! here like any other event.
 //!
-//! What is decided about a session rather than shown is decided here: a far
-//! end's identity against the pins (`api::trust`, over the phone's
-//! `known_hosts` preferences, which `NativeBackend` reads and writes for it),
-//! and the name an RDP credentials prompt starts with (`api::credentials`).
-//! What crosses to Java is the question, when there is one.
+//! What is decided about a session rather than shown is decided here, by the
+//! rules the Linux client keeps too: a far end's identity against the pins
+//! (`api::trust`, over the phone's `known_hosts` preferences, which
+//! `NativeBackend` reads and writes for it), and the name an RDP credentials
+//! prompt starts with (`api::credentials`). What crosses to Java is the
+//! question, when there is one.
 //!
 //! The handle Java holds is a `Box<Handle>`: the backend, and the mailbox its
 //! events go through. Java retires the handle under its own lock before
@@ -648,7 +650,8 @@ fn info<'local>(
         return Ok(JObjectArray::<JString>::null());
     };
     let mut rows = h.backend.info();
-    // The session's sound, which the client holds rather than the backend.
+    // The session's sound, which the client holds rather than the backend,
+    // in the words the Linux client's panel uses.
     if let Some(audio) = &h.audio
         && !rows.is_empty()
     {
@@ -665,10 +668,10 @@ fn info<'local>(
     Ok(array)
 }
 
-/// The debug overlay's sound line (`runtime::media::audio::Sound::line`):
-/// what plays and how far behind, or "nothing playing", and DISABLED or
-/// MUTED. Null where the session has no sound switch, which is when an
-/// overlay has no such line.
+/// The debug overlay's sound line, in the Linux client's words
+/// (`runtime::media::audio::Sound::line`): what plays and how far behind, or
+/// "nothing playing", and DISABLED or MUTED. Null where the session has no
+/// sound switch, which is when an overlay has no such line.
 fn sound_line<'local>(env: &mut Env<'local>, _this: JObject<'local>, handle: jlong) -> Result<JString<'local>, Error> {
     let line = unsafe { self::handle(handle) }
         .and_then(|h| h.audio.as_ref())

@@ -144,8 +144,8 @@ pub enum Platform {
 }
 
 impl Platform {
-    /// The one this was built for, for a caller that does not say (the probe);
-    /// the Android bindings name theirs.
+    /// The one this was built for, for a caller that does not say (the
+    /// probe); the Android bindings and the Linux adapter each name theirs.
     pub fn host() -> Platform {
         if cfg!(target_os = "android") {
             Platform::Android

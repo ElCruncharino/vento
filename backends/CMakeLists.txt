@@ -12,27 +12,31 @@
 # of the viewer's APK (README.md says how) — the build needs nothing of
 # theirs, the probe needs the two files.
 # Gradle never reads this file — each module's CMakeLists is its own root
-# there, under the NDK toolchain — so it is the C backends' build for
-# development: a session file that builds and connects here has been proven
-# through the neutral C API alone.
+# there, under the NDK toolchain — so it is the Linux client's build of the
+# C backends (`linux/build.rs` runs it, with VENTO_SHARED on) and
+# development's: a session file that builds and connects here has been
+# proven through the neutral C API alone.
 #
 #   cmake -S backends -B build/scratch/host -G Ninja -DVENTO_PROBES=ON
 #   cmake --build build/scratch/host
 #   build/scratch/host/libvnc/vento_libvnc_probe HOST:1 --password ... --out shot.ppm
 #
 # Options: -DVENTO_PROBES=ON builds the four probes (and FreeRDP's tests,
-# which `ctest` runs), which are off by default; -DSTRICT_WARNINGS=ON makes a
-# warning in our own sources an error, as `scripts/check-warnings.sh` does for
-# the phone's build; CMAKE_BUILD_TYPE defaults to RelWithDebInfo, since the
-# decoders at -O0 are not what anybody wants to watch and a probe with no line
-# numbers is not either; -DVENTO_REALVNC=OFF leaves the RealVNC module out,
-# which it is anyway under a compiler other than clang — libc-shim, which the
-# hosting layer stands on, does not build under GCC — with a message saying so
-# rather than an error; -DVENTO_SHARED=ON makes each `vento_<name>` a shared
-# library under `lib/` carrying its dependencies and the logger;
-# -DVENTO_FFMPEG_PREFIX=DIR links FreeRDP's scaler against the static FFmpeg
-# under DIR instead of the host's, such as the one
-# `backends/platform/linux/build.rs` made (see
+# which `ctest` runs), which are off by default
+# so that the Linux client's build of this tree compiles none of them;
+# -DSTRICT_WARNINGS=ON makes a warning in our own sources an error,
+# as `scripts/check-warnings.sh` does for the phone's build; CMAKE_BUILD_TYPE
+# defaults to RelWithDebInfo, since the decoders at -O0 are not what anybody
+# wants to watch and a probe with no line numbers is not either;
+# -DVENTO_REALVNC=OFF leaves the RealVNC module out, which it is anyway under
+# a compiler other than clang — libc-shim, which the hosting layer stands on,
+# does not build under GCC — with a message saying so rather than an error;
+# -DVENTO_SHARED=ON makes each `vento_<name>` a shared library under `lib/`
+# carrying its dependencies and the logger, which is how the Rust client under
+# `linux/` links them (its build.rs runs this file with that switch on);
+# -DVENTO_FFMPEG_PREFIX=DIR links FreeRDP's scaler against the static
+# FFmpeg under DIR instead of the host's, which is how that build
+# gives it the one `backends/platform/linux/build.rs` made (see
 # platform/linux/cmake/vento_linux.cmake).
 #
 # Needs, as development packages: openssl, gnutls, nettle (with hogweed and

@@ -67,11 +67,12 @@ use decode::Codec;
 
 /// The least margin a queue keeps: what it keeps beyond the device's period
 /// and what the far end's rhythm has needed of late ([`Queue`] works those
-/// out), for a write later than any of late. Measured on an idle machine:
-/// minute-long sessions to Windows and SPICE ran dry with no margin in three
-/// of four and with 5 ms in one of four; with 10 ms, one of seventeen
-/// sessions across the six backends with sound did. Each millisecond of it is
-/// a millisecond the sound is behind the picture.
+/// out), for a write later than any of late. Measured on an idle machine
+/// (`linux/claude-notes.md`'s Sound paragraph has the rest): minute-long
+/// sessions to Windows and SPICE ran dry with no margin in three of four and
+/// with 5 ms in one of four; with 10 ms, one of seventeen sessions across the
+/// six backends with sound did. Each millisecond of it is a millisecond the
+/// sound is behind the picture.
 pub const MARGIN: Duration = Duration::from_millis(10);
 
 /// The margin a stream starts with, coming down a [`MARGIN_STEP`] at a time
@@ -81,7 +82,7 @@ pub const MARGIN: Duration = Duration::from_millis(10);
 /// machine, which a margin learnt only after a gap is late for. Each
 /// stream's own, since what it allows for is the rhythm the stream has yet
 /// to see; the session's lateness ([`Controls::late`]) is a floor under it,
-/// not added to it.
+/// not added to it. Measured: see `linux/claude-notes.md`'s Sound paragraph.
 pub const MARGIN_START: Duration = Duration::from_millis(30);
 
 /// How long a stream's sound has to have played without running dry for

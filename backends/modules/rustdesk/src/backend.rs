@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The RustDesk client as a [`Backend`](api::backend::Backend), with this
-//! backend's option handling and its rows: what the phone reaches through
-//! `platform_android`'s JNI layer. The picture is decoded by whatever the
-//! client hands over in [`Connect::decoders`]: libavcodec on Linux, MediaCodec
-//! on the phone.
+//! backend's option handling and its rows: what the Linux client holds, and
+//! what the phone reaches through `platform_android`'s JNI layer. The picture is decoded by whatever the client
+//! hands over in [`Connect::decoders`]: libavcodec on Linux, MediaCodec on
+//! the phone.
 
 use crate::{Client, Config, Platform, PreferredCodec, Quality, Reach};
 use runtime::{Bridge, Runner};

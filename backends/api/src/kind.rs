@@ -31,8 +31,9 @@ pub struct Dirs {
 }
 
 impl Dirs {
-    /// The XDG defaults: `vento` under `$XDG_CONFIG_HOME`, `$XDG_STATE_HOME`
-    /// and `$XDG_DATA_HOME`, each falling back to its place under `$HOME`.
+    /// The XDG defaults, as the Linux client has them: `vento` under
+    /// `$XDG_CONFIG_HOME`, `$XDG_STATE_HOME` and `$XDG_DATA_HOME`, each
+    /// falling back to its place under `$HOME`.
     pub fn xdg() -> Dirs {
         let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
         let xdg = |var: &str, under: &str| {

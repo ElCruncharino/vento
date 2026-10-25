@@ -259,9 +259,9 @@
     <string name="panel_display">Display</string>
     <string name="panel_display_value">%1$d · %2$d × %3$d</string>
     <string name="panel_desktop_size">Desktop size</string>
-    <!-- The session's sound switch. Enable where the far end can be asked to
-         stop sending its sound; Mute where it cannot, and the sound is silenced
-         on this phone instead. -->
+    <!-- The session's sound switch, in the desktop client's words. Enable where
+         the far end can be asked to stop sending its sound; Mute where it
+         cannot, and the sound is silenced on this phone instead. -->
     <string name="panel_sound_enable">Enable audio</string>
     <string name="panel_sound_mute">Mute audio</string>
     <string name="panel_desktop_size_value">%1$d × %2$d</string>

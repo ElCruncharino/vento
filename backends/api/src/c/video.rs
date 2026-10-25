@@ -11,11 +11,13 @@
 //! What that buys is that a C backend's video is decoded exactly as RustDesk's
 //! is — the same [`Decoders`], with the person's hardware choice, its fallback
 //! to software, its status line and its answer to "was that hardware" — on
-//! both platforms, the phone's MediaCodec as much as the Linux platform's
+//! both platforms, the phone's MediaCodec as much as the Linux client's
 //! FFmpeg, and nothing of it written twice.
 //!
 //! The table carries function pointers rather than naming symbols, so that a
-//! backend library links nothing of the process it is loaded into.
+//! backend library links nothing of the process it is loaded into: the Linux
+//! client's `libvento_tigervnc.so` has no Rust in it, and its probe has no
+//! table at all.
 
 use std::ffi::{c_char, c_int, c_void};
 use std::sync::Arc;

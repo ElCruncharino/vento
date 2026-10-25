@@ -10,7 +10,7 @@
 //! between them is their config, their live options and the labels on their
 //! info rows, and that is a [`Behaviour`] of function pointers each backend's
 //! crate fills in — the libvncclient, TigerVNC and FreeRDP crates beside
-//! their C sources.
+//! their C sources, and the Linux client's RealVNC adapter.
 //!
 //! The callbacks are trampolined into the mailbox: `user` is an
 //! `Arc<Mailbox>` the session carries, recovered by each trampoline as a

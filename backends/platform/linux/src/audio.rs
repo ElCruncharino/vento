@@ -39,7 +39,8 @@ pub enum Output {
 }
 
 impl Output {
-    /// `auto`, `pipewire` or `alsa`: `VENTO_AUDIO_OUTPUT`.
+    /// `auto`, `pipewire` or `alsa`: the client's `--audio-output`, and
+    /// `VENTO_AUDIO_OUTPUT`.
     pub fn from_name(name: &str) -> Option<Output> {
         match name {
             "auto" => Some(Output::Auto),
@@ -94,7 +95,7 @@ impl Outputs for Audio {
         &self.controls
     }
 
-    /// libavcodec's, the crate's own FFmpeg.
+    /// libavcodec's, the client's own FFmpeg.
     fn decoders(&self) -> Option<&dyn Decoders> {
         Some(&FFmpegAudio)
     }

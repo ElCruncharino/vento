@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! One remote desktop session, whatever protocol is underneath: the interface
-//! a client is written against.
+//! One remote desktop session, whatever protocol is underneath: the
+//! interface the window and the probe are written against.
 //!
 //! It is `Backend.java` with the Android taken out, member for member, because
 //! that interface is the one seam eight backends have had to fit and there was
@@ -225,7 +225,7 @@ impl ConnectionFact {
     /// says "(hardware)") and ", muted" while it is: a row of the client's
     /// rather than the backend's, since the client holds the sound's
     /// controls (the backend has only the streams it writes), and worded
-    /// here so that every client words it alike. `None` while nothing plays:
+    /// here so that both clients word it alike. `None` while nothing plays:
     /// the session's sound switch, which is there from when the far end may
     /// send sound, says the rest.
     pub fn sound(controls: &Controls) -> Option<ConnectionFact> {
@@ -361,7 +361,7 @@ pub trait Backend: Send + Sync {
     /// would go nowhere, as SPICE does with no guest agent that takes one.
     /// `None`, the default, is a protocol that carries the clipboard as a
     /// message and is not told what became of it. Not in `Backend.java`,
-    /// whose app has no use for it.
+    /// whose app has no use for it; the probe's status does.
     fn carries_clipboard(&self) -> Option<bool> {
         None
     }
@@ -423,12 +423,12 @@ pub trait Backend: Send + Sync {
 
     /// The picture as the GPU holds it, where the backend's last picture was
     /// left there for whoever draws on that GPU: a session whose decoders
-    /// were told the client takes such pictures
+    /// were told the window takes such pictures
     /// ([`Decoders::gpu_pictures`](runtime::media::video::Decoders::gpu_pictures)),
-    /// and only while the newest picture is one. The frame events say when it
-    /// changed, as for any other picture. `read_region` and `thumbnail` still
-    /// answer, by reading the picture back first, which is the cost this was to
-    /// save; `None` for every other backend and picture.
+    /// and only while the newest picture is one. The frame events say when
+    /// it changed, as for any other picture. `read_region` and `thumbnail`
+    /// still answer, by reading the picture back first, which is the cost
+    /// this was to save; `None` for every other backend and picture.
     fn gpu_picture(&self) -> Option<std::sync::Arc<dyn runtime::media::video::GpuPicture>> {
         None
     }
@@ -479,7 +479,8 @@ pub trait Backend: Send + Sync {
     /// An identity the library asked to have remembered, for the caller to
     /// keep and hand back to the next session: RealVNC's opaque blob, which
     /// its core sends after a security prompt answered with *remember*. The
-    /// caller decides whether to keep it.
+    /// caller decides whether to keep it — the window does, the probe never
+    /// asks.
     fn saved_identity(&self) -> Option<String> {
         None
     }

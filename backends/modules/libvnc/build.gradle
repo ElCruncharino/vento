@@ -7,10 +7,11 @@ plugins {
 
 // The three parts of the libvncclient backend: `cpp/`, a shim over
 // LibVNCServer's client that names no platform; the crate at this directory's
-// root (`Cargo.toml`, `src/`), the backend as an `api::Backend` over it and
-// the JNI layer every backend shares, registered on the generated natives
-// class; and `java/`'s provider, which holds a session as a `NativeBackend`.
-// The AAR carries the one library CMake links the first two into.
+// root (`Cargo.toml`, `src/`), the backend as an `api::Backend` over it —
+// the one the Linux client holds — and the JNI layer every backend shares,
+// registered on the generated natives class; and `java/`'s provider, which
+// holds a session as a `NativeBackend`. The AAR carries the one library CMake
+// links the first two into.
 //
 // The one structural difference from the other protocol modules is that the
 // native half is not in this directory: it is `third_party/libvncserver`, a

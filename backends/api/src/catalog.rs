@@ -3,9 +3,9 @@
 
 //! What each of the eight backends is, before anything is connected: its
 //! name, why somebody would pick it, where it goes in a picker, and what it
-//! can be told. One list for every client — each of the phone's
-//! `BackendProvider`s answers from a class `vento-codegen` writes out of it —
-//! so that a backend is described once.
+//! can be told. One list for every client — the Linux client's picker reads
+//! it, and each of the phone's `BackendProvider`s answers from a class
+//! `vento-codegen` writes out of it — so that a backend is described once.
 //!
 //! Each entry is its backend's own file, `backends/modules/<name>/catalog.rs`
 //! (its [`About`], its options table and the tests of both), compiled here
@@ -23,8 +23,8 @@ use crate::trust::Pinning;
 /// One backend, described.
 #[derive(Debug, PartialEq, Eq)]
 pub struct About {
-    /// What a connection record stores it by, so it must not change once
-    /// shipped.
+    /// What a connection record stores and a command line names it by, so it
+    /// must not change once shipped.
     pub id: &'static str,
     /// For a picker and a title.
     pub name: &'static str,

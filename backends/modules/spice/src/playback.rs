@@ -10,8 +10,8 @@
 //! [`Player`], which owns the stream and the decoder. Their renderer has a
 //! channel of its own for this, with cpal and libopus behind it; this one
 //! plays where every other backend here plays, and decodes Opus with the
-//! platform's decoder (MediaCodec on the phone), which is why Opus is
-//! offered only where that decodes it.
+//! platform's decoder (libavcodec on the Linux client, MediaCodec on the
+//! phone), which is why Opus is offered only where that decodes it.
 
 use runtime::media::audio::decode::Codec;
 use runtime::media::audio::{Format, Outputs, Player};

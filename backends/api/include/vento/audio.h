@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // The platform's sound output, as a C backend is handed it: a table of calls
-// over `runtime::media::audio::Outputs` (AAudio on the phone; on Linux
-// PipeWire's own streams, or ALSA's `default` device where no PipeWire daemon
-// answers), filled in by `api::c::audio` and passed in a backend's config.
-// Function pointers rather than symbols, for the reason `vento/video.h` gives:
-// a backend library links nothing of the process it is loaded into.
+// over `runtime::media::audio::Outputs` (AAudio on the phone; on the Linux
+// client PipeWire's own streams, or ALSA's `default` device where no PipeWire
+// daemon answers), filled in by `api::c::audio` and passed in a backend's
+// config. Function pointers rather than symbols, for the reason `vento/video.h`
+// gives: a backend library links nothing of the process it is loaded into.
 //
 // What is behind a stream is the same for every backend and both platforms:
 // a queue that keeps as little in front of the device as the far end's own
@@ -19,11 +19,11 @@
 // session's gain and mute, and a device opened off the caller's thread.
 //
 // And where the far end's sound arrives compressed, the platform's decoders
-// for it are in the same table (AAC and Opus: libavcodec on Linux, MediaCodec
-// on the phone, `runtime::media::audio::decode`), so that a backend offers its
-// far end what the platform decodes and hands the packets here rather than to
-// a decoder of its library's own. So a backend only writes what the far end
-// sends, as it arrives, and never waits.
+// for it are in the same table (AAC and Opus: libavcodec on the Linux client,
+// MediaCodec on the phone, `runtime::media::audio::decode`), so that a backend
+// offers its far end what the platform decodes and hands the packets here
+// rather than to a decoder of its library's own. So a backend only writes what
+// the far end sends, as it arrives, and never waits.
 
 #ifndef VENTO_AUDIO_H
 #define VENTO_AUDIO_H

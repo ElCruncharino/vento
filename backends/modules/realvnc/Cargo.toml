@@ -1,18 +1,19 @@
-# The RealVNC backend on Linux: its `Kind`, over the one adapter for the C
-# backends (`remotedesktop-api`'s `c` feature), with this backend's own
-# config, live options, info rows and security prompt. The library is
-# `vento_realvnc` — the session in `cpp/` over the hosting layer in
+# The RealVNC backend as the Linux client holds it: its `Kind`, over the one
+# adapter for the C backends (`remotedesktop-api`'s `c` feature), with this
+# backend's own config, live options, info rows and security prompt. The
+# library is `vento_realvnc` — the session in `cpp/` over the hosting layer in
 # `cpp/host/`, which runs RealVNC's Android viewer core in a glibc process —
-# built by CMake with the other C backends, and only under clang.
+# built by CMake where the client builds the other C backends, and only under
+# clang.
 #
 # Which is why it is loaded rather than linked (`src/lib.rs`): whether the
-# library exists is known only once CMake has run, too late to be a feature
-# of this crate, so this always builds, and finds `libvento_realvnc.so` when
-# a session asks for it — or says why not.
+# library exists is known only once the client's build script has run CMake,
+# too late to be a feature of this crate, so this always builds, and finds
+# `libvento_realvnc.so` when a session asks for it — or says why not.
 #
-# Linux only. The phone's RealVNC backend is the module's Java over the
-# viewer's own JNI, in the add-on, with no Rust in it; on any target but
-# Linux this crate is empty, and no Gradle build names it.
+# The Linux client's alone. The phone's RealVNC backend is the module's Java
+# over the viewer's own JNI, in the add-on, with no Rust in it; on any target
+# but Linux this crate is empty, and no Gradle build names it.
 [package]
 name = "remotedesktop-realvnc"
 version.workspace = true

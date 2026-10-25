@@ -1,13 +1,13 @@
-# What a backend needs of Linux and no protocol owns, for the probes and
-# tests: a video decoder, which on a phone is the hardware's and here is
-# libavcodec's, so that a protocol whose picture is video — RustDesk's — can
-# be shown, probed and tested on the machine it is developed on with the
-# picture in; and a sound output, which on a phone is AAudio and here is a
-# PipeWire stream of its own (`src/pipewire.rs`, libpipewire-0.3 declared by
-# hand and loaded at run time, never linked) or, without PipeWire, ALSA's
-# default device (`src/alsa.rs`, libasound declared by hand and linked by
-# name, as libasound.so.2), with libavcodec's AAC and Opus decoders for the
-# sound that arrives compressed.
+# What a backend needs of Linux and no protocol owns, for the Linux client
+# (`linux/`) and for the probes and tests: a video decoder, which on a phone
+# is the hardware's and here is libavcodec's, so that a protocol whose picture
+# is video — RustDesk's — can be shown, probed and tested on the machine it is
+# developed on with the picture in; and a sound output,
+# which on a phone is AAudio and here is a PipeWire stream of its own
+# (`src/pipewire.rs`, libpipewire-0.3 declared by hand and loaded at run time,
+# never linked) or, without PipeWire, ALSA's default device (`src/alsa.rs`,
+# libasound declared by hand and linked by name, as libasound.so.2), with
+# libavcodec's AAC and Opus decoders for the sound that arrives compressed.
 #
 # The mirror of `remotedesktop-platform-android`, cfg for cfg: on Android the
 # crate is empty and has no dependencies, which is what keeps FFmpeg out of
@@ -16,9 +16,10 @@
 # `cfg(not(target_os = "android"))`, behind its `probe` feature.
 #
 # FFmpeg is the build's own: `build.rs` builds dav1d and a minimal FFmpeg from
-# `third_party/` into OUT_DIR, statically. Building it needs Meson, Ninja, make,
-# pkg-config and a C compiler, and NASM on x86 for the decoders' assembly;
-# nothing of a system FFmpeg.
+# `third_party/` into OUT_DIR, statically, and the Linux client's C backends
+# link the same build (the `links` key is how `linux/build.rs` hears where).
+# Building it needs Meson, Ninja, make, pkg-config and a C compiler, and NASM on
+# x86 for the decoders' assembly; nothing of a system FFmpeg.
 #
 # Beside the crate is the rest of the Linux platform: `cpp/`, the C the Rust
 # decoders call into and the stderr `vento_log` a C backend links;

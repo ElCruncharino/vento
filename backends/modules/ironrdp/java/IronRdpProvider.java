@@ -16,9 +16,9 @@ import java.util.Map;
 
 /**
  * This module's entry in a build's list of backends. What the IronRDP backend
- * is called and what it can be told are the catalog's: {@link IronRdpCatalog},
- * generated from {@code backends/api} at build time, holds the words and the
- * option keys.
+ * is called and what it can be told are the catalog's, which the Linux client
+ * reads too: {@link IronRdpCatalog}, generated from {@code backends/api} at
+ * build time, holds the words and the option keys.
  *
  * <p>A session is a {@link NativeBackend} on {@link IronRdpNatives}, generated
  * too: IronRDP in the module's crate as an {@code api::Backend}, which

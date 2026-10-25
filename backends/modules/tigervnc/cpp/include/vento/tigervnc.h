@@ -2,11 +2,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // TigerVNC's own client as a `vento_session`. The config is filled in from
-// the backend's options by `backends/modules/tigervnc`, the adapter the phone
-// holds it through, and each field is explained below. A certificate goes to
-// `trust_needed`, as libvnc's does, and nothing is kept of it here; `question`
-// fires only for an RSA-AES server key, which is asked about in their viewer's
-// words every time.
+// the backend's options by `backends/modules/tigervnc`, the
+// adapter both clients hold it through, and each field is explained below. A certificate goes to `trust_needed`, as libvnc's
+// does, and nothing is kept of it here; `question` fires only for an RSA-AES
+// server key, which is asked about in their viewer's words every time.
 
 #ifndef VENTO_TIGERVNC_H
 #define VENTO_TIGERVNC_H

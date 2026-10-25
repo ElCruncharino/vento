@@ -126,12 +126,12 @@ final class SessionHud {
                         + " btn " + Button.maskName(mouse.heldMask())
                         + "   keys " + keys.heldCount() + " held",
         };
-        // The sound, wherever the session has a switch for it: what plays,
-        // what is queued in front of the device and the device's own buffer
-        // (together, how far behind what arrived it is heard), what the queue
-        // has had to do about the far end's timing, and whether the far end
-        // is asked not to send it or it is muted here. Read, not set: the
-        // switch is the panel's.
+        // The sound, wherever the session has a switch for it, in the desktop
+        // client's words: what plays, what is queued in front of the device
+        // and the device's own buffer (together, how far behind what arrived
+        // it is heard), what the queue has had to do about the far end's
+        // timing, and whether the far end is asked not to send it or it is
+        // muted here. Read, not set: the switch is the panel's.
         final String sound = backend.soundLine();
         if (sound != null) {
             lines = Arrays.copyOf(lines, lines.length + 1);

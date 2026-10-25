@@ -20,8 +20,8 @@ crate-type = ["lib", "cdylib"]
 [dependencies]
 log.workspace = true
 remotedesktop-runtime.workspace = true
-# `src/backend.rs`, the protocol as an `api::Backend`: what the phone's JNI
-# layer stands in front of.
+# `src/backend.rs`, the protocol as an `api::Backend`: what the Linux
+# client holds, and what the phone's JNI layer stands in front of.
 remotedesktop-api.workspace = true
 
 # A submodule rather than the published crates, because two things had to

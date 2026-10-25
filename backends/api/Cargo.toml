@@ -1,10 +1,10 @@
 # One session on any backend, as every client holds one: the `Backend` trait a
-# client is written against, the `Event`s a session says through a `Mailbox`,
-# what each backend is called and can be told (`catalog`, each entry its
-# backend's own `backends/modules/<name>/catalog.rs`, compiled here by path;
-# `options`, the shape of a row), and the rules every client keeps the same —
-# how a credentials prompt's answer is read, and how a far end's identity
-# meets the pins.
+# window or a phone is written against, the `Event`s a session says through a
+# `Mailbox`, what each backend is called and can be told (`catalog`, each
+# entry its backend's own `backends/modules/<name>/catalog.rs`, compiled here
+# by path; `options`, the shape of a row), and the rules every client keeps
+# the same — how a credentials prompt's answer is read, and how a far end's
+# identity meets the pins.
 #
 # It sits between `remotedesktop-runtime`, which a protocol is written
 # against, and the clients: each backend's adapter is in that backend's own
@@ -13,9 +13,9 @@
 # feature it also carries the one adapter over `vento/backend.h`'s vtable that
 # the C backends' crates fill in.
 #
-# Nothing here knows a platform. The phone supplies what a session needs of it
-# (where to keep things, what decodes video, what the far end is told this
-# machine is) through `Connect`.
+# Nothing here knows a platform. The Linux client and the phone each supply
+# what a session needs of them (where to keep things, what decodes video, what
+# the far end is told this machine is) through `Connect`.
 [package]
 name = "remotedesktop-api"
 version.workspace = true

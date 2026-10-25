@@ -11,6 +11,7 @@
 // H.264 is not among what it can show: the session decodes it with the
 // platform's decoders, handed over by a Rust caller, and this is C with none
 // to hand, so `--h264` is passed on and the session declines to offer it.
+// The Linux client's `vento tigervnc ... --probe` is the probe for H.264.
 
 #include <stdio.h>
 #include <stdlib.h>

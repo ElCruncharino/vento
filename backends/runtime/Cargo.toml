@@ -11,8 +11,8 @@
 #
 # Nothing in here knows what a phone is. The Android half of a backend is
 # `remotedesktop-platform-android`, which depends on this crate and not the
-# other way round, so a client can be built on this layer without a `jni`
-# anywhere in its graph.
+# other way round, so a desktop client can be built on this layer without a
+# `jni` anywhere in its graph.
 [package]
 name = "remotedesktop-runtime"
 version.workspace = true

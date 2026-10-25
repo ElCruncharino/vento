@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The rules every client keeps alike, held to their cases. The credentials
-//! and known-hosts cases are written out here, since the phone applies
+//! and known-hosts cases are written out here, since both clients apply
 //! those rules from this crate and nothing else reads them. The options
 //! cases are in `options.json` beside this file, which the Java tests in
 //! `backends/platform/android/javatest` read too, for the one rule with a
@@ -41,7 +41,7 @@ const SPLIT_DOMAIN: &[(&str, &str, &str)] = &[
 /// An RDP prompt's answer against the session's own domain and user
 /// (already split): `(session domain, session user, answer user, answer
 /// domain, domain, user)`. The answer's domain is one given beside the name,
-/// which the phone's prompt has no box for; empty where none is.
+/// which only the Linux client's `--domain` has; empty where none is.
 const RDP_IDENTITY: &[(&str, &str, &str, &str, &str, &str)] = &[
     ("CORP", "proto", "", "", "CORP", "proto"),
     ("CORP", "proto", "   ", "", "CORP", "proto"),

@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // LibVNCServer's libvncclient as a `vento_session`. The config is filled in
-// from the backend's options by `backends/modules/libvnc`, the adapter the
-// phone holds it through, and each field is explained below.
+// from the backend's options by `backends/modules/libvnc`, the
+// adapter both clients hold it through, and each field is explained below.
 
 #ifndef VENTO_LIBVNC_H
 #define VENTO_LIBVNC_H

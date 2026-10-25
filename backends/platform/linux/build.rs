@@ -3,13 +3,15 @@
 
 //! The desktop's FFmpeg: dav1d and FFmpeg built from their submodules
 //! (`third_party/dav1d`, `third_party/ffmpeg`) into `OUT_DIR` as static
-//! libraries, and `cpp/vento_video.c` compiled over them, so that nothing of a
-//! system FFmpeg is linked or needed.
+//! libraries, and `cpp/vento_video.c` compiled over them, so that the Linux
+//! client links no FFmpeg of the system's and needs none of its development
+//! files.
 //!
 //! **One FFmpeg for every desktop consumer.** The Rust decoders here are one
 //! (the video's, and the sound's AAC and Opus); TigerVNC's libavcodec H.264
-//! context and FreeRDP's scaling are the others, built through CMake. That
-//! build is told where this one put its libraries through the `links` metadata
+//! context and FreeRDP's scaling are the others, built by `linux/build.rs`
+//! through CMake. That build is told
+//! where this one put its libraries through the `links` metadata
 //! (`DEP_VENTO_VIDEO_PREFIX`), so all of them link the same configuration of
 //! the same source. FFmpeg is configured with `--disable-everything` and then
 //! exactly what those consumers use (`DECODERS`, `HWACCELS`, the two scaling
@@ -259,7 +261,7 @@ fn main() {
         "cargo:rustc-link-search=native={}",
         prefix.join("lib").display()
     );
-    // For whatever hands it to the C backends' CMake build.
+    // For `linux/build.rs`, which hands it to the C backends' CMake build.
     println!("cargo:prefix={}", prefix.display());
 }
 

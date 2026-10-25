@@ -16,11 +16,12 @@
 //! costs nothing.
 //!
 //! Waves are played as they come: PCM as it is, AAC and Opus through the
-//! platform's decoders (MediaCodec on the phone), in a [`Player`] the
-//! session shares with this handler. Windows picks AAC when it is offered,
-//! as it does from FreeRDP's device. The server's Close says nothing about
-//! when the sound will have been heard, so the stream is closed instead two
-//! seconds after the last wave was ([`QUIET`]), from the session's loop.
+//! platform's decoders (libavcodec on the Linux client, MediaCodec on the
+//! phone), in a [`Player`] the session shares with this handler. Windows
+//! picks AAC when it is offered, as it does from FreeRDP's device. The
+//! server's Close says nothing about when the sound will have been heard, so
+//! the stream is closed instead two seconds after the last wave was
+//! ([`QUIET`]), from the session's loop.
 
 use runtime::media::audio::decode::Codec;
 use runtime::media::audio::{Format, Outputs, Player};

@@ -14,8 +14,8 @@
 //!
 //! It was one crate with the RFB bindings in it, then one crate with every
 //! protocol's bindings beside it, and is now the one JNI layer: what a Rust
-//! backend's library adds to its protocol is its `api::Backend` adapter and
-//! one [`natives!`] line.
+//! backend's library adds to its protocol is its `api::Backend` adapter,
+//! which the Linux client holds too, and one [`natives!`] line.
 //!
 //! Two threads reach a session, as they do in the RealVNC backend and for the
 //! same reasons: the protocol thread, which owns the connection and delivers

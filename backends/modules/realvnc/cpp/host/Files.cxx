@@ -10,9 +10,9 @@
 // a key in the hardware keystore; this stand-in opens the same path as an
 // ordinary file, so `rsaKeys/vncviewer.privatekey.enc` and
 // `passwords.json.enc` under `state_dir` are plaintext, protected by the
-// directory's mode and nothing else. A caller that wants better wraps these
-// two streams in whatever its platform keeps secrets with; what the core
-// reads and writes through them does not change.
+// directory's mode and nothing else. A desktop client that wants better
+// wraps these two streams in whatever its platform keeps secrets with; what
+// the core reads and writes through them does not change.
 
 #include <errno.h>
 #include <stdint.h>

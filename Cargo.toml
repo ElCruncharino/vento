@@ -12,16 +12,26 @@
 # `Backend` trait, the events, the options and the rules every client keeps
 # alike — and each backend's adapter to it lives in that backend's own
 # crate under `backends/modules/`: the protocol crate for the four in Rust, a
-# small crate beside the C library for the others (RealVNC's empty on the
-# phone). None of them knows a phone. `backends/platform/*` is where one
-# platform's glue lives — Android's JNI and MediaCodec in `android` (and, in
-# `android/codegen`, the host tool that writes its Java), libavcodec in `linux`.
+# small crate beside the C library for the others (RealVNC's the Linux
+# client's alone, and empty on the phone). None of them knows a phone.
+# `backends/platform/*` is where one platform's glue lives — Android's
+# JNI and MediaCodec in `android` (and, in `android/codegen`, the host tool
+# that writes its Java), libavcodec in `linux`. The one client
+# that is not a phone's is `linux/`: a desktop binary that holds a session on
+# any of the eight backends through those adapters, with the C libraries its
+# build.rs has CMake make. It is a workspace of its own, excluded here, and not for
+# want of trying it as a member: Cargo unifies features across a workspace
+# for every platform at once, so the window's GUI stack switched on optional
+# features of crates the phone shares (`bytemuck/derive`, `zerocopy/derive`)
+# and their proc-macro crates appeared in the app's licence page — `cargo
+# metadata --filter-platform` filters packages, not features. Its own lock
+# file keeps all of that out of this graph; it reaches these crates by path.
 # What a platform supplies, it supplies by implementing a trait of `runtime`'s
 # (`Callbacks`, `media::video::Decoders`, `media::audio::Outputs`) and handing
 # it to the session, so no protocol crate says which platform it is on. A
-# protocol crate depends on a platform crate only under a target cfg — `android`
-# for the library the app loads, `desktop` for its probe — so neither build sees
-# the other's.
+# protocol crate depends on a platform crate only under a target cfg —
+# `android` for the library the app loads, `desktop` for its probe — so
+# neither build sees the other's.
 [workspace]
 resolver = "2"
 members = [
@@ -42,8 +52,9 @@ members = [
 # Every member but the Linux platform crate, which is the one whose build
 # script builds dav1d and FFmpeg (minutes, once per target directory): a bare
 # `cargo build`, `test` or `clippy` here is the phone's crates and the
-# backends, and none of those needs it without its `probe` feature.
-# `--workspace` or `-p remotedesktop-platform-linux` for its own tests.
+# backends, and none of those needs it without its `probe` feature. The
+# Linux client builds it through its own workspace; `--workspace` or `-p
+# remotedesktop-platform-linux` for its own tests.
 default-members = [
     "backends/runtime",
     "backends/api",
@@ -58,7 +69,7 @@ default-members = [
     "backends/modules/freerdp",
     "backends/modules/realvnc",
 ]
-exclude = ["third_party"]
+exclude = ["third_party", "linux"]
 
 [workspace.package]
 version = "0.0.1"

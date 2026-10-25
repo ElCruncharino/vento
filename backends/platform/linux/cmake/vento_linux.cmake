@@ -13,7 +13,10 @@
 #
 # The probes are a development tool, built only when asked for with
 # `-DVENTO_PROBES=ON`: off, `vento_backend_probe` does nothing and the probe
-# body is never compiled.
+# body is never compiled, which is what the Linux client's build (`linux/
+# build.rs`, target `all`) wants of the same tree — four executables nobody
+# runs from there, rebuilt whenever a session file changes. The client's own
+# `vento <backend> <address> --probe N` goes through the same session files.
 #
 # Guarded, because the host root includes it once and each module includes it
 # again for the case where a module is configured on its own.
@@ -21,11 +24,11 @@
 # `VENTO_SHARED` is the other shape a backend can take on the host: a shared
 # library per backend, `libvento_<name>.so` under `lib/` in the build tree,
 # carrying its vendored static dependencies and the stderr `vento_log`, so that
-# a process written in something other than C links them by name and nothing
-# else of theirs. Off, and each backend is the static library the probes are
-# built on, which is what it was. `vento_backend_library` and
-# `vento_backend_probe` are the two helpers that know the difference, so that a
-# module's host branch does not.
+# a process written in something other than C — the Rust client under `linux/`
+# — links the four by name and nothing else of theirs. Off, and each backend
+# is the static library the probes are built on, which is what it was.
+# `vento_backend_library` and `vento_backend_probe` are the two helpers that
+# know the difference, so that a module's host branch does not.
 
 get_filename_component(_VENTO_LINUX "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
 get_filename_component(_VENTO_BACKENDS "${_VENTO_LINUX}/../.." ABSOLUTE)
@@ -63,12 +66,13 @@ endif()
 # link them too, and PRIVATE for a shared one, which already holds them.
 # `VENTO_FFMPEG_PREFIX`: the FFmpeg to link, as the static libraries the
 # Linux platform crate builds from `third_party/ffmpeg` and
-# `third_party/dav1d` (backends/platform/linux/build.rs). Given, it is the one
-# FFmpeg of every backend here — which is FreeRDP's scaler alone now, since
-# every backend's H.264 and sound is decoded by the Rust side through vento's
-# decoders — and the Rust decoders link the same build, so nothing here has a
-# system FFmpeg in it; left empty, a module finds the host's as before, which is
-# what a plain `cmake -S backends` for the probes does.
+# `third_party/dav1d` (backends/platform/linux/build.rs, which `linux/build.rs`
+# hears the prefix from and hands on). Given, it is the one FFmpeg of every
+# backend here — which is FreeRDP's scaler alone now, since every backend's
+# H.264 and sound is decoded by the Rust side through vento's decoders — and
+# the Rust decoders link the same build, so a Linux client has no system
+# FFmpeg in it at all; left empty, a module finds the host's as before, which
+# is what a plain `cmake -S backends` for the probes does.
 #
 # One imported target per library, each carrying what a static link of it
 # needs after it — dav1d and libswresample after libavcodec (its AV1 and its
