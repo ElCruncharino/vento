@@ -1,0 +1,148 @@
+From 084c41ec138b7876570ad00cf9c6ce7e58f9397f Mon Sep 17 00:00:00 2001
+From: Nick Haghiri <ElCruncharino@users.noreply.gitlab.gnome.org>
+Date: Sun, 25 Oct 2026 18:39:54 -0400
+Subject: [PATCH 2/2] feat(egfx): let a handler take AVC420 pictures as planes
+
+A handler that draws video itself (on a phone, on the GPU) had to take the
+RGBA the library converts every AVC420 picture into and composites. With
+takes_video_frames on, and a decoder that returns YUV planes, the picture
+goes to on_video_frame as the decoder made it and is neither converted nor
+composited. AVC444 is unchanged.
+---
+ crates/ironrdp-egfx/src/client.rs | 106 ++++++++++++++++++++++++++++++
+ 1 file changed, 106 insertions(+)
+
+diff --git a/crates/ironrdp-egfx/src/client.rs b/crates/ironrdp-egfx/src/client.rs
+index 5e2cbe0e..42c7fbeb 100644
+--- a/crates/ironrdp-egfx/src/client.rs
++++ b/crates/ironrdp-egfx/src/client.rs
+@@ -250,6 +250,34 @@ pub struct BitmapUpdate {
+ /// All methods have default no-op implementations so you only need
+ /// to override the ones relevant to your use case.
+ pub trait GraphicsPipelineHandler: Send {
++    /// Whether AVC420 pictures of surface `surface_id` go to
++    /// [`on_video_frame`](Self::on_video_frame) instead of being converted and composited into
++    /// the surface.
++    ///
++    /// Off by default, which is the surface path. It takes effect only with a decoder that
++    /// returns YUV planes ([`H264Decoder::supports_yuv420`](crate::decode::H264Decoder::supports_yuv420)).
++    /// What goes to the handler is not in the surface, so the surface's contents (a later copy
++    /// out of it, say) lack that picture. AVC444 is not affected.
++    fn takes_video_frames(&self, surface_id: u16) -> bool {
++        let _ = surface_id;
++        false
++    }
++
++    /// An AVC420 picture of surface `surface_id`, decoded and not converted, for `destination`
++    /// in the surface, when [`takes_video_frames`](Self::takes_video_frames) is on.
++    ///
++    /// The picture's pixel `(x, y)` is the surface's pixel `(x, y)`, as in the composited path,
++    /// and may be larger than `destination` (macroblock alignment). Its colours are
++    /// [`Yuv420Frame::to_rgba`](crate::decode::Yuv420Frame::to_rgba)'s: full-range BT.709.
++    fn on_video_frame(
++        &mut self,
++        surface_id: u16,
++        destination: &ExclusiveRectangle,
++        frame: &crate::decode::Yuv420Frame,
++    ) {
++        let _ = (surface_id, destination, frame);
++    }
++
+     /// Returns the capability sets to advertise to the server
+     ///
+     /// The default advertises every version from 10.7 down to 10 with AVC444, then V8.1
+@@ -1201,6 +1229,14 @@ impl GraphicsPipelineClient {
+             return Ok(());
+         };
+ 
++        if decoder.supports_yuv420() && self.handler.takes_video_frames(surface_id) {
++            let picture = decoder
++                .decode_yuv420_for_surface(surface_id, stream.data)
++                .map_err(|e| pdu_other_err!("H.264 decode", source: e))?;
++            self.handler.on_video_frame(surface_id, dest_rect, &picture);
++            return Ok(());
++        }
++
+         // A decoder returning YUV planes is converted with the transform MS-RDPEGFX
+         // specifies, whatever matrix it would convert with itself.
+         let frame = if decoder.supports_yuv420() {
+@@ -3432,6 +3468,76 @@ mod tests {
+         }
+     }
+ 
++    /// A handler that takes video frames gets the decoded planes of an AVC420 update and the
++    /// surface is left alone.
++    #[test]
++    fn avc420_goes_to_a_handler_that_takes_video_frames() {
++        struct YuvDecoder;
++
++        impl H264Decoder for YuvDecoder {
++            fn decode(&mut self, _data: &[u8]) -> crate::decode::DecoderResult<crate::decode::DecodedFrame> {
++                Err(crate::decode::DecoderError::msg("planes only"))
++            }
++
++            fn decode_yuv420(&mut self, _data: &[u8]) -> crate::decode::DecoderResult<crate::decode::Yuv420Frame> {
++                crate::decode::Yuv420Frame::new(16, 16, vec![0; 256], 16, vec![0; 64], vec![0; 64], 8)
++            }
++
++            fn supports_yuv420(&self) -> bool {
++                true
++            }
++        }
++
++        struct VideoHandler {
++            frames: Arc<Mutex<Vec<(u16, ExclusiveRectangle, u16)>>>,
++            updates: Arc<Mutex<usize>>,
++        }
++
++        impl GraphicsPipelineHandler for VideoHandler {
++            fn takes_video_frames(&self, surface_id: u16) -> bool {
++                surface_id == 7
++            }
++
++            fn on_video_frame(
++                &mut self,
++                surface_id: u16,
++                destination: &ExclusiveRectangle,
++                frame: &crate::decode::Yuv420Frame,
++            ) {
++                self.frames
++                    .lock()
++                    .expect("frames lock")
++                    .push((surface_id, destination.clone(), frame.width()));
++            }
++
++            fn on_bitmap_updated(&mut self, _update: &BitmapUpdate) {
++                *self.updates.lock().expect("updates lock") += 1;
++            }
++        }
++
++        let frames = Arc::new(Mutex::new(Vec::new()));
++        let updates = Arc::new(Mutex::new(0));
++        let mut client = GraphicsPipelineClient::new(
++            Box::new(VideoHandler {
++                frames: Arc::clone(&frames),
++                updates: Arc::clone(&updates),
++            }),
++            Some(Box::new(YuvDecoder)),
++        );
++        let dest = ExclusiveRectangle {
++            left: 0,
++            top: 0,
++            right: 16,
++            bottom: 16,
++        };
++        client
++            .decode_avc420(7, &dest, &encode_avc420_wire(&[dest.clone()]))
++            .expect("decode avc420");
++
++        assert_eq!(*frames.lock().expect("frames lock"), vec![(7, dest, 16)]);
++        assert_eq!(*updates.lock().expect("updates lock"), 0, "nothing is composited");
++    }
++
+     /// A partial AVC420 update must draw each region rectangle from its OWN
+     /// (x, y) in the decoded frame, as a separate surface update -- not blit
+     /// one bounding-box block copied from the frame origin.
+-- 
+2.56.0
+
