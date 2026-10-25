@@ -47,6 +47,7 @@ public final class RdpHooks implements NativeBackend.Hooks {
 
     @Override
     public String credentialsHint() {
-        return "Use DOMAIN\\user for another domain, .\\user for a local account.";
+        return "Use DOMAIN\\user for another domain, .\\user for a local account, or"
+                + " MicrosoftAccount\\email@address.com for a Microsoft Account.";
     }
 }

@@ -276,10 +276,10 @@ fn identity_prompt(
     // else about the connection is worth asking about.
     let why = match identity {
         Identity::Changed => {
-            "This server's identity has changed since you last connected. It may not be the same machine.".to_string()
+            "This server's identity has changed since you last connected.".to_string()
         }
         Identity::MatchesAnother => format!(
-            "This server's identity belongs to {}, which you have connected to before.",
+            "This server's identity is the same as {}, which you have connected to before.",
             if matching_address.is_empty() {
                 "a different address"
             } else {

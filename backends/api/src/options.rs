@@ -318,11 +318,11 @@ pub(crate) const VIEW_ONLY: Spec = bool(
 );
 
 pub(crate) const BELL: Spec = Spec {
-    desktop_summary: Some("Show a bell in the window's title when the remote server rings the bell."),
+    desktop_summary: Some("Show bell icon in the window title when server rings bell."),
     ..bool(
         "AcceptBell",
         "Bell",
-        "Vibrate when the remote server rings the bell.",
+        "Vibrate when the server rings the bell.",
         true,
         Scope::Global,
         false,
@@ -533,7 +533,7 @@ mod tests {
         assert_eq!(sound.label_for("local", Platform::Linux), "This computer");
         let bell = find(FIXTURE, "AcceptBell").unwrap();
         assert!(bell.summary_on(Platform::Android).unwrap().starts_with("Vibrate"));
-        assert!(bell.summary_on(Platform::Linux).unwrap().starts_with("Show a bell"));
+        assert!(bell.summary_on(Platform::Linux).unwrap().starts_with("Show bell icon"));
         let shared = find(FIXTURE, "Shared").unwrap();
         assert!(shared.check("true").is_ok());
         assert!(shared.check("yes").is_err());

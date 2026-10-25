@@ -12,9 +12,8 @@ package net.pgaskin.remotedesktop.backend;
  *   <li><b>A TLS with no certificate is still encrypted.</b> Anonymous TLS is
  *       a server with nothing to verify it by, which {@link NativeBackend}
  *       asks about every time, but connecting anyway does not mean "in the
- *       clear" as it does for a RustDesk peer with no key: the session is
- *       hidden from an eavesdropper and not from a machine in the middle, and
- *       the question says that, in the same words in both clients.
+ *       clear" as it does for a RustDesk peer with no key, so the question
+ *       says only that the server could not be verified.
  * </ul>
  */
 public final class VncHooks implements NativeBackend.Hooks {
@@ -26,7 +25,6 @@ public final class VncHooks implements NativeBackend.Hooks {
 
     @Override
     public String unverifiedConsequence() {
-        return "Connecting anyway hides the session from somebody listening"
-                + " and not from a machine in the middle.";
+        return "The server could not be verified.";
     }
 }

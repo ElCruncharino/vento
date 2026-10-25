@@ -84,7 +84,7 @@ impl Connector {
         // rustls completes no handshake without a server certificate, so
         // this does not come from rustls.
         let Some(fingerprint) = fingerprint else {
-            return Err(Error::Protocol("the TLS handshake presented no certificate".into()));
+            return Err(Error::Protocol("the TLS handshake did not present a certificate".into()));
         };
         let mut accepted = self.accepted.lock().unwrap();
         match (trust, accepted.as_deref()) {

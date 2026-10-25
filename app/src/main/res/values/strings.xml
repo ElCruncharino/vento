@@ -292,8 +292,8 @@
     <string name="prompt_catchphrase">Catchphrase: %1$s</string>
     <string name="prompt_signature">Signature: %1$s</string>
     <string name="prompt_trust_title">Connect anyway?</string>
-    <string name="prompt_trust_changed">This server\'s identity has changed since you last connected. It may not be the same machine.</string>
-    <string name="prompt_trust_another">This server\'s identity belongs to %1$s, which you have connected to before.</string>
+    <string name="prompt_trust_changed">This server\'s identity has changed since you last connected.</string>
+    <string name="prompt_trust_another">This server\'s identity is the same as %1$s, which you have connected to before.</string>
     <string name="prompt_trust_another_address">a different address</string>
     <string name="prompt_trust_new">You have not connected to this server before.</string>
     <string name="prompt_trust_missing">This server does not have a verifiable identity.</string>

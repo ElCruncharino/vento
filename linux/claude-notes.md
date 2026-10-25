@@ -840,8 +840,8 @@ process runs (it is not saved). The strip that brings it out follows it.
 It has no shadow, and its buttons are flat: an icon (Material Symbols
 Outlined, unfilled) and no frame at rest, egui's frame while the pointer is
 on one or pressing it. A button with a state shows it in its icon, and its
-tooltip names the button, its state and, for Scale, what a click goes to
-("Scale: fit width — click for fit height"). View only and Info while on,
+tooltip names the button, its state and, for Scale and Monitor, what a
+click goes to ("Scale: fit width (next: fit height)"). View only and Info while on,
 and Sound while off or muted, keep a frame at rest, a dim fill of the selection's
 blue with the icon in the selection's colour. There are no words on it: which monitor or display
 is showing is in the tooltip too. On it:
@@ -1062,7 +1062,7 @@ what was asked; and **Display**, where the far end sends one of several
 screens at a time (RustDesk), asking `request_display`. Then the toolbar's
 **Sound** button as a switch, where there is one, worded by what it does:
 **Enable audio**, on while the far end is asked for its sound, or **Mute
-audio**, on while muted, with what it does in its tooltip. And **Follow window
+audio**, on while muted. And **Follow window
 size**, below, the five **settings**, below, which a running session
 takes a change to at once, and **Debug overlay**, the overlay below, which is
 the session's and not a setting (Ctrl+Alt+D toggles it too).
@@ -1076,7 +1076,7 @@ muted` while it is (the row is the client's, worded in
 `api::backend::ConnectionFact::sound` for the phone's panel too). Everything is refreshed once a second while the panel is open,
 without disturbing a control being used: an open dropdown stays open, and a
 field being typed in keeps its text until it is left, which is when its value
-is sent.
+is sent. Nothing on the panel has a tooltip.
 
 **Follow window size** (off by default, per session) asks the far end for a
 desktop the size of the windows in pixels whenever one changes shape — the
@@ -1305,7 +1305,7 @@ over SSH — its identity is the key: the first time a certificate is accepted
 with **Remember server** ticked, its fingerprint is pinned against the address,
 and from then on a connection whose certificate matches asks nothing, and one
 whose certificate does not asks loudly. The prompt says which it is: *you have
-not connected to this server before*, *this server's identity belongs to
+not connected to this server before*, *this server's identity is the same as
 `<address>`, which you have connected to before* (the same certificate pinned
 under another address — one machine by name and by number), or *this server's
 identity has changed since you last connected*, where the box starts unticked.

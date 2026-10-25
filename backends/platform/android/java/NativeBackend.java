@@ -221,13 +221,14 @@ public final class NativeBackend implements Backend {
         }
 
         /**
-         * What connecting anyway means, shown after the reason the far end
-         * could not be verified: the second half of {@link #onUnverified}'s
-         * question. The common answer is the plain one; a VNC TLS without a
-         * certificate is still encrypted, and says so.
+         * The line shown after the reason the far end could not be verified:
+         * the second half of {@link #onUnverified}'s question. The common one
+         * says the connection is not encrypted; a VNC TLS without a
+         * certificate is still encrypted, so it says only that the server
+         * could not be verified.
          */
         default String unverifiedConsequence() {
-            return "Connecting anyway leaves the session unencrypted.";
+            return "The connection is not encrypted.";
         }
 
         /** Words under a credentials prompt, or empty. */

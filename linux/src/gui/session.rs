@@ -191,8 +191,8 @@ fn popout_size(w: i32, h: i32) -> (u32, u32) {
 fn window_title(name: &str, ringing: bool, monitor: Option<usize>) -> String {
     let bell = if ringing { "🔔 " } else { "" };
     match monitor {
-        Some(i) => format!("{bell}{name} — monitor {} — Vento", i + 1),
-        None => format!("{bell}{name} — Vento"),
+        Some(i) => format!("{bell}{name} - monitor {} - Vento", i + 1),
+        None => format!("{bell}{name} - Vento"),
     }
 }
 
@@ -1700,7 +1700,7 @@ mod tests {
             let title = window_title(snapshot.desktop_name().unwrap(), true, monitor);
             assert!(std::ffi::CString::new(title.clone()).is_ok(), "{title:?}");
         }
-        assert_eq!(window_title("evilname desk", false, Some(1)), "evilname desk — monitor 2 — Vento");
+        assert_eq!(window_title("evilname desk", false, Some(1)), "evilname desk - monitor 2 - Vento");
         // Nothing but control characters is no name: the address stands in.
         assert_eq!(named("\0\0\x01").desktop_name(), None);
         // A name of a megabyte is cut to NAME_MAX characters, the last an

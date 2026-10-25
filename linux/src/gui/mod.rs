@@ -1560,7 +1560,7 @@ impl Gpu {
             .copied()
             .find(|f| matches!(f, wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Rgba8Unorm))
             .or_else(|| caps.formats.first().copied())
-            .ok_or("the surface offers no format")?;
+            .ok_or("the surface does not offer any format")?;
         let renderer = egui_wgpu::Renderer::new(
             &device,
             format,

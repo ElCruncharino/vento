@@ -197,21 +197,21 @@ headless, any of which selects the probe instead of the window:
     fn forget(address: &str, dirs: &Dirs) -> i32 {
         let done = known_hosts::forget(dirs, &backends::all(), address);
         if done.removed.is_empty() {
-            println!("nothing remembered for {address}");
+            println!("no known_hosts entries for {address}");
         } else {
-            println!("forgot {address}; the next connection to it asks again:");
+            println!("removed {address} from known_hosts");
             for line in &done.removed {
                 println!("  {line}");
             }
         }
         if !done.kept.is_empty() {
-            println!("kept, the same host by another name (forget each by its name):");
+            println!("kept other hosts with the same identity:");
             for line in &done.kept {
                 println!("  {line}");
             }
         }
         for line in &done.failed {
-            eprintln!("could not forget: {line}");
+            eprintln!("failed to remove known_hosts entry: {line}");
         }
         i32::from(!done.failed.is_empty())
     }
@@ -219,7 +219,7 @@ headless, any of which selects the probe instead of the window:
     /// The backends and, under each, its options as `-o` takes them.
     fn list() {
         for kind in backends::all() {
-            println!("{}  {} — {}", kind.id, kind.name, (kind.version)());
+            println!("{}  {}  {}", kind.id, kind.name, (kind.version)());
             println!("    {}", kind.description);
             for spec in kind.options {
                 let type_note = match spec.ty {
@@ -238,7 +238,7 @@ headless, any of which selects the probe instead of the window:
                     .map(|g| format!(" (only when {}={})", g.key, g.values.join("/")))
                     .unwrap_or_default();
                 println!(
-                    "    -o {}={}  [{}]{} — {}",
+                    "    -o {}={}  [{}]{}  {}",
                     spec.key,
                     spec.default,
                     type_note,
@@ -375,8 +375,7 @@ headless, any of which selects the probe instead of the window:
 
         if let Some(address) = forget {
             if !positional.is_empty() || headless || connect || !assignments.is_empty() {
-                return Err("--forget takes an address and nothing to connect with: the known hosts \
-                            are kept by address, for every backend"
+                return Err("--forget only takes an address, and not other options"
                     .into());
             }
             if trust::key(&address).is_empty() {
@@ -400,7 +399,7 @@ headless, any of which selects the probe instead of the window:
             return Err("give a backend and an address".into());
         }
         let kind = backends::find(&positional[0])
-            .ok_or_else(|| format!("no backend {:?}; --list shows them", positional[0]))?;
+            .ok_or_else(|| format!("no backend {:?}, see --list", positional[0]))?;
 
         let mut options = Options::defaults(kind.options);
         for assignment in &assignments {
@@ -480,7 +479,7 @@ headless, any of which selects the probe instead of the window:
     fn hw_decode(arg: &str) -> Result<backends::Hardware, String> {
         let how = arg.split_once('=').map_or("", |(_, how)| how);
         backends::hardware_named(how)
-            .ok_or_else(|| format!("--hw-decode: {how:?} is not one of vaapi, auto or off"))
+            .ok_or_else(|| format!("--hw-decode: {how:?} is not one of vaapi, auto, or off"))
     }
 
     /// Parses `--audio-output=WHERE`.
@@ -604,9 +603,9 @@ headless, any of which selects the probe instead of the window:
                 }
                 if mailbox.state() != State::Connected {
                     say(if self.refused.get() {
-                        "ended before the time was up: the password was refused"
+                        "ended by server: the password was refused"
                     } else {
-                        "ended before the time was up"
+                        "ended by server"
                     });
                     status = 1;
                 } else {
@@ -682,7 +681,7 @@ headless, any of which selects the probe instead of the window:
                 None => self.sound_cycle_at.set(Some(now + every)),
                 Some(at) if now >= at => {
                     let on = !controls.enabled();
-                    say(if on { "turning the far end's sound on" } else { "turning the far end's sound off" });
+                    say(if on { "turning the server's sound on" } else { "turning the server's sound off" });
                     controls.set_enabled(on);
                     self.sound_cycle_at.set(Some(now + every));
                 }

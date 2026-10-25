@@ -59,14 +59,20 @@ impl Default for Settings {
 
 impl Settings {
     /// The five as rows of a two-column grid (a label and a box each, the
-    /// shape the dialog's and the panel's options are drawn in), with the
-    /// label `weak` where the panel's are. True if one was changed this
-    /// frame.
-    pub fn rows(&mut self, ui: &mut Ui, weak: bool) -> bool {
+    /// shape the dialog's and the panel's options are drawn in). In the
+    /// `panel` the labels are weak, as the panel's are, and have no
+    /// tooltips. True if one was changed this frame.
+    pub fn rows(&mut self, ui: &mut Ui, panel: bool) -> bool {
         let mut changed = false;
-        let mut row = |ui: &mut Ui, on: &mut bool, label: &str, summary: &str| {
-            let label = if weak { RichText::new(label).weak() } else { RichText::new(label) };
-            ui.label(label).on_hover_text(summary);
+        let label = |ui: &mut Ui, label: &str, summary: &str| {
+            if panel {
+                ui.label(RichText::new(label).weak());
+            } else {
+                ui.label(label).on_hover_text(summary);
+            }
+        };
+        let mut row = |ui: &mut Ui, on: &mut bool, text: &str, summary: &str| {
+            label(ui, text, summary);
             changed |= ui.checkbox(on, "").changed();
             ui.end_row();
         };
@@ -88,28 +94,23 @@ impl Settings {
             ui,
             &mut self.grab_keyboard,
             "Grab keyboard",
-            "Send the window manager's shortcuts (Alt+Tab, Super and the rest) to the remote machine \
-             while the session has the focus and takes input. Off, they stay this desktop's.",
+            "Capture global keybindings and send them to the server while focused.",
         );
         row(
             ui,
             &mut self.software_cursor,
             "Software cursor",
-            "Draw the far end's cursor shape into the picture under the pointer, hiding this desktop's \
-             own, instead of making it this window's pointer. Only where this end owns the pointer; in \
-             relative mode the far end draws its cursor into the picture either way.",
+            "Hide the native cursor and draw the cursor directly. Always enabled if the \
+             remote machine uses a relative pointer.",
         );
         // A box like the others, on meaning `auto`; `vaapi` from the command
         // line, which decodes the same, is kept until the box is switched
-        // off. Which backends use it is said in the summary, which grows as
-        // more of them decode through it.
-        let label = if weak { RichText::new("Hardware decoding").weak() } else { RichText::new("Hardware decoding") };
-        ui.label(label).on_hover_text(
-            "Decode video on the GPU (VAAPI) where the device takes the stream, and in software where it \
-             does not. RustDesk, TigerVNC's H.264 and FreeRDP's H.264 switch at once (at the next picture \
-             the far end sends whole), and RustDesk's VAAPI pictures are drawn from the GPU without being \
-             read back where the window's Vulkan device can; the other backends decode as their libraries \
-             do and do not use this.",
+        // off.
+        label(
+            ui,
+            "Hardware decoding",
+            "Decode video using the GPU (VAAPI) if supported by the backend and local \
+             hardware. Not supported by all backends, and may be slower on some hardware.",
         );
         let mut on = self.hw_decode != Hardware::Off;
         if ui.checkbox(&mut on, "").changed() {

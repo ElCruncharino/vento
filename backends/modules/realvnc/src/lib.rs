@@ -61,10 +61,7 @@ fn library() -> Result<&'static ffi::Library, &'static str> {
 /// library: the backend is then unavailable for that reason, rather than
 /// because the loader could not find the file.
 pub fn not_built() {
-    LIBRARY.not_built(
-        "libvento_realvnc.so was not built: the Linux client's build makes it only with clang on the path"
-            .to_string(),
-    );
+    LIBRARY.not_built("libvento_realvnc.so not available (was clang installed when building?)".to_string());
 }
 
 /// The library of a running session. A [`CSession`] of this backend exists
@@ -326,8 +323,8 @@ mod tests {
     fn a_library_not_built_says_clang() {
         not_built();
         let version = (KIND.version)();
-        assert!(version.starts_with("not available: libvento_realvnc.so was not built: "), "{version}");
-        assert!(version.ends_with("only with clang on the path"), "{version}");
+        assert!(version.starts_with("not available: libvento_realvnc.so "), "{version}");
+        assert!(version.contains("clang"), "{version}");
         assert_eq!(library().err(), version.strip_prefix("not available: "));
     }
 }

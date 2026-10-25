@@ -143,7 +143,7 @@ impl Dialog {
             let password = ui.add(
                 TextEdit::singleline(&mut self.password)
                     .password(true)
-                    .hint_text("asked for when needed")
+                    .hint_text("will be prompted if required")
                     .desired_width(f32::INFINITY),
             );
             if password.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
@@ -154,7 +154,7 @@ impl Dialog {
             ui.label("Domain");
             ui.add(
                 TextEdit::singleline(&mut self.domain)
-                    .hint_text("RDP only; or DOMAIN\\user above")
+                    .hint_text("RDP only (DOMAIN\\user above)")
                     .desired_width(f32::INFINITY),
             );
             ui.end_row();
@@ -192,8 +192,7 @@ impl Dialog {
         ui.add_space(12.0);
         ui.separator();
         ui.add_space(4.0);
-        ui.label(RichText::new("Settings").strong())
-            .on_hover_text("This client's own, for every connection; nothing is saved.");
+        ui.label(RichText::new("Settings").strong());
         ui.add_space(4.0);
         Grid::new("settings").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
             settings.rows(ui, false);
@@ -218,7 +217,7 @@ impl Dialog {
     fn request(&self) -> Result<Request, String> {
         let kind = self.kinds[self.selected];
         if self.address.trim().is_empty() {
-            return Err("An address is needed.".to_string());
+            return Err("Missing address".to_string());
         }
         let mut options = Options::defaults(kind.options);
         for spec in kind.options {

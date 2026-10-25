@@ -626,8 +626,8 @@ impl Pane {
         let scale = ui.add_enabled(connected, icon_only(scale_icon(mode)));
         if scale
             .on_hover_text(format!(
-                "Scale: {} — click for {}.\n\
-                 Where the desktop overflows the window, the pointer near an edge pans it.",
+                "Scale: {} (next: {}).\nIf the desktop is larger than the window, it will pan \
+                 when the cursor is near the edges.",
                 mode.label().to_lowercase(),
                 mode.next().label().to_lowercase(),
             ))
@@ -647,7 +647,7 @@ impl Pane {
             if ui
                 .add_enabled(connected, icon_only(symbol))
                 .on_hover_text(format!(
-                    "Monitor: {} — click for {}.\nThe whole desktop, or one of its monitors.",
+                    "Monitor: {} (next: {}).\nThe whole desktop, or one of its monitors.",
                     monitor_name(current, count),
                     monitor_name(next_monitor(current, count), count),
                 ))
@@ -665,8 +665,7 @@ impl Pane {
             if ui
                 .add_enabled(connected, icon_only(icons::MONITOR))
                 .on_hover_text(format!(
-                    "Display: {} of {count} — click for display {}.\nThe far end sends one display at a \
-                     time; a click asks it for the next.",
+                    "Display: {} of {count} (next: {}).",
                     facts.display + 1,
                     next + 1,
                 ))
@@ -683,11 +682,9 @@ impl Pane {
         if ui
             .add_enabled(connected, toggle(ui.visuals(), symbol, view_only))
             .on_hover_text(if view_only {
-                "View only: on — the mouse, the keyboard and the clipboard stay here. Click to take \
-                 control again."
+                "View only: on."
             } else {
-                "View only: off — the mouse, the keyboard and the clipboard go to the far end. Click \
-                 to watch only."
+                "View only: off."
             })
             .clicked()
         {
@@ -714,7 +711,7 @@ impl Pane {
         if self.main()
             && ui
                 .add_enabled(connected, toggle(ui.visuals(), icons::INFO, s.panel.open))
-                .on_hover_text("Info: the connection's facts, and the settings it can still be told")
+                .on_hover_text("Connection information and settings")
                 .clicked()
         {
             s.panel.open = !s.panel.open;
@@ -724,10 +721,9 @@ impl Pane {
         if ui
             .add(icon_only(if fullscreen { icons::FULLSCREEN_EXIT } else { icons::FULLSCREEN }))
             .on_hover_text(if fullscreen {
-                "Leave fullscreen: back to a window"
+                "Leave fullscreen"
             } else {
-                "Fullscreen: fill the screen. The toolbar still slides in at the top edge; its button, \
-                 or disconnecting, leaves fullscreen."
+                "Enter fullscreen"
             })
             .clicked()
         {
@@ -739,7 +735,7 @@ impl Pane {
         if !self.main() {
             if ui
                 .add(icon_only(icons::PIP_EXIT))
-                .on_hover_text("Return: close this window, and give its monitor back to the main window")
+                .on_hover_text("Reattach monitor to main window")
                 .clicked()
             {
                 s.ops.push(WindowOp::Close { pane: self.id, returned: true });
@@ -749,11 +745,7 @@ impl Pane {
 
         if ui
             .add_enabled(s.disconnecting.is_none() && s.closed.is_none(), icon_only(icons::LINK_OFF))
-            .on_hover_text(if s.relative {
-                "Disconnect: end the session. Ctrl+Alt held together frees the locked pointer."
-            } else {
-                "Disconnect: end the session"
-            })
+            .on_hover_text("Disconnect")
             .clicked()
         {
             s.disconnect();
@@ -769,11 +761,8 @@ impl Pane {
     /// the user likes (their own Fullscreen fills the output each is on).
     fn pop_out_button(&mut self, s: &mut Session, ui: &mut egui::Ui, connected: bool) {
         let tip = match self.monitor {
-            Some(key) => format!(
-                "Pop out: monitor {} in a window of its own; this window moves on to the next monitor",
-                key.index + 1
-            ),
-            None => "Pop out: every monitor in a window of its own, this window keeping the first".to_string(),
+            Some(key) => format!("Detach monitor {} into window", key.index + 1),
+            None => "Detach all monitors".to_string(),
         };
         if !ui.add_enabled(connected, icon_only(icons::OPEN_IN_NEW)).on_hover_text(tip).clicked() {
             return;
@@ -1026,20 +1015,19 @@ fn sound_button(switch: Switch, on: bool) -> (&'static str, &'static str) {
     match (switch, on) {
         (Switch::Enable, true) => (
             icons::VOLUME_UP,
-            "Sound: on — the far end sends its sound and it plays here. Click to ask it to stop.",
+            "Sound: on (click to disable)",
         ),
         (Switch::Enable, false) => (
             icons::VOLUME_OFF,
-            "Sound: off — the far end is asked not to send its sound. Click to ask for it.",
+            "Sound: off (click to enable)",
         ),
         (Switch::Mute, false) => (
             icons::VOLUME_UP,
-            "Sound: on — the far end's sound plays here. Click to mute it.",
+            "Sound: on (click to mute)",
         ),
         (Switch::Mute, true) => (
             icons::VOLUME_MUTE,
-            "Sound: muted — the far end's sound still arrives and plays silently here. Click to hear it \
-             again.",
+            "Sound: muted (server is still sending audio, click to enable)",
         ),
     }
 }
@@ -1121,7 +1109,7 @@ mod tests {
             (enabled, disabled, heard, muted),
             (icons::VOLUME_UP, icons::VOLUME_OFF, icons::VOLUME_UP, icons::VOLUME_MUTE)
         );
-        assert!(enabled_tip.starts_with("Sound: on") && enabled_tip.contains("ask it to stop"));
+        assert!(enabled_tip.starts_with("Sound: on") && enabled_tip.contains("disable"));
         assert!(disabled_tip.starts_with("Sound: off"));
         assert!(heard_tip.starts_with("Sound: on") && heard_tip.contains("mute"));
         assert!(muted_tip.starts_with("Sound: muted"));

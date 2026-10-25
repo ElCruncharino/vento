@@ -202,7 +202,7 @@ impl Panel {
                 // and the state are given what is left of the row and wrap
                 // there rather than pushing the button out of the panel.
                 ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-                    if close_button(ui).on_hover_text("Close the panel").clicked() {
+                    if close_button(ui).clicked() {
                         self.open = false;
                     }
                     ui.with_layout(Layout::top_down(Align::Min), |ui| {
@@ -240,8 +240,7 @@ impl Panel {
 
             if facts.can_resize {
                 let have = (facts.width as u32, facts.height as u32);
-                let label = ui.label(RichText::new("Desktop size").weak());
-                label.on_hover_text("Ask the far end to make its desktop this size; what arrives is what it granted.");
+                ui.label(RichText::new("Desktop size").weak());
                 ComboBox::from_id_salt("desktop-size")
                     .selected_text(size_label(have))
                     .width(ui.available_width())
@@ -256,8 +255,7 @@ impl Panel {
             }
 
             if !facts.displays.is_empty() {
-                let label = ui.label(RichText::new("Display").weak());
-                label.on_hover_text("Which of the far end's screens it is sending; a switch is a request.");
+                ui.label(RichText::new("Display").weak());
                 let shown = facts
                     .displays
                     .get(facts.display.max(0) as usize)
@@ -283,8 +281,7 @@ impl Panel {
             // there whenever the far end may send sound, whether or not any
             // is playing, as the toolbar's is.
             if let Some((switch, on)) = controls.sound {
-                let label = ui.label(RichText::new(switch.label()).weak());
-                label.on_hover_text(sound_summary(switch));
+                ui.label(RichText::new(switch.label()).weak());
                 let mut on = on;
                 if ui.checkbox(&mut on, "").changed() {
                     actions.push(Action::Sound(on));
@@ -292,14 +289,10 @@ impl Panel {
                 ui.end_row();
             }
 
-            let label = ui.label(RichText::new("Follow window size").weak());
-            label.on_hover_text(
-                "Ask the far end for a desktop the size of this window, in pixels, whenever the window \
-                 changes shape — once it has settled, and once the far end says it takes sizes.",
-            );
+            ui.label(RichText::new("Follow window size").weak());
             let mut follow = controls.follow;
             let note = if follow && !facts.can_resize && !facts.can_layout {
-                "waiting for the far end to take a size"
+                "server has not accepted request"
             } else {
                 ""
             };
@@ -316,11 +309,7 @@ impl Panel {
             // The session's, not a setting: it is for looking into a
             // problem with this connection, and is off again in the next.
             // Ctrl+Alt+D toggles it as well.
-            let label = ui.label(RichText::new("Debug overlay").weak());
-            label.on_hover_text(
-                "The state, the pixel path, the cursor, the view and the input, in a corner of the \
-                 desktop. Ctrl+Alt+D toggles it too.",
-            );
+            ui.label(RichText::new("Debug overlay").weak());
             let mut debug = controls.debug;
             if ui.checkbox(&mut debug, "").changed() {
                 actions.push(Action::Debug(debug));
@@ -335,10 +324,7 @@ impl Panel {
     /// One live option as the control its kind calls for, showing what it
     /// is set to now.
     fn option_row(&mut self, ui: &mut Ui, spec: &'static Spec, values: &Options, actions: &mut Vec<Action>) {
-        let label = ui.label(RichText::new(spec.label).weak());
-        if let Some(summary) = spec.summary_on(Platform::Linux) {
-            label.on_hover_text(summary);
-        }
+        ui.label(RichText::new(spec.label).weak());
         let current = values.get(spec.key);
         match spec.ty {
             Type::Bool => {
@@ -358,10 +344,7 @@ impl Panel {
                     .width(ui.available_width())
                     .show_ui(ui, |ui| {
                         for choice in offered {
-                            let mut row = ui.selectable_label(choice.value == current, choice.label_on(Platform::Linux));
-                            if let Some(summary) = choice.summary {
-                                row = row.on_hover_text(summary);
-                            }
+                            let row = ui.selectable_label(choice.value == current, choice.label_on(Platform::Linux));
                             if row.clicked() && choice.value != current {
                                 actions.push(Action::SetOption(spec.key, choice.value.to_string()));
                             }
@@ -386,21 +369,6 @@ impl Panel {
             }
         }
         ui.end_row();
-    }
-}
-
-/// What the sound switch does, for its row's tooltip.
-fn sound_summary(switch: Switch) -> &'static str {
-    match switch {
-        Switch::Enable => {
-            "Ask the far end to send its sound, or to stop sending it: off, nothing arrives and nothing \
-             plays. For this session; the connection's Audio option is what it starts as."
-        }
-        Switch::Mute => {
-            "Silence the far end's sound here. It keeps arriving, since this protocol has no way to ask \
-             the far end to stop, and plays silently, so unmuting is the sound as it is now. For this \
-             session; the connection's Sound option is what keeps the far end quiet for good."
-        }
     }
 }
 
