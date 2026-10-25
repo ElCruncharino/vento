@@ -674,7 +674,9 @@ impl Client {
             // by two 16-bit fields a server chose: 65535×65535 raw is a 17 GB
             // allocation, and an allocation that fails aborts the process
             // instead of returning. A conforming server never sends one — it
-            // clips to what was asked for — so the check is free.
+            // clips to what was asked for — so the check is free. A cursor's
+            // rectangle is a pseudo-encoding's and is not on the desktop;
+            // `decode::cursor` holds it to the cursor bound instead.
             if !decode::is_pseudo(encoding) {
                 let fb = self.shared.framebuffer.read().unwrap();
                 if x + w > fb.width() || y + h > fb.height() {
@@ -1255,6 +1257,7 @@ mod tests {
     struct Recorder {
         clipboard: Vec<String>,
         bells: usize,
+        cursors: Vec<(usize, usize)>,
     }
 
     impl Handler for Recorder {
@@ -1262,7 +1265,10 @@ mod tests {
         fn desktop_size(&mut self, _: usize, _: usize) {}
         fn damaged(&mut self, _: usize, _: usize, _: usize, _: usize) {}
         fn frame_end(&mut self) {}
-        fn cursor(&mut self, _: &[u32], _: usize, _: usize, _: i32, _: i32) {}
+        fn cursor(&mut self, pixels: &[u32], w: usize, h: usize, _: i32, _: i32) {
+            assert_eq!(pixels.len(), w * h);
+            self.cursors.push((w, h));
+        }
         fn bell(&mut self) {
             self.bells += 1;
         }
@@ -1299,6 +1305,46 @@ mod tests {
         let seen = read_all(&Client::new(), &bytes);
         assert!(seen.clipboard.is_empty());
         assert_eq!(seen.bells, 1);
+    }
+
+    /// A `FramebufferUpdate` of one `Cursor` rectangle of `w` by `h`, with
+    /// `body` after it where the pixels and the mask would be.
+    fn cursor_update(w: u16, h: u16, body: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![0, 0, 0, 1];
+        bytes.extend_from_slice(&[0, 1, 0, 2]); // the hotspot
+        bytes.extend_from_slice(&w.to_be_bytes());
+        bytes.extend_from_slice(&h.to_be_bytes());
+        bytes.extend_from_slice(&decode::ENC_CURSOR.to_be_bytes());
+        bytes.extend_from_slice(body);
+        bytes
+    }
+
+    /// A cursor up to the shared bound is a cursor, mask and all.
+    #[test]
+    fn a_cursor_as_big_as_any_is_drawn() {
+        let side = common::MAX_CURSOR_SIDE;
+        let body = vec![0xff; side * 4 + side.div_ceil(8)];
+        let mut bytes = cursor_update(side as u16, 1, &body);
+        bytes.push(2);
+        let seen = read_all(&Client::new(), &bytes);
+        assert_eq!(seen.cursors, vec![(side, 1)]);
+        assert_eq!(seen.bells, 1, "and what follows it is read in step");
+    }
+
+    /// The `Cursor` pseudo-encoding has no desktop to be checked against, so
+    /// its two 16-bit fields are held to the shared cursor bound before
+    /// anything is allocated by them: 65535x65535 asked for 17 GB before a
+    /// pixel had arrived. Past it the session ends, as TigerVNC's and
+    /// libvncclient's do.
+    #[test]
+    fn a_cursor_bigger_than_any_cursor_ends_the_session() {
+        for (w, h) in [(u16::MAX, u16::MAX), (common::MAX_CURSOR_SIDE as u16 + 1, 1)] {
+            let bytes = cursor_update(w, h, &[0; 64]);
+            let mut seen = Recorder::default();
+            let end = Client::new().read_loop(&mut Reader::new(&bytes[..]), &mut seen);
+            assert!(matches!(end, Err(Error::Protocol(_))), "{w}x{h}: {end:?}");
+            assert!(seen.cursors.is_empty());
+        }
     }
 
     /// What the client queued for the server, in order.
