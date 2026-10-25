@@ -6,7 +6,7 @@ plugins {
 }
 
 // `Backend` implemented on somebody else's viewer core. A protocol module like
-// the other two: `:realvnc-jni` holds the declarations, and what is here is
+// the others: `:realvnc-jni` holds the declarations, and what is here is
 // ours — the session's lifecycle, the prompts, the options, and one small
 // library that reads a counter their exported functions do not offer.
 //

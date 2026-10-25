@@ -36,9 +36,12 @@
 //     three interfaces are one shape less a method or two — libvnc has no
 //     `onPointerMode`, FreeRDP no `onUnverified`, TigerVNC `onQuestion` in
 //     place of `onTrustNeeded` — and resolving each optionally is what lets
-//     one adapter serve all three. For the two questions that is more than
+//     one adapter serve all three. For the questions that is more than
 //     tidiness: a question nobody can hear is answered no below, so the
-//     protocol thread is not left parked behind it.
+//     protocol thread is not left parked behind it — which is also all this
+//     adapter does with the two RealVNC asks (`security_needed`, `message`),
+//     since that backend's Android half is Java over the core's own surface
+//     and never comes this way.
 
 #include "vento_jni.h"
 
@@ -434,6 +437,29 @@ static void cbQuestion(void *user, const char *title, const char *text) {
     }
 }
 
+/* The two RealVNC asks, which no module's `Callbacks` declares: RealVNC's
+   Android half is Java over the core's own JNI surface and never comes
+   through this adapter, so these are the contract's shape here, as `refuse`
+   says above, and answer no. */
+static void cbSecurityNeeded(void *user, int identity, int encryption, const char *signature,
+                             const char *catchphrase, const char *matchingAddress) {
+    (void) identity;
+    (void) encryption;
+    (void) signature;
+    (void) catchphrase;
+    (void) matchingAddress;
+    refuse(user, "onSecurityNeeded");
+}
+
+static void cbMessage(void *user, const char *text, int severity, bool question,
+                      const char *confirmLabel) {
+    (void) text;
+    (void) severity;
+    (void) question;
+    (void) confirmLabel;
+    refuse(user, "onMessage");
+}
+
 static void cbClosed(void *user, const char *detail) {
     callString(user, mClosed, detail);
 }
@@ -465,6 +491,8 @@ vento_jni_session *vento_jni_begin(JNIEnv *env, jobject listener) {
     h->callbacks.trust_needed = cbTrustNeeded;
     h->callbacks.unverified = cbUnverified;
     h->callbacks.question = cbQuestion;
+    h->callbacks.security_needed = cbSecurityNeeded;
+    h->callbacks.message = cbMessage;
     h->callbacks.closed = cbClosed;
     return h;
 }
