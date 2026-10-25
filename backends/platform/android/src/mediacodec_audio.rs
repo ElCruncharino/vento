@@ -36,12 +36,11 @@ use runtime::media::audio::Format;
 use runtime::media::audio::decode::{self, Codec, Decoder, Decoders, opus_pre_skip};
 
 use crate::mediacodec::{
-    AMEDIA_OK, AMediaCodec, AMediaCodec_configure, AMediaCodec_createDecoderByType, AMediaCodec_delete,
-    AMediaCodec_dequeueInputBuffer, AMediaCodec_dequeueOutputBuffer, AMediaCodec_getInputBuffer,
+    AMEDIA_OK, AMediaCodec_dequeueInputBuffer, AMediaCodec_dequeueOutputBuffer, AMediaCodec_getInputBuffer,
     AMediaCodec_getOutputBuffer, AMediaCodec_getOutputFormat, AMediaCodec_queueInputBuffer,
-    AMediaCodec_releaseOutputBuffer, AMediaCodec_start, AMediaCodec_stop, AMediaFormat_delete,
-    AMediaFormat_getInt32, AMediaFormat_new, AMediaFormat_setBuffer, AMediaFormat_setInt32, AMediaFormat_setString,
-    BufferInfo, INFO_OUTPUT_BUFFERS_CHANGED, INFO_OUTPUT_FORMAT_CHANGED, codec_name, is_hardware,
+    AMediaCodec_releaseOutputBuffer, AMediaFormat_delete, AMediaFormat_getInt32, AMediaFormat_setBuffer,
+    AMediaFormat_setInt32, BufferInfo, Handle, INFO_OUTPUT_BUFFERS_CHANGED, INFO_OUTPUT_FORMAT_CHANGED, exists,
+    is_hardware,
 };
 
 /// How long a packet waits for an input buffer, and how long the first of
@@ -72,17 +71,7 @@ impl Decoders for MediaCodecAudio {
     /// Asked once and remembered, as the video's is.
     fn decodable(&self, codec: Codec) -> bool {
         static PROBED: OnceLock<[bool; Codec::ALL.len()]> = OnceLock::new();
-        let probed = PROBED.get_or_init(|| {
-            Codec::ALL.map(|codec| {
-                let Ok(mime) = CString::new(mime(codec)) else { return false };
-                let handle = unsafe { AMediaCodec_createDecoderByType(mime.as_ptr()) };
-                if handle.is_null() {
-                    return false;
-                }
-                unsafe { AMediaCodec_delete(handle) };
-                true
-            })
-        });
+        let probed = PROBED.get_or_init(|| Codec::ALL.map(|codec| exists(mime(codec))));
         probed[Codec::ALL.iter().position(|c| *c == codec).unwrap()]
     }
 
@@ -90,13 +79,10 @@ impl Decoders for MediaCodecAudio {
         let config = decode::config(codec, format, config)
             .ok_or_else(|| format!("{} has no setup for {} Hz in {} channels", codec.name(), format.rate, format.channels))?;
         let mime = CString::new(mime(codec)).unwrap();
-        let handle = unsafe { AMediaCodec_createDecoderByType(mime.as_ptr()) };
-        if handle.is_null() {
+        let Some(mut handle) = Handle::create(&mime) else {
             return Err(format!("no {} decoder on this device", codec.name()));
-        }
-        let started = unsafe {
-            let f = AMediaFormat_new();
-            AMediaFormat_setString(f, c"mime".as_ptr(), mime.as_ptr());
+        };
+        let started = handle.start(&mime, |f| unsafe {
             AMediaFormat_setInt32(f, c"sample-rate".as_ptr(), format.rate as i32);
             AMediaFormat_setInt32(f, c"channel-count".as_ptr(), format.channels as i32);
             AMediaFormat_setInt32(f, c"pcm-encoding".as_ptr(), ENCODING_PCM_16BIT);
@@ -109,12 +95,8 @@ impl Decoders for MediaCodecAudio {
                     set_buffer(f, c"csd-2", &OPUS_SEEK_PREROLL_NS.to_le_bytes());
                 }
             }
-            let configured = AMediaCodec_configure(handle, f, std::ptr::null_mut(), std::ptr::null_mut(), 0);
-            AMediaFormat_delete(f);
-            configured == AMEDIA_OK && AMediaCodec_start(handle) == AMEDIA_OK
-        };
+        });
         if !started {
-            unsafe { AMediaCodec_delete(handle) };
             return Err(format!(
                 "MediaCodec would not start {} for {} Hz in {} channels",
                 codec.name(),
@@ -122,7 +104,7 @@ impl Decoders for MediaCodecAudio {
                 format.channels
             ));
         }
-        let name = codec_name(handle).unwrap_or_else(|| "unnamed".into());
+        let name = handle.name().unwrap_or_else(|| "unnamed".into());
         let hardware = match is_hardware(&name) {
             Some(true) => ", hardware",
             Some(false) => ", software",
@@ -145,7 +127,7 @@ unsafe fn set_buffer(format: *mut crate::mediacodec::AMediaFormat, name: &std::f
 
 /// One MediaCodec decoder, stopped and deleted when dropped.
 struct Audio {
-    codec: *mut AMediaCodec,
+    codec: Handle,
     name: String,
     /// What the decoder's output is, from its last output format.
     output: Format,
@@ -154,23 +136,10 @@ struct Audio {
     pts_us: u64,
 }
 
-// A MediaCodec handle in synchronous mode is used from one thread at a time,
-// as `Decoder` promises, and holds nothing tied to the thread that made it.
-unsafe impl Send for Audio {}
-
-impl Drop for Audio {
-    fn drop(&mut self) {
-        unsafe {
-            AMediaCodec_stop(self.codec);
-            AMediaCodec_delete(self.codec);
-        }
-    }
-}
-
 impl Audio {
     /// The decoder's output format, read when it says it has changed.
     fn output_changed(&mut self) {
-        let f = unsafe { AMediaCodec_getOutputFormat(self.codec) };
+        let f = unsafe { AMediaCodec_getOutputFormat(self.codec.raw()) };
         if f.is_null() {
             return;
         }
@@ -196,7 +165,7 @@ impl Audio {
         let mut timeout = wait;
         loop {
             let mut info = BufferInfo::default();
-            let index = unsafe { AMediaCodec_dequeueOutputBuffer(self.codec, &mut info, timeout) };
+            let index = unsafe { AMediaCodec_dequeueOutputBuffer(self.codec.raw(), &mut info, timeout) };
             if index == INFO_OUTPUT_FORMAT_CHANGED {
                 self.output_changed();
                 continue;
@@ -209,7 +178,7 @@ impl Audio {
             }
             timeout = 0;
             let mut size = 0usize;
-            let data = unsafe { AMediaCodec_getOutputBuffer(self.codec, index as usize, &mut size) };
+            let data = unsafe { AMediaCodec_getOutputBuffer(self.codec.raw(), index as usize, &mut size) };
             let (offset, len) = (info.offset.max(0) as usize, info.size.max(0) as usize);
             // Samples of one format: a change between two buffers of a
             // packet returns what came before it, and the rest is lost.
@@ -226,7 +195,7 @@ impl Audio {
                 }
                 *format = Some(self.output);
             }
-            unsafe { AMediaCodec_releaseOutputBuffer(self.codec, index as usize, false) };
+            unsafe { AMediaCodec_releaseOutputBuffer(self.codec.raw(), index as usize, false) };
         }
     }
 
@@ -248,7 +217,7 @@ impl Decoder for Audio {
     fn decode(&mut self, packet: &[u8], out: &mut Vec<i16>) -> Result<Option<Format>, String> {
         let before = out.len();
         let mut format = None;
-        let mut index = unsafe { AMediaCodec_dequeueInputBuffer(self.codec, INPUT_TIMEOUT_US) };
+        let mut index = unsafe { AMediaCodec_dequeueInputBuffer(self.codec.raw(), INPUT_TIMEOUT_US) };
         if index < 0 {
             // Every input buffer can be held by a decoder with nowhere to put
             // what it decoded: its output buffers all waiting to be taken, and
@@ -257,7 +226,7 @@ impl Decoder for Audio {
             // nothing ever after. What it has finished is taken now, without
             // waiting, which frees it to take input, and then once more.
             self.drain(out, &mut format, 0);
-            index = unsafe { AMediaCodec_dequeueInputBuffer(self.codec, INPUT_TIMEOUT_US) };
+            index = unsafe { AMediaCodec_dequeueInputBuffer(self.codec.raw(), INPUT_TIMEOUT_US) };
             if index < 0 {
                 // The packet is dropped, and what was taken is still sound.
                 let taken = self.finish(out, before, format);
@@ -268,12 +237,12 @@ impl Decoder for Audio {
             }
         }
         let mut capacity = 0usize;
-        let buffer = unsafe { AMediaCodec_getInputBuffer(self.codec, index as usize, &mut capacity) };
+        let buffer = unsafe { AMediaCodec_getInputBuffer(self.codec.raw(), index as usize, &mut capacity) };
         let take = packet.len().min(if buffer.is_null() { 0 } else { capacity });
         if take > 0 {
             unsafe { std::ptr::copy_nonoverlapping(packet.as_ptr(), buffer, take) };
         }
-        let queued = unsafe { AMediaCodec_queueInputBuffer(self.codec, index as usize, 0, take, self.pts_us, 0) };
+        let queued = unsafe { AMediaCodec_queueInputBuffer(self.codec.raw(), index as usize, 0, take, self.pts_us, 0) };
         if queued != AMEDIA_OK {
             return Err(format!("the decoder took no packet ({queued})"));
         }
