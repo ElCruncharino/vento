@@ -135,7 +135,11 @@ pub struct Client {
     /// about this session rather than about the protocol — so the seam polls it
     /// and it can turn true seconds after the picture arrives.
     resizable: Arc<AtomicBool>,
-    closed: AtomicBool,
+    /// What `close` rings. The command queue says the same, but only the
+    /// running session reads it: everything before that — four dials, four
+    /// links, a TLS handshake each — is a step with a deadline and nothing
+    /// else, so a close that waited for the queue waited for those too.
+    closing: tokio::sync::Notify,
 }
 
 impl Client {
@@ -152,7 +156,7 @@ impl Client {
             view_only: Arc::new(AtomicBool::new(false)),
             monitors: Arc::new(Mutex::new(Vec::new())),
             resizable: Arc::new(AtomicBool::new(false)),
-            closed: AtomicBool::new(false),
+            closing: tokio::sync::Notify::new(),
         }
     }
 
@@ -249,7 +253,10 @@ impl Client {
     }
 
     pub fn close(&self) {
-        self.closed.store(true, Ordering::Relaxed);
+        // `notify_one` rather than `notify_waiters`: it leaves a permit when
+        // nothing is waiting yet, so a close that arrives before the runtime
+        // has started is still the first thing the session sees.
+        self.closing.notify_one();
         let _ = self.commands.send(Command::Close);
     }
 
@@ -266,7 +273,16 @@ impl Client {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
-        runtime.block_on(self.session(config, handler, inbox))
+        // The whole session raced against the close, rather than the close
+        // being one more thing the session listens for: dropping the session
+        // is what ends a dial, a handshake or a read wherever it has got to,
+        // and the runtime going with it ends the channels' reader tasks.
+        runtime.block_on(async {
+            tokio::select! {
+                ended = self.session(config, handler, inbox) => ended,
+                () = self.closing.notified() => Err(Error::Closed),
+            }
+        })
     }
 
     async fn session(
