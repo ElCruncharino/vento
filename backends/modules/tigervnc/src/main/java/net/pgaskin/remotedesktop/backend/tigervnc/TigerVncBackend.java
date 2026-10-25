@@ -42,7 +42,9 @@ import java.util.function.Consumer;
  *   <li><b>The far end's identity is TigerVNC's business.</b> The native side
  *       checks the certificate the way their viewer does, keeps their viewer's
  *       known-hosts file beside the app's, and asks in their viewer's words;
- *       what the seam carries is the question and the answer.
+ *       what the seam carries is the question and the answer. One difference:
+ *       a certificate an authority vouches for is asked about once too, where
+ *       their viewer would take it without a word.
  *       So {@code KnownHosts} is not consulted for this backend, and clearing it
  *       does not reach this store — {@link #forgetHosts} is what does.
  * </ul>
