@@ -173,10 +173,13 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
     public void videoFrame(int x, int y, int width, int height,
                            int frameWidth, int frameHeight, int colorMode, byte[] nv12) {
         final VideoLayer v = video;
-        if (v != null) {
-            v.submit(x, y, width, height, frameWidth, frameHeight, colorMode, nv12);
+        if (v != null && v.submit(x, y, width, height, frameWidth, frameHeight, colorMode, nv12)) {
+            // A picture alone ends no frame, and the tiles under a new region
+            // are cut out of it when the view next draws.
+            postInvalidateOnAnimation();
         }
     }
+
     private final TapRegions tapRegions = TapRegions.standard();
     private final MouseOverlay overlay;
     private final ExtensionKeyboard keyboard;

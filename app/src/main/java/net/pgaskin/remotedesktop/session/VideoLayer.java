@@ -93,18 +93,22 @@ public final class VideoLayer implements GLSurfaceView.Renderer {
     /**
      * A frame for a rectangle, from any thread. Replaces the region's last frame.
      * The frame is {@code frameW} by {@code frameH} and may be larger than the
-     * rectangle; the rectangle's top-left part is what is kept.
+     * rectangle; the rectangle's top-left part is what is kept. True where this
+     * made a region that was not there, which the view must redraw to cut its tiles
+     * out of.
      */
-    public void submit(int x, int y, int w, int h, int frameW, int frameH, int colorMode, byte[] nv12) {
+    public boolean submit(int x, int y, int w, int h, int frameW, int frameH, int colorMode, byte[] nv12) {
         if (w <= 0 || h <= 0 || frameW < w || frameH < h) {
-            return;
+            return false;
         }
         final byte[] picture = crop(nv12, frameW, frameH, w, h);
         ByteBuffer copy = ByteBuffer.allocateDirect(picture.length).order(ByteOrder.nativeOrder());
         copy.put(picture).position(0);
+        final boolean added;
         synchronized (this) {
             Region region = find(x, y, w, h);
-            if (region == null) {
+            added = region == null;
+            if (added) {
                 region = new Region(x, y, w, h);
                 regions.add(region);
             }
@@ -125,6 +129,7 @@ public final class VideoLayer implements GLSurfaceView.Renderer {
             }
         }
         surface.requestRender();
+        return added;
     }
 
     /**
