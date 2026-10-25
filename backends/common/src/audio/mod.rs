@@ -239,6 +239,36 @@ impl Sound {
     pub fn audible(&self) -> bool {
         self.enabled && !self.muted
     }
+
+    /// A debug overlay's line for the sound, where the session has a switch:
+    /// what plays — what is queued in front of the device and the device's
+    /// own buffer, the two together how far behind what arrived it is heard,
+    /// and what the queue has had to do about the far end's timing — or that
+    /// nothing does; and DISABLED while the far end is asked not to send its
+    /// sound, MUTED while it is muted here. Both clients' overlays say it in
+    /// these words.
+    pub fn line(&self, playback: Option<Playback>) -> Option<String> {
+        self.switch?;
+        let what = match playback {
+            Some(p) => format!(
+                "{}  queue {} ms + device {} ms  underruns {}  dropped {}",
+                p.describe(),
+                p.queued.as_millis(),
+                p.device.as_millis(),
+                p.stats.underruns,
+                p.stats.dropped,
+            ),
+            None => "nothing playing".to_string(),
+        };
+        let state = if !self.enabled {
+            "  DISABLED"
+        } else if self.muted {
+            "  MUTED"
+        } else {
+            ""
+        };
+        Some(format!("snd {what}{state}"))
+    }
 }
 
 /// What a session is playing right now, as [`Controls::playback`] answers:
@@ -903,5 +933,32 @@ mod tests {
         c.set_muted(false);
         c.set_gain(0.5);
         assert_eq!(c.factor(0.5), 0.25);
+    }
+
+    #[test]
+    fn the_overlay_says_the_sound_and_whether_it_is_off_or_muted() {
+        let sound = |switch, enabled, muted| Sound {
+            switch,
+            enabled,
+            muted,
+            playing: false,
+        };
+        assert_eq!(sound(None, true, false).line(None), None);
+        assert_eq!(sound(Some(Switch::Enable), false, false).line(None).unwrap(), "snd nothing playing  DISABLED");
+        let playback = Playback {
+            format: Format::new(48_000, 2).unwrap(),
+            codec: None,
+            queued: Duration::from_millis(32),
+            device: Duration::from_millis(50),
+            stats: Stats::default(),
+        };
+        assert_eq!(
+            sound(Some(Switch::Mute), true, true).line(Some(playback)).unwrap(),
+            "snd PCM 48 kHz stereo  queue 32 ms + device 50 ms  underruns 0  dropped 0  MUTED"
+        );
+        assert_eq!(
+            sound(Some(Switch::Enable), true, false).line(Some(playback)).unwrap(),
+            "snd PCM 48 kHz stereo  queue 32 ms + device 50 ms  underruns 0  dropped 0"
+        );
     }
 }

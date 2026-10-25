@@ -163,6 +163,11 @@ pub const NATIVES: &[Native] = &[
         params: &["handle"],
     },
     Native {
+        name: "soundLine",
+        descriptor: "(J)Ljava/lang/String;",
+        params: &["handle"],
+    },
+    Native {
         name: "readRegion",
         descriptor: "(JIIIILandroid/graphics/Bitmap;II)Z",
         params: &["handle", "x", "y", "width", "height", "dst", "dstX", "dstY"],

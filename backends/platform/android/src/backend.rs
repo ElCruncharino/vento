@@ -268,6 +268,7 @@ pub const METHODS: &[NativeMethod] = &[
     },
     native_method! { fn facts(handle: jlong) -> [jint], error_policy = LogErrorAndDefault },
     native_method! { fn info(handle: jlong) -> [JString], error_policy = LogErrorAndDefault },
+    native_method! { fn sound_line(handle: jlong) -> JString, error_policy = LogErrorAndDefault },
     native_method! { fn traffic(handle: jlong) -> [jlong], error_policy = LogErrorAndDefault },
     native_method! {
         raw fn read_region(
@@ -651,6 +652,20 @@ fn info<'local>(
         }
     }
     Ok(array)
+}
+
+/// The debug overlay's sound line (`common::audio::Sound::line`): what plays
+/// and how far behind, or "nothing playing", and DISABLED or MUTED. Null
+/// where the session has no sound switch, which is when an overlay has no
+/// such line.
+fn sound_line<'local>(env: &mut Env<'local>, _this: JObject<'local>, handle: jlong) -> Result<JString<'local>, Error> {
+    let line = unsafe { self::handle(handle) }
+        .and_then(|h| h.audio.as_ref())
+        .and_then(|audio| audio.controls().sound().line(audio.controls().playback()));
+    match line {
+        Some(line) => env.new_string(line),
+        None => Ok(JString::null()),
+    }
 }
 
 fn field(field: Field) -> &'static str {
