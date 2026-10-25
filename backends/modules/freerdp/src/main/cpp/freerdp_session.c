@@ -406,8 +406,19 @@ static BOOL onEndPaint(rdpContext *context) {
         return TRUE;
     }
 
-    const int fw = s->fbW, fh = s->fbH;
     pthread_rwlock_wrlock(&s->fbLock);
+    /* Both sizes are read here, under the lock the copy's own size changes
+       under, and the damage is held to the smaller of the two buffers. The
+       desktop is resized on two threads — the protocol thread's for a
+       reactivation, the graphics pipeline's channel thread for its reset —
+       and a paint ends on either of them, so a size read before the lock
+       could be the old one of a copy since made smaller, and its rows were
+       then written at the old stride past the new allocation's end. And
+       the two buffers are resized one after the other (onDesktopResize),
+       with a call of this from inside gdi_resize in between. */
+    const int stride = s->fbW;
+    const int fw = s->fb ? (stride < gdi->width ? stride : gdi->width) : 0;
+    const int fh = s->fb ? (s->fbH < gdi->height ? s->fbH : gdi->height) : 0;
     for (INT32 i = 0; i < hwnd->ninvalid; i++) {
         const HGDI_RGN r = &hwnd->cinvalid[i];
         int x = r->x, y = r->y, w = r->w, h = r->h;
@@ -424,7 +435,7 @@ static BOOL onEndPaint(rdpContext *context) {
             const uint32_t *src = (const uint32_t *) (gdi->primary_buffer
                     + (size_t) (y + row) * gdi->stride) + x;
             uint32_t *dst = (uint32_t *) (s->fb
-                    + (size_t) (y + row) * (size_t) fw * 4u) + x;
+                    + (size_t) (y + row) * (size_t) stride * 4u) + x;
             for (int col = 0; col < w; col++) {
                 const uint32_t p = src[col];
                 dst[col] = 0xFF000000u | ((p & 0x00FF0000u) >> 16)
@@ -457,16 +468,31 @@ static BOOL onSurfaceBits(rdpContext *context, const SURFACE_BITS_COMMAND *cmd) 
 }
 
 /* Not optional: gdi_ResetGraphics asserts on this callback, so a client without
-   one does not fail to resize, it aborts on the channel thread. */
+   one does not fail to resize, it aborts on the channel thread.
+
+   Called on two threads: the protocol thread's, when the server reactivates
+   the connection at another size (libfreerdp/core/connection.c), and the
+   graphics pipeline channel's, on its reset (libfreerdp/gdi/gfx.c), which
+   holds the pipeline's own lock but not the update lock every paint is made
+   under. So the whole of a resize is made under that one, which the library
+   exports for this and which is recursive: two resizes do not interleave
+   their copies and GDIs, the sizes go out in the order the buffers took
+   them, and no paint on the other thread is between its BeginPaint and its
+   EndPaint while the buffers change under it. gdi_resize ends a paint of
+   its own first (update_end_paint, into onEndPaint), with the copy already
+   at the new size and the GDI still at the old, which onEndPaint's clamp to
+   the smaller of the two is for. */
 static BOOL onDesktopResize(rdpContext *context) {
     Session *s = sessionOf(context);
+    rdp_update_lock(context->update);
     const UINT32 w = freerdp_settings_get_uint32(context->settings, FreeRDP_DesktopWidth);
     const UINT32 h = freerdp_settings_get_uint32(context->settings, FreeRDP_DesktopHeight);
-    if (!allocFramebuffer(s, (int) w, (int) h) || !gdi_resize(context->gdi, w, h)) {
-        return FALSE;
+    const BOOL ok = allocFramebuffer(s, (int) w, (int) h) && gdi_resize(context->gdi, w, h);
+    if (ok) {
+        s->cb.desktop_size(s->cb.user, (int) w, (int) h);
     }
-    s->cb.desktop_size(s->cb.user, (int) w, (int) h);
-    return TRUE;
+    rdp_update_unlock(context->update);
+    return ok;
 }
 
 /* ---- the monitors ------------------------------------------------------- */
