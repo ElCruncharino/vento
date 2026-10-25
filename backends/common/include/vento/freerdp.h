@@ -35,11 +35,12 @@ typedef struct vento_freerdp_config {
     int monitors;
     int keyboard_layout;
     const char *client_name;
-    /* A writable directory: the library keeps a certificate store there, and
-       one it cannot write is a connection that fails as a TLS error. Also
-       becomes the process's HOME where there is none, which is an Android
-       app's process: WinPR reads it, and cannot start a session without one.
-       A HOME already set is left as it is. */
+    /* A writable directory: the library sets its certificate store up there,
+       and fails to connect without one, though the store is never read or
+       written — every certificate goes to `trust_needed` and nowhere else.
+       Also becomes the process's HOME where there is none, which is an
+       Android app's process: WinPR reads it, and cannot start a session
+       without one. A HOME already set is left as it is. */
     const char *config_path;
     int connect_timeout_ms;  /* 0 or less for the library's default */
 } vento_freerdp_config;

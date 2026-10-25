@@ -40,11 +40,11 @@ import java.util.function.Consumer;
  *       told them once and fails if they are wrong; FreeRDP asks again through
  *       its own callback, so a mistyped password is a second prompt rather than
  *       a closed session.
- *   <li><b>The certificate has two questions.</b> FreeRDP keeps a store of its
- *       own and asks a different one when what is on file disagrees. Neither
- *       answer comes from that store here — {@link KnownHosts} is what decides —
- *       but the second callback has to exist, because leaving it unset is a
- *       refusal.
+ *   <li><b>The certificate is managed outside the library.</b> FreeRDP has a
+ *       store of its own, which would connect without asking to a server on
+ *       file and write down every yes; it is told to leave that alone, so
+ *       {@link KnownHosts} is the only thing that decides, and a yes is for
+ *       this connection.
  *   <li><b>The graphics pipeline is a value rather than an absence.</b>
  * </ul>
  */
@@ -109,16 +109,15 @@ public final class FreeRdpBackend implements Backend, FreeRdpNative.Callbacks {
     }
 
     /**
-     * The library's own certificate store, emptied: one PEM per server it has
-     * connected to, under {@code server/}. The {@code certs/} directory beside
-     * it is left alone, since the library only reads it — it is where a
-     * certificate authority would go, and nothing here puts one there.
+     * The library's own certificate store, emptied: one PEM per server, under
+     * {@code server/}, which builds before this one wrote and this one neither
+     * writes nor reads (see {@code onVerifyX509Certificate} in the JNI). The
+     * {@code certs/} directory beside it is left alone, since the library only
+     * ever read it and nothing here puts anything there.
      *
-     * <p>Whether a connection is refused is the app's pin store's answer rather
-     * than this one's (see {@code onVerifyChangedCertificate} in the JNI), so
-     * nothing here decides anything — but it is still a list of the machines
-     * this phone has been to, written without anybody asking, and "forget every
-     * server" that left it behind would be a half-truth.
+     * <p>So nothing in it decides anything — but it is still a list of the
+     * machines this phone has been to, written without anybody asking, and
+     * "forget every server" that left it behind would be a half-truth.
      */
     static void forgetHosts(Context context) {
         final File store = store(context);
@@ -158,9 +157,9 @@ public final class FreeRdpBackend implements Backend, FreeRdpNative.Callbacks {
         final int[] size = FreeRdpProvider.size(context, address,
                 options.get(FreeRdpProvider.DESKTOP_SIZE));
         // A directory of ours rather than the library's default, which is under
-        // $HOME and does not exist in an app's process: what it keeps there is a
-        // certificate store nothing here reads, but one it cannot write is a
-        // connection that fails and blames TLS for it.
+        // $HOME and does not exist in an app's process: the library sets a
+        // certificate store up there at connect, which nothing here lets it
+        // read or write, and without a path for one the connection fails.
         final File store = store(context);
         //noinspection ResultOfMethodCallIgnored
         store.mkdirs();

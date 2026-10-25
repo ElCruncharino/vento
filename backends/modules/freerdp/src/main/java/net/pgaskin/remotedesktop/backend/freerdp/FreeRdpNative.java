@@ -107,9 +107,10 @@ final class FreeRdpNative {
      * @param scale      the percentage the far end is asked to draw its own
      *                   interface at; 100, 140 and 180 are the only values the
      *                   protocol allows, and anything else is taken as 100
-     * @param configPath a writable directory: the library keeps a certificate
-     *                   store there, and one it cannot write is a connection
-     *                   that fails as a TLS error
+     * @param configPath a writable directory: the library sets its certificate
+     *                   store up there, never read or written since the
+     *                   certificate is managed outside it, and fails to
+     *                   connect without one
      */
     static native long nativeCreate(Callbacks listener, String address, String userName,
                                     String domain, String password, String nla,

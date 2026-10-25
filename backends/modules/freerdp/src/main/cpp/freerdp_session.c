@@ -55,6 +55,7 @@
 #include <freerdp/client/channels.h>
 #include <freerdp/client/cliprdr.h>
 #include <freerdp/client/cmdline.h>
+#include <freerdp/crypto/certificate.h>
 #include <freerdp/client/disp.h>
 #include <freerdp/channels/rdpgfx.h>
 #include <freerdp/gdi/gdi.h>
@@ -786,17 +787,50 @@ static BOOL onAuthenticate(freerdp *instance, char **username, char **password, 
 
 /* The same wait, for the other question a handshake asks. Nothing vouches for
    an RDP server's certificate — a Windows host signs its own — so the identity
-   is the fingerprint, and the answer comes from the pin store or from a person.
+   is the fingerprint, and the answer comes from the app: its pin store, or a
+   person.
 
-   1 rather than 2 deliberately: 2 is "remember this", which would put the
-   decision in a file of FreeRDP's beside the one this app already keeps. */
-static DWORD askTrust(Session *s, const char *fingerprint) {
+   The library is told the certificate is managed outside it (see
+   applySettings), which makes this the only question it asks and the only
+   answer it takes. Left to manage it itself, it would first look the server
+   up in a store of its own under the config path and connect without asking
+   when what is on file matches — a PEM left there by anyone, ever, would
+   outvote the app — and a yes it was given would be written into that store
+   for next time. Here a yes is good for this connection alone (the library
+   keeps it for a redirect or a reconnect of the same session) and nothing is
+   written anywhere.
+
+   The fingerprint is the one the library's own prompt would have shown, the
+   SHA-256 of the server's certificate, so a pin made against that prompt
+   still matches. */
+static int onVerifyX509Certificate(freerdp *instance, const BYTE *data, size_t length,
+                                   const char *hostname, UINT16 port, DWORD flags) {
+    (void) hostname; (void) port; (void) flags;
+    Session *s = sessionOf(instance->context);
+
+    /* The chain as PEM, the server's own certificate first, which is the one
+       read back here. Copied because the length is what bounds it. */
+    char *pem = data ? malloc(length + 1) : NULL;
+    if (!pem) {
+        return 0;
+    }
+    memcpy(pem, data, length);
+    pem[length] = '\0';
+    rdpCertificate *cert = freerdp_certificate_new_from_pem(pem);
+    free(pem);
+    char *fingerprint = cert ? freerdp_certificate_get_fingerprint(cert) : NULL;
+    freerdp_certificate_free(cert);
+    if (!fingerprint) {
+        return 0;
+    }
+
     pthread_mutex_lock(&s->lock);
     s->trustAnswered = 0;
     s->trustAccepted = 0;
     pthread_mutex_unlock(&s->lock);
 
-    s->cb.trust_needed(s->cb.user, fingerprint ? fingerprint : "");
+    s->cb.trust_needed(s->cb.user, fingerprint);
+    free(fingerprint);
 
     pthread_mutex_lock(&s->lock);
     while (!s->trustAnswered && !s->quit) {
@@ -804,27 +838,9 @@ static DWORD askTrust(Session *s, const char *fingerprint) {
     }
     const int accepted = s->trustAccepted && !s->quit;
     pthread_mutex_unlock(&s->lock);
+    /* 0 rather than -1 for a no: both refuse, and -1 has the library log the
+       whole certificate as an error as well. */
     return accepted ? 1 : 0;
-}
-
-static DWORD onVerifyCertificate(freerdp *instance, const char *host, UINT16 port,
-                                 const char *common_name, const char *subject, const char *issuer,
-                                 const char *fingerprint, DWORD flags) {
-    (void) host; (void) port; (void) common_name; (void) subject; (void) issuer; (void) flags;
-    return askTrust(sessionOf(instance->context), fingerprint);
-}
-
-/* Not the same question, and leaving it unset is a refusal: this is the one
-   asked when the library's own store disagrees with what arrived. The store is
-   not what decides here — the app's pin store is — so both ask the same thing. */
-static DWORD onVerifyChangedCertificate(freerdp *instance, const char *host, UINT16 port,
-                                        const char *common_name, const char *subject,
-                                        const char *issuer, const char *fingerprint,
-                                        const char *old_subject, const char *old_issuer,
-                                        const char *old_fingerprint, DWORD flags) {
-    (void) host; (void) port; (void) common_name; (void) subject; (void) issuer;
-    (void) old_subject; (void) old_issuer; (void) old_fingerprint; (void) flags;
-    return askTrust(sessionOf(instance->context), fingerprint);
 }
 
 /* ---- keysyms to scancodes ----------------------------------------------- */
@@ -1330,9 +1346,10 @@ static void applySettings(Session *s, rdpSettings *settings) {
     freerdp_settings_set_uint32(settings, FreeRDP_TcpConnectTimeout,
                                 (UINT32) (s->connectTimeoutMs > 0 ? s->connectTimeoutMs : 20000));
 
-    /* Where the library keeps its own certificate store. It is not what decides
-       trust here — the app's pin store is — but a directory it cannot write is
-       reported as a TLS failure rather than as itself. */
+    /* Where the library would keep its own certificate store. Nothing is kept
+       there — the certificate is managed outside the library, below — but the
+       TLS layer still sets a store up at connect, and without a path for one
+       the connection fails before it starts. */
     if (s->configPath) {
         freerdp_settings_set_string(settings, FreeRDP_ConfigPath, s->configPath);
     }
@@ -1343,6 +1360,11 @@ static void applySettings(Session *s, rdpSettings *settings) {
     freerdp_settings_set_bool(settings, FreeRDP_UseCommonStdioCallbacks, FALSE);
     freerdp_settings_set_bool(settings, FreeRDP_IgnoreCertificate, FALSE);
     freerdp_settings_set_bool(settings, FreeRDP_AutoAcceptCertificate, FALSE);
+    /* Every certificate goes to onVerifyX509Certificate and to nothing else:
+       not the known-hosts store under the config path, not its JSON
+       certificate list, not a certificate authority. The app's answer is the
+       only one, and the library writes none of its own. */
+    freerdp_settings_set_bool(settings, FreeRDP_ExternalCertificateManagement, TRUE);
 
     /* Network Level Authentication: prefer it, insist on it, or refuse it.
        Nothing here turns off TLS — a server that offers only the RDP security
@@ -1519,11 +1541,9 @@ static void *protocolThread(void *arg) {
     ctx->instance->PostConnect = onPostConnect;
     ctx->instance->PostDisconnect = onPostDisconnect;
     ctx->instance->AuthenticateEx = onAuthenticate;
-    /* Two callbacks rather than one: the library keeps a store of its own and
-       asks a different question when what is on file disagrees. Leaving the
-       second unset is a refusal. */
-    ctx->instance->VerifyCertificateEx = onVerifyCertificate;
-    ctx->instance->VerifyChangedCertificateEx = onVerifyChangedCertificate;
+    /* The one certificate question, asked with the library's own store left
+       out of it (see onVerifyX509Certificate). */
+    ctx->instance->VerifyX509Certificate = onVerifyX509Certificate;
 
     applySettings(s, ctx->settings);
 
