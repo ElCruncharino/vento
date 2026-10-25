@@ -169,6 +169,7 @@ impl Backend for Rfb {
             displays: Vec::new(),
             display: -1,
             can_resize: connected && client.can_resize(),
+            can_layout: false,
             view_only: self.options.lock().unwrap().bool("ViewOnly"),
             pointer_relative: client.pointer_is_relative(),
         }

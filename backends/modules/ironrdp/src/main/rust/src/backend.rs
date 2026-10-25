@@ -161,6 +161,7 @@ impl Backend for IronRdp {
             displays: Vec::new(),
             display: -1,
             can_resize: self.mailbox.connected() && client.can_resize(),
+            can_layout: false,
             view_only: self.options.lock().unwrap().bool("ViewOnly"),
             pointer_relative: false,
         }
