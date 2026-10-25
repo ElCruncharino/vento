@@ -195,8 +195,10 @@ static void vento_h264_subsystem_uninit(H264_CONTEXT *h264) {
     h264->pSystemData = NULL;
 }
 
-/* Returns 1 with a picture's planes in the context, below zero without one,
-   as the library's other subsystems do. */
+/* Returns 1 with the picture's planes in the context, and below zero without
+   one. The library also accepts 0 for a frame that made no picture yet
+   (libavcodec's subsystem waiting for more input), but decode_planes returns
+   false for that and for a failure alike, so both are reported as a failure. */
 static int vento_h264_subsystem_decompress(H264_CONTEXT *WINPR_RESTRICT h264,
                                            const BYTE *WINPR_RESTRICT data, UINT32 size) {
     Context *c = h264->pSystemData;

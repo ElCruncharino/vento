@@ -477,20 +477,31 @@ One commit per upstream, after review, by the lead:
   vento's sound output through `vento/audio.h`'s table (`VentoAudio.h`).
   Builds `common/` only, with `config.h` written by our
   CMake and, on Android, an empty `pthread` target for the link.
-- **freerdp** 3.32.0; two patches: `0001`, codec/h264: `WITH_H264_EXTERNAL`,
+- **freerdp** 3.32.2; one patch, `0001`, codec/h264: `WITH_H264_EXTERNAL`,
   a slot for an application's subsystem, `g_Subsystem_external`, tried
-  first, and `WITH_GFX_H264` following it; and `0002`, upstream's
-  190167212 cherry-picked, which 3.32.0's channel reassembly needs: without
-  it a static channel's message of more than one chunk whose length is not
-  a multiple of 128 (a far-end clipboard past 1600 bytes) is a "read error"
-  that ends the session. Drop `0002` at the first release that has it.
+  first, and `WITH_GFX_H264` following it. The second, upstream's
+  FreeRDP/FreeRDP@190167212b9af27d375b09e75a8e3e41aa7d0284 cherry-picked
+  for 3.32.0's channel reassembly (a static channel's message of more than
+  one chunk whose length is not a multiple of 128, such as a far-end
+  clipboard past 1600 bytes, was a "read error" that ended the session),
+  was dropped at 3.32.2; 3.32.1 is the first release with it. A far-end
+  clipboard past 1600 bytes is still the check: `xclip` in the testrdp
+  container sets one.
   The module's `h264_vento.c` is built against `libfreerdp/codec/h264.h`,
   which is internal: check that
   `H264_CONTEXT_SUBSYSTEM` and the context's `pYUVData`, `iStride`,
   `YUVWidth`, `YUVHeight` and `pSystemData` still mean the same, that
   contexts are still made, reset and fed inside the GDI's SurfaceCommand
   (the session sets whose they are around it), and that AVC444 still feeds
-  both pictures through the surface's one context. No `WITH_VIDEO_FFMPEG`,
+  both pictures through the surface's one context. Since 3.32.1 a
+  subsystem's 0 from Decompress means a frame without a picture, which the
+  library skips; ours returns 1 or below zero. Also since 3.32.1,
+  `h264_context_set_option` with `H264_CONTEXT_OPTION_HW_ACCEL` re-creates
+  the subsystem (Uninit, then Init), and since 3.32.2 only when the value
+  changes; the GDI sets it inside the surface command to whether
+  `SoftwareGdi` is off, and the session keeps `SoftwareGdi` on, so the
+  value stays the context's default and nothing is re-created. No
+  `WITH_VIDEO_FFMPEG`,
   `WITH_FFMPEG_HWACCEL` or `WITH_MEDIACODEC`. Its sound plays on vento's
   output through the module's rdpsnd device (`rdpsnd_vento.c`), found with
   no patch through the public `freerdp_register_addin_provider` (registered
@@ -505,7 +516,9 @@ One commit per upstream, after review, by the lead:
   decoders take them, and decodes them through `vento/audio.h`), and that
   the Close PDU still does not reach the device (it closes its own stream
   when idle). No `WITH_PULSE`, `WITH_ALSA`, `WITH_OSS`, `WITH_SNDIO`,
-  `WITH_OPENSLES` or `WITH_DSP_FFMPEG`; their "fake" device is still built
+  `WITH_OPENSLES`, `WITH_AAUDIO` (3.32.1's, on by default on Android when
+  the NDK has libaaudio, which `find_package(AAudio)` is also kept from
+  looking for) or `WITH_DSP_FFMPEG`; their "fake" device is still built
   and is what Sound = off gets. On Linux `WITH_SWSCALE` is the one FFmpeg
   switch on, and `WITH_FFMPEG` is off so that their swscale branch does not
   link libavcodec for the camera channel's MJPEG; check that scaling still

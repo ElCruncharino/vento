@@ -125,14 +125,14 @@ set(WITH_H264_EXTERNAL ON CACHE BOOL "" FORCE)
 # (it is built regardless of these options), and a session with sound off or
 # played on the remote machine uses it. None of the sound libraries the others
 # would link (PulseAudio and the fifteen libraries behind it, ALSA, OSS, sndio,
-# OpenSL ES) is looked for. The microphone channel's devices go with them,
-# which loses nothing: the channel is built but never loaded.
+# OpenSL ES, AAudio) is looked for. The microphone channel's devices go with
+# them, which loses nothing: the channel is built but never loaded.
 #
 # AAC and Opus from the server are decoded by the platform's decoders in the
 # same table, so the library's DSP only handles PCM and is built without
 # FFmpeg (`WITH_DSP_FFMPEG`) on both platforms: the device claims those formats
 # itself and receives the packets unchanged.
-foreach(off WITH_PULSE WITH_ALSA WITH_OSS WITH_SNDIO WITH_OPENSLES WITH_DSP_FFMPEG)
+foreach(off WITH_PULSE WITH_ALSA WITH_OSS WITH_SNDIO WITH_OPENSLES WITH_AAUDIO WITH_DSP_FFMPEG)
     set(${off} OFF CACHE BOOL "" FORCE)
 endforeach()
 
@@ -223,13 +223,14 @@ else()
     set(WITH_VERBOSE_WINPR_ASSERT OFF CACHE BOOL "" FORCE)
 endif()
 
-# Their configure looks for these two libraries and warns when they are
-# missing, though both are behind options already turned off above. Disabling
-# the search rather than the warning gives the same result on a machine that has
+# Their configure looks for these libraries, though each is behind an option
+# already turned off above: Opus and uriparser warn when they are missing, and
+# AAudio, looked for on Android only, sets WITH_AAUDIO's default. Disabling the
+# search rather than the warning gives the same result on a machine that has
 # them installed, which the NDK toolchain's find-root rules only mostly
 # guarantee. The JSON libraries need no such line, since WITH_JSON_DISABLED
 # skips their detection.
-foreach(pkg Opus uriparser)
+foreach(pkg Opus uriparser AAudio)
     set(CMAKE_DISABLE_FIND_PACKAGE_${pkg} ON)
 endforeach()
 
