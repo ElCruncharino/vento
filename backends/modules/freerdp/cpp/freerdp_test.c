@@ -3,11 +3,11 @@
 
 // Tests of the session file's pure parts, built with the probes
 // (`-DVENTO_PROBES=ON`) and run by `ctest` in that build tree or as
-// `freerdp/vento_freerdp_test`: the address, the keysym tables, the monitor
-// layouts in both directions, the full command ring, the keys sent for a
-// press and its release, the effect of the display-control channel's
-// capabilities on a layout, the H.264 subsystem's handling of a decoder that
-// won't open, and the sound switch as rdpsnd devices come and go.
+// `freerdp/vento_freerdp_test`: the address, the proxy type, the keysym
+// tables, the monitor layouts in both directions, the full command ring, the
+// keys sent for a press and its release, the effect of the display-control
+// channel's capabilities on a layout, the H.264 subsystem's handling of a
+// decoder that won't open, and the sound switch as rdpsnd devices come and go.
 //
 // The three sources are included rather than linked, to reach their static
 // functions; nothing in them connects anywhere. The two input calls used for
@@ -127,6 +127,22 @@ static void testAddress(void) {
     split("host:0", NULL, 0, "port number");
     split("host:65536", NULL, 0, "port number");
     split("host:33a", NULL, 0, "port number");
+}
+
+/* ---- the proxy ---------------------------------------------------------- */
+
+/* The library takes a proxy from https_proxy or HTTPS_PROXY only while the
+   type is PROXY_TYPE_NONE. */
+static void testNoProxy(void) {
+    Session *s = testSession();
+    rdpSettings *settings = freerdp_settings_new(0);
+    CHECK(settings != NULL);
+    if (settings) {
+        applySettings(s, settings);
+        CHECK(freerdp_settings_get_uint32(settings, FreeRDP_ProxyType) == PROXY_TYPE_IGNORE);
+        freerdp_settings_free(settings);
+    }
+    freeTestSession(s);
 }
 
 /* ---- the keysyms -------------------------------------------------------- */
@@ -598,6 +614,7 @@ static void testSoundSwitch(void) {
 
 int main(void) {
     testAddress();
+    testNoProxy();
     testKeysyms();
     testKeysSent();
     testRing();

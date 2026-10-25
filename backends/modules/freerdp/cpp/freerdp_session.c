@@ -1835,6 +1835,11 @@ static void applySettings(Session *s, rdpSettings *settings) {
     freerdp_settings_set_bool(settings, FreeRDP_SoftwareGdi, TRUE);
     freerdp_settings_set_uint32(settings, FreeRDP_TcpConnectTimeout,
                                 (UINT32) (s->connectTimeoutMs > 0 ? s->connectTimeoutMs : 20000));
+    /* No proxy. With the type left at PROXY_TYPE_NONE, the library reads
+       https_proxy, HTTPS_PROXY and no_proxy from the environment at connect
+       and sends the connection through the proxy named there, without the
+       session showing it. */
+    freerdp_settings_set_uint32(settings, FreeRDP_ProxyType, PROXY_TYPE_IGNORE);
 
     /* Where the library would keep its certificate store. Nothing is kept
        there (the certificate is managed outside the library, below), but the
