@@ -9,7 +9,7 @@ use crate::backend::Backend;
 use crate::catalog::About;
 use crate::events::Mailbox;
 use crate::options::Options;
-use common::video::Decoders;
+use common::video::{Decoders, Hardware};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -100,6 +100,14 @@ impl Connect<'_> {
             return (self.domain.to_string(), self.user.to_string());
         }
         crate::credentials::split_domain(self.user)
+    }
+
+    /// How video may be decoded, as the [`decoders`](Connect::decoders) say
+    /// at connect: what a library with decoders of its own is handed, where
+    /// a backend that decodes through `decoders` asks them instead, and
+    /// again whenever it makes a decoder.
+    pub fn hardware(&self) -> Hardware {
+        self.decoders.as_ref().map(|d| d.hardware()).unwrap_or_default()
     }
 }
 
