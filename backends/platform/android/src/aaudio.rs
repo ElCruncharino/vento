@@ -80,7 +80,9 @@ unsafe extern "C" {
     fn AAudioStream_getFramesRead(stream: *mut AAudioStream) -> i64;
 }
 
-/// How many times a stream is opened again after its output went away.
+/// How many times a stream is opened again after its output went away
+/// without having played in between: a limit on a stream that fails as soon
+/// as it opens, not on how often the person changes the output device.
 const REOPENS: u32 = 3;
 
 fn text(result: i32) -> String {
@@ -365,6 +367,9 @@ unsafe extern "C" fn error(stream: *mut AAudioStream, user: *mut c_void, result:
     // Only compared, never called through: which stream failed, as a number
     // a thread may carry.
     let failed = stream as usize;
+    // Whether the mixer read anything from it: a stream that played was a
+    // working one, and the count of reopens starts over with it.
+    let played = context.read.load(Ordering::Relaxed) > 0;
     log::info!("audio: the output stream stopped ({}); opening another", text(result));
     let spawned = std::thread::Builder::new().name("vento-aaudio".into()).spawn(move || {
         let (open, again) = {
@@ -374,6 +379,9 @@ unsafe extern "C" fn error(stream: *mut AAudioStream, user: *mut c_void, result:
                 Some(o) if o.stream as usize == failed => state.open.take(),
                 _ => None,
             };
+            if played {
+                state.reopens = 0;
+            }
             let again = open.is_some() && !state.closed && state.reopens < REOPENS;
             if again {
                 state.reopens += 1;
