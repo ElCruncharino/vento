@@ -1642,11 +1642,14 @@ void Session::run() {
 
 bool Session::readRegion(int x, int y, int w, int h, void *dst, size_t stride, int dstX,
                          int dstY) {
-    if (w <= 0 || h <= 0) {
+    if (w <= 0 || h <= 0 || dstX < 0 || dstY < 0) {
         return false;
     }
     const std::shared_lock<std::shared_mutex> guard(fbLock_);
-    if (shadow_.empty() || x < 0 || y < 0 || x + w > shadowW_ || y + h > shadowH_) {
+    // Subtracted rather than added: `x + w` near INT_MAX overflows, and what
+    // it wraps to passes.
+    if (shadow_.empty() || x < 0 || y < 0 || x > shadowW_ || y > shadowH_
+            || w > shadowW_ - x || h > shadowH_ - y) {
         return false;
     }
     for (int row = 0; row < h; row++) {

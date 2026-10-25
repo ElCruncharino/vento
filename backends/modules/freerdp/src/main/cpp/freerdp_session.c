@@ -2001,12 +2001,15 @@ static bool op_traffic(vento_session *base, uint64_t out[2]) {
 static bool op_read_region(vento_session *base, int x, int y, int w, int h, void *dst,
                            size_t stride, int dstX, int dstY) {
     Session *s = sessionOfBase(base);
-    if (w <= 0 || h <= 0) {
+    if (w <= 0 || h <= 0 || dstX < 0 || dstY < 0) {
         return false;
     }
     bool ok = false;
     pthread_rwlock_rdlock(&s->fbLock);
-    if (s->fb && x >= 0 && y >= 0 && x + w <= s->fbW && y + h <= s->fbH) {
+    /* Subtracted rather than added: `x + w` near INT_MAX wraps negative and
+       would pass, and the rows would be read from before the framebuffer. */
+    if (s->fb && x >= 0 && y >= 0 && x <= s->fbW && y <= s->fbH && w <= s->fbW - x
+            && h <= s->fbH - y) {
         for (int row = 0; row < h; row++) {
             const uint8_t *src = s->fb + ((size_t) (y + row) * (size_t) s->fbW + x) * 4u;
             uint8_t *out = (uint8_t *) dst + (size_t) (dstY + row) * stride + (size_t) dstX * 4u;
