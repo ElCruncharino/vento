@@ -371,7 +371,7 @@ aside:
 
     (cd linux && cargo build && cargo test && cargo clippy --all-targets)
     linux/target/debug/vento <backend> <address> --password ... --trust \
-        --probe 3 --out build/scratch/<backend>.ppm
+        --probe wait=3,out=build/scratch/<backend>.ppm
 
 Always `./patch.sh check`. After an options change, `cargo test --locked -p
 remotedesktop-api` and `./gradlew :backends:testDebugUnitTest`: the

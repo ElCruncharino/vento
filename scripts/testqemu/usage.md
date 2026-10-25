@@ -143,7 +143,7 @@ well. Same image, same ports, same `t` and `s`:
 
 ```sh
 AUDIO=spice NAME=myqemu PORT=5962 SPICE_PORT=5964 SPICE_TLS_PORT=5965 TONE_PORT=5956 ./run.sh
-PIPEWIRE_NODE=vento_test vento spice 127.0.0.1:5964 --password spicepass --probe 60
+PIPEWIRE_NODE=vento_test vento spice 127.0.0.1:5964 --password spicepass --probe wait=60
 ```
 
 `scripts/testaudio/bursts.py` is the measurement: with a client playing the

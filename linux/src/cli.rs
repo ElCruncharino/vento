@@ -4,7 +4,11 @@
 //! The command line's words: the options [`split`] takes apart, GNU-style,
 //! the help text, and the two listings of the backends (the help's
 //! `backends:` section and `--list`), all formatted from plain data so that
-//! they can be tested without opening a library.
+//! they can be tested without opening a library; and `--probe`'s spec,
+//! taken apart into its [`Step`]s.
+
+use std::path::PathBuf;
+use std::time::Duration;
 
 /// An option the command line takes: its long name without the dashes, its
 /// one-letter name if it has one, and whether it takes a value.
@@ -44,30 +48,10 @@ pub const FLAGS: &[Flag] = &[
     flag("no-grab-keyboard", None, false),
     flag("probe", Some('P'), true),
     flag("connect-timeout", None, true),
-    flag("out", None, true),
-    flag("out-thumb", None, true),
-    flag("thumb-step", None, true),
-    flag("click", None, true),
-    flag("key", None, true),
-    flag("clipboard", None, true),
-    flag("sound-cycle", None, true),
-    flag("resize", None, true),
-    flag("layout", None, true),
 ];
 
 /// The probe's own options, which mean something only with `--probe`.
-pub const PROBE_ONLY: &[&str] = &[
-    "connect-timeout",
-    "out",
-    "out-thumb",
-    "thumb-step",
-    "click",
-    "key",
-    "clipboard",
-    "sound-cycle",
-    "resize",
-    "layout",
-];
+pub const PROBE_ONLY: &[&str] = &["connect-timeout"];
 
 /// One word of the command line, taken apart.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -139,17 +123,16 @@ pub struct Defaults {
     pub state_dir: String,
 }
 
-/// The default `--scale`, `--connect-timeout` and `--thumb-step`.
+/// The default `--scale`, `--connect-timeout` and thumbnail scale (1/N).
 pub const SCALE: &str = "auto";
 pub const CONNECT_TIMEOUT: u64 = 30;
 pub const THUMB_STEP: usize = 8;
 
-const USAGE: &str = "\
-usage:
+const USAGE: &str = r#"usage:
   vento                                       connection dialog
   vento [<backend> [<address>]] [options]     connection dialog (prefilled)
   vento <backend> <address> --connect ...     single session, auto-connect
-  vento <backend> <address> --probe N ...     headless probe
+  vento <backend> <address> --probe SPEC ...  headless probe
   vento --list                                list backends
   vento --forget <address> [--state-dir DIR]  forget host
 
@@ -187,18 +170,23 @@ session options (also see backends below):
       --no-grab-keyboard     do not automatically grab the keyboard
 
 probe options (--probe must be provided for these options to work):
-  -P, --probe N              run headless, wait for N seconds after connecting (implies --connect)
+  -P, --probe SPEC           run headless and run the steps in SPEC once connected (implies --connect)
       --connect-timeout N    wait up to N seconds for the connection (default: <connect-timeout>)
-      --out FILE             save framebuffer ppm
-      --out-thumb FILE       save framebuffer thumbnail ppm
-      --thumb-step N         thumbnail scale, 1/N (default: <thumb-step>)
-      --click X,Y            left-click once connected
-      --key KEYSYM           press and release X keysym (e.g., 0x61, 97, 0141 are all 'a')
-      --clipboard TEXT       send this as the clipboard a second after connecting
-      --sound-cycle N        turn the far end's sound off and on every N seconds
-      --resize WxH           ask for a desktop this size a second after connecting
-      --layout WxH,WxH,...   ask for these screens side by side instead
-";
+
+probe steps (SPEC is a comma-separated list of these, run in order):
+  wait=SECONDS               wait, printing events (e.g., 2, 0.5)
+  click=X:Y                  left-click at that position
+  key=KEYSYM                 press and release X keysym (e.g., 0x61, 97, 0141 are all 'a')
+  clipboard=TEXT             send this as the clipboard
+  resize=WxH                 ask for a desktop this size
+  layout=WxH;WxH;...         ask for these screens side by side
+  sound-cycle=SECONDS        turn the far end's sound off and on every SECONDS from now on (0 stops)
+  out=FILE                   save framebuffer ppm
+  thumb=FILE[:N]             save framebuffer thumbnail ppm, scaled 1/N (default: <thumb-step>)
+
+  values may be quoted with ' or " to hold commas; inside quotes, \\ \' \" \n \t are escapes
+  e.g., --probe 'wait=1,click=500:300,key=0x61,clipboard="a, \"b\"",wait=2,out=shot.ppm'
+"#;
 
 /// The help without its `backends:` section, the defaults filled in.
 pub fn usage(defaults: &Defaults) -> String {
@@ -283,10 +271,207 @@ pub fn list_line(id: &str, library: &Result<std::path::PathBuf, (std::path::Path
     }
 }
 
+/// One step of `--probe`'s spec.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Step {
+    /// `wait=SECONDS`: events printed, prompts answered, for this long.
+    Wait(Duration),
+    /// `click=X:Y`: a left click there.
+    Click(i32, i32),
+    /// `key=KEYSYM`: the key pressed and released.
+    Key(u32),
+    /// `clipboard=TEXT`: the text sent as the clipboard.
+    Clipboard(String),
+    /// `resize=WxH`: a desktop this size asked for.
+    Resize(u32, u32),
+    /// `layout=WxH;WxH;...`: these screens asked for, left to right.
+    Layout(Vec<(u32, u32)>),
+    /// `sound-cycle=SECONDS`: the far end's sound turned off and on this
+    /// often from here on; zero stops it.
+    SoundCycle(Duration),
+    /// `out=FILE`: the framebuffer written there.
+    Out(PathBuf),
+    /// `thumb=FILE[:N]`: the framebuffer's thumbnail at 1/N written there.
+    Thumb(PathBuf, usize),
+}
+
+/// The names of the steps [`steps`] takes, in the help's order.
+pub const STEPS: &[&str] = &["wait", "click", "key", "clipboard", "resize", "layout", "sound-cycle", "out", "thumb"];
+
+/// `--probe`'s spec: steps separated by commas, each `name=value`. Space
+/// around a name is ignored. A value runs to the next comma outside quotes;
+/// a part of it in single or double quotes is taken as written, commas and
+/// the other quote included, except for the escapes `\\`, `\'`, `\"`, `\n`
+/// and `\t`. Outside quotes, a backslash is itself. An empty spec has no
+/// steps.
+pub fn steps(spec: &str) -> Result<Vec<Step>, String> {
+    if spec.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    let mut chars = spec.chars();
+    loop {
+        let (name, value, more) = next_step(&mut chars)?;
+        let name = name.trim();
+        if name.is_empty() && value.is_none() {
+            return Err(format!("step {} is empty", out.len() + 1));
+        }
+        let Some(value) = value else {
+            if seconds(name).is_ok() {
+                return Err(format!("{name:?} is not a step (wait={name} waits {name} seconds)"));
+            }
+            return Err(if STEPS.contains(&name) {
+                format!("{name} needs a value ({name}=...)")
+            } else {
+                format!("unknown step {name:?}")
+            });
+        };
+        out.push(step(name, &value)?);
+        if !more {
+            return Ok(out);
+        }
+    }
+}
+
+/// The next step's name, its value (none without an `=`), and whether a
+/// comma ended it.
+fn next_step(chars: &mut std::str::Chars) -> Result<(String, Option<String>, bool), String> {
+    let mut name = String::new();
+    let mut value: Option<String> = None;
+    while let Some(c) = chars.next() {
+        match (&mut value, c) {
+            (_, ',') => return Ok((name, value, true)),
+            (None, '=') => value = Some(String::new()),
+            (None, c) => name.push(c),
+            (Some(v), quote @ ('\'' | '"')) => {
+                if let Err(e) = quoted(chars, quote, v) {
+                    let name = name.trim();
+                    return Err(if STEPS.contains(&name) {
+                        format!("{name}: {e}")
+                    } else {
+                        format!("unknown step {name:?}")
+                    });
+                }
+            }
+            (Some(v), c) => v.push(c),
+        }
+    }
+    Ok((name, value, false))
+}
+
+/// The rest of a quoted part, after its opening `quote`, onto `into`.
+fn quoted(chars: &mut std::str::Chars, quote: char, into: &mut String) -> Result<(), String> {
+    let open = || format!("no closing {quote}");
+    loop {
+        match chars.next().ok_or_else(open)? {
+            c if c == quote => return Ok(()),
+            '\\' => into.push(match chars.next().ok_or_else(open)? {
+                c @ ('\\' | '\'' | '"') => c,
+                'n' => '\n',
+                't' => '\t',
+                c => return Err(format!("unknown escape \\{c} (only \\\\, \\', \\\", \\n and \\t)")),
+            }),
+            c => into.push(c),
+        }
+    }
+}
+
+/// A step from its name and value.
+fn step(name: &str, value: &str) -> Result<Step, String> {
+    let wrong = |e: String| format!("{name}: {e}");
+    Ok(match name {
+        "wait" => Step::Wait(seconds(value).map_err(wrong)?),
+        "click" => {
+            let (x, y) = value.split_once(':').ok_or_else(|| wrong(format!("not X:Y: {value:?}")))?;
+            Step::Click(number(x).map_err(wrong)?, number(y).map_err(wrong)?)
+        }
+        "key" => Step::Key(keysym(value).map_err(wrong)?),
+        "clipboard" => Step::Clipboard(value.to_string()),
+        "resize" => {
+            let (w, h) = dimensions(value).map_err(wrong)?;
+            Step::Resize(w, h)
+        }
+        "layout" => Step::Layout(value.split(';').map(dimensions).collect::<Result<_, _>>().map_err(wrong)?),
+        "sound-cycle" => Step::SoundCycle(seconds(value).map_err(wrong)?),
+        "out" if value.is_empty() => return Err(wrong("no file".into())),
+        "out" => Step::Out(PathBuf::from(value)),
+        "thumb" => {
+            // A trailing `:N` is the scale; a file whose name ends in one
+            // is written with the scale given after it.
+            let (file, scale) = match value.rsplit_once(':') {
+                Some((file, n)) if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) => {
+                    let n: usize = number(n).map_err(wrong)?;
+                    if n == 0 {
+                        return Err(wrong("the scale is 1/N, and N is at least 1".into()));
+                    }
+                    (file, n)
+                }
+                _ => (value, THUMB_STEP),
+            };
+            if file.is_empty() {
+                return Err(wrong("no file".into()));
+            }
+            Step::Thumb(PathBuf::from(file), scale)
+        }
+        _ => return Err(format!("unknown step {name:?}")),
+    })
+}
+
+/// Seconds as digits with an optional fraction: `2`, `0.5`, `.5`, `2.`.
+fn seconds(value: &str) -> Result<Duration, String> {
+    let wrong = || format!("{value:?} is not a number of seconds");
+    let digits = value.bytes().filter(u8::is_ascii_digit).count();
+    let dots = value.bytes().filter(|&b| b == b'.').count();
+    if digits == 0 || dots > 1 || digits + dots != value.len() {
+        return Err(wrong());
+    }
+    Duration::try_from_secs_f64(value.parse().map_err(|_| wrong())?).map_err(|_| wrong())
+}
+
+fn number<T: std::str::FromStr>(value: &str) -> Result<T, String> {
+    value.parse().map_err(|_| format!("{value:?} is not a number"))
+}
+
+/// `WxH`, neither of them zero.
+fn dimensions(value: &str) -> Result<(u32, u32), String> {
+    let (w, h) = value.split_once('x').ok_or(format!("not WxH: {value:?}"))?;
+    let (w, h) = (number::<u32>(w)?, number::<u32>(h)?);
+    if w == 0 || h == 0 {
+        return Err(format!("a screen has an area: {value:?}"));
+    }
+    Ok((w, h))
+}
+
+/// A keysym as probe.c's `strtol(.., 0)` reads one, so that `key=` means
+/// the same key as that probe's `--key`: hex after `0x` or `0X` (`0x61`),
+/// octal after any other leading zero (`0141`), decimal otherwise (`97`),
+/// after leading white space and an optional `+`, with nothing after the
+/// digits. `0o` and `0b` are not prefixes to strtol (without C23's), so they
+/// are not here either. What does not fit a keysym's 32 bits, or is
+/// negative, is refused rather than wrapped.
+fn keysym(value: &str) -> Result<u32, String> {
+    let wrong = || format!("{value:?} is not a keysym");
+    // C's isspace, which is not Unicode's.
+    let v = value.trim_start_matches([' ', '\t', '\n', '\x0b', '\x0c', '\r']);
+    let v = v.strip_prefix('+').unwrap_or(v);
+    let (digits, radix) = if let Some(hex) = v.strip_prefix("0x").or_else(|| v.strip_prefix("0X")) {
+        (hex, 16)
+    } else if v.len() > 1 && v.starts_with('0') {
+        (&v[1..], 8)
+    } else {
+        (v, 10)
+    };
+    // from_str_radix takes a sign of its own, which strtol does not after
+    // a prefix; so the digits are checked first.
+    if digits.is_empty() || !digits.chars().all(|c| c.is_digit(radix)) {
+        return Err(wrong());
+    }
+    u32::from_str_radix(digits, radix).map_err(|_| wrong())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     fn split_(args: &[&str]) -> Result<Vec<Arg>, String> {
         split(args.iter().map(|a| a.to_string()).collect(), FLAGS)
@@ -467,5 +652,176 @@ backends:
             ),
             "libvnc /opt/vento/lib/libvento_libvnc.so (error: libz.so.1: cannot open shared object file)"
         );
+    }
+
+    fn secs(s: f64) -> Step {
+        Step::Wait(Duration::from_secs_f64(s))
+    }
+
+    #[test]
+    fn a_spec_is_its_steps_in_order() {
+        assert_eq!(
+            steps(concat!(
+                "wait=1,click=100:200,key=0x61,clipboard=hi,resize=1280x720,layout=800x600;1024x768,",
+                "sound-cycle=2,out=a.ppm,thumb=b.ppm:4,thumb=c.ppm,wait=0.5"
+            )),
+            Ok(vec![
+                secs(1.0),
+                Step::Click(100, 200),
+                Step::Key(0x61),
+                Step::Clipboard("hi".into()),
+                Step::Resize(1280, 720),
+                Step::Layout(vec![(800, 600), (1024, 768)]),
+                Step::SoundCycle(Duration::from_secs(2)),
+                Step::Out(PathBuf::from("a.ppm")),
+                Step::Thumb(PathBuf::from("b.ppm"), 4),
+                Step::Thumb(PathBuf::from("c.ppm"), THUMB_STEP),
+                secs(0.5),
+            ])
+        );
+        assert_eq!(steps(""), Ok(vec![]));
+        assert_eq!(steps("  "), Ok(vec![]));
+        // Space around a name is ignored; a value is as written.
+        assert_eq!(steps(" wait=1, key=97"), Ok(vec![secs(1.0), Step::Key(97)]));
+        assert_eq!(steps("wait=1 ,key=97"), Err("wait: \"1 \" is not a number of seconds".into()));
+        assert_eq!(steps("wait=1,wait=2"), Ok(vec![secs(1.0), secs(2.0)]));
+        assert_eq!(steps("click=-1:5"), Ok(vec![Step::Click(-1, 5)]));
+        assert_eq!(steps("sound-cycle=0"), Ok(vec![Step::SoundCycle(Duration::ZERO)]));
+        for (spec, want) in [("wait=0", 0.0), ("wait=.5", 0.5), ("wait=2.", 2.0), ("wait=007", 7.0)] {
+            assert_eq!(steps(spec), Ok(vec![secs(want)]), "{spec}");
+        }
+    }
+
+    #[test]
+    fn quotes_hold_commas_and_the_other_quote_and_take_escapes() {
+        let clip = |spec: &str| match steps(spec) {
+            Ok(s) => match &s[..] {
+                [Step::Clipboard(text)] => text.clone(),
+                other => panic!("{spec}: {other:?}"),
+            },
+            Err(e) => panic!("{spec}: {e}"),
+        };
+        assert_eq!(clip(r#"clipboard='a, b'"#), "a, b");
+        assert_eq!(clip(r#"clipboard="a, b""#), "a, b");
+        assert_eq!(clip(r#"clipboard="it's""#), "it's");
+        assert_eq!(clip(r#"clipboard='say "hi"'"#), r#"say "hi""#);
+        assert_eq!(clip(r#"clipboard="say \"hi\"""#), r#"say "hi""#);
+        assert_eq!(clip(r#"clipboard='it\'s'"#), "it's");
+        assert_eq!(clip(r#"clipboard='a\\b'"#), r"a\b");
+        assert_eq!(clip(r#"clipboard="one\ntwo\tthree""#), "one\ntwo\tthree");
+        assert_eq!(clip(r#"clipboard='\"'"#), "\"");
+        // Parts in quotes and out of them run together, as in a shell.
+        assert_eq!(clip(r#"clipboard=a'b,c'd"e,f""#), "ab,cde,f");
+        // Outside quotes a backslash is itself, and = is part of the value.
+        assert_eq!(clip(r"clipboard=C:\dir\n"), r"C:\dir\n");
+        assert_eq!(clip("clipboard=a=b"), "a=b");
+        assert_eq!(clip("clipboard= x "), " x ");
+        assert_eq!(clip("clipboard="), "");
+        assert_eq!(clip("clipboard=''"), "");
+        assert_eq!(clip(r#"clipboard="""#), "");
+        assert_eq!(clip("clipboard='é, ü'"), "é, ü");
+        assert_eq!(
+            steps(r#"clipboard="a, \"b\"",wait=1,out='my, file.ppm'"#),
+            Ok(vec![Step::Clipboard(r#"a, "b""#.into()), secs(1.0), Step::Out(PathBuf::from("my, file.ppm"))])
+        );
+        assert_eq!(steps("thumb='a,b.ppm':2"), Ok(vec![Step::Thumb(PathBuf::from("a,b.ppm"), 2)]));
+        assert_eq!(steps("layout='800x600;800x600'"), Ok(vec![Step::Layout(vec![(800, 600), (800, 600)])]));
+    }
+
+    #[test]
+    fn a_broken_spec_is_refused_with_the_step_named() {
+        let err = |spec: &str| steps(spec).expect_err(spec);
+        assert_eq!(err("clipboard='a, b"), "clipboard: no closing '");
+        assert_eq!(err(r#"clipboard="a\""#), "clipboard: no closing \"");
+        assert_eq!(err(r"clipboard='a\"), "clipboard: no closing '");
+        assert_eq!(err(r"clipboard='a\x'"), r#"clipboard: unknown escape \x (only \\, \', \", \n and \t)"#);
+        assert_eq!(err("bogus='a"), "unknown step \"bogus\"");
+        assert_eq!(err("bogus=1"), "unknown step \"bogus\"");
+        assert_eq!(err("Wait=1"), "unknown step \"Wait\"");
+        assert_eq!(err("'wait'=1"), "unknown step \"'wait'\"");
+        assert_eq!(err("=1"), "unknown step \"\"");
+        assert_eq!(err("bogus"), "unknown step \"bogus\"");
+        assert_eq!(err("wait"), "wait needs a value (wait=...)");
+        assert_eq!(err("wait=1,out"), "out needs a value (out=...)");
+        assert_eq!(err("5"), "\"5\" is not a step (wait=5 waits 5 seconds)");
+        assert_eq!(err(","), "step 1 is empty");
+        assert_eq!(err(",wait=1"), "step 1 is empty");
+        assert_eq!(err("wait=1,,out=a"), "step 2 is empty");
+        assert_eq!(err("wait=1,"), "step 2 is empty");
+        assert_eq!(err("wait=1, "), "step 2 is empty");
+        assert_eq!(err("out="), "out: no file");
+        assert_eq!(err("thumb="), "thumb: no file");
+        assert_eq!(err("thumb=:4"), "thumb: no file");
+        assert_eq!(err("thumb=a.ppm:0"), "thumb: the scale is 1/N, and N is at least 1");
+        assert_eq!(err("thumb=a.ppm:99999999999999999999999"), "thumb: \"99999999999999999999999\" is not a number");
+        // A colon not followed by digits belongs to the file name.
+        assert_eq!(steps("thumb=a:b.ppm"), Ok(vec![Step::Thumb(PathBuf::from("a:b.ppm"), THUMB_STEP)]));
+        assert_eq!(steps("thumb=a.ppm:"), Ok(vec![Step::Thumb(PathBuf::from("a.ppm:"), THUMB_STEP)]));
+    }
+
+    #[test]
+    fn a_bad_number_is_refused_by_step() {
+        let err = |spec: &str| steps(spec).expect_err(spec);
+        for bad in ["", "-1", "+1", "1s", "1.2.3", ".", "inf", "nan", "1e3", " 1", "1 ", "0x10"] {
+            assert_eq!(err(&format!("wait={bad}")), format!("wait: {bad:?} is not a number of seconds"));
+            assert_eq!(err(&format!("sound-cycle={bad}")), format!("sound-cycle: {bad:?} is not a number of seconds"));
+        }
+        assert!(err("wait=99999999999999999999999").starts_with("wait: "));
+        // X,Y is two steps, the first of them broken.
+        assert_eq!(err("click=1,2"), "click: not X:Y: \"1\"");
+        assert_eq!(err("click=1"), "click: not X:Y: \"1\"");
+        assert_eq!(err("click=1:"), "click: \"\" is not a number");
+        assert_eq!(err("click=a:2"), "click: \"a\" is not a number");
+        assert_eq!(err("click=1:2:3"), "click: \"2:3\" is not a number");
+        assert_eq!(err("click=1.5:2"), "click: \"1.5\" is not a number");
+        assert_eq!(err("key="), "key: \"\" is not a keysym");
+        assert_eq!(err("key=a"), "key: \"a\" is not a keysym");
+        assert_eq!(err("resize=1280"), "resize: not WxH: \"1280\"");
+        assert_eq!(err("resize=0x720"), "resize: a screen has an area: \"0x720\"");
+        assert_eq!(err("resize=1280x-1"), "resize: \"-1\" is not a number");
+        assert_eq!(err("resize="), "resize: not WxH: \"\"");
+        assert_eq!(err("layout="), "layout: not WxH: \"\"");
+        assert_eq!(err("layout=800x600;"), "layout: not WxH: \"\"");
+        assert_eq!(err("layout=800x600;0x1"), "layout: a screen has an area: \"0x1\"");
+    }
+
+    #[test]
+    fn a_keysym_is_read_as_strtol_with_base_zero_reads_it() {
+        assert_eq!(keysym("0x61"), Ok(0x61));
+        assert_eq!(keysym("0X61"), Ok(0x61));
+        assert_eq!(keysym("97"), Ok(0x61));
+        assert_eq!(keysym("0141"), Ok(0x61));
+        assert_eq!(keysym("0"), Ok(0));
+        assert_eq!(keysym("00"), Ok(0));
+        assert_eq!(keysym(" \t+0xff0d"), Ok(0xff0d));
+        assert_eq!(keysym("0xffffffff"), Ok(u32::MAX));
+        for refused in [
+            "0o141", "0b101", "08", "0x", "", " ", "0x+61", "0x-61", "-1", "97 ", "1e3", "0x1ffffffff", "++1",
+        ] {
+            assert!(keysym(refused).is_err(), "{refused:?}");
+        }
+    }
+
+    /// Every step is in the help, at the options' column, and the help's
+    /// example is a spec the parser takes.
+    #[test]
+    fn the_help_lists_every_step_and_its_example_parses() {
+        let help = usage(&Defaults { extlib_dir: "E".into(), state_dir: "S".into() });
+        let section = &help[help.find("probe steps (").expect("no probe steps section")..];
+        let rows: Vec<&str> = section.lines().skip(1).take_while(|l| !l.is_empty()).collect();
+        assert_eq!(rows.len(), STEPS.len(), "{rows:?}");
+        for (row, name) in rows.iter().zip(STEPS) {
+            assert!(row.starts_with(&format!("  {name}=")), "{row:?} is not {name}");
+            assert_eq!(&row[27..29], "  ", "{row:?}");
+            assert_ne!(row.as_bytes()[29], b' ', "{row:?}");
+        }
+        assert!(section.contains("scaled 1/N (default: 8)\n"));
+        assert!(section.contains(concat!(r#"inside quotes, \\ \' \" \n \t are escapes"#, "\n")), "{section}");
+        let example = section.lines().find_map(|l| l.strip_prefix("  e.g., --probe ")).expect("no example");
+        let example = example.strip_prefix('\'').and_then(|e| e.strip_suffix('\'')).expect("not in shell quotes");
+        let parsed = steps(example).unwrap();
+        assert!(parsed.contains(&Step::Clipboard(r#"a, "b""#.into())), "{parsed:?}");
+        assert!(help.contains("  vento <backend> <address> --probe SPEC ...  headless probe\n"));
+        assert!(help.contains("  -P, --probe SPEC  "));
     }
 }

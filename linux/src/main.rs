@@ -13,12 +13,13 @@
 //! forgets a server (`known_hosts::forget`) without connecting anywhere.
 //! `--probe` selects the headless mode instead, modelled on
 //! `backends/platform/linux/probe/probe.c`: it connects, prints every event,
-//! answers the prompts from the flags, writes the framebuffer and its
-//! thumbnail where asked, prints the facts, and exits with a status that is
-//! zero only if it connected, stayed connected, wrote what was asked for and
-//! closed when told to. Input is sent and not confirmed, since no protocol
-//! confirms it; the failures that can be detected (input requested in view
-//! only, a clipboard the backend says has nowhere to go) fail it.
+//! answers the prompts from the flags, runs the steps of its spec
+//! ([`cli::Step`]: waits, input, requests, the framebuffer and its thumbnail
+//! written), prints the facts, and exits with a status that is zero only if
+//! it connected, stayed connected through the steps, wrote what was asked
+//! for and closed when told to. Input is sent and not confirmed, since no
+//! protocol confirms it; the failure that can be detected (a clipboard the
+//! backend says has nowhere to go) fails it.
 
 mod cli;
 
@@ -27,7 +28,7 @@ fn main() {
 }
 
 mod host {
-    use super::cli::{self, Arg};
+    use super::cli::{self, Arg, Step};
     use runtime::media::audio::Outputs as _;
     use std::cell::Cell;
     use std::path::PathBuf;
@@ -65,27 +66,20 @@ mod host {
         password: Option<String>,
         options: Options,
         dirs: Dirs,
-        seconds: u64,
+        /// `--probe`'s spec, run in order once connected.
+        steps: Vec<Step>,
         connect_timeout: u64,
         trust: bool,
-        click: Option<(i32, i32)>,
-        key: Option<u32>,
-        clipboard: Option<String>,
-        /// `--resize`: a desktop size to ask for, as the window's follower
-        /// asks for one.
-        resize: Option<(u32, u32)>,
-        /// `--sound-cycle`: how often the far end's sound is turned off and
+        /// `sound-cycle=`: how often the far end's sound is turned off and
         /// on again, where the session's switch can ask it to.
-        sound_cycle: Option<Duration>,
-        /// The session's sound controls, for `--sound-cycle`, and when it
+        sound_cycle: Cell<Option<Duration>>,
+        /// The session's sound controls, for `sound-cycle=`, and when it
         /// next turns the switch.
         sound_controls: std::cell::RefCell<Option<Arc<runtime::media::audio::Controls>>>,
         sound_cycle_at: Cell<Option<Instant>>,
         /// The session's sound as last printed, so that each change is
         /// printed on its own line.
         sound: Cell<vento::events::Sound>,
-        /// `--layout`: screens to ask for, left to right.
-        layout: Option<Vec<(u32, u32)>>,
         /// `--no-recv-clipboard`'s opposite: whether what the far end copies
         /// is shown, which is the probe's way of taking it.
         clipboard_in: bool,
@@ -93,11 +87,6 @@ mod host {
         hw_decode: backends::Hardware,
         /// `--audio`: where the far end's sound plays.
         audio_output: backends::AudioOutput,
-        /// `--out` and `--out-thumb`: where the framebuffer and its
-        /// thumbnail go.
-        out: Option<PathBuf>,
-        out_thumb: Option<PathBuf>,
-        thumb_step: usize,
         /// Whether `--password` has been given to a credentials prompt.
         /// It is given once: a second prompt is the far end saying it was
         /// wrong, and answering that with the same password again is a loop
@@ -216,17 +205,8 @@ mod host {
         let mut domain = String::new();
         let mut password = None;
         let mut assignments: Vec<String> = Vec::new();
-        let mut seconds = None;
+        let mut steps = None;
         let mut connect_timeout = cli::CONNECT_TIMEOUT;
-        let mut click = None;
-        let mut key = None;
-        let mut clipboard = None;
-        let mut resize = None;
-        let mut sound_cycle = None;
-        let mut layout = None;
-        let mut out = None;
-        let mut out_thumb = None;
-        let mut thumb_step = cli::THUMB_STEP;
         let mut state_dir = None;
         let mut extlib_dir = None;
         let mut settings = gui::Settings::default();
@@ -291,31 +271,8 @@ mod host {
                 "no-send-clipboard" => settings.clipboard_out = false,
                 "no-recv-clipboard" => settings.clipboard_in = false,
                 "no-grab-keyboard" => settings.grab_keyboard = false,
-                "probe" => seconds = Some(number::<u64>(&value, "--probe")?),
+                "probe" => steps = Some(cli::steps(&value).map_err(|e| format!("--probe: {e}"))?),
                 "connect-timeout" => connect_timeout = number::<u64>(&value, "--connect-timeout")?,
-                "out" => out = Some(PathBuf::from(value)),
-                "out-thumb" => out_thumb = Some(PathBuf::from(value)),
-                "thumb-step" => thumb_step = number::<usize>(&value, "--thumb-step")?.max(1),
-                "click" => {
-                    let (x, y) = value.split_once(',').ok_or("--click: not X,Y")?;
-                    click = Some((number::<i32>(x.trim(), "--click")?, number::<i32>(y.trim(), "--click")?));
-                }
-                "key" => key = Some(keysym(&value)?),
-                "clipboard" => clipboard = Some(value),
-                "sound-cycle" => {
-                    let seconds: u64 =
-                        value.parse().ok().filter(|&n| n > 0).ok_or_else(|| format!("--sound-cycle {value:?}"))?;
-                    sound_cycle = Some(Duration::from_secs(seconds));
-                }
-                "resize" => resize = Some(dimensions(&value, "--resize")?),
-                "layout" => {
-                    layout = Some(
-                        value
-                            .split(',')
-                            .map(|s| dimensions(s.trim(), "--layout"))
-                            .collect::<Result<Vec<_>, _>>()?,
-                    );
-                }
                 other => unreachable!("--{other} is in cli::FLAGS but not parsed"),
             }
         }
@@ -326,7 +283,7 @@ mod host {
         if list {
             return Ok(Mode::List);
         }
-        let headless = seconds.is_some();
+        let headless = steps.is_some();
         if let Some(name) = probe_only
             && !headless
         {
@@ -374,7 +331,7 @@ mod host {
         }
         options.check_requirements(kind.options)?;
 
-        let Some(seconds) = seconds else {
+        let Some(steps) = steps else {
             return Ok(Mode::Gui(Box::new(gui::Launch {
                 request: Some(gui::Request {
                     kind,
@@ -399,24 +356,16 @@ mod host {
             password,
             options,
             dirs,
-            seconds,
+            steps,
             connect_timeout,
             trust: settings.trust,
-            click,
-            key,
-            clipboard,
-            resize,
-            sound_cycle,
+            sound_cycle: Cell::new(None),
             sound_controls: std::cell::RefCell::new(None),
             sound_cycle_at: Cell::new(None),
             sound: Cell::new(Default::default()),
-            layout,
             clipboard_in: settings.clipboard_in,
             hw_decode: settings.hardware(),
             audio_output: settings.audio_output,
-            out,
-            out_thumb,
-            thumb_step,
             answered: Cell::new(false),
             refused: Cell::new(false),
         })))
@@ -450,45 +399,8 @@ mod host {
         })
     }
 
-    /// `WxH`, neither of them zero.
-    fn dimensions(value: &str, flag: &str) -> Result<(u32, u32), String> {
-        let (w, h) = value.split_once('x').ok_or(format!("{flag}: not WxH: {value:?}"))?;
-        let (w, h) = (number::<u32>(w, flag)?, number::<u32>(h, flag)?);
-        if w == 0 || h == 0 {
-            return Err(format!("{flag}: a screen has an area: {value:?}"));
-        }
-        Ok((w, h))
-    }
-
     fn number<T: std::str::FromStr>(value: &str, flag: &str) -> Result<T, String> {
         value.trim().parse().map_err(|_| format!("{flag}: {value:?} is not a number"))
-    }
-
-    /// A keysym as probe.c's `strtol(.., 0)` reads one, so that the same
-    /// `--key` means the same key to both probes: hex after `0x` or `0X`
-    /// (`0x61`), octal after any other leading zero (`0141`), decimal
-    /// otherwise (`97`), after leading white space and an optional `+`, with
-    /// nothing after the digits. `0o` and `0b` are not prefixes to strtol
-    /// (without C23's), so they are not here either. What does not fit a
-    /// keysym's 32 bits, or is negative, is refused rather than wrapped.
-    fn keysym(value: &str) -> Result<u32, String> {
-        let wrong = || format!("--key: {value:?} is not a keysym");
-        // C's isspace, which is not Unicode's.
-        let v = value.trim_start_matches([' ', '\t', '\n', '\x0b', '\x0c', '\r']);
-        let v = v.strip_prefix('+').unwrap_or(v);
-        let (digits, radix) = if let Some(hex) = v.strip_prefix("0x").or_else(|| v.strip_prefix("0X")) {
-            (hex, 16)
-        } else if v.len() > 1 && v.starts_with('0') {
-            (&v[1..], 8)
-        } else {
-            (v, 10)
-        };
-        // from_str_radix takes a sign of its own, which strtol does not after
-        // a prefix; so the digits are checked first.
-        if digits.is_empty() || !digits.chars().all(|c| c.is_digit(radix)) {
-            return Err(wrong());
-        }
-        u32::from_str_radix(digits, radix).map_err(|_| wrong())
     }
 
     /// At most `bytes` of `text`, cut where a character starts: the far end's
@@ -544,7 +456,8 @@ mod host {
 
             let mut status = 0;
             // Drain and print until connected, or the connect deadline.
-            let connected = self.pump(&mailbox, &backend, &say, self.connect_timeout, |m| {
+            let connect_timeout = Duration::from_secs(self.connect_timeout);
+            let connected = self.pump(&mailbox, &backend, &say, connect_timeout, |m| {
                 m.state() != State::Connecting
             });
             if mailbox.state() != State::Connected {
@@ -557,12 +470,13 @@ mod host {
                 });
                 status = 1;
             } else {
-                // A second for the first frame, so a click lands on a drawn
-                // desktop; then the rest of the time asked for.
-                self.pump(&mailbox, &backend, &say, 1, |_| false);
-                if mailbox.state() == State::Connected {
-                    self.poke(&backend, &say);
-                    self.pump(&mailbox, &backend, &say, self.seconds.saturating_sub(1), |_| false);
+                for step in &self.steps {
+                    if mailbox.state() != State::Connected {
+                        break;
+                    }
+                    if !self.step(step, &mailbox, &backend, &say) {
+                        status = 1;
+                    }
                 }
                 if mailbox.state() != State::Connected {
                     say(if self.refused.get() {
@@ -573,12 +487,10 @@ mod host {
                     status = 1;
                 } else {
                     self.facts(&backend, &say);
-                    if !self.write_pictures(&backend, &say) {
-                        status = 1;
-                    }
                     // Asked at the end rather than when it was sent, since an
                     // agent that comes up late still gets the offer.
-                    if self.clipboard.is_some() && backend.carries_clipboard() == Some(false) {
+                    let sent_clipboard = self.steps.iter().any(|s| matches!(s, Step::Clipboard(_)));
+                    if sent_clipboard && backend.carries_clipboard() == Some(false) {
                         say("clipboard not carried: the far end has nowhere to put it");
                         status = 1;
                     }
@@ -587,7 +499,7 @@ mod host {
 
             say("disconnect");
             backend.disconnect();
-            if !self.pump(&mailbox, &backend, &say, 10, |m| m.state() == State::Closed) {
+            if !self.pump(&mailbox, &backend, &say, Duration::from_secs(10), |m| m.state() == State::Closed) {
                 say("no close within 10 s of disconnect");
                 status = 1;
             }
@@ -597,18 +509,18 @@ mod host {
             status
         }
 
-        /// Prints events until `done` is true, the session closes, or
-        /// `seconds` pass; whether `done` was reached. Prompts are answered
-        /// from the flags as they arrive.
+        /// Prints events until `done` is true, the session closes, or `time`
+        /// passes; whether `done` was reached. Prompts are answered from the
+        /// flags as they arrive.
         fn pump(
             &self,
             mailbox: &Mailbox,
             backend: &Arc<dyn Backend>,
             say: &dyn Fn(&str),
-            seconds: u64,
+            time: Duration,
             done: impl Fn(&Mailbox) -> bool,
         ) -> bool {
-            let deadline = Instant::now() + Duration::from_secs(seconds);
+            let deadline = Instant::now() + time;
             loop {
                 while let Some(event) = mailbox.take() {
                     self.print(&event, say);
@@ -629,11 +541,11 @@ mod host {
             }
         }
 
-        /// `--sound-cycle`: turns the switch once it is due, where the far
-        /// end can be asked; the first turn is a period after the switch is
-        /// offered.
+        /// `sound-cycle=`: turns the switch once it is due, where the far
+        /// end can be asked; the first turn is a period after the step, or
+        /// after the switch is offered if that is later.
         fn cycle_sound(&self, now: Instant, say: &dyn Fn(&str)) {
-            let (Some(every), Some(controls)) = (self.sound_cycle, self.sound_controls.borrow().clone()) else {
+            let (Some(every), Some(controls)) = (self.sound_cycle.get(), self.sound_controls.borrow().clone()) else {
                 return;
             };
             if controls.sound().switch != Some(runtime::media::audio::Switch::Enable) {
@@ -811,58 +723,74 @@ mod host {
             }
         }
 
-        fn poke(&self, backend: &Arc<dyn Backend>, say: &dyn Fn(&str)) {
-            if let Some((x, y)) = self.click {
-                say(&format!("pointer -> click at {x},{y}"));
-                backend.pointer(x, y, 0);
-                backend.pointer(x, y, 1);
-                backend.pointer(x, y, 0);
+        /// Runs one of `--probe`'s steps; whether it did what it says.
+        fn step(&self, step: &Step, mailbox: &Mailbox, backend: &Arc<dyn Backend>, say: &dyn Fn(&str)) -> bool {
+            match step {
+                Step::Wait(time) => {
+                    self.pump(mailbox, backend, say, *time, |_| false);
+                }
+                &Step::Click(x, y) => {
+                    say(&format!("pointer -> click at {x},{y}"));
+                    backend.pointer(x, y, 0);
+                    backend.pointer(x, y, 1);
+                    backend.pointer(x, y, 0);
+                }
+                Step::Clipboard(text) => {
+                    say(&format!("clipboard -> {text:?}"));
+                    backend.clipboard(text);
+                }
+                &Step::Key(keysym) => {
+                    say(&format!("key_down/key_up -> keysym {keysym:#x}"));
+                    backend.key_down(keysym, 1);
+                    backend.key_up(1);
+                }
+                &Step::Resize(w, h) => {
+                    say(&format!("request_desktop_size -> {w}x{h}"));
+                    backend.request_desktop_size(w, h);
+                }
+                Step::Layout(sizes) => self.layout(sizes, backend, say),
+                Step::SoundCycle(every) => {
+                    self.sound_cycle.set(Some(*every).filter(|e| !e.is_zero()));
+                    self.sound_cycle_at.set(None);
+                }
+                Step::Out(path) => return self.out(path, backend, say),
+                Step::Thumb(path, scale) => return self.thumb(path, *scale, backend, say),
             }
-            if let Some(text) = &self.clipboard {
-                say(&format!("clipboard -> {text:?}"));
-                backend.clipboard(text);
-            }
-            if let Some(keysym) = self.key {
-                say(&format!("key_down/key_up -> keysym {keysym:#x}"));
-                backend.key_down(keysym, 1);
-                backend.key_up(1);
-            }
-            if let Some((w, h)) = self.resize {
-                say(&format!("request_desktop_size -> {w}x{h}"));
-                backend.request_desktop_size(w, h);
-            }
-            if let Some(sizes) = &self.layout {
-                // The far end's screens keep their ids by position, as a
-                // window placing its monitors left to right would hand them
-                // back; one past them has an id the far end cannot have yet
-                // (none has all 2^32), and the backend numbers it.
-                let have = backend.facts().monitors;
-                let fresh = (0..=u32::MAX).rev().find(|id| have.iter().all(|m| m.id != *id));
-                let mut x = 0i32;
-                let screens: Vec<Monitor> = sizes
-                    .iter()
-                    .enumerate()
-                    .map(|(i, &(w, h))| {
-                        let id = have.get(i).map(|m| m.id).or(fresh).unwrap_or(0);
-                        let m = Monitor {
-                            id,
-                            x,
-                            y: 0,
-                            width: w as i32,
-                            height: h as i32,
-                        };
-                        x += w as i32;
-                        m
-                    })
-                    .collect();
-                let width = x.max(0) as u32;
-                let height = sizes.iter().map(|s| s.1).max().unwrap_or(0);
-                say(&format!(
-                    "request_layout -> {width}x{height}: {}",
-                    screens.iter().map(screen).collect::<Vec<_>>().join(", ")
-                ));
-                backend.request_layout(width, height, &screens);
-            }
+            true
+        }
+
+        /// `layout=`: the screens asked for side by side.
+        fn layout(&self, sizes: &[(u32, u32)], backend: &Arc<dyn Backend>, say: &dyn Fn(&str)) {
+            // The far end's screens keep their ids by position, as a
+            // window placing its monitors left to right would hand them
+            // back; one past them has an id the far end cannot have yet
+            // (none has all 2^32), and the backend numbers it.
+            let have = backend.facts().monitors;
+            let fresh = (0..=u32::MAX).rev().find(|id| have.iter().all(|m| m.id != *id));
+            let mut x = 0i32;
+            let screens: Vec<Monitor> = sizes
+                .iter()
+                .enumerate()
+                .map(|(i, &(w, h))| {
+                    let id = have.get(i).map(|m| m.id).or(fresh).unwrap_or(0);
+                    let m = Monitor {
+                        id,
+                        x,
+                        y: 0,
+                        width: w as i32,
+                        height: h as i32,
+                    };
+                    x += w as i32;
+                    m
+                })
+                .collect();
+            let width = x.max(0) as u32;
+            let height = sizes.iter().map(|s| s.1).max().unwrap_or(0);
+            say(&format!(
+                "request_layout -> {width}x{height}: {}",
+                screens.iter().map(screen).collect::<Vec<_>>().join(", ")
+            ));
+            backend.request_layout(width, height, &screens);
         }
 
         fn facts(&self, backend: &Arc<dyn Backend>, say: &dyn Fn(&str)) {
@@ -906,77 +834,65 @@ mod host {
             }
         }
 
-        /// `--out` and `--out-thumb`: whether each asked for was written.
-        fn write_pictures(&self, backend: &Arc<dyn Backend>, say: &dyn Fn(&str)) -> bool {
-            if self.out.is_none() && self.out_thumb.is_none() {
-                return true;
-            }
+        /// `out=`: whether the framebuffer was written.
+        fn out(&self, path: &std::path::Path, backend: &Arc<dyn Backend>, say: &dyn Fn(&str)) -> bool {
             let facts = backend.facts();
             let (width, height) = (facts.width, facts.height);
             if width == 0 || height == 0 {
                 say("no framebuffer size to read");
                 return false;
             }
-            let mut ok = true;
-            let write = |path: &std::path::Path, picture: &vento::backend::Picture, what: String| match ppm::write(
-                path, picture,
-            ) {
-                Ok(()) => {
-                    say(&format!("{what} -> {}", path.display()));
-                    true
+            let mut rgba = vec![0u8; width * height * 4];
+            if !backend.read_region(0, 0, width, height, &mut rgba, width * 4, 0, 0) {
+                say(&format!("read_region {width}x{height} refused"));
+                return false;
+            }
+            let picture = vento::backend::Picture { width, height, rgba };
+            write_picture(path, &picture, &format!("read_region {width}x{height}"), say)
+        }
+
+        /// `thumb=`: whether the thumbnail was written.
+        fn thumb(&self, path: &std::path::Path, step: usize, backend: &Arc<dyn Backend>, say: &dyn Fn(&str)) -> bool {
+            let facts = backend.facts();
+            if facts.width == 0 || facts.height == 0 {
+                say("no framebuffer size to read");
+                return false;
+            }
+            match backend.thumbnail(step) {
+                Some(picture) => {
+                    let what = format!("read_thumbnail 1/{step} {}x{}", picture.width, picture.height);
+                    write_picture(path, &picture, &what, say)
                 }
-                Err(e) => {
-                    say(&format!("writing {}: {e}", path.display()));
+                None => {
+                    say(&format!("read_thumbnail 1/{step} refused"));
                     false
                 }
-            };
-            if let Some(out) = &self.out {
-                let mut rgba = vec![0u8; width * height * 4];
-                if backend.read_region(0, 0, width, height, &mut rgba, width * 4, 0, 0) {
-                    let picture = vento::backend::Picture { width, height, rgba };
-                    ok &= write(out, &picture, format!("read_region {width}x{height}"));
-                } else {
-                    say(&format!("read_region {width}x{height} refused"));
-                    ok = false;
-                }
             }
-            if let Some(out) = &self.out_thumb {
-                let step = self.thumb_step;
-                match backend.thumbnail(step) {
-                    Some(picture) => {
-                        let what = format!("read_thumbnail 1/{step} {}x{}", picture.width, picture.height);
-                        ok &= write(out, &picture, what);
-                    }
-                    None => {
-                        say(&format!("read_thumbnail 1/{step} refused"));
-                        ok = false;
-                    }
-                }
+        }
+    }
+
+    /// Writes `picture` to `path` as a PPM, saying so; whether it was written.
+    fn write_picture(
+        path: &std::path::Path,
+        picture: &vento::backend::Picture,
+        what: &str,
+        say: &dyn Fn(&str),
+    ) -> bool {
+        match ppm::write(path, picture) {
+            Ok(()) => {
+                say(&format!("{what} -> {}", path.display()));
+                true
             }
-            ok
+            Err(e) => {
+                say(&format!("writing {}: {e}", path.display()));
+                false
+            }
         }
     }
 
     #[cfg(test)]
     mod tests {
         use super::*;
-
-        #[test]
-        fn a_keysym_is_read_as_strtol_with_base_zero_reads_it() {
-            assert_eq!(keysym("0x61"), Ok(0x61));
-            assert_eq!(keysym("0X61"), Ok(0x61));
-            assert_eq!(keysym("97"), Ok(0x61));
-            assert_eq!(keysym("0141"), Ok(0x61));
-            assert_eq!(keysym("0"), Ok(0));
-            assert_eq!(keysym("00"), Ok(0));
-            assert_eq!(keysym(" \t+0xff0d"), Ok(0xff0d));
-            assert_eq!(keysym("0xffffffff"), Ok(u32::MAX));
-            for refused in [
-                "0o141", "0b101", "08", "0x", "", " ", "0x+61", "0x-61", "-1", "97 ", "1e3", "0x1ffffffff", "++1",
-            ] {
-                assert!(keysym(refused).is_err(), "{refused:?}");
-            }
-        }
 
         fn parsed(args: &[&str]) -> Result<Mode, String> {
             parse(cli::split(args.iter().map(|a| a.to_string()).collect(), cli::FLAGS)?)
@@ -1010,7 +926,7 @@ mod host {
             assert_eq!(hardware(&["--video=vaapi", "--video=auto", "--hw-decode"]), Hardware::Auto);
             assert_eq!(launch(&["--video=vaapi"]).settings.video, Hardware::On);
             assert_eq!(
-                probe(&["rustdesk", "127.0.0.1", "--probe", "1", "--hw-decode", "--video=vaapi"]).hw_decode,
+                probe(&["rustdesk", "127.0.0.1", "--probe", "wait=1", "--hw-decode", "--video=vaapi"]).hw_decode,
                 Hardware::On
             );
             for refused in [&["--video="][..], &["--video", "VAAPI"], &["--video=nvdec"], &["--video"]] {
@@ -1031,7 +947,7 @@ mod host {
             assert_eq!(output(&["--audio=pipewire"]), AudioOutput::PipeWire);
             assert_eq!(output(&["--audio=off"]), AudioOutput::Off);
             assert_eq!(
-                probe(&["tigervnc", "127.0.0.1", "--probe", "1", "--audio=alsa", "--audio=auto"]).audio_output,
+                probe(&["tigervnc", "127.0.0.1", "--probe", "wait=1", "--audio=alsa", "--audio=auto"]).audio_output,
                 AudioOutput::Auto
             );
             for refused in [&["--audio="][..], &["--audio=pulse"], &["--audio=PipeWire"], &["--audio"]] {
@@ -1085,42 +1001,48 @@ mod host {
             let forced = launch(&["--view-only", "rfb", "127.0.0.1:1", "-o", "ViewOnly=false"]);
             assert!(forced.settings.view_only);
             assert_eq!(forced.request.unwrap().options.get("ViewOnly"), "true");
-            let probe = probe(&["rfb", "127.0.0.1:1", "-P1", "--view-only"]);
+            let probe = probe(&["rfb", "127.0.0.1:1", "-Pwait=1", "--view-only"]);
             assert_eq!(probe.options.get("ViewOnly"), "true");
         }
 
         #[test]
-        fn trust_is_for_the_window_and_the_probe_and_resize_only_for_the_probe() {
+        fn trust_is_for_the_window_and_the_probe_and_the_steps_only_for_the_probe() {
             assert!(launch(&["--trust"]).settings.trust);
             assert!(launch(&["--trust", "-c", "rfb", "127.0.0.1:1"]).settings.trust);
-            assert!(probe(&["rfb", "127.0.0.1:1", "--trust", "--probe=1"]).trust);
-            assert!(!probe(&["rfb", "127.0.0.1:1", "--probe=1"]).trust);
-            for (flag, value) in [
-                ("--connect-timeout", "5"),
-                ("--out", "x.ppm"),
-                ("--out-thumb", "x.ppm"),
-                ("--thumb-step", "4"),
-                ("--click", "1,2"),
-                ("--key", "0x61"),
-                ("--clipboard", "x"),
-                ("--sound-cycle", "2"),
-                ("--resize", "800x600"),
-                ("--layout", "800x600,800x600"),
-            ] {
-                let error = format!("{flag} needs --probe");
-                assert_eq!(parsed(&["rfb", "127.0.0.1:1", flag, value]).err(), Some(error.clone()));
-                assert_eq!(parsed(&["rfb", "127.0.0.1:1", "-c", flag, value]).err(), Some(error));
-                assert!(parsed(&["rfb", "127.0.0.1:1", flag, value, "-P", "1"]).is_ok(), "{flag}");
+            assert!(probe(&["rfb", "127.0.0.1:1", "--trust", "--probe=wait=1"]).trust);
+            assert!(!probe(&["rfb", "127.0.0.1:1", "--probe=wait=1"]).trust);
+            let error = "--connect-timeout needs --probe".to_string();
+            assert_eq!(parsed(&["rfb", "127.0.0.1:1", "--connect-timeout", "5"]).err(), Some(error.clone()));
+            assert_eq!(parsed(&["rfb", "127.0.0.1:1", "-c", "--connect-timeout=5"]).err(), Some(error));
+            let p = probe(&["rfb", "127.0.0.1:1", "--connect-timeout", "5", "-P", ""]);
+            assert_eq!((p.connect_timeout, p.steps.len()), (5, 0));
+            // The former probe flags are gone; their steps are in the spec.
+            for flag in ["--out", "--out-thumb", "--thumb-step", "--click", "--key", "--clipboard", "--resize"] {
+                assert_eq!(
+                    parsed(&["rfb", "127.0.0.1:1", "-P", "wait=1", flag, "x"]).err(),
+                    Some(format!("unknown option {flag}"))
+                );
             }
-            let p = probe(&["rfb", "127.0.0.1:1", "-P3", "--out", "a.ppm", "--out-thumb=b.ppm", "--thumb-step=4"]);
-            assert_eq!(p.seconds, 3);
-            assert_eq!(p.out, Some(PathBuf::from("a.ppm")));
-            assert_eq!(p.out_thumb, Some(PathBuf::from("b.ppm")));
-            assert_eq!(p.thumb_step, 4);
+            let p = probe(&["rfb", "127.0.0.1:1", "-P", "wait=3,out=a.ppm,thumb=b.ppm:4,clipboard='a, b'"]);
+            assert_eq!(
+                p.steps,
+                [
+                    Step::Wait(Duration::from_secs(3)),
+                    Step::Out(PathBuf::from("a.ppm")),
+                    Step::Thumb(PathBuf::from("b.ppm"), 4),
+                    Step::Clipboard("a, b".into()),
+                ]
+            );
             assert_eq!(p.connect_timeout, cli::CONNECT_TIMEOUT);
-            let p = probe(&["rfb", "127.0.0.1:1", "-P", "1", "--resize", "800x600", "--click=-1,5"]);
-            assert_eq!(p.resize, Some((800, 600)));
-            assert_eq!(p.click, Some((-1, 5)));
+            assert_eq!(
+                parsed(&["rfb", "127.0.0.1:1", "--probe", "3"]).err().unwrap(),
+                "--probe: \"3\" is not a step (wait=3 waits 3 seconds)"
+            );
+            assert_eq!(
+                parsed(&["rfb", "127.0.0.1:1", "--probe=wait=1,bogus=2"]).err().unwrap(),
+                "--probe: unknown step \"bogus\""
+            );
+            assert_eq!(parsed(&["rfb", "127.0.0.1:1", "--probe"]).err().unwrap(), "--probe needs a value");
         }
 
         #[test]
@@ -1161,9 +1083,9 @@ mod host {
             assert_eq!(request.options.get("Shared"), "false");
             assert_eq!(parsed(&["-c"]).err().unwrap(), "give a backend and an address");
             assert_eq!(parsed(&["-c", "rfb"]).err().unwrap(), "give a backend and an address");
-            assert_eq!(parsed(&["-P", "1", "rfb"]).err().unwrap(), "give a backend and an address");
+            assert_eq!(parsed(&["-P", "wait=1", "rfb"]).err().unwrap(), "give a backend and an address");
             assert_eq!(parsed(&["nope", "h"]).err().unwrap(), "no backend \"nope\", see --list");
-            assert_eq!(probe(&["-P5", "rfb", "127.0.0.1:1"]).address, "127.0.0.1:1");
+            assert_eq!(probe(&["-Pwait=5", "rfb", "127.0.0.1:1"]).address, "127.0.0.1:1");
             assert_eq!(parsed(&["--x11"]).err().unwrap(), "unknown option --x11");
         }
 

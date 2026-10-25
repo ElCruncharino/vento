@@ -162,7 +162,7 @@ clock, which is how a pause and a restore are lined up with the bursts.
 ```sh
 id=$(./sink.sh load)
 PIPEWIRE_NODE=vento_test vento tigervnc 127.0.0.1::5962 --password vncpass \
-    -o Audio=true --probe 330 & pid=$!
+    -o Audio=true --probe wait=330 & pid=$!
 ./sink.sh check $pid && ./bursts.py out --port 5956 --seconds 300
 kill $pid; ./sink.sh unload $id
 ```
@@ -197,7 +197,7 @@ the check sees.
 ```sh
 id=$(./sink.sh load)
 PIPEWIRE_NODE=vento_test vento freerdp 10.33.0.208 --user user --password password \
-    --trust --state-dir <scratch> -o Sound=local --probe 400 & pid=$!
+    --trust --state-dir <scratch> -o Sound=local --probe wait=400 & pid=$!
 sleep 10   # connected and logged on
 WIN_SSH='ssh user@10.33.0.208' ./winbursts.py out --seconds 300 --check $pid
 kill $pid; ./sink.sh unload $id

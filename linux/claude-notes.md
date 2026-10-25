@@ -82,8 +82,8 @@ clients, and what differs between them is each client's own code.
   (`--state-dir`, `$XDG_STATE_HOME/vento` by default), with tests.
 - **`src/main.rs`** — the `vento` binary: the window, `--help`, `--list`,
   `--forget`, and the headless probe. **`src/cli.rs`** — the command line's
-  GNU-style splitting, the help text, and the formatting of the help's
-  `backends:` section and of `--list`, with tests.
+  GNU-style splitting, the help text, the formatting of the help's
+  `backends:` section and of `--list`, and `--probe`'s spec, with tests.
 
 ## Building and running
 
@@ -402,17 +402,16 @@ cargo run -- --list
 cargo run -- --forget 127.0.0.1:5901
 
 # A session, headless: connect, print every event, answer the prompts from the
-# flags, write the framebuffer and its thumbnail where asked, print the facts,
-# and leave. --probe N (-P N) selects this instead of the window; the probe's
-# other options (--out, --out-thumb, --click, --key, --clipboard, --resize,
-# --layout, …) are refused without it. A certificate the known hosts match is
-# accepted without --trust; --trust accepts any other for this run and pins
-# nothing.
-cargo run -- tigervnc 127.0.0.1:5901 --password vncpass -P 5 \
-    --out /tmp/shot.ppm --out-thumb /tmp/shot-thumb.ppm \
-    --click 500,300 --key 0x61 --clipboard hello
-cargo run -- rdp 127.0.0.1:3389 --user proto --password protopass \
-    --trust --probe 5 --out /tmp/rdp.ppm
+# flags, run the steps of the spec in order (waits, input, size requests,
+# the framebuffer and its thumbnail written), print the facts, and leave.
+# --probe SPEC (-P SPEC) selects this instead of the window; its other option,
+# --connect-timeout, is refused without it. A certificate the known hosts
+# match is accepted without --trust; --trust accepts any other for this run
+# and pins nothing.
+cargo run -- tigervnc 127.0.0.1:5901 --password vncpass -P \
+    'wait=1,click=500:300,key=0x61,clipboard="hello, \"you\"",wait=4,out=/tmp/shot.ppm,thumb=/tmp/shot-thumb.ppm'
+cargo run -- freerdp 127.0.0.1:3389 --user proto --password protopass \
+    --trust --probe wait=2,resize=1280x720,wait=3,out=/tmp/rdp.ppm
 ```
 
 `build.rs` runs `backends/CMakeLists.txt` with `-DVENTO_SHARED=ON`, which makes
@@ -509,32 +508,45 @@ codec with `(hardware)` or `(software)`, and a `decoder` line after them is
 the overlay's `dec` line, with the reason where hardware was asked for and
 the picture is software.
 
-The probe's exit status is 0 only if it connected within `--connect-timeout`,
-stayed connected for the time asked, wrote the framebuffer and the thumbnail
-where `--out` and `--out-thumb` asked for them, and closed within 10 s of disconnecting; it is 1
-otherwise, and 2 for a command line it refused. `--click`, `--key` and
-`--clipboard` are sent, not confirmed: no protocol here says input arrived, so
-0 says they went out on a live session and nothing more; under `-o
-ViewOnly=true` every backend drops them. `--clipboard` fails the run (1) where the
-backend can tell the text went nowhere, which today is SPICE without a guest
-agent that takes a clipboard.
+`--probe`'s spec (`cli::steps`, with tests) is a comma-separated list of
+`name=value` steps, run in order once connected, with nothing between them:
+`wait=SECONDS` (a fraction is fine) prints events for that long, so a click
+that should land on a drawn desktop comes after a `wait=1`. `click=X:Y`,
+`key=KEYSYM` (read as probe.c's `--key` reads it), `clipboard=TEXT`,
+`resize=WxH`, `layout=WxH;WxH;…`, `sound-cycle=SECONDS`, `out=FILE` and
+`thumb=FILE[:N]` (1/N, 8 unless given) each print the line they always have.
+A value runs to the next comma; a part of it in single or double quotes holds
+commas and the other quote, with `\\`, `\'`, `\"`, `\n` and `\t` as escapes
+there (and nowhere else), so `clipboard="a, \"b\""` sends `a, "b"`. An empty
+spec connects, prints the facts and leaves. Steps stop at the first one that
+finds the session gone.
 
-`--resize WxH` asks for a desktop of that size, as the window does when it is
-resized, and `--layout WxH,WxH,…` asks for that many screens side by side,
+The probe's exit status is 0 only if it connected within `--connect-timeout`,
+stayed connected through the steps, wrote every `out=` and `thumb=` picture,
+and closed within 10 s of disconnecting; it is 1 otherwise (a failed write
+does not stop the steps after it), and 2 for a command line or spec it
+refused. `click=`, `key=` and `clipboard=` are sent, not confirmed: no
+protocol here says input arrived, so 0 says they went out on a live session
+and nothing more; under `-o ViewOnly=true` every backend drops them. A
+`clipboard=` step fails the run (1) where the backend can tell, at the end,
+that the text went nowhere, which today is SPICE without a guest agent that
+takes a clipboard.
+
+`resize=WxH` asks for a desktop of that size, as the window does when it is
+resized, and `layout=WxH;WxH;…` asks for that many screens side by side,
 handing the far end's own screens back by position (their ids kept) and
-numbering any past them afresh. Both go out a second after connecting (the
-layout after the size, where both are given), and
-like input they are sent, not confirmed: the facts printed at the end, which
-list each monitor as `id=N WxH+X+Y`, say what the far end made of them, and
+numbering any past them afresh. Like input they are sent, not confirmed: a
+`desktop_size` line, and the facts printed at the end, which list each
+monitor as `id=N WxH+X+Y`, say what the far end made of them, and
 `scripts/testvnc/heads.sh` says the same from the server's side.
 
 The probe prints the session's sound as it changes: `sound switch: Enable
 audio on` (or `off`, or `Mute audio off`, or `none`) whenever the switch the
 window would show changes, and `audio playing` and `audio stopped` as a
-stream starts and the last one closes. `--sound-cycle N` turns an Enable
-switch off, and on again, every N seconds once the backend has offered one,
-printing each turn — the far end's side of it is what the socket carries,
-which `ss -tin` on the client shows.
+stream starts and the last one closes. A `sound-cycle=N` step turns an Enable
+switch off, and on again, every N seconds from then on once the backend has
+offered one (`sound-cycle=0` stops it), printing each turn. The far end's side
+of it is what the socket carries, which `ss -tin` on the client shows.
 
 `--verbose` lets the backends' debug lines through (and not the GUI stack's,
 which would be tens of thousands a minute). What is typed is never among

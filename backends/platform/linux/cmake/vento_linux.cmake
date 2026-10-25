@@ -15,7 +15,7 @@
 # `vento_backend_probe` does nothing and the probe body is never compiled,
 # which suits the Linux client's build of the same tree (`linux/build.rs`,
 # target `all`): it would otherwise rebuild four unused executables whenever a
-# session file changes. The client's own `vento <backend> <address> --probe N`
+# session file changes. The client's own `vento <backend> <address> --probe SPEC`
 # goes through the same session files.
 #
 # Guarded, because the host root includes it once and each module includes it
