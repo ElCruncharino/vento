@@ -81,6 +81,7 @@
 #include <thread>
 #include <vector>
 
+#include <core/Exception.h>
 #include <core/LogWriter.h>
 #include <core/Logger.h>
 #include <core/Region.h>
@@ -267,7 +268,6 @@ enum CmdType {
     CMD_CLIPBOARD,
     CMD_PICTURE,
     CMD_RESIZE,
-    CMD_DISCONNECT,
 };
 
 struct Cmd {
@@ -1321,11 +1321,6 @@ void Session::runCmd(Conn *conn, Cmd &cmd) {
             conn->writer()->writeSetDesktopSize(cmd.a, cmd.b, layout);
             break;
         }
-        case CMD_DISCONNECT: {
-            const std::lock_guard<std::mutex> guard(lock_);
-            quit_ = true;
-            break;
-        }
     }
 }
 
@@ -1589,6 +1584,13 @@ void Session::run() {
             }
         }
     } catch (rdr::end_of_stream &e) {
+        detail = "The connection was lost";
+    } catch (core::socket_error &e) {
+        // A reset or a broken pipe on a connection that was up is the same
+        // ending as its stream running out, and is said in the same words as
+        // libvnc's; the library's own ("read: Connection reset by peer
+        // (104)") goes to the log.
+        LOGW("the connection ended: %s", e.what());
         detail = "The connection was lost";
     } catch (rfb::auth_cancelled &e) {
         // Somebody said no, which needs no words — or a certificate was
