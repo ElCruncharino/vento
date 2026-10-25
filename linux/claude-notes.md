@@ -903,7 +903,9 @@ is showing is in the tooltip too. On it:
 - **Resize** (`resize`, beside Scale at 1:1 when not fullscreen) asks for
   the window to be the size of what it shows, the desktop or its monitor,
   in device pixels, so that nothing is panned or left over; a maximised
-  window is unmaximised first.
+  window is unmaximised first. It is hidden while the window's inner size
+  is that size already, and stays shown where the window manager keeps
+  another size.
 - **Monitor** (when the far end reports more than one) shows the whole desktop
   (`tv_displays`, several screens) or one monitor's rectangle (`monitor`, one
   screen), with the scale modes applied to that. Where a

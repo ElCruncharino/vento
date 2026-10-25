@@ -641,7 +641,8 @@ impl Pane {
     /// The main window's: Scale, Resize, Monitor, Pop out, View only,
     /// Sound, Info, Fullscreen, Disconnect. A pop-out's: Scale, Resize,
     /// Monitor, View only, Sound, Fullscreen, Return. Resize only at 1:1 in
-    /// a window, and Sound only where the far end may send sound.
+    /// a window not already the size it asks for, and Sound only where the
+    /// far end may send sound.
     fn toolbar_items(&mut self, s: &mut Session, ui: &mut egui::Ui, host: &mut Host) {
         let connected = s.connected();
         let mode = self.view.mode;
@@ -658,9 +659,17 @@ impl Pane {
             self.view.cycle();
         }
         // At 1:1 in a window, the window can be made the size of what it
-        // shows, which at that scale is its size in device pixels.
+        // shows, which at that scale is its size in device pixels. Hidden
+        // while the window is that size already; a window manager that
+        // keeps another size leaves it shown.
+        let fitted = s
+            .desktop
+            .as_ref()
+            .map(Desktop::size)
+            .is_some_and(|(width, height)| host.window.inner_size() == fit_size(self.source_rect(width, height)));
         if mode == ScaleMode::Original
             && host.window.fullscreen().is_none()
+            && !fitted
             && ui
                 .add_enabled(connected, icon_only(icons::RESIZE))
                 .on_hover_text("Resize window to desktop size")
@@ -794,8 +803,7 @@ impl Pane {
         let Some((width, height)) = s.desktop.as_ref().map(Desktop::size) else {
             return;
         };
-        let source = self.source_rect(width, height);
-        let size = PhysicalSize::new(source.width().round() as u32, source.height().round() as u32);
+        let size = fit_size(self.source_rect(width, height));
         log::info!("resizing the window to {}×{}", size.width, size.height);
         if host.window.is_maximized() {
             host.window.set_maximized(false);
@@ -1150,6 +1158,12 @@ fn next_monitor(current: Option<usize>, count: usize) -> Option<usize> {
     }
 }
 
+/// The window's inner size, in device pixels, that shows `source` (in
+/// desktop pixels) one to one with nothing panned or left over.
+fn fit_size(source: Rect) -> PhysicalSize<u32> {
+    PhysicalSize::new(source.width().round() as u32, source.height().round() as u32)
+}
+
 /// A Monitor choice in words, for the tooltip.
 fn monitor_name(monitor: Option<usize>, count: usize) -> String {
     match monitor {
@@ -1186,6 +1200,14 @@ mod tests {
         assert!(disabled_tip.starts_with("Sound: off"));
         assert!(heard_tip.starts_with("Sound: on") && heard_tip.contains("mute"));
         assert!(muted_tip.starts_with("Sound: muted"));
+    }
+
+    #[test]
+    fn the_resize_button_asks_for_the_shown_rectangle_in_device_pixels() {
+        let whole = Rect::from_min_size(Pos2::ZERO, vec2(1024.0, 768.0));
+        assert_eq!(fit_size(whole), PhysicalSize::new(1024, 768));
+        let second = Rect::from_min_size(pos2(1920.0, 0.0), vec2(1600.0, 900.0));
+        assert_eq!(fit_size(second), PhysicalSize::new(1600, 900));
     }
 
     #[test]
