@@ -15,6 +15,7 @@ use crate::keymap::{self, Key};
 use crate::sound::{QUIET, Sound};
 use crate::tls;
 use runtime::media::audio::{Outputs, Player};
+use runtime::rate::Rate;
 use runtime::{Credentials, Handler, Hangup};
 
 use ironrdp_blocking::{Framed, connect_begin, connect_finalize, mark_as_upgraded};
@@ -48,7 +49,7 @@ use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// How often the protocol thread comes up for air when the desktop is silent.
 ///
@@ -909,7 +910,10 @@ impl Client {
             pointer_software_rendering: false,
         }
         .build();
-        let mut rate = Rate::new(Arc::clone(&self.shared.bytes_in));
+        // What has arrived by the last frame drawn: the line speed is the
+        // bytes between two frames, the frames' and anything else's.
+        let mut rate = Rate::new();
+        let mut counted = self.shared.bytes_in.load(Ordering::Relaxed);
         // One monitor's worth, which is what the connection sequence asked for
         // and what every monitor after the first is a copy of. Kept separately
         // because `desktop` becomes the bounding box the moment a layout is
@@ -1058,9 +1062,11 @@ impl Client {
                         }
                     }
                     if drew {
-                        if let Some(speed) = rate.sample() {
+                        let total = self.shared.bytes_in.load(Ordering::Relaxed);
+                        if let Some(speed) = rate.sample(total.saturating_sub(counted)) {
                             self.shared.info.lock().unwrap().line_speed = speed;
                         }
+                        counted = total;
                         handler.frame_end();
                     }
                 }
@@ -1527,52 +1533,6 @@ fn connector_config(
         // A desktop, not a RemoteApp.
         remote_application_mode: false,
         rail_support_level: RailSupportLevel::empty(),
-    }
-}
-
-/// A throughput estimate for the connection panel, smoothed so it reads as a
-/// speed rather than as whatever the last frame happened to cost.
-struct Rate {
-    bytes: Arc<AtomicU64>,
-    last: Instant,
-    at: u64,
-    bytes_per_second: f64,
-}
-
-impl Rate {
-    fn new(bytes: Arc<AtomicU64>) -> Rate {
-        Rate {
-            at: bytes.load(Ordering::Relaxed),
-            bytes,
-            last: Instant::now(),
-            bytes_per_second: 0.0,
-        }
-    }
-
-    fn sample(&mut self) -> Option<String> {
-        let now = Instant::now();
-        let total = self.bytes.load(Ordering::Relaxed);
-        let bytes = total.saturating_sub(self.at);
-        let elapsed = now.duration_since(self.last).as_secs_f64();
-        self.last = now;
-        self.at = total;
-        // An idle desktop produces a trickle, and dividing by the gap between
-        // two of those would report it as the line's speed.
-        if elapsed <= 0.0 || elapsed > 1.0 || bytes < 1024 {
-            return None;
-        }
-        let instant = bytes as f64 / elapsed;
-        self.bytes_per_second = if self.bytes_per_second == 0.0 {
-            instant
-        } else {
-            self.bytes_per_second * 0.7 + instant * 0.3
-        };
-        let kbit = self.bytes_per_second * 8.0 / 1000.0;
-        Some(if kbit >= 1000.0 {
-            format!("{:.1} Mbit/s", kbit / 1000.0)
-        } else {
-            format!("{kbit:.0} kbit/s")
-        })
     }
 }
 
