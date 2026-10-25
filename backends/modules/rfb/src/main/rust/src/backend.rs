@@ -5,9 +5,10 @@
 //! backend's option handling and its rows: what the phone reaches through
 //! `platform_android`'s JNI layer.
 
+use crate::client::Screen;
 use crate::{Client, Config, Security};
 use common::{Bridge, Session};
-use session::backend::{Backend, ConnectionFact, Credentials, Facts, Field, Picture, Traffic};
+use session::backend::{Backend, ConnectionFact, Credentials, Facts, Field, Monitor, Picture, Traffic};
 use session::credentials::fill_user;
 use session::events::{Feed, Mailbox};
 use session::kind::{CONNECT_TIMEOUT_MS, Connect, Kind};
@@ -134,6 +135,29 @@ impl Backend for Rfb {
             .request_desktop_size(width.min(65535) as u16, height.min(65535) as u16);
     }
 
+    /// A screen outside RFB's sixteen bits cannot be said at all, and a
+    /// layout with one in it is not sent rather than sent wrapped.
+    fn request_layout(&self, width: u32, height: u32, screens: &[Monitor]) {
+        let u16 = |v: i64| u16::try_from(v).ok();
+        let screens: Option<Vec<Screen>> = screens
+            .iter()
+            .map(|m| {
+                Some(Screen {
+                    id: m.id,
+                    x: u16(m.x as i64)?,
+                    y: u16(m.y as i64)?,
+                    width: u16(m.width as i64)?,
+                    height: u16(m.height as i64)?,
+                    flags: 0,
+                })
+            })
+            .collect();
+        let size = (u16(width as i64), u16(height as i64));
+        if let (Some(screens), (Some(width), Some(height))) = (screens, size) {
+            self.session.client.request_layout(width, height, &screens);
+        }
+    }
+
     /// The picture-quality controls are live: RFB lets `SetEncodings` be
     /// sent at any time, so this really does act on the session in front of
     /// you. Shared is decided at ClientInit and the bell is read where the
@@ -157,19 +181,20 @@ impl Backend for Rfb {
         let client = &self.session.client;
         // Live rather than connected, which is what the layout used to be
         // asked under: a rectangle can arrive before the state does.
+        // With the server's ids, which a layout asked for hands back.
         let flat: Vec<i32> = client
             .screens()
             .iter()
-            .flat_map(|s| [s.x as i32, s.y as i32, s.width as i32, s.height as i32])
+            .flat_map(|s| [s.id as i32, s.x as i32, s.y as i32, s.width as i32, s.height as i32])
             .collect();
         Facts {
             width,
             height,
-            monitors: session::backend::Monitor::from_flat(&flat),
+            monitors: Monitor::from_flat5(&flat),
             displays: Vec::new(),
             display: -1,
             can_resize: connected && client.can_resize(),
-            can_layout: false,
+            can_layout: connected && client.can_layout(),
             view_only: self.options.lock().unwrap().bool("ViewOnly"),
             pointer_relative: client.pointer_is_relative(),
         }

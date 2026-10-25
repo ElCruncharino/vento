@@ -80,7 +80,7 @@ pub struct Info {
 /// the framebuffer; the id and the flags are the server's own and go back
 /// unchanged in a `SetDesktopSize`, since a server matches the screens it is
 /// sent against the ones it has.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Screen {
     pub id: u32,
     pub x: u16,
@@ -295,7 +295,46 @@ impl Client {
             .first()
             .copied()
             .unwrap_or_default();
-        self.send(set_desktop_size(width, height, screen));
+        let screen = Screen {
+            x: 0,
+            y: 0,
+            width,
+            height,
+            ..screen
+        };
+        self.send(set_desktop_size(width, height, &[screen]));
+    }
+
+    /// Whether the server takes a layout of screens now, any number of them:
+    /// the same rule as [`can_resize`](Client::can_resize) without the one
+    /// screen, since a layout says where each of them goes.
+    pub fn can_layout(&self) -> bool {
+        self.shared.can_resize.load(Ordering::Relaxed) && !self.shared.view_only.load(Ordering::Relaxed)
+    }
+
+    /// Ask the server for a desktop this size divided into `screens`, each
+    /// the server's screen of that id moved or resized, or a new one (see
+    /// [`requested_layout`]); their flags are ignored and the server's kept.
+    /// Nothing is sent for a layout that is not one of this desktop, or that
+    /// is the one the server has already.
+    pub fn request_layout(&self, width: u16, height: u16, screens: &[Screen]) {
+        if !self.can_layout() || width == 0 || height == 0 {
+            return;
+        }
+        let have = self.screens();
+        let Some(layout) = requested_layout(&have, width, height, screens) else {
+            let n = screens.len();
+            log::warn!("not asking for {width}x{height} in {n} screens: that is not a valid layout");
+            return;
+        };
+        let same_size = {
+            let fb = self.shared.framebuffer.read().unwrap();
+            fb.width() == width as usize && fb.height() == height as usize
+        };
+        if same_size && layout == have {
+            return;
+        }
+        self.send(set_desktop_size(width, height, &layout));
     }
 
     pub fn key_down(&self, keysym: u32, key_id: i64) {
@@ -921,26 +960,76 @@ fn pointer_event(x: u16, y: u16, buttons: u16, extended: bool) -> Vec<u8> {
     msg
 }
 
-/// A `SetDesktopSize`: the size wanted, and a layout of one screen covering it.
+/// A `SetDesktopSize`: the size wanted, and the screens it is divided into,
+/// at most 255 of them, as they are given.
 ///
-/// The screen keeps the id and flags the server gave it, which is what makes
-/// this a change to the desktop that is there rather than a proposal of a new
-/// one — a server matches what it is sent against the screens it has.
-fn set_desktop_size(width: u16, height: u16, screen: Screen) -> Vec<u8> {
-    let mut msg = Vec::with_capacity(24);
+/// A screen that keeps the id and flags the server gave it is what makes this
+/// a change to the desktop that is there rather than a proposal of a new one —
+/// a server matches what it is sent against the screens it has.
+fn set_desktop_size(width: u16, height: u16, screens: &[Screen]) -> Vec<u8> {
+    let screens = &screens[..screens.len().min(255)];
+    let mut msg = Vec::with_capacity(8 + 16 * screens.len());
     msg.push(251u8);
     msg.push(0);
     msg.extend_from_slice(&width.to_be_bytes());
     msg.extend_from_slice(&height.to_be_bytes());
-    msg.push(1); // one screen
+    msg.push(screens.len() as u8);
     msg.push(0);
-    msg.extend_from_slice(&screen.id.to_be_bytes());
-    msg.extend_from_slice(&0u16.to_be_bytes());
-    msg.extend_from_slice(&0u16.to_be_bytes());
-    msg.extend_from_slice(&width.to_be_bytes());
-    msg.extend_from_slice(&height.to_be_bytes());
-    msg.extend_from_slice(&screen.flags.to_be_bytes());
+    for screen in screens {
+        msg.extend_from_slice(&screen.id.to_be_bytes());
+        msg.extend_from_slice(&screen.x.to_be_bytes());
+        msg.extend_from_slice(&screen.y.to_be_bytes());
+        msg.extend_from_slice(&screen.width.to_be_bytes());
+        msg.extend_from_slice(&screen.height.to_be_bytes());
+        msg.extend_from_slice(&screen.flags.to_be_bytes());
+    }
     msg
+}
+
+/// A layout asked for, as the screens to send against the server's own
+/// `have`: a screen whose id the server has is that screen, moved or resized,
+/// and keeps its flags; one with an id the server has not, or one already
+/// used earlier in the list, is new, and gets the lowest id neither list has,
+/// as TigerVNC's viewer gives its new screens a fresh one. `None` where the
+/// result is not a layout of a `width × height` desktop, by the rules
+/// TigerVNC's `ScreenSet::validate` checks before it sends one: at least one
+/// screen and at most 255, none empty or outside the desktop.
+pub fn requested_layout(have: &[Screen], width: u16, height: u16, wanted: &[Screen]) -> Option<Vec<Screen>> {
+    if wanted.is_empty() || wanted.len() > 255 {
+        return None;
+    }
+    let mut kept: Vec<Option<&Screen>> = Vec::with_capacity(wanted.len());
+    for (i, w) in wanted.iter().enumerate() {
+        let repeat = wanted[..i].iter().zip(&kept).any(|(v, k)| k.is_some() && v.id == w.id);
+        kept.push(if repeat { None } else { have.iter().find(|h| h.id == w.id) });
+    }
+    let mut next = 0u32;
+    let mut layout = Vec::with_capacity(wanted.len());
+    for (w, k) in wanted.iter().zip(&kept) {
+        let fits = w.width > 0
+            && w.height > 0
+            && w.x as u32 + w.width as u32 <= width as u32
+            && w.y as u32 + w.height as u32 <= height as u32;
+        if !fits {
+            return None;
+        }
+        let (id, flags) = match k {
+            Some(h) => (h.id, h.flags),
+            None => {
+                let used = |id: u32| {
+                    have.iter().any(|h| h.id == id)
+                        || wanted.iter().zip(&kept).any(|(v, k)| k.is_some() && v.id == id)
+                };
+                while used(next) {
+                    next += 1;
+                }
+                next += 1;
+                (next - 1, 0)
+            }
+        };
+        layout.push(Screen { id, flags, ..*w });
+    }
+    Some(layout)
 }
 
 /// The screen list inside an `ExtendedDesktopSize` rectangle.
@@ -1214,10 +1303,12 @@ mod tests {
         let screen = Screen {
             id: 0x0102_0304,
             flags: 0x0000_0001,
+            width: 1280,
+            height: 800,
             ..Screen::default()
         };
         assert_eq!(
-            set_desktop_size(1280, 800, screen),
+            set_desktop_size(1280, 800, &[screen]),
             vec![
                 251, 0, // SetDesktopSize
                 5, 0, 3, 32, // 1280 × 800
@@ -1248,7 +1339,109 @@ mod tests {
         while let Ok(Out::Bytes(b)) = rx.try_recv() {
             sent.push(b);
         }
-        assert_eq!(sent, vec![set_desktop_size(1280, 800, Screen::default())]);
+        let whole = Screen {
+            width: 1280,
+            height: 800,
+            ..Screen::default()
+        };
+        assert_eq!(sent, vec![set_desktop_size(1280, 800, &[whole])]);
+    }
+
+    /// Every screen of a layout, in the order given, after the one header.
+    #[test]
+    fn set_desktop_size_carries_every_screen() {
+        let screens = [
+            Screen {
+                id: 1,
+                x: 0,
+                y: 0,
+                width: 1024,
+                height: 768,
+                flags: 0,
+            },
+            Screen {
+                id: 2,
+                x: 1024,
+                y: 0,
+                width: 1280,
+                height: 800,
+                flags: 9,
+            },
+        ];
+        let msg = set_desktop_size(2304, 800, &screens);
+        assert_eq!(msg.len(), 8 + 2 * 16);
+        assert_eq!(&msg[..8], &[251, 0, 9, 0, 3, 32, 2, 0]);
+        assert_eq!(&msg[24..], &[0, 0, 0, 2, 4, 0, 0, 0, 5, 0, 3, 32, 0, 0, 0, 9]);
+    }
+
+    fn screen(id: u32, x: u16, width: u16, height: u16, flags: u32) -> Screen {
+        Screen {
+            id,
+            x,
+            y: 0,
+            width,
+            height,
+            flags,
+        }
+    }
+
+    /// The server's screens keep their ids and flags wherever they are put;
+    /// anything else is new, with the lowest id free in both lists.
+    #[test]
+    fn a_layout_keeps_the_servers_screens_and_numbers_new_ones() {
+        let have = [screen(1, 0, 1280, 800, 5), screen(2, 1280, 1280, 800, 0)];
+        let wanted = [
+            screen(2, 0, 1024, 768, 0),
+            screen(1, 1024, 1280, 800, 0),
+            screen(77, 2304, 800, 600, 3),
+        ];
+        let got = requested_layout(&have, 3104, 800, &wanted).unwrap();
+        assert_eq!(
+            got,
+            [screen(2, 0, 1024, 768, 0), screen(1, 1024, 1280, 800, 5), screen(0, 2304, 800, 600, 0)]
+        );
+        // A repeat is a new screen too, and 0 is taken by then.
+        let wanted = [screen(1, 0, 800, 600, 0), screen(1, 800, 800, 600, 0), screen(0, 1600, 800, 600, 0)];
+        let got = requested_layout(&have, 2400, 600, &wanted).unwrap();
+        assert_eq!(got.iter().map(|s| s.id).collect::<Vec<_>>(), [1, 0, 3]);
+        assert_eq!(got[0].flags, 5);
+    }
+
+    #[test]
+    fn a_layout_that_is_not_one_of_the_desktop_is_not_built() {
+        let have = [screen(1, 0, 1280, 800, 0)];
+        assert_eq!(requested_layout(&have, 1280, 800, &[]), None);
+        // Past the right-hand edge, and empty.
+        assert_eq!(requested_layout(&have, 2000, 800, &[screen(1, 1000, 1280, 800, 0)]), None);
+        assert_eq!(requested_layout(&have, 1280, 800, &[screen(1, 0, 0, 800, 0)]), None);
+        assert!(requested_layout(&have, 1280, 800, &[screen(1, 0, 1280, 800, 0)]).is_some());
+    }
+
+    /// Like a resize, a layout waits for the server's offer and is not sent
+    /// in view only; one is sent with every screen in it.
+    #[test]
+    fn a_layout_is_asked_for_only_once_the_server_offers_one() {
+        let client = Client::new();
+        client.shared.running.store(true, Ordering::Release);
+        let two = [screen(9, 0, 1280, 800, 0), screen(9, 1280, 1280, 800, 0)];
+        client.request_layout(2560, 800, &two);
+        client.shared.can_resize.store(true, Ordering::Relaxed);
+        *client.shared.screens.lock().unwrap() =
+            vec![screen(9, 0, 1920, 1200, 0), screen(4, 1920, 800, 600, 0)];
+        // Two screens is not a resize, and is a layout.
+        assert!(!client.can_resize());
+        assert!(client.can_layout());
+        client.request_layout(2560, 800, &two);
+        client.set_view_only(true);
+        client.request_layout(1280, 800, &two[..1]);
+
+        let rx = client.rx.lock().unwrap().take().unwrap();
+        let mut sent = Vec::new();
+        while let Ok(Out::Bytes(b)) = rx.try_recv() {
+            sent.push(b);
+        }
+        let expected = [screen(9, 0, 1280, 800, 0), screen(0, 1280, 1280, 800, 0)];
+        assert_eq!(sent, vec![set_desktop_size(2560, 800, &expected)]);
     }
 
     /// What a session was told, for the tests that run the read loop over
