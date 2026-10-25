@@ -23,6 +23,8 @@
 //! it, and a closed one cannot be reused.
 
 use ironrdp_egfx::client::{BitmapUpdate, GraphicsPipelineClient, GraphicsPipelineHandler, Surface};
+use ironrdp_egfx::pdu::MapSurfaceToScaledOutputPdu;
+use ironrdp_pdu::geometry::ExclusiveRectangle;
 use ironrdp_egfx::decode::{DecodedFrame, DecoderError, DecoderResult, H264Decoder, Yuv420Frame};
 use ironrdp_egfx::pdu::{
     CapabilitiesV81Flags, CapabilitiesV10Flags, CapabilitiesV103Flags, CapabilitiesV104Flags, CapabilitiesV107Flags,
@@ -70,7 +72,33 @@ pub struct State {
     hardware: Mutex<Option<bool>>,
     /// The decoder's own status line, for an overlay.
     status: Mutex<Option<String>>,
+    /// Whether the session draws AVC420 itself: set once, before the channel
+    /// opens, by a session whose window has a layer for video. AVC444 is
+    /// always converted by the library.
+    video: AtomicBool,
+    /// Where on the desktop each surface that is mapped 1:1 to the output
+    /// sits. Only these surfaces' pictures are handed over undrawn; a scaled
+    /// one (or one not mapped) is composited, which scales it.
+    origins: Mutex<BTreeMap<u16, (usize, usize)>>,
+    /// The pictures made since the session last took them, at most one per
+    /// rectangle.
+    pictures: Mutex<Vec<Picture>>,
 }
+
+/// A decoded AVC420 picture that was not composited: the `width` by `height`
+/// rectangle at (`x`, `y`) of the desktop, as NV12.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Picture {
+    pub x: usize,
+    pub y: usize,
+    pub width: usize,
+    pub height: usize,
+    pub nv12: Vec<u8>,
+}
+
+/// `runtime::Handler::video`'s colour mode for what MS-RDPEGFX specifies for
+/// AVC420: BT.709, full range.
+pub const COLOR_MODE: i32 = 0b11;
 
 impl State {
     /// The desktop's size at the session's start, before the server has
@@ -88,6 +116,17 @@ impl State {
             .get(&surface_id)
             .copied()
             .unwrap_or_else(|| *self.output.lock().unwrap())
+    }
+
+    /// Whether the session's window draws AVC420 itself.
+    pub fn set_video(&self, on: bool) {
+        self.video.store(on, Ordering::Relaxed);
+    }
+
+    /// The pictures that were handed over undrawn since the last call, in
+    /// the order they were made.
+    pub fn take_pictures(&self) -> Vec<Picture> {
+        std::mem::take(&mut *self.pictures.lock().unwrap())
     }
 
     /// Whether a restart was asked for since the last call.
@@ -187,9 +226,12 @@ pub fn client(state: Arc<State>, decoders: Option<Arc<dyn Decoders>>) -> Graphic
 }
 
 /// What the library tells about the channel, written into the [`State`]
-/// and logged. The picture itself does not come through here: the library
-/// composites it into the session's image, and the handler's copy of each
-/// update is only counted.
+/// and logged. The picture itself mostly does not come through here: the
+/// library composites it into the session's image, and the handler's copy of
+/// each update is only counted. The exception is AVC420 on a surface mapped
+/// 1:1, when the session's window draws video itself ([`State::set_video`]):
+/// the library hands the decoder's planes over undrawn, and they are cut
+/// into [`Picture`]s for the session to take.
 struct Pipeline {
     state: Arc<State>,
 }
@@ -214,6 +256,7 @@ impl GraphicsPipelineHandler for Pipeline {
         // The reset deletes every surface (MS-RDPEGFX 3.3.5.14), and the
         // library tells of none of them.
         self.state.surfaces.lock().unwrap().clear();
+        self.state.origins.lock().unwrap().clear();
     }
 
     fn on_reset_graphics_rejected(&mut self, width: u32, height: u32) {
@@ -232,6 +275,64 @@ impl GraphicsPipelineHandler for Pipeline {
     fn on_surface_deleted(&mut self, surface_id: u16) {
         log::debug!("graphics pipeline: surface {surface_id} deleted");
         self.state.surfaces.lock().unwrap().remove(&surface_id);
+        self.state.origins.lock().unwrap().remove(&surface_id);
+    }
+
+    fn on_surface_mapped(&mut self, surface_id: u16, origin_x: u32, origin_y: u32) {
+        self.state
+            .origins
+            .lock()
+            .unwrap()
+            .insert(surface_id, (origin_x as usize, origin_y as usize));
+    }
+
+    /// Reported after `on_surface_mapped` for the same surface, which a
+    /// scaled mapping also is: the picture is then scaled by the compositor
+    /// and not ours to draw.
+    fn on_map_surface_to_scaled_output(&mut self, pdu: &MapSurfaceToScaledOutputPdu) {
+        self.state.origins.lock().unwrap().remove(&pdu.surface_id);
+    }
+
+    fn takes_video_frames(&self, surface_id: u16) -> bool {
+        self.state.video.load(Ordering::Relaxed) && self.state.origins.lock().unwrap().contains_key(&surface_id)
+    }
+
+    fn on_video_frame(&mut self, surface_id: u16, destination: &ExclusiveRectangle, frame: &Yuv420Frame) {
+        let Some(&(origin_x, origin_y)) = self.state.origins.lock().unwrap().get(&surface_id) else {
+            return;
+        };
+        let (output_width, output_height) = *self.state.output.lock().unwrap();
+        // The picture's pixel is the surface's, so the rectangle is cut from
+        // it where it is: from the even pixel at or before its corner, since
+        // NV12 shares a chroma sample between two, and to the least of the
+        // rectangle's, the picture's and the desktop's far edges.
+        let left = usize::from(destination.left) & !1;
+        let top = usize::from(destination.top) & !1;
+        let right = usize::from(destination.right)
+            .min(usize::from(frame.width()))
+            .min(output_width.saturating_sub(origin_x));
+        let bottom = usize::from(destination.bottom)
+            .min(usize::from(frame.height()))
+            .min(output_height.saturating_sub(origin_y));
+        if right <= left || bottom <= top {
+            return;
+        }
+        let Some(nv12) = nv12(frame, left, top, right, bottom) else {
+            log::warn!("graphics pipeline: a picture smaller than the rows it was cut from; not drawn");
+            return;
+        };
+        let picture = Picture {
+            x: origin_x + left,
+            y: origin_y + top,
+            width: right - left,
+            height: bottom - top,
+            nv12,
+        };
+        // A session that has not taken the last picture of this rectangle
+        // never will need it.
+        let mut pictures = self.state.pictures.lock().unwrap();
+        pictures.retain(|p| (p.x, p.y, p.width, p.height) != (picture.x, picture.y, picture.width, picture.height));
+        pictures.push(picture);
     }
 
     fn on_bitmap_updated(&mut self, update: &BitmapUpdate) {
@@ -260,7 +361,30 @@ impl GraphicsPipelineHandler for Pipeline {
         log::info!("graphics pipeline: channel closed");
         *self.state.caps.lock().unwrap() = None;
         self.state.surfaces.lock().unwrap().clear();
+        self.state.origins.lock().unwrap().clear();
     }
+}
+
+/// The `left, top` to `right, bottom` rectangle of a picture as NV12: its Y
+/// rows, then its U and V rows interleaved. `left` and `top` are even, and
+/// the rectangle is within the picture; `None` where the picture has fewer
+/// rows than that.
+fn nv12(frame: &Yuv420Frame, left: usize, top: usize, right: usize, bottom: usize) -> Option<Vec<u8>> {
+    let (width, height) = (right - left, bottom - top);
+    let (chroma_width, chroma_height) = (width.div_ceil(2), height.div_ceil(2));
+    let mut out = Vec::with_capacity(width * height + chroma_width * chroma_height * 2);
+    for row in top..bottom {
+        out.extend_from_slice(frame.luma_row(row)?.get(left..right)?);
+    }
+    let first = left / 2;
+    for row in top / 2..top / 2 + chroma_height {
+        let u = frame.u_row(row)?.get(first..first + chroma_width)?;
+        let v = frame.v_row(row)?.get(first..first + chroma_width)?;
+        for (u, v) in u.iter().zip(v) {
+            out.extend([*u, *v]);
+        }
+    }
+    Some(out)
 }
 
 /// The library's H.264 decoder, over the platform's.
@@ -718,5 +842,104 @@ mod tests {
         assert_eq!(pipeline.state.encoding(), "EGFX 10.6");
         pipeline.on_close();
         assert_eq!(pipeline.state.encoding(), "");
+    }
+
+    /// An 8x4 picture whose Y is `10 * row + col` and whose chroma is the
+    /// row and column of its sample in U (`16 * row + col`) and V (the same
+    /// plus 100).
+    fn picture() -> Yuv420Frame {
+        let y = (0..4).flat_map(|r| (0..8).map(move |c| (10 * r + c) as u8)).collect();
+        let u: Vec<u8> = (0..2).flat_map(|r| (0..4).map(move |c| (16 * r + c) as u8)).collect();
+        let v = u.iter().map(|b| b + 100).collect();
+        Yuv420Frame::new(8, 4, y, 8, u, v, 4).unwrap()
+    }
+
+    /// NV12 of a rectangle: its Y rows, then U and V interleaved, from the
+    /// chroma samples that sit under it.
+    #[test]
+    fn a_rectangle_is_cut_out_as_nv12() {
+        let whole = nv12(&picture(), 0, 0, 8, 4).unwrap();
+        assert_eq!(whole.len(), 8 * 4 + 4 * 2 * 2);
+        assert_eq!(whole[..8], [0, 1, 2, 3, 4, 5, 6, 7]);
+        assert_eq!(whole[32..40], [0, 100, 1, 101, 2, 102, 3, 103]);
+        assert_eq!(whole[40..], [16, 116, 17, 117, 18, 118, 19, 119]);
+        // From (2, 2) to (7, 4): five wide, so three chroma pairs, from the
+        // second sample of the second chroma row.
+        let part = nv12(&picture(), 2, 2, 7, 4).unwrap();
+        assert_eq!(part[..5], [22, 23, 24, 25, 26]);
+        assert_eq!(part[5..10], [32, 33, 34, 35, 36]);
+        assert_eq!(part[10..], [17, 117, 18, 118, 19, 119]);
+        // Past the picture's rows, nothing.
+        assert!(nv12(&picture(), 0, 0, 8, 6).is_none());
+    }
+
+    fn pipeline_with_video() -> Pipeline {
+        let state = Arc::new(State::default());
+        state.set_output(100, 50);
+        state.set_video(true);
+        Pipeline { state }
+    }
+
+    /// A surface mapped 1:1 hands its pictures over, placed on the desktop and
+    /// cut to it; a scaled, an unmapped and a deleted one do not, and nothing
+    /// does while the session has not asked.
+    #[test]
+    fn only_a_surface_mapped_one_to_one_hands_its_pictures_over() {
+        let mut p = pipeline_with_video();
+        assert!(!p.takes_video_frames(1));
+        p.on_surface_mapped(1, 10, 20);
+        assert!(p.takes_video_frames(1));
+        let rect = ExclusiveRectangle {
+            left: 3,
+            top: 1,
+            right: 8,
+            bottom: 4,
+        };
+        p.on_video_frame(1, &rect, &picture());
+        let pictures = p.state.take_pictures();
+        // From the even pixel at or before the corner, (2, 0), to the
+        // rectangle's far edge: (2, 0)-(8, 4), at (10, 20) on the desktop
+        // plus that.
+        assert_eq!(
+            pictures.iter().map(|p| (p.x, p.y, p.width, p.height)).collect::<Vec<_>>(),
+            vec![(12, 20, 6, 4)]
+        );
+        assert!(p.state.take_pictures().is_empty());
+        // Cut to the desktop: surface 2 sits at (96, 48) on a 100x50 one.
+        p.on_surface_mapped(2, 96, 48);
+        p.on_video_frame(2, &ExclusiveRectangle { left: 0, top: 0, right: 8, bottom: 4 }, &picture());
+        let pictures = p.state.take_pictures();
+        assert_eq!(
+            pictures.iter().map(|p| (p.x, p.y, p.width, p.height)).collect::<Vec<_>>(),
+            vec![(96, 48, 4, 2)]
+        );
+        // Scaled afterwards, which the library reports after the mapping.
+        p.on_map_surface_to_scaled_output(&MapSurfaceToScaledOutputPdu {
+            surface_id: 1,
+            output_origin_x: 10,
+            output_origin_y: 20,
+            target_width: 16,
+            target_height: 8,
+        });
+        assert!(!p.takes_video_frames(1));
+        p.on_surface_deleted(2);
+        assert!(!p.takes_video_frames(2));
+        p.state.set_video(false);
+        p.on_surface_mapped(3, 0, 0);
+        assert!(!p.takes_video_frames(3));
+    }
+
+    /// A newer picture of a rectangle replaces one the session has not taken.
+    #[test]
+    fn an_untaken_picture_is_replaced_by_the_next_of_its_rectangle() {
+        let mut p = pipeline_with_video();
+        p.on_surface_mapped(1, 0, 0);
+        let rect = ExclusiveRectangle { left: 0, top: 0, right: 8, bottom: 4 };
+        p.on_video_frame(1, &rect, &picture());
+        let other = ExclusiveRectangle { left: 0, top: 0, right: 4, bottom: 4 };
+        p.on_video_frame(1, &other, &picture());
+        p.on_video_frame(1, &rect, &picture());
+        let sizes: Vec<_> = p.state.take_pictures().iter().map(|p| p.width).collect();
+        assert_eq!(sizes, vec![4, 8]);
     }
 }

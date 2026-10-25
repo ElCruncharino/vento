@@ -919,6 +919,9 @@ impl Client {
         self.shared
             .pipeline
             .set_output(usize::from(desktop.width), usize::from(desktop.height));
+        // Before the channel opens, so that its first AVC420 picture is
+        // already handed over undrawn where the window draws video itself.
+        self.shared.pipeline.set_video(handler.takes_video());
         self.shared.running.store(true, Ordering::Release);
         handler.connected(usize::from(desktop.width), usize::from(desktop.height));
 
@@ -1152,6 +1155,12 @@ impl Client {
                         self.shared.info.lock().unwrap().server_pixels =
                             format!("{}×{}, 32 bpp", desktop.width, desktop.height);
                         handler.desktop_size(size.0, size.1);
+                    }
+                    // After the damage and the size above, which they are in
+                    // order with: a picture made in this PDU is drawn over the
+                    // damage it came with, and over a size it was made for.
+                    for p in self.shared.pipeline.take_pictures() {
+                        handler.video(p.x, p.y, p.width, p.height, pipeline::COLOR_MODE, &p.nv12);
                     }
                     if drew {
                         let total = self.shared.bytes_in.load(Ordering::Relaxed);
