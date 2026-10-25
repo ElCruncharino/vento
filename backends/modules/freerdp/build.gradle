@@ -7,7 +7,10 @@ plugins {
 
 // Both halves of the FreeRDP backend: `src/main/java` implements `Backend` on
 // `src/main/cpp`, which is a shim over FreeRDP's own client, and the AAR carries
-// the library CMake compiles them to.
+// the library CMake compiles them to. The shim is itself two files:
+// `freerdp_session.c`, which drives the library and names no platform, and
+// `freerdp_jni.c`, the JNI entry points over the adapter shared with the other
+// C backends in `backends/platform/android/jni`.
 //
 // As with the two borrowed VNC clients, the native half is not in this
 // directory: it is `third_party/freerdp`, a submodule at the repository root

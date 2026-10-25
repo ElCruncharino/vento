@@ -9,6 +9,7 @@ endif()
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../../../../cmake/reproducible.cmake")
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../../../../cmake/warnings.cmake")
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../../../../cmake/vento_jni.cmake")
 
 # One shared library per protocol, as every other backend module does, so a
 # build that drops this protocol drops the whole of it. Everything below is
@@ -105,7 +106,10 @@ endforeach()
 add_subdirectory("${THIRD_PARTY}/freerdp" freerdp EXCLUDE_FROM_ALL)
 remotedesktop_vendored_warnings("${THIRD_PARTY}/freerdp")
 
-add_library(remotedesktop_freerdp SHARED freerdp_jni.c)
+# Two halves: the session, which is the shim over FreeRDP's client and names
+# no platform, and the JNI file, which is `FreeRdpNative`'s entry points over
+# the shared Android adapter `vento_jni` brings with it.
+add_library(remotedesktop_freerdp SHARED freerdp_session.c freerdp_jni.c)
 remotedesktop_warnings(remotedesktop_freerdp)
 # Their targets carry no usable include directories under add_subdirectory —
 # their own build puts them on the path globally — so the four are named here:
@@ -117,4 +121,4 @@ target_include_directories(remotedesktop_freerdp SYSTEM PRIVATE
         "${THIRD_PARTY}/freerdp/winpr/include" "${CMAKE_CURRENT_BINARY_DIR}/freerdp/winpr/include"
         "$<TARGET_PROPERTY:openssl,INTERFACE_INCLUDE_DIRECTORIES>")
 target_link_libraries(remotedesktop_freerdp PRIVATE
-        freerdp-client freerdp winpr jnigraphics log)
+        freerdp-client freerdp winpr vento_jni jnigraphics log)

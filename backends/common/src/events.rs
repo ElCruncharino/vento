@@ -16,7 +16,9 @@
 ///
 /// Every method is called from the protocol thread, through a shared
 /// reference, and must not block on anything the protocol thread is waiting
-/// for. `Send + Sync` because the session's thread calls these and whoever
+/// for — or, behind the C API, from a thread the C library runs beside it
+/// (FreeRDP's graphics pipeline paints on its dynamic channels' thread:
+/// `vento/backend.h`). `Send + Sync` because the session's thread calls these and whoever
 /// created the session holds the other end.
 pub trait Events: Send + Sync {
     fn connected(&self, width: usize, height: usize);
