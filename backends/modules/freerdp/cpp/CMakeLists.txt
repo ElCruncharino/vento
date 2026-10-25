@@ -165,6 +165,17 @@ else()
     foreach(off WITH_LIBSYSTEMD WITH_PKCS11 CHANNEL_URBDRC WITH_CLANG_FORMAT WITH_WEBVIEW)
         set(${off} OFF CACHE BOOL "" FORCE)
     endforeach()
+    # WinPR's own UTF-8/UTF-16 conversion (crt/unicode_builtin.c) rather than
+    # ICU's, which is all their Linux build wants ICU for (their timezone
+    # mapping's ICU is off by default, and stays off). The conversions are
+    # the clipboard's text and the strings of the protocol — names, the
+    # domain, the credentials — between UTF-8 and the UTF-16 RDP speaks,
+    # which needs no locale data; ICU was four libraries (38 MB, 32 of them
+    # its data) needed at the one major version the build machine's
+    # distribution had, and the first thing missing elsewhere after
+    # libasound. The phone's build is left as it was: it converts through
+    # Java's String (crt/unicode_android.c), which links nothing.
+    set(WITH_UNICODE_BUILTIN ON CACHE BOOL "" FORCE)
     # Their FindFFmpeg looks for eight libraries and skips the search when
     # FFMPEG_LIBRARIES is cached. Where the Linux client's build gives a static
     # FFmpeg (VENTO_FFMPEG_PREFIX, vento_linux.cmake) the two the scaler

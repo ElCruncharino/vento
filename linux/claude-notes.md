@@ -378,8 +378,8 @@ running it needs installed: glibc as new as the build machine's (it is
 linked against its symbol versions), zlib, and per backend — **libvnc**
 GnuTLS and libjpeg (`libjpeg.so.62`, libjpeg-turbo's); **tigervnc** GnuTLS,
 Nettle (and hogweed, GMP), libjpeg, pixman and libstdc++; **freerdp**
-OpenSSL 3 (`libssl.so.3`, `libcrypto.so.3`), ICU (`libicuuc` and three
-more, of the build machine's major version); **realvnc** libstdc++ and
+OpenSSL 3 (`libssl.so.3`, `libcrypto.so.3`) and nothing else (its UTF-16
+conversion is WinPR's own, not ICU's); **realvnc** libstdc++ and
 libatomic. A backend's library that cannot be loaded stops the binary from
 starting (RealVNC's excepted, which is opened at run time and says it is not
 available). Loaded at run time where they are there, and not needed

@@ -463,7 +463,14 @@ One commit per upstream, after review, by the lead:
   switch on, and `WITH_FFMPEG` is off so that their swscale branch does not
   link libavcodec for the camera channel's MJPEG; check that scaling still
   needs only libswscale and libavutil, and that rdpgfx still offers 10.5
-  and 10.6 only with a scaler (the session is EGFX 10.4 without).
+  and 10.6 only with a scaler (the session is EGFX 10.4 without). Also on
+  Linux, `WITH_UNICODE_BUILTIN`: WinPR's own UTF-8/UTF-16 conversion
+  (`winpr/libwinpr/crt/unicode_builtin.c`) in place of ICU's, so the
+  library links no ICU; check that the option still exists under that name
+  and is still the only thing in their Linux build that looks for ICU
+  (`WITH_TIMEZONE_ICU` stays off by default), and that `readelf -d
+  libvento_freerdp.so` names no `libicu*`. Android keeps
+  `unicode_android.c`, Java's String.
   `LegacyTls` row for TLS 1.0 at level 0; `remotedesktop_vendored_warnings`
   silences their tree.
 - **ironrdp** master 9b151c4c. No patches. A submodule rather than crates.io
