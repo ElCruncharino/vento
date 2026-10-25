@@ -67,9 +67,12 @@ fn create(c: &Connect) -> Result<Arc<dyn Backend>, String> {
         },
         keyboard_layout: KEYBOARD_LAYOUT,
         connect_timeout: Duration::from_millis(CONNECT_TIMEOUT_MS as u64),
+        // FreeRDP's row and its words: "local" plays it here, where there is
+        // somewhere to play it.
+        audio: c.audio.clone().filter(|_| o.get("Sound") == "local"),
     };
     log::info!(
-        "connecting to {} as {:?} ({}x{} × {}, nla {:?}, compression {:?}, remotefx {}, experience {:?}, platform {:?})",
+        "connecting to {} as {:?} ({}x{} × {}, nla {:?}, compression {:?}, remotefx {}, experience {:?}, platform {:?}, sound {})",
         config.address,
         config.user_name,
         config.desktop_size.0,
@@ -79,7 +82,8 @@ fn create(c: &Connect) -> Result<Arc<dyn Backend>, String> {
         config.compression,
         config.remote_fx,
         config.experience,
-        config.platform
+        config.platform,
+        if config.audio.is_some() { "here" } else { "off" }
     );
     let session = Session::start(
         Arc::new(Client::new()),
