@@ -235,13 +235,15 @@ One commit per upstream, after review, by the lead:
   support; newest in the 3.8 line). nettle 4.1 warns of further API changes.
   `MINI_GMP_ENABLE_FLOAT=0` is an answer configure puts in CFLAGS, so the
   port sets it itself.
-- **libvncserver** at upstream master; six patches. No releases since
-  0.9.15. The sixth (`0006`, as TigerVNC's `0006`) hands a certificate that
-  verified against the system's authorities, and is for the name dialled, to
-  `GetX509CertFingerprintMismatchDecision` too when it is installed, so the
-  shim's `trust_needed` and the known hosts see every certificate; should
-  upstream ever take it or change `verify_certificate_callback`, check that a
-  CA-signed certificate still reaches the hook.
+- **libvncserver** at upstream master; seven patches. No releases since
+  0.9.15. `0006` (as TigerVNC's `0006`) hands a certificate that verified
+  against the system's authorities, and is for the name dialled, to
+  `GetX509CertFingerprintMismatchDecision` too when it is installed, and
+  `0007` one that verified for another name, which upstream refuses outright
+  (TigerVNC's viewer asks about it, and so does that backend): so the shim's
+  `trust_needed` and the known hosts see every certificate. Should upstream
+  ever take them or change `verify_certificate_callback`, check that a
+  CA-signed certificate, for the name or not, still reaches the hook.
 - **tigervnc** master dd416cbf, reporting 1.16.80; five patches (the PAM one
   dropped). The certificate check and known-hosts store are the shim's now,
   ported from `vncviewer/CConn.cxx`; audio is behind the `Audio` row, an

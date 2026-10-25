@@ -1,7 +1,7 @@
 From 2aa67cf8fcb90da6cade622e502ba8fd85ad4dd7 Mon Sep 17 00:00:00 2001
 From: Claude Opus 5 <noreply@anthropic.com>
 Date: Wed, 12 Aug 2026 04:12:07 -0400
-Subject: [PATCH 2/6] libvncclient: no handshake deadline over a question for a
+Subject: [PATCH 2/7] libvncclient: no handshake deadline over a question for a
  person
 
 The TLS handshake's 15-second timeout also covers the certificate
