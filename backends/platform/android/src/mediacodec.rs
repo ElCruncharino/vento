@@ -36,22 +36,22 @@ use common::video::convert::{Frame, Plane};
 use common::video::{Changes, Codec, Decoders, Output, bitstream};
 
 #[repr(C)]
-struct AMediaCodec {
+pub(crate) struct AMediaCodec {
     _private: [u8; 0],
 }
 
 #[repr(C)]
-struct AMediaFormat {
+pub(crate) struct AMediaFormat {
     _private: [u8; 0],
 }
 
 #[repr(C)]
 #[derive(Default)]
-struct BufferInfo {
-    offset: i32,
-    size: i32,
-    presentation_time_us: i64,
-    flags: u32,
+pub(crate) struct BufferInfo {
+    pub(crate) offset: i32,
+    pub(crate) size: i32,
+    pub(crate) presentation_time_us: i64,
+    pub(crate) flags: u32,
 }
 
 // `off_t` is the fourth argument's type and is 64 bits on every ABI this ships
@@ -62,12 +62,12 @@ compile_error!("the MediaCodec binding assumes a 64-bit off_t");
 
 #[link(name = "mediandk")]
 unsafe extern "C" {
-    fn AMediaFormat_new() -> *mut AMediaFormat;
-    fn AMediaFormat_delete(format: *mut AMediaFormat) -> i32;
-    fn AMediaFormat_setString(format: *mut AMediaFormat, name: *const c_char, value: *const c_char);
-    fn AMediaFormat_setInt32(format: *mut AMediaFormat, name: *const c_char, value: i32);
-    fn AMediaFormat_getInt32(format: *mut AMediaFormat, name: *const c_char, out: *mut i32) -> bool;
-    fn AMediaFormat_getRect(
+    pub(crate) fn AMediaFormat_new() -> *mut AMediaFormat;
+    pub(crate) fn AMediaFormat_delete(format: *mut AMediaFormat) -> i32;
+    pub(crate) fn AMediaFormat_setString(format: *mut AMediaFormat, name: *const c_char, value: *const c_char);
+    pub(crate) fn AMediaFormat_setInt32(format: *mut AMediaFormat, name: *const c_char, value: i32);
+    pub(crate) fn AMediaFormat_getInt32(format: *mut AMediaFormat, name: *const c_char, out: *mut i32) -> bool;
+    pub(crate) fn AMediaFormat_getRect(
         format: *mut AMediaFormat,
         name: *const c_char,
         left: *mut i32,
@@ -75,32 +75,38 @@ unsafe extern "C" {
         right: *mut i32,
         bottom: *mut i32,
     ) -> bool;
-    fn AMediaFormat_getBuffer(
+    pub(crate) fn AMediaFormat_setBuffer(
+        format: *mut AMediaFormat,
+        name: *const c_char,
+        data: *const c_void,
+        size: usize,
+    );
+    pub(crate) fn AMediaFormat_getBuffer(
         format: *mut AMediaFormat,
         name: *const c_char,
         data: *mut *mut c_void,
         size: *mut usize,
     ) -> bool;
 
-    fn AMediaCodec_createDecoderByType(mime: *const c_char) -> *mut AMediaCodec;
-    fn AMediaCodec_configure(
+    pub(crate) fn AMediaCodec_createDecoderByType(mime: *const c_char) -> *mut AMediaCodec;
+    pub(crate) fn AMediaCodec_configure(
         codec: *mut AMediaCodec,
         format: *const AMediaFormat,
         surface: *mut c_void,
         crypto: *mut c_void,
         flags: u32,
     ) -> i32;
-    fn AMediaCodec_start(codec: *mut AMediaCodec) -> i32;
-    fn AMediaCodec_stop(codec: *mut AMediaCodec) -> i32;
-    fn AMediaCodec_flush(codec: *mut AMediaCodec) -> i32;
-    fn AMediaCodec_delete(codec: *mut AMediaCodec) -> i32;
-    fn AMediaCodec_dequeueInputBuffer(codec: *mut AMediaCodec, timeout_us: i64) -> isize;
-    fn AMediaCodec_getInputBuffer(
+    pub(crate) fn AMediaCodec_start(codec: *mut AMediaCodec) -> i32;
+    pub(crate) fn AMediaCodec_stop(codec: *mut AMediaCodec) -> i32;
+    pub(crate) fn AMediaCodec_flush(codec: *mut AMediaCodec) -> i32;
+    pub(crate) fn AMediaCodec_delete(codec: *mut AMediaCodec) -> i32;
+    pub(crate) fn AMediaCodec_dequeueInputBuffer(codec: *mut AMediaCodec, timeout_us: i64) -> isize;
+    pub(crate) fn AMediaCodec_getInputBuffer(
         codec: *mut AMediaCodec,
         index: usize,
         out_size: *mut usize,
     ) -> *mut u8;
-    fn AMediaCodec_queueInputBuffer(
+    pub(crate) fn AMediaCodec_queueInputBuffer(
         codec: *mut AMediaCodec,
         index: usize,
         offset: i64,
@@ -108,24 +114,25 @@ unsafe extern "C" {
         time_us: u64,
         flags: u32,
     ) -> i32;
-    fn AMediaCodec_dequeueOutputBuffer(
+    pub(crate) fn AMediaCodec_dequeueOutputBuffer(
         codec: *mut AMediaCodec,
         info: *mut BufferInfo,
         timeout_us: i64,
     ) -> isize;
-    fn AMediaCodec_getOutputBuffer(
+    pub(crate) fn AMediaCodec_getOutputBuffer(
         codec: *mut AMediaCodec,
         index: usize,
         out_size: *mut usize,
     ) -> *mut u8;
-    fn AMediaCodec_getBufferFormat(codec: *mut AMediaCodec, index: usize) -> *mut AMediaFormat;
-    fn AMediaCodec_releaseOutputBuffer(
+    pub(crate) fn AMediaCodec_getOutputFormat(codec: *mut AMediaCodec) -> *mut AMediaFormat;
+    pub(crate) fn AMediaCodec_getBufferFormat(codec: *mut AMediaCodec, index: usize) -> *mut AMediaFormat;
+    pub(crate) fn AMediaCodec_releaseOutputBuffer(
         codec: *mut AMediaCodec,
         index: usize,
         render: bool,
     ) -> i32;
-    fn AMediaCodec_getName(codec: *mut AMediaCodec, out_name: *mut *mut c_char) -> i32;
-    fn AMediaCodec_releaseName(codec: *mut AMediaCodec, name: *mut c_char);
+    pub(crate) fn AMediaCodec_getName(codec: *mut AMediaCodec, out_name: *mut *mut c_char) -> i32;
+    pub(crate) fn AMediaCodec_releaseName(codec: *mut AMediaCodec, name: *mut c_char);
 }
 
 // For the calls Android 16 added (API 36), looked up rather than linked:
@@ -138,9 +145,9 @@ unsafe extern "C" {
 /// every library already loaded, `libmediandk.so` among them.
 const RTLD_DEFAULT: *mut c_void = std::ptr::null_mut();
 
-const AMEDIA_OK: i32 = 0;
-const INFO_OUTPUT_FORMAT_CHANGED: isize = -2;
-const INFO_OUTPUT_BUFFERS_CHANGED: isize = -3;
+pub(crate) const AMEDIA_OK: i32 = 0;
+pub(crate) const INFO_OUTPUT_FORMAT_CHANGED: isize = -2;
+pub(crate) const INFO_OUTPUT_BUFFERS_CHANGED: isize = -3;
 
 /// MediaCodec's own constants, which the NDK headers do not declare: they are
 /// Java fields on `MediaCodecInfo.CodecCapabilities` and `MediaFormat`. Asking
@@ -738,7 +745,7 @@ fn start(handle: *mut AMediaCodec, codec: Codec, width: usize, height: usize, ma
 
 /// The name MediaCodec gave the codec it picked, or `None` where it says
 /// nothing.
-fn codec_name(codec: *mut AMediaCodec) -> Option<String> {
+pub(crate) fn codec_name(codec: *mut AMediaCodec) -> Option<String> {
     let mut name: *mut c_char = std::ptr::null_mut();
     if unsafe { AMediaCodec_getName(codec, &mut name) } != AMEDIA_OK || name.is_null() {
         return None;
@@ -756,7 +763,7 @@ fn codec_name(codec: *mut AMediaCodec) -> Option<String> {
 /// reads in Java — and before that, the rule apps had to use: the
 /// platform's own codecs are named `c2.android.`, `c2.google.` or
 /// `omx.google.`, and a few vendors mark a software one in its name.
-fn is_hardware(name: &str) -> Option<bool> {
+pub(crate) fn is_hardware(name: &str) -> Option<bool> {
     type GetCodecInfo = unsafe extern "C" fn(*const c_char, *mut *const c_void) -> i32;
     type GetInfoType = unsafe extern "C" fn(*const c_void) -> i32;
     static STORE: OnceLock<Option<(GetCodecInfo, GetInfoType)>> = OnceLock::new();
