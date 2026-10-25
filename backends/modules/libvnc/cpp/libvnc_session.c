@@ -143,8 +143,6 @@ typedef struct {
        since one is asked in place of the other. */
     int trustAnswered, trustAccepted;
 
-    /* true while initClient has not returned; see stop */
-    int handshaking;
     char *storedUser, *storedPass;
     int storedPassUsed;
 
@@ -1279,17 +1277,10 @@ static void *protocolThread(void *arg) {
 
     publishClient(s, cl);
 
-    /* A failed handshake frees the client, so `initClient` unpublishes it
-       first, and `handshaking` is cleared only afterwards, so that neither
-       teardown call reads a freed client in between. */
+    /* A failed handshake frees the client; `initClient` unpublishes it
+       first, so that neither teardown call reads a freed client. */
     forgetLastError();
-    pthread_mutex_lock(&s->lock);
-    s->handshaking = 1;
-    pthread_mutex_unlock(&s->lock);
     const int connected = initClient(s, cl);
-    pthread_mutex_lock(&s->lock);
-    s->handshaking = 0;
-    pthread_mutex_unlock(&s->lock);
     if (!connected) {
         pthread_mutex_lock(&s->lock);
         const int cancelled = s->quit;
@@ -1570,16 +1561,18 @@ static void op_answer_trust(vento_session *base, bool accept) {
 }
 
 /* Both ways a session ends set the flag, write to the wake pipe *and* shut
-   down the socket. The wake pipe ends the dial (see `dial`), but nothing in
-   the handshake after it polls the pipe: the protocol thread is blocked in
-   the library's read, and the TLS handshake deliberately has no deadline of
-   its own (patches/libvncserver's 0002), so only shutting down the socket
-   interrupts it. */
+   down the socket. The wake pipe ends the dial (see `dial`) and wakes the
+   loop's poll, but nothing else polls it: the protocol thread can be blocked
+   in the library's read, which waits for the rest of a message for as long
+   as the server takes to send it, during the handshake and after it alike.
+   Only shutting down the socket interrupts that. The client is unpublished
+   before it is cleaned up, so a socket reached through `s->cl` under `lock`
+   is still open. */
 static void stop(Session *s) {
     pthread_mutex_lock(&s->lock);
     s->quit = 1;
     s->paused = 0;
-    if (s->handshaking && s->cl && s->cl->sock >= 0) {
+    if (s->cl && s->cl->sock >= 0) {
         shutdown(s->cl->sock, SHUT_RDWR);
     }
     pthread_cond_broadcast(&s->cond);
