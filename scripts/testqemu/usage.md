@@ -133,3 +133,14 @@ off so that no guest volume changes the level. The screen is the guest's
 text console (720×400). `NAME=` and the ports are for running it beside the
 shared `protoqemu` rather than in its place; the image is `protoqemu`'s
 whatever the container is called (`IMAGE=` to change that).
+
+**`AUDIO=spice`** is the same guest heard over SPICE instead: the card's
+output goes to `-audiodev spice`, QEMU's SPICE server's playback channel,
+which a SPICE client hears when it opens that channel — as Opus where the
+client offers it (vento's does wherever the platform decodes Opus), PCM
+where not. QEMU's mixer still runs under it, so the VNC capture is there as
+well. Same image, same ports, same `t` and `s`:
+
+```sh
+AUDIO=spice NAME=myqemu PORT=5962 SPICE_PORT=5964 SPICE_TLS_PORT=5965 TONE_PORT=5956 ./run.sh
+```
