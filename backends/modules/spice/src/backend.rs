@@ -20,6 +20,7 @@ pub static KIND: Kind = Kind {
     about: &api::catalog::SPICE,
     version: || crate::VERSION.to_string(),
     create,
+    forget: None,
 };
 
 struct Spice {

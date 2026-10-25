@@ -20,6 +20,7 @@ pub static KIND: Kind = Kind {
     about: &api::catalog::RFB,
     version: || crate::PROTOCOL_VERSION.to_string(),
     create,
+    forget: None,
 };
 
 struct Rfb {

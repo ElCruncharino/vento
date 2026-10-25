@@ -24,6 +24,7 @@ pub static KIND: Kind = Kind {
     about: &api::catalog::LIBVNC,
     version: || unsafe { api::c::string(ffi::vento_libvnc_version()) },
     create,
+    forget: None,
 };
 
 // The phone's library: this backend, registered on the module's generated

@@ -45,6 +45,53 @@ pub fn canonical(fingerprint: &str) -> String {
         .collect()
 }
 
+/// Whether `stored`, a key some store files a server under, names the server
+/// `asked` names, for forgetting it. Keys carry no backend, so neither does
+/// this, and where it is unsure it says yes: what is forgotten is asked about
+/// again, never trusted. Three ways:
+///
+/// - the two are one [`key`] (the address as written, folded for case);
+/// - `stored` is that key filed under a network, `<address>@<network>` (a
+///   RustDesk ID under its rendezvous server, [`pinned_as`]): asking for the
+///   address forgets it under every network, and asking for
+///   `<address>@<network>` that one alone, by the first rule;
+/// - both name a port and come to one host and port read either way a port
+///   is read (`runtime::address`): a number as a port, or under 100 as a VNC
+///   display, with `host::port` for the port itself — so `host:1`,
+///   `host:5901` and `host::5901` are one server. A bare host is no port: it
+///   matches only the bare host, since which port it meant was the backend's
+///   default, and the key does not say which backend.
+pub fn same_server(stored: &str, asked: &str) -> bool {
+    let (stored, asked) = (key(stored), key(asked));
+    if stored == asked {
+        return true;
+    }
+    if let Some((address, _network)) = stored.rsplit_once('@')
+        && address == asked
+    {
+        return true;
+    }
+    use runtime::address::{Ports, split};
+    // A default of 0 is no port: `split` takes 0 for none given and
+    // refuses it written.
+    [Ports::Plain, Ports::Display].into_iter().any(|ports| {
+        match (split(&stored, 0, ports), split(&asked, 0, ports)) {
+            (Ok(a), Ok(b)) => a.1 != 0 && a == b,
+            _ => false,
+        }
+    })
+}
+
+/// The host of a key, where it reads as an address: what the entries kept
+/// for being another port are listed by when one is forgotten.
+pub fn host_of(stored: &str) -> Option<String> {
+    let stored = key(stored);
+    let address = stored.rsplit_once('@').map_or(stored.as_str(), |(a, _)| a);
+    runtime::address::split(address, 0, runtime::address::Ports::Display)
+        .ok()
+        .map(|(host, _)| host)
+}
+
 /// What a fingerprint comes to against the pins.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Verdict {
@@ -251,6 +298,36 @@ mod tests {
         assert_eq!(key("Host.Example"), "host.example");
         assert_eq!(canonical("66:cc:ED"), "66CCED");
         assert_eq!(canonical("66 CC-ed"), "66CCED");
+    }
+
+    #[test]
+    fn a_server_is_forgotten_by_any_spelling_of_its_port_and_under_any_network() {
+        // One key, folded.
+        assert!(same_server("host.example:3389", " Host.Example:3389 "));
+        // A VNC display, its port, and `::port` are one server.
+        for a in ["127.0.0.1:1", "127.0.0.1:5901", "127.0.0.1::5901"] {
+            for b in ["127.0.0.1:1", "127.0.0.1:5901", "127.0.0.1::5901"] {
+                assert!(same_server(a, b), "{a} {b}");
+            }
+        }
+        assert!(same_server("[FE80::1]:5900", "[fe80::1]:0"));
+        // Another port, another host, or a bare host against a port: kept.
+        assert!(!same_server("127.0.0.1:5902", "127.0.0.1:5901"));
+        assert!(!same_server("127.0.0.2:5901", "127.0.0.1:5901"));
+        assert!(!same_server("desktop:5900", "desktop"));
+        assert!(!same_server("desktop", "desktop:3389"));
+        assert!(!same_server("desktop.example", "desktop"));
+        // A RustDesk ID under every network, or under the one named.
+        assert!(same_server("123456789@rs-ny.rustdesk.com", "123456789"));
+        assert!(same_server("123456789@rs-ny.rustdesk.com", "123456789@RS-NY.rustdesk.com"));
+        assert!(!same_server("123456789@rs-ny.rustdesk.com", "123456789@other.example"));
+        assert!(!same_server("123456789@rs-ny.rustdesk.com", "12345678"));
+        // What is not an address at all is matched as written only.
+        assert!(same_server("not an address::", "NOT an address::"));
+        assert!(!same_server("a:b", "a:c"));
+        assert_eq!(host_of("Desktop:5900").as_deref(), Some("desktop"));
+        assert_eq!(host_of("123456789@rs-ny.rustdesk.com").as_deref(), Some("123456789"));
+        assert_eq!(host_of("[::1]:5900").as_deref(), Some("::1"));
     }
 
     #[test]
