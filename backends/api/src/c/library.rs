@@ -84,6 +84,14 @@ impl<T> Library<T> {
         let _ = self.loaded.set(Err(why));
     }
 
+    /// The file the library was opened from, as the process has it mapped,
+    /// opening it first; or, where it cannot be opened, its file name and
+    /// why, as [`get`](Self::get) says.
+    pub fn path(&self) -> Result<std::path::PathBuf, (&'static str, &str)> {
+        self.get().map_err(|why| (self.name, why))?;
+        mapped(self.name).ok_or((self.name, "opened, but not among the process's mappings"))
+    }
+
     /// A backend's `version`: the library's version as `read` gets it, or
     /// "not available: <why>".
     pub fn version(&self, read: impl FnOnce(&T) -> String) -> String {
@@ -115,6 +123,17 @@ impl<T> Library<T> {
         unsafe { (self.bind)(library.into()) }
             .map_err(|e| format!("{} is not the library {} describes: {e}", self.name, self.header))
     }
+}
+
+/// The path of the first mapping in `/proc/self/maps` whose file is named
+/// `name`: where the loader found a library opened by that name.
+#[cfg(target_os = "linux")]
+fn mapped(name: &str) -> Option<std::path::PathBuf> {
+    let maps = std::fs::read_to_string("/proc/self/maps").ok()?;
+    maps.lines()
+        .filter_map(|line| line.find('/').map(|at| &line[at..]))
+        .find(|path| path.rsplit('/').next() == Some(name))
+        .map(std::path::PathBuf::from)
 }
 
 /// Calls one of a C backend's own functions (declared in its header, outside
@@ -207,6 +226,20 @@ mod tests {
         assert!(OPENED.get().is_ok());
         OPENED.not_built("built only with clang".to_string());
         assert!(OPENED.get().is_ok());
+    }
+
+    /// An opened library's path is the file the loader mapped; a missing
+    /// one's error names the file it looked for.
+    #[test]
+    fn the_path_is_the_mapped_file_or_the_name_and_why() {
+        static LIBC: Library<()> = Library::new("libc.so.6", "vento/nothing.h", Scope::Local, nothing);
+        let path = LIBC.path().unwrap();
+        assert!(path.is_absolute() && path.ends_with("libc.so.6"), "{path:?}");
+        static MISSING: Library<()> =
+            Library::new("libvento_nowhere.so", "vento/nothing.h", Scope::Local, nothing);
+        let (name, why) = MISSING.path().unwrap_err();
+        assert_eq!(name, "libvento_nowhere.so");
+        assert!(why.starts_with("libvento_nowhere.so: "), "{why}");
     }
 
     /// A library that opens but lacks one of the header's functions is

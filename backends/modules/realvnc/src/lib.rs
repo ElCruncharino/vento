@@ -57,6 +57,12 @@ fn library() -> Result<&'static ffi::Library, &'static str> {
     LIBRARY.get()
 }
 
+/// The file `libvento_realvnc.so` was opened from, opening it first, or its
+/// name and why it cannot be opened: for the client's list of its backends.
+pub fn library_path() -> Result<std::path::PathBuf, (&'static str, &'static str)> {
+    LIBRARY.path()
+}
+
 /// Called before first use when the client's build did not make the
 /// library: the backend is then unavailable for that reason, rather than
 /// because the loader could not find the file.

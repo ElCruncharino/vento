@@ -148,3 +148,10 @@ static LIBRARY: api::c::library::Library<ffi::Library> = api::c::library::Librar
 );
 #[cfg(not(target_os = "linux"))]
 static LIBRARY: api::c::library::Linked = api::c::library::Linked;
+
+/// The file `libvento_libvnc.so` was opened from, opening it first, or its name
+/// and why it cannot be opened: for the client's list of its backends.
+#[cfg(target_os = "linux")]
+pub fn library_path() -> Result<std::path::PathBuf, (&'static str, &'static str)> {
+    LIBRARY.path()
+}
