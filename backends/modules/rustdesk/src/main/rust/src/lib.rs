@@ -38,16 +38,20 @@
 //! list, so the same protocol code is a VP9 session on one platform and an
 //! H.265 one on another.
 
-/// The JNI half: the entry points the Java in this module declares, in front
-/// of a `common::Session`. Android only — everything above is the protocol,
-/// and it builds and tests on the host with none of this compiled.
-// The protocol as a `session::Backend`, with this backend's options read into
-// its config and its rows. The phone has `bindings` and its Java twin.
-#[cfg(not(target_os = "android"))]
+// The protocol as the phone holds it: a `session::Backend`, with this backend's
+// options read into its config and its rows, through the one JNI layer below.
 pub mod backend;
 
+// The library the add-on carries: this backend, registered on the module's
+// generated natives class, with the phone's MediaCodec for the picture.
+// Android only — everything else is the protocol, and it builds and tests on
+// the host with none of this compiled.
 #[cfg(target_os = "android")]
-mod bindings;
+platform_android::natives!(
+    class = c"net/pgaskin/remotedesktop/backend/rustdesk/RustDeskNatives",
+    kind = backend::KIND,
+    decoders = || Some(std::sync::Arc::new(platform_android::mediacodec::MediaCodec)),
+);
 
 mod client;
 pub mod crypto;

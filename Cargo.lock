@@ -2604,7 +2604,6 @@ name = "remotedesktop-rustdesk"
 version = "0.0.1"
 dependencies = [
  "dryoc",
- "jni",
  "log",
  "protobuf",
  "protobuf-codegen",

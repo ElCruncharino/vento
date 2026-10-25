@@ -1,7 +1,9 @@
-# The RustDesk backend's native half. The protocol is plain Rust and
-# `src/bindings` is Android-only, so `cargo test` exercises it on the host. The
-# picture is decoded by whatever `common::video::Decoders` the client is
-# handed: the phone's MediaCodec from `src/bindings`.
+# The RustDesk backend's native half. The protocol is plain Rust, and on
+# Android the library is that client as a `session::Backend` (`src/backend.rs`)
+# registered through the platform crate's one JNI layer, so `cargo test`
+# exercises it on the host. The picture is decoded by whatever
+# `common::video::Decoders` the client is handed: the phone's MediaCodec, named
+# in `src/lib.rs`.
 [package]
 name = "remotedesktop-rustdesk"
 version.workspace = true
@@ -36,15 +38,14 @@ sha2 = "0.11"
 # in here: it builds under the NDK without being asked anything.
 zstd = "0.13"
 
-# `src/backend.rs`, the protocol as a `session::Backend`.
-[target.'cfg(not(target_os = "android"))'.dependencies]
+# `src/backend.rs`, the protocol as a `session::Backend`: what the phone's JNI
+# layer stands in front of.
 remotedesktop-session.workspace = true
 
-# The only part of this crate that knows a phone exists: the JNI entry points
-# in `src/bindings` and the platform crate they stand on, which is where the
-# MediaCodec decoder they hand the client lives.
+# The only part of this crate that knows a phone exists: the one line in
+# `src/lib.rs` that hands the backend to the platform crate's JNI layer, with
+# the MediaCodec decoder that crate has for the picture.
 [target.'cfg(target_os = "android")'.dependencies]
-jni.workspace = true
 remotedesktop-platform-android.workspace = true
 
 [build-dependencies]
