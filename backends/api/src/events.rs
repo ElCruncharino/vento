@@ -388,6 +388,16 @@ impl Mailbox {
         self.inner.lock().unwrap().queue.pop_front()
     }
 
+    /// Everything waiting, in order, under one lock. For a window drawing a
+    /// frame: it takes what was queued when the frame began, and what
+    /// arrives while it draws waits for the next frame, which the wake asks
+    /// for. A loop on [`take`](Self::take) instead never ends while a
+    /// session queues frames faster than the window draws them, and every
+    /// frame it takes in the meantime holds pixels until the loop ends.
+    pub fn take_all(&self) -> Vec<Event> {
+        self.inner.lock().unwrap().queue.drain(..).collect()
+    }
+
     /// Blocks until an event is waiting or `timeout` has passed, and returns
     /// whether one is. For a dedicated thread, not a window.
     pub fn wait(&self, timeout: Duration) -> bool {
@@ -849,6 +859,30 @@ mod tests {
             }
             assert_eq!(last, Some(Event::Closed { detail: String::new() }));
         }
+    }
+
+    #[test]
+    fn take_all_leaves_what_arrives_afterwards_for_the_next_take() {
+        let mailbox = Mailbox::new(None);
+        mailbox.on_connected(100, 100);
+        mailbox.on_damaged(0, 0, 10, 10);
+        mailbox.on_frame_end();
+        mailbox.on_bell();
+        let batch = mailbox.take_all();
+        assert_eq!(batch.len(), 3);
+        assert_eq!(batch[0], Event::Connected { width: 100, height: 100 });
+        assert_eq!(frame(Some(batch[1].clone())), Some(vec![rect(0, 0, 10, 10)]));
+        assert_eq!(batch[2], Event::Bell);
+        assert!(mailbox.take_all().is_empty());
+        // A frame queued after the batch was taken is a new one, merged with
+        // the frames after it as usual, and is the next batch.
+        mailbox.on_damaged(20, 20, 5, 5);
+        mailbox.on_frame_end();
+        mailbox.on_damaged(30, 30, 5, 5);
+        mailbox.on_frame_end();
+        let next = mailbox.take_all();
+        assert_eq!(next.len(), 1);
+        assert_eq!(frame(Some(next[0].clone())), Some(vec![rect(20, 20, 5, 5), rect(30, 30, 5, 5)]));
     }
 
     #[test]

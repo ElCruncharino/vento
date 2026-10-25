@@ -539,8 +539,14 @@ impl Session {
 
     // ---- events from the backend -------------------------------------------
 
+    /// The events waiting when the frame began. Those that arrive while it
+    /// draws wait for the next frame, which the mailbox's wake asks for. A
+    /// session on a busy screen can queue frames faster than `draw_frame`
+    /// reads them, so taking events until the mailbox was empty did not end
+    /// while they kept coming, and each frame taken added a staging image to
+    /// the pass (gigabytes within a minute against a full-screen video).
     fn drain(&mut self, ctx: &egui::Context, host: &mut Host) {
-        while let Some(event) = self.mailbox.take() {
+        for event in self.mailbox.take_all() {
             self.redraw_others = true;
             match event {
                 Event::Connected { width, height } | Event::DesktopSize { width, height } => {
