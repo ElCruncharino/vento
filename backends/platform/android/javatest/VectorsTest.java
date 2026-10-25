@@ -24,8 +24,8 @@ import java.util.Map;
  *
  * <p>One rule is left with a Java copy: {@link BackendOption#settle}, which the
  * option screens run as somebody edits. The credentials and known-hosts
- * vectors are the Rust side's alone now, since the rules they hold are only
- * there.
+ * cases are the Rust side's alone, written in that file, since the rules
+ * they hold are only there.
  */
 public class VectorsTest {
 

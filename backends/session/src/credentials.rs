@@ -3,7 +3,7 @@
 
 //! How a credentials prompt's answer is read, the same for every client:
 //! the adapters apply these to what the phone's prompts deliver, and
-//! `backends/vectors/credentials.json` holds them to their cases.
+//! `tests/vectors.rs` holds them to their cases.
 
 use crate::Credentials;
 use crate::catalog::About;
@@ -33,7 +33,7 @@ fn trim(typed: &str) -> &str {
 
 /// Credentials as a prompt hands them back: an empty user name means the
 /// one the session was created with. A name is read trimmed, so one that
-/// is only spaces is an empty one (`backends/vectors/credentials.json`).
+/// is only spaces is an empty one (`tests/vectors.rs`).
 pub fn fill_user(mut credentials: Credentials, user: &str) -> Credentials {
     let typed = trim(&credentials.user);
     credentials.user = if typed.is_empty() { user } else { typed }.to_string();
