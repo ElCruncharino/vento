@@ -1,0 +1,38 @@
+# The RustDesk desktop with a sound to send: `AUDIO=1 ./run.sh` (usage.md).
+#
+# Built on top of the protorustdesk image rather than into it, as
+# scripts/testqemu's audio guest is, so a rebuild of this one never changes
+# the image the shared container runs. What it adds is a PulseAudio server
+# with a null sink as the default, which their server records from (the
+# default sink's monitor, as on any Linux desktop), and testqemu's
+# `audio/tone.c` playing into it through ALSA's PulseAudio plugin: silence,
+# and a 440 Hz burst per 't' on a TCP port, answered with its own share of
+# the delay. Build with the tone's source as a second context:
+#
+#   docker build -t protorustdesk-audio -f Dockerfile.audio \
+#       --build-context tonesrc=../testqemu/audio .
+ARG BASE=protorustdesk:latest
+
+FROM debian:trixie AS tone
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev libasound2-dev \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=tonesrc tone.c /src/tone.c
+RUN gcc -O2 -Wall -o /tone /src/tone.c -lasound -lm
+
+FROM ${BASE}
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        pulseaudio \
+        pulseaudio-utils \
+        `# ALSA's "pulse" device, which is what the tone plays into` \
+        libasound2-plugins \
+        `# the serial line the QEMU guest has, as a pty on a TCP port` \
+        socat \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=tone /tone /usr/local/bin/tone
+COPY start.sh /usr/local/bin/start.sh
+COPY start-audio.sh /usr/local/bin/start-audio.sh
+RUN chmod +x /usr/local/bin/start.sh /usr/local/bin/start-audio.sh
+EXPOSE 4555
+ENTRYPOINT ["/usr/local/bin/start-audio.sh"]

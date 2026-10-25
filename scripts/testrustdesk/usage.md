@@ -47,3 +47,36 @@ Two things the container has to do that a person does not, both in `start.sh`:
 What this rig answered is [45a](../../notes/77-rustdesk-checks.md)'s check 2:
 **their X11 capture works under Xvfb**, unprompted, first try — which is the one
 [49](../../notes/49-h264.md) lost a day to with a headless compositor.
+
+## And sound
+
+`AUDIO=1` is the same desktop with a sound to send, on an image of its own
+(`protorustdesk-audio`, from `Dockerfile.audio`, built on top of
+`protorustdesk` as it is):
+
+```sh
+AUDIO=1 NAME=myrd PORT=21128 TONE_PORT=5957 RENDEZVOUS=none ./run.sh
+printf t | ncat --send-only 127.0.0.1 5957   # one 440 Hz burst
+NAME=myrd ./run.sh stop
+```
+
+It adds a PulseAudio server for root whose default sink is a null sink,
+which their server records from (that sink's monitor, as on any Linux
+desktop), and `scripts/testqemu/audio/tone.c` playing into it through
+ALSA's PulseAudio plugin: silence, and half a second of 440 Hz at half
+scale per `t` on `TONE_PORT`, answered with its own share of the delay. Three
+things it has to do that a desktop does not, all in `start-audio.sh`:
+
+- **Their connection manager runs from the start, without its window**
+  (`rustdesk --cm-no-ui`, started again whenever it exits, which it does
+  when a session ends). The manager is what records the sound and hands it
+  to the server; on a desktop the server starts it, as a Flutter window,
+  when a client connects, and here that window cannot start (no libEGL) —
+  the server then logs `Error of audio service` once a second and sends
+  nothing.
+- **The silence is a square wave of one LSB, not zeros.** Their server stops
+  sending eight seconds into a silence and starts again with the next
+  sound, so a client's stream would not exist — and could not be checked to
+  be on the null sink — before the first burst.
+- **`enable-audio` is `Y`** in their config (`start.sh` writes `N`
+  otherwise).
