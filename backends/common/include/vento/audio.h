@@ -43,6 +43,13 @@ extern "C" {
 #define VENTO_AUDIO_CODEC_AAC 1
 #define VENTO_AUDIO_CODEC_OPUS 2
 
+/* What the session's sound switch does (`offer`): silence the far end's
+   sound here, where nothing can ask the far end to stop sending it during a
+   session (RDP's sound), or ask it to stop and to send again (QEMU's audio
+   extension). As `common::audio::Switch` names them. */
+#define VENTO_AUDIO_SWITCH_MUTE 1
+#define VENTO_AUDIO_SWITCH_ENABLE 2
+
 /* One stream of the far end's sound. Not safe to call into from two threads
    at once; from one thread after another is fine. */
 typedef struct vento_audio_stream vento_audio_stream;
@@ -93,6 +100,22 @@ typedef struct vento_audio {
     int (*decode)(vento_audio_decoder *d, const uint8_t *data, size_t len,
                   const int16_t **samples, int *rate, int *channels);
     void (*decoder_close)(vento_audio_decoder *d);
+    /* The far end may send sound from now on, so the session shows its sound
+       switch: said as early as the protocol says it (a QEMU server's audio
+       acknowledgement, an RDP server's list of formats), and again whenever
+       it changes. `sw` is VENTO_AUDIO_SWITCH_MUTE, with `enabled` true and no
+       `enable`, where the far end cannot be asked to stop; or
+       VENTO_AUDIO_SWITCH_ENABLE, `enabled` whether it is asked for its sound
+       now, and `enable(ctx, on)` called when the person turns the switch — on
+       their thread, a window's, never inside a call into this table, so it
+       hands the question to the protocol's thread and returns, and it calls
+       nothing here. */
+    void (*offer)(void *user, int sw, bool enabled, void (*enable)(void *ctx, bool on),
+                  void *ctx);
+    /* The far end will send no more sound, or the session is ending: no
+       switch. Once this returns `enable` is not called again, so a backend
+       withdraws before `ctx` goes away; `release` withdraws too. */
+    void (*withdraw)(void *user);
     /* The table is the backend's from the moment it is handed over: this is
        called once, after the last stream and decoder are closed, and also
        when the backend fails to start at all. */

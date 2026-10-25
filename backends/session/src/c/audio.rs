@@ -40,6 +40,8 @@ pub fn table(outputs: Arc<dyn Outputs>) -> ffi::vento_audio {
         decoder_open: Some(decoder_open),
         decode: Some(decode),
         decoder_close: Some(decoder_close),
+        offer: Some(offer),
+        withdraw: Some(withdraw),
         release: Some(release),
     }
 }
@@ -216,9 +218,53 @@ unsafe extern "C" fn close(s: *mut ffi::vento_audio_stream) {
     }
 }
 
+/// A backend's `ctx`, carried to whichever thread turns the switch: the
+/// header has the backend keep it alive until it withdraws, and the call is
+/// the backend's to make safe on any thread.
+struct Ctx(*mut c_void);
+
+unsafe impl Send for Ctx {}
+unsafe impl Sync for Ctx {}
+
+unsafe extern "C" fn offer(
+    user: *mut c_void,
+    switch: c_int,
+    enabled: bool,
+    enable: Option<unsafe extern "C" fn(*mut c_void, bool)>,
+    ctx: *mut c_void,
+) {
+    if user.is_null() {
+        return;
+    }
+    let controls = unsafe { &*(user as *const Arc<dyn Outputs>) }.controls();
+    match (switch as u32, enable) {
+        (ffi::VENTO_AUDIO_SWITCH_ENABLE, Some(enable)) => {
+            let ctx = Ctx(ctx);
+            controls.offer_enable(
+                enabled,
+                Box::new(move |on| {
+                    let ctx = &ctx;
+                    unsafe { enable(ctx.0, on) }
+                }),
+            );
+        }
+        // A mute, or an enable with no way to ask: either way the far end
+        // sends, and the switch can only silence it here.
+        _ => controls.offer_mute(),
+    }
+}
+
+unsafe extern "C" fn withdraw(user: *mut c_void) {
+    if !user.is_null() {
+        unsafe { &*(user as *const Arc<dyn Outputs>) }.controls().withdraw();
+    }
+}
+
 unsafe extern "C" fn release(user: *mut c_void) {
     if !user.is_null() {
-        drop(unsafe { Box::from_raw(user as *mut Arc<dyn Outputs>) });
+        let outputs = unsafe { Box::from_raw(user as *mut Arc<dyn Outputs>) };
+        // The backend's `ctx` goes with it, whether or not it withdrew.
+        outputs.controls().withdraw();
     }
 }
 
@@ -400,5 +446,46 @@ mod tests {
             drop(stream);
             t.release.unwrap()(t.user);
         }
+    }
+
+    #[test]
+    fn the_switch_goes_through_the_table() {
+        use common::audio::Switch;
+        use std::sync::atomic::AtomicI32;
+
+        // What a backend's ctx would be: here, a count of what it was asked.
+        static ASKED: AtomicI32 = AtomicI32::new(0);
+        unsafe extern "C" fn enable(ctx: *mut c_void, on: bool) {
+            assert_eq!(ctx as usize, 42);
+            ASKED.fetch_add(if on { 10 } else { 1 }, Ordering::Relaxed);
+        }
+
+        let controls = Arc::new(Controls::new());
+        let fake = Arc::new(Fake {
+            controls: Arc::clone(&controls),
+            queues: Mutex::new(Vec::new()),
+            dropped: Arc::new(AtomicBool::new(false)),
+        });
+        let t = table(fake as Arc<dyn Outputs>);
+        let ctx = 42usize as *mut c_void;
+        unsafe {
+            t.offer.unwrap()(t.user, ffi::VENTO_AUDIO_SWITCH_MUTE as c_int, true, None, std::ptr::null_mut());
+            assert_eq!(controls.sound().switch, Some(Switch::Mute));
+            t.offer.unwrap()(t.user, ffi::VENTO_AUDIO_SWITCH_ENABLE as c_int, false, Some(enable), ctx);
+            assert_eq!((controls.sound().switch, controls.enabled()), (Some(Switch::Enable), false));
+            assert!(controls.set_enabled(true));
+            assert!(controls.set_enabled(false));
+            assert_eq!(ASKED.load(Ordering::Relaxed), 11);
+            t.withdraw.unwrap()(t.user);
+            assert_eq!(controls.sound().switch, None);
+            assert!(!controls.set_enabled(true));
+            // Offered again and released without a withdraw: the release
+            // withdraws.
+            t.offer.unwrap()(t.user, ffi::VENTO_AUDIO_SWITCH_ENABLE as c_int, true, Some(enable), ctx);
+            t.release.unwrap()(t.user);
+        }
+        assert_eq!(controls.sound().switch, None);
+        assert!(!controls.set_enabled(false));
+        assert_eq!(ASKED.load(Ordering::Relaxed), 11);
     }
 }

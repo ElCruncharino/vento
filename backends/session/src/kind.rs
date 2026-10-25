@@ -94,10 +94,11 @@ pub struct Connect<'a> {
     /// TigerVNC or FreeRDP one that never offers H.264.
     pub decoders: Option<Arc<dyn Decoders>>,
     /// Where the far end's sound goes, for the backends that have sound
-    /// (TigerVNC's QEMU audio and FreeRDP's rdpsnd, through `vento/audio.h`):
-    /// the phone's AAudio, one per session so that its controls — the mute a
-    /// window sets — are this session's alone. `None` is a session whose
-    /// sound is dropped.
+    /// (TigerVNC's QEMU audio and FreeRDP's rdpsnd through `vento/audio.h`,
+    /// SPICE's, IronRDP's and RustDesk's in Rust): the phone's AAudio, one
+    /// per session so that its controls — the switch and the mute a window
+    /// sets — are this session's alone. `None` is a session whose sound is
+    /// dropped.
     pub audio: Option<Arc<dyn Outputs>>,
 }
 
@@ -145,10 +146,10 @@ impl Kind {
     /// switch of its own.) The option is not live, as the catalog has it,
     /// so this is once per session.
     ///
-    /// Whether the session is playing sound is likewise said for every
-    /// backend at once: the session's audio controls are told to say it
-    /// through the mailbox, as [`Event::Audio`](crate::events::Event::Audio),
-    /// whichever backend's streams it is that start and stop.
+    /// The session's sound is likewise said for every backend at once: the
+    /// session's audio controls are told to say it through the mailbox, as
+    /// [`Event::Sound`](crate::events::Event::Sound), whichever backend's
+    /// streams it is that start and stop and whichever offers the switch.
     pub fn start(&self, connect: &Connect) -> Result<Arc<dyn Backend>, String> {
         if self.options.iter().any(|s| s.key == "AcceptBell") {
             connect.mailbox.accept_bell(connect.options.bool("AcceptBell"));
@@ -157,9 +158,9 @@ impl Kind {
             // Weak, so that a stream a backend leaks past its session does
             // not keep the mailbox alive with it.
             let mailbox = Arc::downgrade(&connect.mailbox);
-            audio.controls().on_playing(Box::new(move |playing| {
+            audio.controls().on_sound(Box::new(move |sound| {
                 if let Some(mailbox) = mailbox.upgrade() {
-                    mailbox.on_audio(playing);
+                    mailbox.on_sound(sound);
                 }
             }));
         }
@@ -189,7 +190,7 @@ mod tests {
     }
 
     #[test]
-    fn a_session_says_when_its_sound_starts_and_stops() {
+    fn a_session_says_its_sound_and_its_switch() {
         static KIND: Kind = Kind {
             about: &crate::catalog::TIGERVNC,
             version: String::new,
@@ -221,8 +222,18 @@ mod tests {
         assert!(KIND.start(&connect).is_err());
         let mut stream = audio.open(Format::new(48_000, 2).unwrap()).unwrap();
         stream.write(&[0, 0]);
-        assert_eq!(mailbox.take(), Some(Event::Audio { playing: true }));
+        let playing = |playing: bool| {
+            Some(Event::Sound(common::audio::Sound {
+                switch: playing.then_some(common::audio::Switch::Mute),
+                enabled: true,
+                muted: false,
+                playing,
+            }))
+        };
+        assert_eq!(mailbox.take(), playing(true));
         drop(stream);
-        assert_eq!(mailbox.take(), Some(Event::Audio { playing: false }));
+        assert_eq!(mailbox.take(), playing(false));
+        audio.controls().offer_enable(false, Box::new(|_| {}));
+        assert!(matches!(mailbox.take(), Some(Event::Sound(s)) if s.switch == Some(common::audio::Switch::Enable) && !s.enabled));
     }
 }

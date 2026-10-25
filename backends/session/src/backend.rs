@@ -223,8 +223,8 @@ impl ConnectionFact {
     /// is: a row of the client's rather than the backend's, since the
     /// client holds the sound's controls (the backend has only the streams
     /// it writes), and worded here so that every client words it alike.
-    /// `None` while nothing plays, which is when the toolbars have no sound
-    /// button either.
+    /// `None` while nothing plays: the session's sound switch, which is
+    /// there from when the far end may send sound, says the rest.
     pub fn sound(controls: &Controls) -> Option<ConnectionFact> {
         let playback = controls.playback()?;
         let muted = if controls.muted() { ", muted" } else { "" };
