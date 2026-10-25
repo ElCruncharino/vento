@@ -7,8 +7,11 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Context;
 import android.graphics.Bitmap;
+import android.graphics.Rect;
 import android.graphics.Canvas;
 import android.graphics.Paint;
+import android.graphics.Path;
+import android.graphics.Region;
 import android.os.SystemClock;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
@@ -49,6 +52,7 @@ import net.pgaskin.remotedesktop.control.ui.Chrome;
 import net.pgaskin.remotedesktop.control.ui.TextInput;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -157,6 +161,22 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
     private final CursorController cursor;
     private final GestureRecognizer gestures;
     private final TouchRouter router;
+    /** The GPU video layer, when the connection draws video there; null otherwise. */
+    private VideoLayer video;
+
+    /** Put the layer behind this view, and call {@link #videoFrame} for its frames. */
+    public void setVideoLayer(VideoLayer layer) {
+        video = layer;
+    }
+
+    @Override
+    public void videoFrame(int x, int y, int width, int height,
+                           int frameWidth, int frameHeight, int colorMode, byte[] nv12) {
+        final VideoLayer v = video;
+        if (v != null) {
+            v.submit(x, y, width, height, frameWidth, frameHeight, colorMode, nv12);
+        }
+    }
     private final TapRegions tapRegions = TapRegions.standard();
     private final MouseOverlay overlay;
     private final ExtensionKeyboard keyboard;
@@ -413,6 +433,11 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
 
     @Override
     public void desktopSize(int width, int height) {
+        final VideoLayer v = video;
+        if (v != null) {
+            // A new desktop, or a reconnect: nothing the layer holds is still true.
+            v.clear();
+        }
         if (mirror != null && mirror.desktopWidth() == width && mirror.desktopHeight() == height) {
             return;
         }
@@ -431,10 +456,51 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
 
     @Override
     public void damaged(int x, int y, int width, int height) {
+        // Non-video pixels here give the rectangle back to the CPU framebuffer. What
+        // video had left of the regions it covered is stale in the mirror, so that
+        // goes to repaint too.
+        final VideoLayer v = video;
+        final List<Rect> repaint = v != null ? v.damaged(x, y, width, height) : Collections.emptyList();
         final Mirror m = mirror;
         if (m != null) {
             m.damaged(x, y, width, height);
+            for (Rect r : repaint) {
+                m.damaged(r.left, r.top, r.width(), r.height());
+            }
         }
+    }
+
+    /**
+     * The backend's read of a tile of the desktop, with whatever video is under it
+     * painted over, since the backend's own picture of that video is stale or absent.
+     */
+    private boolean readTile(Backend backend, int x, int y, int w, int h,
+                             Bitmap dst, int dstX, int dstY) {
+        final boolean ok = backend.readRegion(x, y, w, h, dst, dstX, dstY);
+        final VideoLayer v = video;
+        final boolean painted = v != null && v.paintRegion(dst, x, y, w, h, dstX, dstY);
+        return ok || painted;
+    }
+
+    /**
+     * A thumbnail of the desktop, from the backend, with the video painted over it.
+     * {@code thumb} is null where the backend has no picture yet, in which case the
+     * thumbnail is the video alone, on black.
+     */
+    public Bitmap thumbnail(Bitmap thumb, int maxW, int maxH) {
+        final VideoLayer v = video;
+        if (v == null || !v.hasVideo()) {
+            return thumb;
+        }
+        final int dw = viewport.desktopWidth(), dh = viewport.desktopHeight();
+        if (thumb == null) {
+            final float s = Math.min(maxW / (float) dw, maxH / (float) dh);
+            thumb = Bitmap.createBitmap(Math.max(1, Math.round(dw * s)),
+                    Math.max(1, Math.round(dh * s)), Bitmap.Config.ARGB_8888);
+            thumb.eraseColor(0xff000000);
+        }
+        v.paintThumbnail(thumb, dw, dh);
+        return thumb;
     }
 
     @Override
@@ -1198,18 +1264,32 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
 
     @Override
     protected void onDraw(Canvas c) {
-        c.drawColor(mirror != null ? 0xff000000 : emptyColor);
+        // With a video layer the desktop is transparent, so the layer behind (black
+        // where it has no video) shows through wherever the tiles do not paint.
+        if (mirror == null) {
+            c.drawColor(emptyColor);
+        } else if (video == null) {
+            c.drawColor(0xff000000);
+        }
 
         if (mirror != null) {
             // Read the visible changed tiles on the drawing thread, because a
             // fetch must never queue behind connection work. Off-screen tiles
             // stay dirty until they are visible.
-            mirror.update(backend,
+            mirror.update((x, y, w, h, dst, dx, dy) -> readTile(backend, x, y, w, h, dst, dx, dy),
                     viewport.toDesktopX(0), viewport.toDesktopY(0),
                     viewport.toDesktopX(getWidth()), viewport.toDesktopY(getHeight()));
             final int save = c.save();
             c.translate(viewport.originX(), viewport.originY());
             c.scale(viewport.getScale(), viewport.getScale());
+            final VideoLayer v = video;
+            if (v != null) {
+                // The tiles are clipped out of every video region, so the old
+                // pixels under one never show through the frame drawn behind.
+                v.setView(viewport.getScale(), viewport.originX(), viewport.originY(),
+                        getWidth(), getHeight());
+                c.clipPath(v.holes(), Region.Op.DIFFERENCE);
+            }
             mirror.draw(c, bitmapPaint);
             c.restoreToCount(save);
             drawCursor(c);
