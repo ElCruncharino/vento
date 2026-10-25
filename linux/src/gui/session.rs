@@ -563,7 +563,11 @@ impl Session {
                         log::debug!("clipboard from the far end: {} bytes, not taken", text.len());
                     } else if self.clipboard.far(&text) {
                         log::debug!("clipboard from the far end: {} bytes", text.len());
-                        host.winit.set_clipboard_text(text);
+                        // egui's own as well, for a paste into a text field.
+                        host.winit.set_clipboard_text(text.clone());
+                        if let Some(clipboard) = host.clipboard {
+                            clipboard.set(text);
+                        }
                     }
                 }
                 Event::Closed { detail } => {
@@ -753,16 +757,11 @@ impl Session {
     }
 
     /// The keyboard focus: the keys still down let go of when it leaves,
-    /// the clipboard read and offered when it comes back
-    /// (`local_clipboard`), and the capture and the shortcuts (the
-    /// window's) following it.
+    /// and the capture and the shortcuts (the window's) following it. The
+    /// clipboard is read when it comes back, by the window, and offered
+    /// when the read is in (`local_clipboard`).
     pub fn focus(&mut self, focused: bool, host: &mut Host) {
-        if focused {
-            // egui-winit reads the clipboard on this thread, and waits on
-            // its owner for as long as its backend does.
-            let text = host.winit.clipboard_text();
-            self.local_clipboard(text);
-        } else {
+        if !focused {
             self.focus_lost();
         }
         // The capture follows the focus on the next frame.
@@ -782,7 +781,7 @@ impl Session {
     /// only, not yet connected) is kept and offered when it has
     /// (`frame_shared`); it was dropped, so a copy made before a trust
     /// prompt never reached the far end. `None` is a clipboard with no
-    /// text, or one that could not be read.
+    /// text, or one that could not be read in time (see `clipboard/`).
     pub fn local_clipboard(&mut self, text: Option<String>) {
         if let Some(text) = text
             && let Some(text) = self.clipboard.local(text, self.accepts_input())

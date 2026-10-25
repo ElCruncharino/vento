@@ -1045,6 +1045,25 @@ turning sending on offers the next copy and not an old one. Proven against
 `scripts/testvnc` with `wl-copy`/`wl-paste` and the far end's `xclip`, both
 directions, both ways round, and on X11 with `xclip` at both ends.
 
+The local clipboard is the window's own (`src/gui/clipboard/`), not
+egui-winit's, and is read and served on a thread of its own, so the window
+never waits on another program. A read is answered when it is in, and the
+focus-in offer is made then; it is given up after **2 seconds** in all, and on
+Wayland after **1 second** in which the source writes nothing, so a hung or
+stopped owner costs a log line and no frozen window. At most 16 MiB is read.
+The owner is asked what it has first and the best text type is taken
+(`UTF8_STRING`, then `text/plain;charset=utf-8`, then Latin-1 `STRING`, then
+`TEXT` and plain `text/plain`); what arrives is decoded by the type it really
+came as, and text under a UTF-8 name that is not UTF-8 is read as Latin-1 —
+not with U+FFFD in it, which TigerVNC's servers refuse whole. What the far end
+copies is served as `UTF8_STRING`, `TEXT`, `text/plain;charset=utf-8` (and
+`UTF-8`), `text/plain` (UTF-8) and `STRING` (Latin-1, `?` for the rest). A
+Ctrl+C in one of the window's text fields sets the local clipboard, and Ctrl+V
+there pastes what the local clipboard holds at that moment: the key starts a
+read like the focus-in one, and the text is pasted when it is in, a few
+milliseconds later — or not at all, from an owner that does not answer within
+the deadline, with the window responsive meanwhile.
+
 **The debug overlay** (the connection panel's **Debug overlay**, or
 **Ctrl+Alt+D**) is the
 phone's `SessionHud`: a small monospace box in the bottom left of the
@@ -1232,9 +1251,22 @@ What the window uses beyond `xdg_wm_base`:
 - `zwp_pointer_constraints_v1` and `zwp_relative_pointer_manager_v1` — the
   pointer lock and raw motion of relative mode, through winit's
   `CursorGrabMode::Locked` and `DeviceEvent::MouseMotion`.
-- The clipboard goes through smithay-clipboard over winit's own connection:
-  egui-winit makes both of its clipboards on Linux and uses smithay's where
-  the display handle is Wayland, arboard's otherwise.
+- The clipboard is `wl_data_device` on winit's own connection — the
+  selection is told only to, and set only by, the client with the focus —
+  bound by `src/gui/clipboard/wayland.rs` on an event queue of its own and
+  read from its own thread, with a keyboard and pointer of its own for the
+  serials. A read is a `wl_display.sync` (the selection arrives just before
+  the focus) and then the offer into a non-blocking pipe. Tried in a headless
+  sway: a `wl-copy` stopped with `SIGSTOP` was given up after 1 s, and a copy
+  at the far end arriving meanwhile was taken at once (smithay-clipboard,
+  before, waited until the source was continued). Nothing keeps what the
+  window owns once it exits, unless the compositor or a tool does. The
+  thread is stopped while the event loop is still there; one that has not
+  stopped 2.5 s later is still on the connection, so the windows (which hold
+  it) are then never dropped and the connection lasts until the process is
+  gone. Before, winit closed it under the thread: with the thread's quit held
+  back by a scratch hook, the client ended in a segmentation fault; now it
+  exits 0.
 - The native cursor goes through winit's `CustomCursor`, which on Wayland is
   a `wl_shm` buffer in the pointer surface. winit takes straight alpha and
   premultiplies it (the shapes arrive straight, which is what the phone's
@@ -1353,13 +1385,17 @@ hardware's Vulkan or GL through the Xlib handles.
   buffer scale: the cursor is in device pixels, so the resampling is right at
   any scale factor (×2 at `WINIT_X11_SCALE_FACTOR=2` in a fill mode, ×1 at
   1:1).
-- **The clipboard is arboard's**, which serves `CLIPBOARD` from a thread of
-  its own over a connection of its own. Proven both ways with `xclip`. On
-  exit it hands the text to a clipboard manager if one runs; without one,
-  what the far end copied is gone when the window closes, as with any X
-  client (on the rig, `xclip -o` then found no owner). arboard waits up to
-  four seconds for an unresponsive selection owner, and the clipboard is
-  read on focus-in, so a hung owner stalls that one frame.
+- **The clipboard is the window's own** (`src/gui/clipboard/x11.rs`), which
+  reads and serves `CLIPBOARD` from a thread of its own over a connection of
+  its own. Proven both ways with `xclip`, every advertised target converting.
+  A read asks for `TARGETS` first and receives `INCR`; an owner that never
+  answers is given up after 2 s with the window answering `_NET_WM_PING` in
+  milliseconds throughout (arboard, before, tried six formats for four
+  seconds each, 24 s frozen). Text up to 1 MiB is served in one property and
+  longer text by `INCR`, in 1 MiB steps. On exit it hands the text to a
+  clipboard manager if one runs (`SAVE_TARGETS`, waiting up to 2 s); without
+  one, what the far end copied is gone when the window closes, as with any X
+  client (on the rig, `xclip -o` then found no owner).
 - **Fullscreen** is `_NET_WM_STATE_FULLSCREEN`, which needs an EWMH window
   manager; under Openbox the window became the screen's 1600×1000, and
   with follow window size on the far end followed it there and back. It is
