@@ -1,7 +1,7 @@
 From 35e360575636929e26d1d42b0d900c6197af1d6a Mon Sep 17 00:00:00 2001
 From: user <email>
 Date: Fri, 16 Oct 2026 19:51:34 -0400
-Subject: [PATCH 1/1] codec,h264: a decoder subsystem the application provides
+Subject: [PATCH 1/2] codec,h264: a decoder subsystem the application provides
 
 An application that links the library statically and has a video
 decoder of its own (hardware decoding with its own device handling and

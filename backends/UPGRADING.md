@@ -327,10 +327,15 @@ One commit per upstream, after review, by the lead:
   `vncviewer/CConn.cxx`; audio is behind the `Audio` row, an AAudio sink over
   the shim's own `AudioOutput.h`. Builds `common/` only, with `config.h` written
   by our CMake and, on Android, an empty `pthread` target for the link.
-- **freerdp** 3.32.0; one patch (`0001`, codec/h264: `WITH_H264_EXTERNAL`,
+- **freerdp** 3.32.0; two patches: `0001`, codec/h264: `WITH_H264_EXTERNAL`,
   a slot for an application's subsystem, `g_Subsystem_external`, tried
-  first, and `WITH_GFX_H264` following it). The module's `h264_vento.c` is
-  built against `libfreerdp/codec/h264.h`, which is internal: check that
+  first, and `WITH_GFX_H264` following it; and `0002`, upstream's
+  190167212 cherry-picked, which 3.32.0's channel reassembly needs: without
+  it a static channel's message of more than one chunk whose length is not
+  a multiple of 128 (a far-end clipboard past 1600 bytes) is a "read error"
+  that ends the session. Drop `0002` at the first release that has it.
+  The module's `h264_vento.c` is built against `libfreerdp/codec/h264.h`,
+  which is internal: check that
   `H264_CONTEXT_SUBSYSTEM` and the context's `pYUVData`, `iStride`,
   `YUVWidth`, `YUVHeight` and `pSystemData` still mean the same, that
   contexts are still made, reset and fed inside the GDI's SurfaceCommand
