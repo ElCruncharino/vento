@@ -5,7 +5,8 @@
 //! after the decoder has finished with it.
 //!
 //! The arithmetic is the same expression twice — once a row at a time and once
-//! sixteen pixels at a time — and the vectorised one is used only where it has
+//! sixteen pixels at a time, in NEON on aarch64 and SSE2 on x86_64 (a phone,
+//! an emulator, a desktop) — and the vectorised one is used only where it has
 //! been shown to agree with the other on this decoder's own output. What is in
 //! doubt is never the arithmetic; it is whether the planes are where the
 //! decoder's descriptor says they are, and a row of real pixels answers that
@@ -355,6 +356,146 @@ mod neon {
     }
 }
 
+#[cfg(target_arch = "x86_64")]
+mod sse2 {
+    use super::{Coefficients, Layout, Row};
+    use std::arch::x86_64::*;
+
+    /// The same row, sixteen pixels at a time, with SSE2 — which every x86_64
+    /// processor has, so there is nothing to detect. The shape is NEON's: the
+    /// same layouts, the same sixteen, the same bounds, and nothing done where
+    /// those do not hold.
+    ///
+    /// The products are 32-bit, as the scalar loop's are: a chroma term is up
+    /// to 541 × 128, which no 16-bit lane holds. `pmaddwd` is what makes that
+    /// cheap here — U and V interleaved into pairs and multiplied by a pair of
+    /// coefficients is each chroma term in one instruction, and luma paired
+    /// with zero is `Y × y` the same way — and the two saturating packs at the
+    /// end are the scalar clamp.
+    pub fn row(row: &Row, l: &Layout, out: &mut [u32], w: usize, c: &Coefficients) -> usize {
+        if l.y_col_inc != 1 || l.horiz_subsampling != 2 {
+            return 0;
+        }
+        let (u, v) = (row.u.as_ptr(), row.v.as_ptr());
+        let u_first = v == u.wrapping_add(1);
+        let interleaved = l.uv_col_inc == 2 && (u_first || u == v.wrapping_add(1));
+        if l.uv_col_inc != 1 && !interleaved {
+            return 0;
+        }
+        let pair = if u_first { row.u } else { row.v };
+
+        let end = w / 16 * 16;
+        let chroma = if interleaved {
+            pair.len() >= end
+        } else {
+            row.u.len() >= end / 2 && row.v.len() >= end / 2
+        };
+        if end == 0 || row.y.len() < end || out.len() < end || !chroma {
+            return 0;
+        }
+
+        // Two 16-bit coefficients in one 32-bit lane, the first multiplying
+        // the lane's low half (U, or Y) and the second its high half (V).
+        let pairs = |lo: i32, hi: i32| ((hi as u32) << 16 | (lo as u16 as u32)) as i32;
+
+        // SAFETY: SSE2 is part of x86_64. Every load is of bytes below `end`
+        // in its own slice (or `end / 2` for a separate chroma plane), and
+        // every store of words below `end` in `out`, which the lengths above
+        // cover; all of them are unaligned loads and stores.
+        unsafe {
+            let zero = _mm_setzero_si128();
+            let y_off = _mm_set1_epi16(c.y_offset as i16);
+            let mid = _mm_set1_epi16(128);
+            let half = _mm_set1_epi32(128);
+            let cy = _mm_set1_epi32(pairs(c.y, 0));
+            let crv = _mm_set1_epi32(pairs(0, c.rv));
+            let cg = _mm_set1_epi32(pairs(c.gu, c.gv));
+            let cbu = _mm_set1_epi32(pairs(c.bu, 0));
+            let low_bytes = _mm_set1_epi16(0xff);
+            let opaque = _mm_set1_epi8(-1);
+
+            let mut col = 0usize;
+            while col < end {
+                // Eight U and eight V as 16-bit lanes, whichever way they came.
+                let (ub, vb) = if interleaved {
+                    let both = _mm_loadu_si128(pair.as_ptr().add(col) as *const __m128i);
+                    let first = _mm_and_si128(both, low_bytes);
+                    let second = _mm_srli_epi16::<8>(both);
+                    if u_first {
+                        (first, second)
+                    } else {
+                        (second, first)
+                    }
+                } else {
+                    (
+                        _mm_unpacklo_epi8(
+                            _mm_loadl_epi64(row.u.as_ptr().add(col / 2) as *const __m128i),
+                            zero,
+                        ),
+                        _mm_unpacklo_epi8(
+                            _mm_loadl_epi64(row.v.as_ptr().add(col / 2) as *const __m128i),
+                            zero,
+                        ),
+                    )
+                };
+                let uu = _mm_sub_epi16(ub, mid);
+                let vv = _mm_sub_epi16(vb, mid);
+                // (U, V) pairs for chroma samples 0-3 and 4-7.
+                let uv = [_mm_unpacklo_epi16(uu, vv), _mm_unpackhi_epi16(uu, vv)];
+
+                // Each chroma term once per sample, then onto the two luma
+                // pixels it covers: four pixels' worth per register.
+                let mut rv = [zero; 4];
+                let mut gu = [zero; 4];
+                let mut bu = [zero; 4];
+                for i in 0..2 {
+                    let r = _mm_add_epi32(_mm_madd_epi16(uv[i], crv), half);
+                    let g = _mm_add_epi32(_mm_madd_epi16(uv[i], cg), half);
+                    let b = _mm_add_epi32(_mm_madd_epi16(uv[i], cbu), half);
+                    rv[i * 2] = _mm_unpacklo_epi32(r, r);
+                    rv[i * 2 + 1] = _mm_unpackhi_epi32(r, r);
+                    gu[i * 2] = _mm_unpacklo_epi32(g, g);
+                    gu[i * 2 + 1] = _mm_unpackhi_epi32(g, g);
+                    bu[i * 2] = _mm_unpacklo_epi32(b, b);
+                    bu[i * 2 + 1] = _mm_unpackhi_epi32(b, b);
+                }
+
+                let yraw = _mm_loadu_si128(row.y.as_ptr().add(col) as *const __m128i);
+                let ylo = _mm_add_epi16(_mm_unpacklo_epi8(yraw, zero), y_off);
+                let yhi = _mm_add_epi16(_mm_unpackhi_epi8(yraw, zero), y_off);
+                let yy = [
+                    _mm_madd_epi16(_mm_unpacklo_epi16(ylo, zero), cy),
+                    _mm_madd_epi16(_mm_unpackhi_epi16(ylo, zero), cy),
+                    _mm_madd_epi16(_mm_unpacklo_epi16(yhi, zero), cy),
+                    _mm_madd_epi16(_mm_unpackhi_epi16(yhi, zero), cy),
+                ];
+
+                // Sixteen bytes of one channel: shifted, then saturated to
+                // 16 bits and to 0-255, which is the scalar clamp.
+                let channel = |terms: &[__m128i; 4]| {
+                    let at = |i: usize| _mm_srai_epi32::<8>(_mm_add_epi32(yy[i], terms[i]));
+                    _mm_packus_epi16(_mm_packs_epi32(at(0), at(1)), _mm_packs_epi32(at(2), at(3)))
+                };
+                let (r, g, b) = (channel(&rv), channel(&gu), channel(&bu));
+
+                // R, G, B, A in memory, which is red at shift 0 in a word.
+                let rg = [_mm_unpacklo_epi8(r, g), _mm_unpackhi_epi8(r, g)];
+                let ba = [_mm_unpacklo_epi8(b, opaque), _mm_unpackhi_epi8(b, opaque)];
+                let dst = out.as_mut_ptr().add(col) as *mut __m128i;
+                for half in 0..2 {
+                    _mm_storeu_si128(dst.add(half * 2), _mm_unpacklo_epi16(rg[half], ba[half]));
+                    _mm_storeu_si128(
+                        dst.add(half * 2 + 1),
+                        _mm_unpackhi_epi16(rg[half], ba[half]),
+                    );
+                }
+                col += 16;
+            }
+            col
+        }
+    }
+}
+
 /// Whether the two agree on this decoder's first row, which is what decides
 /// that the vectorised one may be used at all. One row of one frame, once per
 /// layout.
@@ -376,7 +517,11 @@ pub fn row_vectorised(row: &Row, l: &Layout, out: &mut [u32], w: usize, c: &Coef
     {
         neon::row(row, l, out, w, c)
     }
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(target_arch = "x86_64")]
+    {
+        sse2::row(row, l, out, w, c)
+    }
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
     {
         let _ = (row, l, out, w, c);
         0
@@ -438,7 +583,7 @@ mod tests {
     /// Only where there is a second path to agree with: everywhere else the
     /// scalar loop is the whole of the conversion, and a decoder checks this
     /// again on its own first row of every layout.
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
     #[test]
     fn the_two_paths_agree() {
         let c = coefficients(true, false);
@@ -447,6 +592,69 @@ mod tests {
             // A width that is not a multiple of sixteen, so the tail is
             // exercised as well as the block.
             assert!(vectorised_agrees(&row_of(&base, at), &layout, 61, &c));
+        }
+    }
+
+    /// Every matrix and range, U before V and V before U, and samples at both
+    /// ends of the byte — which is where a clamp or a sign goes wrong.
+    #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+    #[test]
+    fn the_two_paths_agree_everywhere() {
+        let w = 256;
+        let mut seed = 7u32;
+        let mut next = move || {
+            seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+            match (seed >> 16) % 8 {
+                0 => 0,
+                1 => 255,
+                _ => (seed >> 8) as u8,
+            }
+        };
+        let y: Vec<u8> = (0..w).map(|_| next()).collect();
+        let chroma: Vec<u8> = (0..w).map(|_| next()).collect();
+        let separate = Layout {
+            y_col_inc: 1,
+            uv_col_inc: 1,
+            horiz_subsampling: 2,
+        };
+        let paired = Layout {
+            uv_col_inc: 2,
+            ..separate
+        };
+        for (bt709, full_range) in [(false, false), (false, true), (true, false), (true, true)] {
+            let c = coefficients(bt709, full_range);
+            let rows = [
+                (
+                    Row {
+                        y: &y,
+                        u: &chroma[..w / 2],
+                        v: &chroma[w / 2..],
+                    },
+                    separate,
+                ),
+                (
+                    Row {
+                        y: &y,
+                        u: &chroma,
+                        v: &chroma[1..],
+                    },
+                    paired,
+                ),
+                (
+                    Row {
+                        y: &y,
+                        u: &chroma[1..],
+                        v: &chroma,
+                    },
+                    paired,
+                ),
+            ];
+            for (row, layout) in rows {
+                assert!(
+                    vectorised_agrees(&row, &layout, w - 3, &c),
+                    "bt709 {bt709}, full range {full_range}, {layout:?}"
+                );
+            }
         }
     }
 
