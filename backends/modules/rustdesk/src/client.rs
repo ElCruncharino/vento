@@ -1243,7 +1243,7 @@ impl Client {
                     // key frame of the peer's own accord; a new way of
                     // decoding is this end's doing, and the peer is asked.
                     if switched {
-                        log::info!("decoding switched to {}: asking for a key frame", hardware.name());
+                        log::info!("decoding switched to hardware {hardware:?}: asking for a key frame");
                         self.refresh_video();
                     }
                 }

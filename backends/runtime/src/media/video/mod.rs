@@ -63,42 +63,31 @@ impl Codec {
 ///
 /// Here rather than beside a platform's decoder because it is what a session
 /// is started with, whichever backend it is: RustDesk's picture is decoded by
-/// the platform's [`Decoders`], which carry it, and a library with decoders
-/// of its own is handed it at connect. A phone's MediaCodec is whatever the
-/// phone has and takes no such choice; its [`Decoders`] say `Off`, which to
-/// the phone means nothing more than "nothing was asked".
+/// the platform's [`Decoders`], which carry it, and so are TigerVNC's and
+/// FreeRDP's H.264, whose libraries ask the same decoders' mode through
+/// `vento/video.h`. Which API "the GPU" is, and what a setting calls each
+/// mode, are the platform's. A phone's MediaCodec is whatever the phone has
+/// and takes no such choice; its [`Decoders`] say `Off`, which to the phone
+/// means nothing more than "nothing was asked".
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Hardware {
     /// Software, and nothing of a device opened or loaded: the default.
     #[default]
     Off,
-    /// VAAPI, through libva, on the first DRM render node.
-    Vaapi,
-    /// Per stream: VAAPI where it takes the stream (a device, with a decoder
-    /// for the profile), else software. The same as [`Vaapi`](Self::Vaapi)
-    /// while VAAPI is the one API there is; what the setting means is "the
-    /// GPU where it can", whatever decodes there.
+    /// The platform's hardware decoder, by name, and software for a stream it
+    /// cannot take.
+    On,
+    /// Per stream: the GPU where it takes the stream, whatever decodes
+    /// there, else software. The same as [`On`](Self::On) where a platform
+    /// has one way to the GPU; what the setting means is "the GPU where it
+    /// can" rather than a choice of API.
     Auto,
 }
 
 impl Hardware {
     /// Every mode, in declaration order, which is also how the C side numbers
-    /// them (`vento_video_hardware`, `vento_video_decoders.mode`).
-    pub const ALL: [Hardware; 3] = [Hardware::Off, Hardware::Vaapi, Hardware::Auto];
-
-    /// The name a setting or a command line uses: "off", "vaapi" or "auto".
-    pub fn name(self) -> &'static str {
-        match self {
-            Hardware::Off => "off",
-            Hardware::Vaapi => "vaapi",
-            Hardware::Auto => "auto",
-        }
-    }
-
-    /// The one [`name`](Self::name) names.
-    pub fn from_name(name: &str) -> Option<Hardware> {
-        Hardware::ALL.into_iter().find(|h| h.name() == name)
-    }
+    /// them (`vento_video_decoders.mode`).
+    pub const ALL: [Hardware; 3] = [Hardware::Off, Hardware::On, Hardware::Auto];
 }
 
 /// One decoder, for one codec at one size.
@@ -147,8 +136,8 @@ pub trait Decoder {
 
     /// A line for an overlay about how this decoder is decoding — the codec,
     /// the method and what a frame costs, and why it is software where
-    /// hardware was asked for (`H.264 vaapi map 2.1 ms`, `H.264 sw 3.4 ms
-    /// (vaapi: no device)`) — or `None` where it has nothing to say.
+    /// hardware was asked for (a phone's `H.264 c2.exynos.h264.decoder`) — or
+    /// `None` where it has nothing to say.
     fn status(&self) -> Option<String> {
         None
     }
@@ -216,7 +205,10 @@ pub enum Decoded {
 }
 
 /// A decoded picture left in the memory the hardware decoded it into, for
-/// whoever draws on the same GPU to import and convert there.
+/// whoever draws on the same GPU to import and convert there. What that
+/// memory is, and how it is imported, are the platform's alone
+/// ([`platform`](Self::platform)). Everything else here is what any holder
+/// may ask.
 ///
 /// Holding one holds the surface: the decoder will not decode into it again
 /// until every holder has let go, so a holder lets go once the GPU has
@@ -241,56 +233,16 @@ pub trait GpuPicture: Send + Sync {
     /// with the stream while the surfaces stay.
     fn colour(&self) -> (bool, bool);
 
-    /// The surface as DMA-BUFs, one a plane, each descriptor a new one of
-    /// the caller's own.
-    #[cfg(unix)]
-    fn export(&self) -> Result<Dmabuf, String>;
+    /// The picture as the platform that decoded it holds it, for that
+    /// platform's own drawing code to import: opaque to everything else, which
+    /// has no use for it.
+    fn platform(&self) -> &dyn std::any::Any;
 
     /// The picture converted on the processor into `out`, `width * height`
     /// words as [`Decoder::decode`] writes them (the part both sizes have,
     /// every row of it): for whoever needs it in memory after all, which
     /// costs the readback this picture was left on the GPU to save.
     fn read(&self, out: &mut [u32], width: usize, height: usize) -> bool;
-}
-
-/// A [`GpuPicture`]'s surface as DMA-BUFs, with what its numbers mean.
-#[cfg(unix)]
-pub struct Dmabuf {
-    /// Y, then U and V interleaved (NV12, P010): a single-plane buffer each,
-    /// in the order they are read.
-    pub layers: Vec<DmabufLayer>,
-    /// BT.709 rather than BT.601, and full range rather than limited, as
-    /// [`convert::Frame`] says them.
-    pub bt709: bool,
-    pub full_range: bool,
-}
-
-/// One plane of a [`Dmabuf`]: its descriptor, its DRM format and layout
-/// modifier, and where its samples are in it.
-#[cfg(unix)]
-pub struct DmabufLayer {
-    pub fd: std::os::fd::OwnedFd,
-    /// A DRM fourcc: `R8  ` and `GR88` for NV12, `R16 ` and `GR32` (GR1616)
-    /// for P010.
-    pub fourcc: u32,
-    pub modifier: u64,
-    pub offset: u32,
-    pub pitch: u32,
-    /// The plane's size in samples, which is the surface's and not the
-    /// picture's.
-    pub width: u32,
-    pub height: u32,
-}
-
-/// The DRM fourccs a [`DmabufLayer`] can be in.
-pub mod fourcc {
-    const fn code(c: &[u8; 4]) -> u32 {
-        u32::from_le_bytes(*c)
-    }
-    pub const R8: u32 = code(b"R8  ");
-    pub const GR88: u32 = code(b"GR88");
-    pub const R16: u32 = code(b"R16 ");
-    pub const GR1616: u32 = code(b"GR32");
 }
 
 /// What this platform can decode, and a decoder when asked for one.
