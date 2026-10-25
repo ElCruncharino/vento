@@ -882,11 +882,13 @@ impl Outlet {
 
     /// The mailbox's wake: deliver everything waiting, on this thread.
     ///
-    /// A wake on a thread that is already delivering (a callback that
-    /// answers straight back into the session, which can queue another
-    /// event) finds the lock held, and the loop below it takes the new
-    /// event on its next turn; so does one on another thread. Nothing here
-    /// blocks, which a protocol thread holding its own locks needs.
+    /// Each turn takes the events waiting when it began, under one lock, and
+    /// delivers them. A wake on a thread that is already delivering (a
+    /// callback that answers straight back into the session, which can
+    /// queue another event) finds the lock held and sets `requested`, and
+    /// the delivering thread takes the new event on its next turn; so does
+    /// one on another thread. Nothing here blocks, which a protocol thread
+    /// holding its own locks needs.
     fn wake(&self) {
         let Some(mailbox) = self.mailbox.get().and_then(Weak::upgrade) else {
             return;
@@ -897,7 +899,7 @@ impl Outlet {
                 return;
             };
             self.requested.store(false, Ordering::SeqCst);
-            while let Some(event) = mailbox.take() {
+            for event in mailbox.take_all() {
                 self.deliver(event);
             }
             drop(guard);
