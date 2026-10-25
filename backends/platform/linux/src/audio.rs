@@ -38,16 +38,20 @@ pub enum Output {
     /// ALSA's `default` device only; libpipewire is not loaded. Without
     /// libasound, no sound.
     Alsa,
+    /// None: the client hands a session no output ([`Audio::plays`]), so
+    /// the far end's sound is dropped, and neither library is loaded.
+    Off,
 }
 
 impl Output {
-    /// `auto`, `pipewire` or `alsa`: the client's `--audio-output`, and
+    /// `auto`, `pipewire`, `alsa` or `off`: the client's `--audio`, and
     /// `VENTO_AUDIO_OUTPUT`.
     pub fn from_name(name: &str) -> Option<Output> {
         match name {
             "auto" => Some(Output::Auto),
             "pipewire" => Some(Output::PipeWire),
             "alsa" => Some(Output::Alsa),
+            "off" => Some(Output::Off),
             _ => None,
         }
     }
@@ -56,7 +60,7 @@ impl Output {
     pub fn from_env() -> Output {
         match std::env::var("VENTO_AUDIO_OUTPUT") {
             Ok(name) => Output::from_name(&name).unwrap_or_else(|| {
-                log::warn!("audio: VENTO_AUDIO_OUTPUT={name:?} is not auto, pipewire or alsa; taking auto");
+                log::warn!("audio: VENTO_AUDIO_OUTPUT={name:?} is not auto, pipewire, alsa or off; taking auto");
                 Output::Auto
             }),
             Err(_) => Output::Auto,
@@ -85,6 +89,12 @@ impl Audio {
         }
     }
 
+    /// Whether there is an output to play on: not with [`Output::Off`],
+    /// where the client hands the session none.
+    pub fn plays(&self) -> bool {
+        self.output != Output::Off
+    }
+
     /// Renames the session's streams, those playing included: what a mixer
     /// lists them as.
     pub fn set_title(&self, title: &str) {
@@ -107,6 +117,7 @@ impl Outputs for Audio {
             Output::Alsa => crate::alsa::device(queue),
             Output::Auto => Ok(crate::pipewire::device(queue, Arc::clone(&self.title), true)),
             Output::PipeWire => Ok(crate::pipewire::device(queue, Arc::clone(&self.title), false)),
+            Output::Off => Err("sound output is off".to_string()),
         }
     }
 }
@@ -120,6 +131,7 @@ mod tests {
         assert_eq!(Output::from_name("auto"), Some(Output::Auto));
         assert_eq!(Output::from_name("pipewire"), Some(Output::PipeWire));
         assert_eq!(Output::from_name("alsa"), Some(Output::Alsa));
+        assert_eq!(Output::from_name("off"), Some(Output::Off));
         assert_eq!(Output::from_name("PipeWire"), None);
         assert_eq!(Output::from_name("pulse"), None);
         assert_eq!(Output::default(), Output::Auto);
