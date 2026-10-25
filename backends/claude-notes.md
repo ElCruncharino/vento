@@ -9,11 +9,11 @@ backends share — `runtime/` what a protocol client is written against and a
 platform is written to, its picture and sound (`runtime::media`) included,
 and `api/` what a client holds a session by; and what one platform needs of
 all of them lives under that platform, `platform/<os>/` — its crate, its C,
-its CMake half and, for the phone, its Java and its ports. Inside a module,
-each language has one place: the Rust crate at its root, the C in `cpp/`, the
-Java in `java/`, the options in `catalog.rs`. What is left at the top is what
-builds them all: the Gradle parent, its tasks and the CMake every C backend
-includes.
+its CMake half and, for the phone, its Java, the generator of the Java each
+module compiles, and its ports. Inside a module, each language has one place:
+the Rust crate at its root, the C in `cpp/`, the Java in `java/`, the options
+in `catalog.rs`. What is left at the top is what builds them all: the Gradle
+parent, its tasks and the CMake every C backend includes.
 
     backends/
       claude-notes.md, UPGRADING.md
@@ -23,10 +23,10 @@ includes.
       runtime/          what a protocol and a platform are written to,
                         src/media/ too
       api/              what a client holds a session by
-      codegen/  vectors/
+      vectors/
       modules/<name>/   one per backend (eight)
       platform/
-        android/        crate, java/, javatest/, cpp/, cmake/, ports/
+        android/        crate, codegen/, java/, javatest/, cpp/, cmake/, ports/
       build/            the :backends module's Gradle output, untracked
 
 ## The backends: `modules/<name>/`
@@ -84,8 +84,6 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
   (`backend.h`, `video.h`, `audio.h`, `log.h`, `text.h`; each C backend's own
   header is in its module): with the crate that reads them into Rust, as each
   backend's header is with its own.
-- `codegen/` (`vento-codegen`) — the phone's Java catalogs and natives
-  classes, generated from `api` at build time on the host.
 - `vectors/` — `options.json`, the cases of the one rule with a Java copy
   (`settle`), which both the Rust and the Java tests read. Cases only the
   Rust tests read are written in them.
@@ -96,7 +94,11 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
   platform: the one JNI layer, MediaCodec and AAudio (the crate), and, in
   `java/`, the `:backends` module's Java — the seam every backend's provider
   is written against, the files with no package directories over them — with
-  its tests in `javatest/`; `cpp/`, the logcat logger and the export map a C
+  its tests in `javatest/`; `codegen/` (`vento-codegen`, a crate of its
+  own), the host tool that writes each module's generated Java — its catalog
+  and its natives class — at build time, out of `api` and this crate's JNI
+  table alone, so that it needs none of the backends' crates, bindgen or
+  libclang; `cpp/`, the logcat logger and the export map a C
   backend's library is linked with; `cmake/vento_android.cmake`, a C
   backend's Android half (`vento_android_library`); and `ports/`, the
   generated Android builds of openssl, nettle and gnutls (`gen.sh` in each

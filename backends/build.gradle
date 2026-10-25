@@ -81,7 +81,7 @@ ext {
 
 /*
  * What Rust says a backend is, as Java its module compiles: `vento-codegen`
- * (`codegen/`) writes the catalog's entry for the backend — id, name,
+ * (`platform/android/codegen/`) writes the catalog's entry for the backend — id, name,
  * description, place in a picker, and every option with its key as a
  * constant — and the module's provider answers from it. A generated source
  * directory, one per variant, decided by AGP: nothing of it is in the tree,
@@ -93,7 +93,7 @@ ext {
  */
 ext.codegenSources = files(
         '../Cargo.toml', '../Cargo.lock', '../rust-toolchain.toml',
-        'codegen/Cargo.toml', 'codegen/src',
+        'platform/android/codegen/Cargo.toml', 'platform/android/codegen/src',
         'api/Cargo.toml', 'api/build.rs', 'api/src',
         file('modules').listFiles().findAll { it.isDirectory() }.sort().collect { new File(it, 'catalog.rs') },
         'platform/android/Cargo.toml', 'platform/android/src',

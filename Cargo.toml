@@ -14,8 +14,9 @@
 # crate under `backends/modules/`: the protocol crate for the four in Rust, a
 # small crate beside the C library for the others. None of them knows a
 # phone. `backends/platform/*` is where one platform's glue lives — Android's
-# JNI and MediaCodec in `android`. What a platform supplies, it supplies by
-# implementing a trait of `runtime`'s (`Callbacks`, `media::video::Decoders`,
+# JNI and MediaCodec in `android` (and, in `android/codegen`, the host tool
+# that writes its Java). What a platform supplies, it supplies by implementing a
+# trait of `runtime`'s (`Callbacks`, `media::video::Decoders`,
 # `media::audio::Outputs`) and handing it to the session, so no protocol crate
 # says which platform it is on. A protocol crate depends on the platform crate
 # only under a target cfg, `android`, for the library the app loads, so the host
@@ -25,8 +26,8 @@ resolver = "2"
 members = [
     "backends/runtime",
     "backends/api",
-    "backends/codegen",
-    "backends/platform/*",
+    "backends/platform/android",
+    "backends/platform/android/codegen",
     "backends/modules/rfb",
     "backends/modules/ironrdp",
     "backends/modules/spice",
