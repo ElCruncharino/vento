@@ -33,6 +33,9 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <poll.h>
 #include <pthread.h>
 #include <stdarg.h>
@@ -42,6 +45,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <rfb/rfbclient.h>
@@ -868,6 +873,156 @@ static void drainWake(Session *s) {
     }
 }
 
+/* Whether the session has been asked to end. */
+static int quitting(Session *s) {
+    pthread_mutex_lock(&s->lock);
+    const int quit = s->quit;
+    pthread_mutex_unlock(&s->lock);
+    return quit;
+}
+
+/* The second half of a non-blocking connect, watched beside the doorbell:
+   the socket writable is the connect done (`SO_ERROR` says how), and the
+   doorbell with `quit` set is the session ended under it. 0 and `*err` set
+   where it did not connect. */
+static int waitConnected(Session *s, int fd, int timeoutMs, int *err) {
+    struct timespec start;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    for (;;) {
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        const long elapsed = (now.tv_sec - start.tv_sec) * 1000L + (now.tv_nsec - start.tv_nsec) / 1000000L;
+        if (elapsed >= timeoutMs) {
+            *err = ETIMEDOUT;
+            return 0;
+        }
+        struct pollfd fds[2] = {{fd, POLLOUT, 0}, {s->wake[0], POLLIN, 0}};
+        const int r = poll(fds, 2, (int) (timeoutMs - elapsed));
+        if (r < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            *err = errno;
+            return 0;
+        }
+        if (fds[1].revents) {
+            /* Whatever else rang it is a command, and the ring is drained once
+               the session is up whether or not the doorbell still says so. */
+            drainWake(s);
+            if (quitting(s)) {
+                *err = ECANCELED;
+                return 0;
+            }
+        }
+        if (fds[0].revents) {
+            int soError = 0;
+            socklen_t len = sizeof soError;
+            if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &soError, &len) != 0) {
+                soError = errno;
+            }
+            *err = soError;
+            return soError == 0;
+        }
+    }
+}
+
+/* libvncclient's dial, done here so that a disconnect can end it.
+   Theirs (`ConnectClientToTcpAddr6WithTimeout`) makes its socket where
+   nothing outside can reach it and then waits out `connectTimeout` in a
+   `select` of its own, so a session ended while a black-holed address was
+   being dialled sat there for all of it, and `op_destroy`'s join with it.
+   This is the same dial otherwise — every address in turn, each with the
+   whole timeout, the socket left non-blocking with `TCP_NODELAY` as theirs
+   leaves it — with the doorbell watched beside the socket. */
+static rfbSocket dial(Session *s, const char *host, int port, int timeoutMs) {
+    char service[8];
+    snprintf(service, sizeof service, "%d", port);
+    struct addrinfo hints;
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    struct addrinfo *res = NULL;
+    const int gai = getaddrinfo(host[0] ? host : "localhost", service, &hints, &res);
+    if (gai != 0) {
+        logErr("Could not find %s: %s", host, gai_strerror(gai));
+        return RFB_INVALID_SOCKET;
+    }
+    int err = EHOSTUNREACH;
+    rfbSocket sock = RFB_INVALID_SOCKET;
+    for (struct addrinfo *ai = res; ai && sock == RFB_INVALID_SOCKET && err != ECANCELED; ai = ai->ai_next) {
+        const int fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+        if (fd < 0) {
+            err = errno;
+            continue;
+        }
+        const int fl = fcntl(fd, F_GETFL, 0);
+        if (fl < 0 || fcntl(fd, F_SETFL, fl | O_NONBLOCK) < 0) {
+            err = errno;
+            close(fd);
+            continue;
+        }
+        if (connect(fd, ai->ai_addr, ai->ai_addrlen) == 0) {
+            sock = fd;
+        } else if (errno != EINPROGRESS) {
+            err = errno;
+            close(fd);
+        } else if (waitConnected(s, fd, timeoutMs, &err)) {
+            sock = fd;
+        } else {
+            close(fd);
+        }
+    }
+    freeaddrinfo(res);
+    if (sock == RFB_INVALID_SOCKET) {
+        /* Nothing worth saying about a dial the session itself ended: what
+           is reported for it is nothing at all. */
+        if (err != ECANCELED) {
+            logErr("Unable to connect to VNC server: %s", strerror(err));
+        }
+        return RFB_INVALID_SOCKET;
+    }
+    const int one = 1;
+    setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (const char *) &one, sizeof one);
+    return sock;
+}
+
+/* `rfbInitClient` with the connect step ours (see `dial`): the library's
+   own two halves of it, `rfbClientConnect` and `rfbClientInitialise`, with the
+   first replaced, and the client freed on failure as theirs frees it — after
+   it has been unpublished, so that `stop` cannot reach a freed client in
+   between. A UNIX socket, which their connect also takes for a host, is still
+   theirs to dial: it either answers or refuses, and nothing waits on it. */
+static int initClient(Session *s, rfbClient *cl) {
+    struct stat st;
+    int ok;
+    if (stat(cl->serverHost, &st) == 0 && S_ISSOCK(st.st_mode)) {
+        ok = rfbClientConnect(cl);
+    } else {
+        const int timeoutMs = s->connectTimeoutMs > 0 ? s->connectTimeoutMs : 20000;
+        const rfbSocket sock = dial(s, cl->serverHost, cl->serverPort, timeoutMs);
+        ok = sock != RFB_INVALID_SOCKET;
+        if (ok) {
+            /* Under the lock `stop` tests it under: from here a disconnect
+               breaks this socket, and one that came first means it is not
+               used at all. */
+            pthread_mutex_lock(&s->lock);
+            if (s->quit) {
+                close(sock);
+                ok = 0;
+            } else {
+                cl->sock = sock;
+            }
+            pthread_mutex_unlock(&s->lock);
+        }
+    }
+    if (ok && rfbClientInitialise(cl)) {
+        return 1;
+    }
+    publishClient(s, NULL);
+    rfbClientCleanup(cl);
+    return 0;
+}
+
 static void *protocolThread(void *arg) {
     Session *s = (Session *) arg;
 
@@ -931,17 +1086,14 @@ static void *protocolThread(void *arg) {
 
     publishClient(s, cl);
 
-    /* rfbInitClient frees the client itself on failure, so the handle has to go
-       before anything else can touch it — and in the same breath as the flag
-       the teardown calls test, or they read a freed client in between. */
+    /* A failed handshake frees the client, so `initClient` unpublishes it
+       before that — and the flag the teardown calls test goes back down after,
+       so that neither of them reads a freed client in between. */
     forgetLastError();
     pthread_mutex_lock(&s->lock);
     s->handshaking = 1;
     pthread_mutex_unlock(&s->lock);
-    const int connected = rfbInitClient(cl, NULL, NULL);
-    if (!connected) {
-        publishClient(s, NULL);
-    }
+    const int connected = initClient(s, cl);
     pthread_mutex_lock(&s->lock);
     s->handshaking = 0;
     pthread_mutex_unlock(&s->lock);
@@ -1225,9 +1377,10 @@ static void op_answer_trust(vento_session *base, bool accept) {
 }
 
 /* Both of the ways a session ends set the flag, ring the doorbell *and* break
-   the socket: nothing in the handshake watches the wake pipe — the protocol
-   thread is inside somebody else's read, and the TLS one has no deadline of
-   its own on purpose — so breaking the socket is what a flag cannot do. */
+   the socket: the doorbell is what ends the dial (see `dial`), but nothing in
+   the handshake after it watches the wake pipe — the protocol thread is inside
+   somebody else's read, and the TLS one has no deadline of its own on
+   purpose — so breaking the socket is what a flag cannot do. */
 static void stop(Session *s) {
     pthread_mutex_lock(&s->lock);
     s->quit = 1;
