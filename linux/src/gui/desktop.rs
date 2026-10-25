@@ -30,6 +30,13 @@
 //! partial update of one pixel per tile with the new options, which is how
 //! egui-wgpu is told to rebuild the sampler without the pixels being sent
 //! again.
+//!
+//! A picture the backend left on the GPU is not read at all: it is
+//! converted into a texture of its own there (`zerocopy.rs`), which is drawn
+//! in place of the tiles, the same way, for as long as the pictures come
+//! that way ([`show_gpu`](Desktop::show_gpu)). Meanwhile the tiles are left
+//! as they were, and once a picture is read out of the backend again they
+//! are read again whole.
 
 use super::view::Layout;
 use crate::backend::Backend;
@@ -56,6 +63,9 @@ pub struct Desktop {
     width: usize,
     height: usize,
     options: TextureOptions,
+    /// The texture a picture on the GPU was converted into, while the
+    /// pictures are drawn from there.
+    gpu: Option<TextureId>,
     /// What has gone through `read_region` into the textures, for the
     /// debug overlay: rectangles, bytes, and the last one.
     uploads: u64,
@@ -136,6 +146,7 @@ impl Desktop {
             width,
             height,
             options,
+            gpu: None,
             uploads: 0,
             bytes: 0,
             last: None,
@@ -199,7 +210,32 @@ impl Desktop {
         self.last = Some(rect);
     }
 
+    /// Draw `texture`, a picture converted on the GPU, in place of the
+    /// tiles until [`leave_gpu`](Self::leave_gpu).
+    pub fn show_gpu(&mut self, texture: TextureId) {
+        if self.gpu.is_none() {
+            log::info!("the desktop is drawn from the GPU's pictures");
+        }
+        self.gpu = Some(texture);
+    }
+
+    /// Back to the tiles; true where the desktop was drawn from the GPU,
+    /// and the tiles are then to be read again whole.
+    pub fn leave_gpu(&mut self) -> bool {
+        let was = self.gpu.take().is_some();
+        if was {
+            log::info!("the desktop is drawn from pictures read back again");
+        }
+        was
+    }
+
+    pub fn on_gpu(&self) -> bool {
+        self.gpu.is_some()
+    }
+
     /// Nearest where a desktop pixel is a device pixel, linear otherwise.
+    /// While the desktop is drawn from the GPU the tiles take the new
+    /// options at their next read, which is a whole one, rather than now.
     pub fn set_exact(&mut self, ctx: &egui::Context, backend: &dyn Backend, exact: bool) {
         let wanted = if exact {
             TextureOptions::NEAREST
@@ -210,6 +246,9 @@ impl Desktop {
             return;
         }
         self.options = wanted;
+        if self.gpu.is_some() {
+            return;
+        }
         // One pixel per tile, re-read, carrying the new options: the
         // samplers change and the rest of each texture stays where it is.
         for tile in 0..self.tiles.len() {
@@ -228,6 +267,22 @@ impl Desktop {
     /// The layout's rectangle is on device pixels already, so that at 1:1 a
     /// desktop pixel is a device pixel and nearest is exact.
     pub fn paint(&self, painter: &egui::Painter, layout: &Layout) {
+        if let Some(id) = self.gpu {
+            // One texture of the whole desktop, drawn as a single tile is.
+            let whole = Rect {
+                x: 0,
+                y: 0,
+                width: self.width,
+                height: self.height,
+            };
+            let tile = [Tile { id, own: whole, held: whole }];
+            for (_, rect, uv) in pieces(&tile, layout.source, layout.rect) {
+                let mut mesh = Mesh::with_texture(id);
+                mesh.add_rect_with_uv(rect, uv, Color32::WHITE);
+                painter.add(Shape::mesh(mesh));
+            }
+            return;
+        }
         for (tile, rect, uv) in pieces(&self.tiles, layout.source, layout.rect) {
             let mut mesh = Mesh::with_texture(self.tiles[tile].id);
             mesh.add_rect_with_uv(rect, uv, Color32::WHITE);

@@ -58,6 +58,7 @@ mod toolbar;
 mod view;
 mod wayland;
 mod x11;
+mod zerocopy;
 
 use crate::backends::{Dirs, Kind};
 use crate::options::Options;
@@ -132,6 +133,9 @@ pub struct Host<'a> {
     pub output: Option<String>,
     /// The local clipboard, where there is one (see `clipboard/`).
     pub clipboard: Option<&'a Clipboard>,
+    /// The GPU, for a picture left on it: only in a window's frame, and
+    /// only where it can draw one.
+    pub video: Option<Video<'a>>,
 }
 
 /// Runs the window until it is closed; the process's exit status.
@@ -236,6 +240,27 @@ struct Gpu {
     /// pipeline was made for it.
     format: wgpu::TextureFormat,
     renderer: egui_wgpu::Renderer,
+    /// Hardware pictures drawn from the GPU memory they were decoded into
+    /// (`zerocopy.rs`), or why the device cannot.
+    zerocopy: Result<zerocopy::Zerocopy, String>,
+}
+
+impl Gpu {
+    /// What the session draws a picture left on the GPU with, where it can.
+    fn video(&mut self) -> Option<Video<'_>> {
+        let zerocopy = self.zerocopy.as_mut().ok()?;
+        Some(Video {
+            zerocopy,
+            renderer: &mut self.renderer,
+        })
+    }
+}
+
+/// The GPU's half of drawing a picture left on it: the conversion, and the
+/// renderer its texture is registered with.
+pub struct Video<'a> {
+    pub zerocopy: &'a mut zerocopy::Zerocopy,
+    pub renderer: &'a mut egui_wgpu::Renderer,
 }
 
 /// One window and what is its own: where it is drawn, egui-winit's state
@@ -618,12 +643,18 @@ impl App {
         let wake: Box<dyn Fn() + Send + Sync> = Box::new(move || {
             let _ = proxy.send_event(Wake::Now(None));
         });
+        let zerocopy = match self.gpu.as_ref().map(|g| &g.zerocopy) {
+            Some(Ok(_)) => Ok(()),
+            Some(Err(why)) => Err(why.clone()),
+            None => Err("no GPU yet".to_string()),
+        };
         match Session::start(
             request.clone(),
             &self.dirs,
             self.settings,
             self.placement,
             (size.width, size.height),
+            zerocopy,
             wake,
         ) {
             Ok(mut session) => {
@@ -833,6 +864,7 @@ impl App {
             pointer: surface.pointer,
             output: surface.output.clone(),
             clipboard: self.clipboard.as_ref(),
+            video: gpu.video(),
         };
         let egui = self.egui.clone();
         let settings = &mut self.settings;
@@ -1053,6 +1085,7 @@ impl App {
             pointer: surface.pointer,
             output: surface.output.clone(),
             clipboard: self.clipboard.as_ref(),
+            video: None,
         };
         Some(f(session, &mut host, &self.egui))
     }
@@ -1087,11 +1120,13 @@ impl App {
                 pointer: surface.pointer,
                 output: surface.output.clone(),
                 clipboard: self.clipboard.as_ref(),
+                video: None,
             };
             self.settings = session.settings;
             self.placement = session.placement();
             let teardown = session.shutdown(&self.egui, &mut host);
             self.reap(teardown);
+            self.forget_video();
             self.screen = Screen::Dialog(dialog);
         }
         self.launched = false;
@@ -1119,9 +1154,11 @@ impl App {
                         pointer: surface.pointer,
                         output: surface.output.clone(),
                         clipboard: self.clipboard.as_ref(),
+                        video: None,
                     };
                     let teardown = session.shutdown(&self.egui, &mut host);
                     self.reap(teardown);
+                    self.forget_video();
                 }
             }
         }
@@ -1130,6 +1167,14 @@ impl App {
             surface.inhibitor = None;
         }
         event_loop.exit();
+    }
+
+    /// What an ended session left on the GPU let go of: the pictures'
+    /// imports, which hold their surfaces' memory, and their texture.
+    fn forget_video(&mut self) {
+        if let Some(Video { zerocopy, renderer }) = self.gpu.as_mut().and_then(Gpu::video) {
+            zerocopy.forget(renderer);
+        }
     }
 
     /// Keeps `teardown` until it has finished, and forgets the ones that have.
@@ -1191,6 +1236,7 @@ impl App {
                     pointer: surface.pointer,
                     output: surface.output.clone(),
                     clipboard: self.clipboard.as_ref(),
+                    video: None,
                 };
                 session.focus(focused, &mut host);
             }
@@ -1488,10 +1534,18 @@ impl Gpu {
             .map_err(|e| format!("adapter: {e}"))?;
         // Everything the adapter can do rather than WebGPU's defaults, whose
         // 8192-pixel textures are half of what most hardware has; a desktop
-        // past even the adapter's limit is tiled (see `desktop.rs`).
+        // past even the adapter's limit is tiled (see `desktop.rs`). And
+        // where it has them, the DMA-BUF import and the 16-bit textures a
+        // hardware picture is drawn from without reading it back
+        // (`zerocopy.rs`): asked for whether or not hardware decoding is on,
+        // since it can be turned on mid-session, and costing nothing until
+        // a picture is imported (Vulkan's device has one extension more).
+        let features = adapter.features()
+            & (wgpu::Features::VULKAN_EXTERNAL_MEMORY_DMA_BUF | wgpu::Features::TEXTURE_FORMAT_16BIT_NORM);
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("vento"),
+                required_features: features,
                 required_limits: adapter.limits(),
                 ..Default::default()
             })
@@ -1518,6 +1572,11 @@ impl Gpu {
             },
         );
         log::info!("wgpu: {} ({:?})", adapter.get_info().name, adapter.get_info().backend);
+        let zerocopy = zerocopy::Zerocopy::new(&adapter, &device, &queue);
+        match &zerocopy {
+            Ok(_) => log::info!("hardware pictures can be drawn from their DMA-BUFs on this device"),
+            Err(why) => log::info!("hardware pictures will be read back: {why}"),
+        }
         let gpu = Gpu {
             instance,
             adapter,
@@ -1525,6 +1584,7 @@ impl Gpu {
             queue,
             format,
             renderer,
+            zerocopy,
         };
         Ok((gpu, surface))
     }

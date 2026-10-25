@@ -107,7 +107,9 @@ impl Settings {
         ui.label(label).on_hover_text(
             "Decode video on the GPU (VAAPI) where the device takes the stream, and in software where it \
              does not. RustDesk, TigerVNC's H.264 and FreeRDP's H.264 switch at once (at the next picture \
-             the far end sends whole); the other backends decode as their libraries do and do not use this.",
+             the far end sends whole), and RustDesk's VAAPI pictures are drawn from the GPU without being \
+             read back where the window's Vulkan device can; the other backends decode as their libraries \
+             do and do not use this.",
         );
         let mut on = self.hw_decode != Hardware::Off;
         if ui.checkbox(&mut on, "").changed() {

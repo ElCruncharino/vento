@@ -77,7 +77,7 @@ use super::toolbar::Placement;
 use super::x11::Fence;
 use super::{Host, Request};
 use crate::backend::Backend;
-use crate::backends::{self, Connect, Dirs, Pinned};
+use crate::backends::{self, Connect, Dirs, Hardware, Pinned};
 use crate::events::{Cursor, Event, Mailbox, State};
 use crate::known_hosts::{self, KnownHosts, Store};
 use api::trust::{self, Decision};
@@ -214,6 +214,11 @@ pub struct Session {
     /// The session's sound as it last said it (`Event::Sound`): whether
     /// there is a switch and what it does, and whether anything plays.
     pub sound: Sound,
+    /// Whether a hardware picture the backend leaves on the GPU is drawn
+    /// from there (`zerocopy.rs`): `Ok` while it can be, or why not — the
+    /// device cannot, or an import failed, after which the session's
+    /// pictures are read back to the end of it.
+    zero_copy: Result<(), String>,
     mailbox: Arc<Mailbox>,
     desktop: Option<Desktop>,
     snapshot: Snapshot,
@@ -307,11 +312,17 @@ impl Session {
         settings: Settings,
         placement: Placement,
         screen: (u32, u32),
+        zero_copy: Result<(), String>,
         wake: Box<dyn Fn() + Send + Sync>,
     ) -> Result<Session, String> {
         let mailbox = Mailbox::new(Some(wake));
         let client_name = backends::client_name();
         let decoders = backends::decoders(settings.hw_decode);
+        // Told before the backend starts, so its first picture can be one:
+        // only a hardware picture is ever left on the GPU, and only by a
+        // backend that asks to, so with hardware decoding off this changes
+        // nothing.
+        decoders.set_gpu_pictures(zero_copy.is_ok());
         // Its streams are listed under the address until the far end says
         // its desktop's name (`poll`).
         let audio = backends::audio(&request.address, settings.audio_output);
@@ -350,6 +361,7 @@ impl Session {
             decoders,
             audio,
             sound: Sound::default(),
+            zero_copy,
             mailbox,
             desktop: None,
             snapshot: Snapshot::default(),
@@ -517,6 +529,7 @@ impl Session {
                         // it came before this size did.
                         self.draw_frame(
                             ctx,
+                            host,
                             &[crate::events::Rect {
                                 x: 0,
                                 y: 0,
@@ -533,7 +546,7 @@ impl Session {
                     for pane in &mut self.panes {
                         pane.unpresented = Some(pane.unpresented.map_or(ended, |t| t.min(ended)));
                     }
-                    self.draw_frame(ctx, &rects);
+                    self.draw_frame(ctx, host, &rects);
                 }
                 Event::Cursor(shape) => self.set_cursor(ctx, shape),
                 Event::PointerMode { relative } => {
@@ -585,12 +598,61 @@ impl Session {
         }
     }
 
-    /// A frame of the backend's onto the desktop: `rects` read out of the
-    /// backend into the desktop's textures.
-    fn draw_frame(&mut self, ctx: &egui::Context, rects: &[crate::events::Rect]) {
-        if let Some(desktop) = &mut self.desktop {
+    /// A frame of the backend's onto the desktop: its picture drawn from
+    /// the GPU, where it was left there and this window can, and otherwise
+    /// `rects` read out of the backend. A picture that fails to draw from
+    /// the GPU is read back, and so is every one after it: the decoders are
+    /// told to leave none there again, and the overlay says why.
+    fn draw_frame(&mut self, ctx: &egui::Context, host: &mut Host, rects: &[crate::events::Rect]) {
+        let Some(desktop) = &mut self.desktop else {
+            return;
+        };
+        if self.zero_copy.is_ok()
+            && let Some(picture) = self.backend.gpu_picture()
+            && let Some(video) = &mut host.video
+        {
+            match video.zerocopy.show(&picture, video.renderer) {
+                Ok(id) => {
+                    desktop.show_gpu(id);
+                    return;
+                }
+                Err(why) => {
+                    log::warn!("hardware pictures will be read back for the rest of the session: {why}");
+                    self.decoders.set_gpu_pictures(false);
+                    self.zero_copy = Err(why);
+                }
+            }
+        }
+        // Back from the GPU, the tiles are as old as the last picture read
+        // into them: all of it is read again.
+        if desktop.leave_gpu() {
+            let (width, height) = desktop.size();
+            desktop.update(ctx, &*self.backend, &[crate::events::Rect { x: 0, y: 0, width, height }]);
+        } else {
             desktop.update(ctx, &*self.backend, rects);
         }
+    }
+
+    /// The overlay's word on how the picture gets to the screen, where
+    /// hardware decoding is on: drawn from the GPU, and what that costs
+    /// here, or why it is read back instead.
+    fn zero_copy_summary(&self, host: &Host) -> Option<String> {
+        // Only RustDesk's pictures are ever left on the GPU: whole frames of
+        // video, where TigerVNC's and FreeRDP's H.264 is rectangles composed
+        // with the rest of their picture in memory.
+        if self.settings.hw_decode == Hardware::Off
+            || self.request.kind.id != api::catalog::RUSTDESK.id
+        {
+            return None;
+        }
+        let on_gpu = self.desktop.as_ref().is_some_and(Desktop::on_gpu);
+        let cost = host.video.as_ref().and_then(|v| v.zerocopy.cost());
+        Some(match (&self.zero_copy, on_gpu, cost) {
+            (Err(why), _, _) => format!("zero-copy off ({why})"),
+            (Ok(()), true, Some(ms)) => format!("zero-copy {ms:.2} ms"),
+            (Ok(()), true, None) => "zero-copy".to_string(),
+            (Ok(()), false, _) => "zero-copy idle".to_string(),
+        })
     }
 
     fn set_cursor(&mut self, ctx: &egui::Context, shape: Option<Cursor>) {

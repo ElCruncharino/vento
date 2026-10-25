@@ -59,7 +59,9 @@ clients, and what differs between them is each client's own code.
   which monitor it shows, its toolbar, the pointer over it and its cursor;
   the main window's or a pop-out's, with tests), `desktop.rs` (the desktop as one
   texture, or as tiles where it is bigger than the device's largest, updated
-  a damaged rectangle at a time), `view.rs` (scale modes, panning and the
+  a damaged rectangle at a time, or a picture on the GPU's texture),
+  `zerocopy.rs` and `zerocopy.wgsl` (a hardware picture imported from its
+  DMA-BUFs and converted on the GPU, with tests), `view.rs` (scale modes, panning and the
   pointer's mapping, pure arithmetic with tests), `toolbar.rs` (where the
   toolbar sits and which strip of the edge brings it out, with tests),
   `icons.rs` (the toolbar's font and the symbols it draws, tested against
@@ -149,8 +151,9 @@ this was measured on), Mesa's for AMD; a Mesa built without the
 patent-encumbered codecs (Fedora's) has no H.264 or H.265 decoder, so those
 streams are software's there, and NVIDIA's own driver has no VAAPI at all.
 
-The picture comes off the device as planes in memory (NV12, P010 or XV30)
-and is converted like a software one, so the two look the same: VAAPI's
+Unless it is drawn from the GPU (below), the picture comes off the device
+as planes in memory (NV12, P010 or XV30) and is converted like a software
+one, so the two look the same: VAAPI's
 surface mapped for reading — each decoder measures, on its first pictures,
 whether mapping the surface in place or as an image the driver copies it
 into is faster on this machine, and keeps to the faster. A hardware failure
@@ -166,6 +169,46 @@ cheap. RustDesk's, TigerVNC's and FreeRDP's **Encoding** row says which,
 after the codec: `AV1 (software)`, `H.264 (hardware)`, `EGFX 10.6, H.264
 (software)`, nothing before the first picture; and the debug overlay's `dec` line says how and what a frame costs
 (`dec H.264 vaapi map 2.1 ms`, `dec H.264 sw 3.2 ms (vaapi: no device)`).
+
+**RustDesk's hardware pictures are drawn from the GPU** where the window
+can, with nothing read back (zero-copy): on wgpu's Vulkan, with a device
+that imports DMA-BUFs (`VK_EXT_external_memory_dma_buf`, which the window
+asks for at start where the adapter has it) and samples the surface's
+layout. A VAAPI picture in NV12 or P010 is then not mapped at all: the
+decoder waits for the GPU to finish it and hands it out held, its surface
+exported as two DMA-BUFs (Y, and U and V interleaved; Intel's 4-tiled
+layout on Lunar Lake). The window imports a surface once and keeps the
+import while the decoder reuses the surface, converts each picture with one
+render pass — `runtime::media::video::convert`'s integer arithmetic, P010
+narrowed as in software — into a texture of the picture's size, and draws that
+texture where the desktop's tiles would be: the same view and filter, every
+window, the cursor on top, and the same pixels (a screenshot of an H.264
+session differs from the read-back one in no pixel; the tests hold the pass
+to `convert` for every pair of chroma samples, and an imported picture to
+its read-back on the fixtures). The decoder makes more surfaces as the
+window holds some, so nothing waits; a held picture is let go of once the
+GPU has read it. The framebuffer is then behind the picture, and caught up
+(read back once) only for whoever reads it — `read_region`, a thumbnail;
+the probe never asks for pictures on the GPU. Where the window cannot —
+the GL backend (`WGPU_BACKEND=gl`), an X server without DRI3, where wgpu's
+Vulkan is lavapipe and has only the linear layout, a P010 stream on a
+device without 16-bit textures, an import or a pass that fails — pictures
+are read back as before, which the log says once and the overlay says
+(`dec H.264 vaapi map 9.5 ms  zero-copy off (wgpu is on Gl, and only Vulkan
+imports DMA-BUFs here)`); a failure turns it off for the rest of the
+session, the next picture read back. Measured on Lunar Lake (debug build,
+1920x1200, a terminal of random text redrawn ten times a second, 30 s of
+`/proc/PID/stat`): H.264 drawn from the GPU took 4.1 ms a frame on the
+protocol thread (the decode and the wait for it) and 9.7% of a core for the
+whole process, where read back it took 13.4 ms and 16.3%, and in software
+8.6 ms and 16.2%; VP9 3.7 ms and 8.9%, AV1 3.6 ms and 9.3%, VP8 4.2 ms and
+7.2%. The window's pass costs it 2.3 ms a picture in a debug build, most of
+it wgpu's own unoptimised code; in a release build 0.7 ms, and the same
+H.264 comparison is 4.0 ms and 2.9% from the GPU, 11.9 ms and 9.0% read
+back, 8.3 ms and 10.8% in software. **TigerVNC and FreeRDP stay
+on read-back**: their H.264 is rectangles composed, with every other
+encoding, into a framebuffer in memory, which a picture on the GPU would
+have to be composed with there. H.265 4:4:4's XV30 is read back too.
 
 The setting reaches every backend: the session's decoders carry it.
 **RustDesk** asks them each frame and takes a change at once — a new
@@ -1080,10 +1123,13 @@ for the far end, or the size it asked for), the cursor shape (native, or
 software when that setting is on, its size and hotspot) and the two clipboard
 switches; three delays (below); and, where the backend decodes video through
 this end's decoders (RustDesk), `dec` and the decoder's line: the codec, the
-method (`sw`, `vaapi map`, `vaapi copy` where the driver will not map it),
-the smoothed time of the decoder's call, and why it is
+method (`sw`, `vaapi map`, `vaapi dmabuf` for a picture left on the GPU,
+`vaapi copy` where the driver will not map it), the smoothed time of the decoder's call, and why it is
 software where hardware was asked for — made on the protocol thread twice a
-second and copied, not built per frame; wherever the session has a sound switch, `snd`:
+second and copied, not built per frame — and, with hardware decoding on, how
+the picture reaches the screen: `zero-copy` and what the window's pass
+costs it a picture, `zero-copy idle` before a picture has come that way, or
+`zero-copy off` and why; wherever the session has a sound switch, `snd`:
 what plays, what is queued in front of the device, the queue's target and
 the margin in it, and the device's own buffer, named for the output (`queue
 26 ms, target 46 (margin 10) + PipeWire 10 ms`, `queue 30 ms, target 50
@@ -1228,7 +1274,11 @@ needs — the raw display and window handles for the inhibitor and the X11
 keyboard grab, device events for raw motion, keyboard events as winit delivers
 them with the layout's logical key, and the event loop's wake-up (the backend's
 mailbox wakes it through an event-loop proxy). It costs a page of surface
-setup.
+setup. The zero-copy path reaches under wgpu to wgpu-hal's Vulkan device
+(`as_hal`, `texture_from_dmabuf_fd`, `create_texture_from_hal`) and asks
+Vulkan one question itself through `ash` (whether the device samples a
+layout modifier): the three calls are the part of a wgpu upgrade to read
+the release notes for, and `gui/zerocopy.rs`'s tests are what proves them.
 
 
 #### Wayland
