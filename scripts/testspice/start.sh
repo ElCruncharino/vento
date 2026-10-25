@@ -16,7 +16,7 @@ AGENT="${AGENT:-on}"
 # Which end owns the cursor, and on this guest that is decided by a *driver*
 # rather than by a device: Linux's psmouse binds QEMU's VMMouse, a PS/2 mouse
 # with an absolute mode behind the VMware port, so QEMU has an absolute pointer
-# and SPICE offers client mode — with no tablet attached and no agent running.
+# and SPICE offers client mode, with no tablet attached and no agent running.
 # `vmport=off` takes the port away and leaves a plain PS/2 mouse; `agent-mouse=off`
 # stops the agent supplying an absolute pointer instead, which leaves a session
 # with a relative pointer and a clipboard.
@@ -60,7 +60,7 @@ if [ "$AGENT" = "on" ]; then
            -device virtserialport,chardev=vdagent,name=com.redhat.spice.0)
 fi
 
-# A second port, which is how the host runs a command inside the guest — see
+# A second port, which is how the host runs a command inside the guest; see
 # `guest-cmd`. Nothing about SPICE goes down it.
 rm -f /run/guest-cmd.sock /run/guest-tty.sock
 

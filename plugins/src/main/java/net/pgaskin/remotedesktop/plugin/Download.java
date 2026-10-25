@@ -16,12 +16,12 @@ import java.net.URI;
 import java.net.URL;
 
 /**
- * Fetching an archive from somebody else's server, which is the one route an
- * add-on has that the app could not have offered.
+ * Downloads an archive from a third-party server, the one route an add-on
+ * offers that the app could not.
  *
- * <p>Nothing here decides whether what arrives is any good: that is the pin's
- * job, once the file is on disk. A mirror repacks, so an archive's own hash
- * names a copy rather than a build.
+ * <p>Nothing here checks what arrives: the pinned hashes do that, once the
+ * file is on disk. Mirrors repack archives, so an archive's own hash
+ * identifies a copy rather than a build.
  */
 public final class Download {
 
@@ -36,9 +36,9 @@ public final class Download {
         /** The URL is the file. */
         DIRECT,
         /**
-         * An API that answers with the path to one build. Aptoide's, asked for
-         * an exact version code, which is the one mirror here with something to
-         * ask rather than a page to scrape.
+         * An API that returns the path to one build: Aptoide's, queried for an
+         * exact version code. It is the only mirror here with an API rather
+         * than a page to scrape.
          */
         APTOIDE,
     }
@@ -49,18 +49,18 @@ public final class Download {
     private Download() {
     }
 
-    /** How far through, for a screen to draw. A negative total is not yet known. */
+    /** Download progress, for the screen to show. A negative total is unknown. */
     public interface Progress {
         void at(long done, long total);
     }
 
     /**
-     * Whose server is on the other end, for a screen to name.
+     * The server being contacted, for the screen to show.
      *
-     * <p>Somebody watching ten megabytes arrive is owed the name of whoever is
-     * sending them, and a mirror that is being tried after another one failed is
-     * the case where it matters: the bar looks the same either way. A host and
-     * not a URL, because a line of status is not wide enough for one.
+     * <p>The user should know who is sending a ten-megabyte download, especially
+     * when a mirror is tried after another one failed, since the progress bar
+     * looks the same either way. A host rather than a URL, because a status line
+     * is not wide enough for a URL.
      */
     public interface Where {
         /** Asking a mirror's API which file it has. */
@@ -71,22 +71,21 @@ public final class Download {
     }
 
     /**
-     * The first source that answers wins.
+     * Downloads from the first source that succeeds.
      *
-     * <p>Every failure is reported, not the last: two mirrors fail for two
-     * different reasons, and being told about the second when the first is the
-     * one that usually works is being told the wrong thing. Each is logged with
-     * the host it came from as well, since a message on a screen cannot carry a
-     * URL.
+     * <p>Every failure is reported, not only the last: two mirrors fail for
+     * different reasons, and reporting only the second hides the error from the
+     * first, which is usually the one that works. Each is also logged with its
+     * URL, since the message on screen cannot include one.
      */
     public static void toFile(Iterable<Source> sources, File out, Progress progress, Where where)
             throws IOException {
         final StringBuilder failures = new StringBuilder();
         for (Source source : sources) {
             try {
-                // Whoever is asked and whoever answers with the file are not
-                // always the same host, so the second is named once it is known
-                // rather than the first being named for both.
+                // The host that is queried and the host that serves the file
+                // can differ, so the second is shown once it is known rather
+                // than showing the first for both.
                 final String url = resolve(source, progress, where);
                 where.fetching(host(url));
                 fetch(url, out, progress);
@@ -104,7 +103,7 @@ public final class Download {
                 ? "There is nowhere to fetch it from." : failures.toString());
     }
 
-    /** The host a URL names, and the URL itself where it somehow names none. */
+    /** The host in a URL, or the URL itself if it has none. */
     private static String host(String url) {
         try {
             final String host = URI.create(url).getHost();
@@ -139,17 +138,17 @@ public final class Download {
     }
 
     /**
-     * What an archive may be. The viewer's own APK is 11.7 MB, so this is a
-     * ceiling nothing real approaches; what it is for is a server that answers
-     * a request for one with an endless stream.
+     * The maximum archive size. The viewer's own APK is 11.7 MB, so no real
+     * archive comes close; this guards against a server that responds with an
+     * endless stream.
      */
     private static final long MAX_BYTES = 256L * 1024 * 1024;
 
     /**
-     * Redirects by hand: HttpURLConnection will not follow one across schemes.
-     * Which is also why each hop's scheme is checked — following one by hand is
-     * agreeing to whatever it names, and a mirror that redirects to http is a
-     * mirror sending somebody's ten megabytes in the clear.
+     * Follows redirects manually, since HttpURLConnection does not follow one
+     * across schemes. That is also why each hop's scheme is checked: following
+     * redirects manually accepts whatever they name, and a mirror that
+     * redirects to http would send the download unencrypted.
      */
     private static void fetch(String url, File out, Progress progress) throws IOException {
         String location = url;
@@ -176,8 +175,8 @@ public final class Download {
                 if (code != 200) {
                     throw new IOException("The download failed with HTTP " + code + ".");
                 }
-                // What the server says it is sending, which is a hint for a bar
-                // and nothing else: the ceiling below counts what arrives.
+                // The size the server declares, used only for the progress
+                // bar: the limit below counts the bytes that arrive.
                 final long expected = conn.getContentLengthLong();
                 try (InputStream in = conn.getInputStream();
                      FileOutputStream sink = new FileOutputStream(out)) {
@@ -191,8 +190,9 @@ public final class Download {
                             throw new IOException("The download is larger than this can accept.");
                         }
                         sink.write(buffer, 0, n);
-                        // Every quarter megabyte rather than every buffer: this
-                        // hops to the main thread, and a bar cannot show more.
+                        // Every quarter megabyte rather than every buffer: each
+                        // update is posted to the main thread, and a progress
+                        // bar cannot show finer steps.
                         if (got - said >= 256 * 1024) {
                             said = got;
                             progress.at(got, expected);

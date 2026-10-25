@@ -6,27 +6,30 @@
 # Everything in this module is linkage rather than design: the natives bind by
 # mangled name, and the callbacks are looked up by string and cached as method
 # ids. A rename, a moved class or a changed parameter type does not fail to
-# compile — it fails at run time, as an UnsatisfiedLinkError if you are lucky and
-# a NoSuchMethodError on a native thread if you are not.
+# compile; it fails at run time, as an UnsatisfiedLinkError at best and a
+# NoSuchMethodError on a native thread at worst.
 #
-# So ask the two authorities, and never a decompiler's idea of Java:
+# So check against the two authoritative sources, never a decompiler's
+# reconstruction of Java:
 #
 #   1. every `native` method declared here has an exported Java_… symbol in
 #      libvncviewer.so;
-#   2. every member declared here whose name also exists in the viewer's own dex
+#   2. every method of a callback interface the core resolves has its name and
+#      descriptor in libvncviewer.so's strings;
+#   3. every member declared here whose name also exists in the viewer's own dex
 #      has the same descriptor and the same static-ness there.
 #
-# Either one fails the check. What does *not* fail it is a member that exists
-# here and not there: this module is not a copy of their Java, so a record's
+# Any one fails the check. What does *not* fail it is a member that exists here
+# and not there: this module is not a copy of their Java, so a record's
 # accessors, a constant moved to where its type is and a stub that answers a
-# callback are all ours, and are listed rather than complained about. Members
-# that exist there and not here are the deliberate subset — their connection
+# callback are all ours, and are listed rather than reported as errors. Members
+# that exist there and not here are left out deliberately: their connection
 # store, their cloud account, and everything neither side calls.
 #
 # Both sides come out of one APK, of the build `Library.VERSION` names: their
-# dex and the library itself. Nothing fetches it — see README.md — and it is
-# looked for in `apk/` and in the repository's `stuff/`, by name, so that a
-# different build of the viewer cannot answer a question about this one.
+# dex and the library itself. Nothing fetches it (see README.md); it is looked
+# for in `apk/` and in the repository's `stuff/`, by name, so that a different
+# build of the viewer cannot stand in for this one.
 #
 #   ./check-jni-abi.sh            # builds the module if needed
 #   NOBUILD=1 ./check-jni-abi.sh  # against whatever is already built
@@ -57,10 +60,10 @@ fi
 CLASSES="$(find build -type d -path "*/classes/$PKG" 2>/dev/null | head -1)"
 [ -n "$CLASSES" ] || { echo "nothing built: run without NOBUILD=1" >&2; exit 1; }
 
-# The pinned build by name, not the first APK lying about: `stuff/` holds the
-# 4.9.1 the reverse engineering was done against as well, and checking this
-# module's declarations against a different build's dex would answer a question
-# nobody asked. The version comes from the pin itself, so the two cannot drift.
+# The pinned build by name, not the first APK found: `stuff/` also holds the
+# 4.9.1 the reverse engineering was done against, and checking this module's
+# declarations against a different build's dex would check the wrong build.
+# The version comes from the pin itself, so the two cannot drift.
 PIN="src/main/java/$PKG/Library.java"
 VERSION="$(sed -n 's/.*VERSION *= *"\([^"]*\)".*/\1/p' "$PIN" | head -1)"
 [ -n "$VERSION" ] || { echo "no VERSION in $PIN" >&2; exit 1; }
@@ -78,9 +81,9 @@ THEIRS="$(dirname "$(find "$WORK/theirs" -path "*/$PKG/SessionBindings.smali" | 
 [ -d "$THEIRS" ] || { echo "$APK has no $PKG in it" >&2; exit 1; }
 
 # One ABI is enough for a symbol table, and arm64 is the one every device that
-# can run this has. The hash is checked because the whole point of a pin is that
-# the questions below are asked of *that* build: an archive with the right name
-# and a different library in it would otherwise pass quietly.
+# can run this has. The hash is checked because a pin means the checks below
+# run against *that* build: an archive with the right name and a different
+# library in it would otherwise pass quietly.
 SO="$WORK/theirs/lib/arm64-v8a/libvncviewer.so"
 [ -f "$SO" ] || { echo "$APK has no arm64-v8a/libvncviewer.so in it" >&2; exit 1; }
 WANT="$(grep -A2 '"arm64-v8a/libvncviewer.so"' "$PIN" \
@@ -163,7 +166,7 @@ for class_file in "$CLASSES"/*.class; do
     mangled_class="${base//$/_00024}"
     javap_decls "$class_file" > "$WORK/decls.txt"
     # The name is what is left of the declaration once the argument list is
-    # cut off — not the last field, which for anything with arguments is the
+    # cut off, not the last field, which for anything with arguments is the
     # last argument's type.
     while read -r name; do
         [ -n "$name" ] || continue
@@ -185,7 +188,7 @@ echo "         $natives natives"
 # A native that drifts is caught above, by its symbol. A *callback* that drifts
 # is not: the core looks it up by string at run time, so the evidence is the
 # string table. An interface whose name is not in there is one the core never
-# resolves — this module has one, the sealed type over the form elements — and
+# resolves (this module has one, the sealed type over the form elements), and
 # it is reported rather than checked.
 STRINGS="$WORK/strings.txt"
 strings -a -n 1 "$SO" | sort -u > "$STRINGS"

@@ -13,99 +13,98 @@ import net.pgaskin.remotedesktop.backend.Backend;
 import java.util.Arrays;
 
 /**
- * The desktop as last seen, held as a grid of tiles.
+ * A local copy of the desktop, held as a grid of tiles.
  *
  * <p>It replaces one desktop-sized bitmap, for a measured reason: a bitmap whose
  * pixels have changed gets a new generation id and hwui re-uploads <em>all</em>
- * of it, 0.96 ms of render thread per megapixel on this device, on every frame
- * with any damage at all however small. That put the size of the desktop into
- * the cost of a frame — 26% janky frames at 1080&times;2400 against 85% at
- * 3840&times;2400 for the same workload. Two more things fall out of the same
- * grid, which is why it is one mechanism rather than three:
+ * of it, 0.96 ms of render thread per megapixel on the test device, on every
+ * frame with any damage, however small. That made the cost of a frame depend on
+ * the desktop size: 26% janky frames at 1080&times;2400 against 85% at
+ * 3840&times;2400 for the same workload. The grid also gives two more benefits:
  *
  * <ul>
- *   <li><b>Damage off screen is not fetched.</b> A tile outside the viewport
+ *   <li><b>Off-screen damage is not fetched.</b> A tile outside the viewport
  *       stays dirty and is read when it comes back into view.
- *   <li><b>Damage rectangles stop being the unit of work.</b> They only mark
+ *   <li><b>Damage rectangles are not the unit of work.</b> They only mark
  *       tiles, so a repaint arriving as 34 ZRLE strips costs at most one read
  *       per tile rather than 34.
  * </ul>
  *
- * <p>Each dirty tile is read once a frame, and what is read is the union of the
- * damage that landed in it — clipped to the tile, so what changed next door
- * cannot enlarge this one's read — landing at its own place inside the tile,
- * because {@link Backend#readRegion} takes a destination offset and leaves the
- * rest of the bitmap alone. The exact union is therefore both the smallest read
- * and the cheapest one, with nothing to trade off.
+ * <p>Each dirty tile is read once per frame, and the read covers the union of
+ * the damage in it, clipped to the tile (so damage in a neighbouring tile
+ * cannot enlarge this one's read). It lands at its own position inside the
+ * tile, because {@link Backend#readRegion} takes a destination offset and
+ * leaves the rest of the bitmap alone, so the exact union is both the smallest
+ * and the cheapest read.
  *
- * <p>{@link #damaged} arrives on the protocol's thread and does nothing but set
- * bits. Everything else is the drawing thread's. A tile's dirty bit is cleared
+ * <p>{@link #damaged} is called on the protocol thread and only sets bits.
+ * Everything else runs on the drawing thread. A tile's dirty bit is cleared
  * <em>before</em> it is read, so damage arriving during a read leaves it dirty
- * and it is read again next frame — over-fetching rather than missing a change.
+ * and it is read again next frame: over-fetching rather than missing a change.
  */
 final class Mirror {
 
     /**
-     * Roughly this big, in desktop pixels, unless the session says otherwise —
-     * roughly, because the grid is then made to divide the desktop exactly
-     * ({@link #tileW}).
+     * The approximate tile size in desktop pixels, unless the session sets
+     * another. Approximate because the grid is then adjusted to divide the
+     * desktop exactly ({@link #tileW}).
      *
-     * <p>The whole trade is in this number: bigger tiles upload more than
-     * changed and draw in fewer calls, smaller ones upload less and cost a
-     * longer per-frame loop — the loop that costs the original 10.5 ms a frame
-     * at 128, with ~180 tiles on a phone screen. A sweep over a small-change
-     * workload and a full-screen-repaint one settled on 512: at 128 the render
-     * thread costs 39.2% of a core where 512 costs 25.4%.
+     * <p>Bigger tiles upload more than changed but draw in fewer calls; smaller
+     * ones upload less but need a longer per-frame loop, the loop that costs
+     * the original (RealVNC Viewer) 10.5 ms a frame at 128, with ~180 tiles on
+     * a phone screen. Measuring a small-change workload and a full-screen
+     * repaint settled on 512: at 128 the render thread uses 39.2% of a core,
+     * at 512 25.4%.
      */
     static final int DEFAULT_TILE = 512;
 
     /**
-     * Desktop pixels of the neighbouring tile kept around each tile's own, so
-     * that filtering at a tile's edge has something true to sample.
+     * Desktop pixels of the neighbouring tiles kept around each tile, so that
+     * filtering at a tile's edge samples the correct pixels.
      *
-     * <p>Without it the picture grows a faint grid. Scaled, a tile boundary that
-     * lands between two device pixels has to blend the last row of one tile with
-     * the first row of the next — and a bitmap cannot be sampled past its own
-     * edge, so each side clamps to itself and the boundary row comes out
-     * unblended, measured at up to 127 levels of difference on a one-pixel line
-     * every {@code tile × scale} pixels. One pixel is all bilinear sampling ever
-     * reaches for, and it costs 0.8% of the grid at 512.
+     * <p>Without it the picture shows a faint grid. When scaled, a tile boundary
+     * between two device pixels has to blend the last row of one tile with the
+     * first row of the next, but a bitmap cannot be sampled past its own edge,
+     * so each side clamps to itself and the boundary row is not blended,
+     * measured at up to 127 levels of difference on a one-pixel line every
+     * {@code tile × scale} pixels. Bilinear sampling reaches at most one pixel,
+     * and it costs 0.8% of the grid at 512.
      */
     private static final int APRON = 1;
 
     private final int desktopW, desktopH;
 
     /**
-     * A tile's size, chosen so that the grid covers the desktop and no more.
+     * A tile's size, chosen so that the grid covers the desktop exactly.
      *
      * <p>Whole tiles of the requested size would leave the right column and the
-     * bottom row mostly padding — 3&times;5 tiles of 512 over a 1080&times;2400
-     * desktop is 3.96 MP of texture for 2.59 MP of picture, and hwui uploads
-     * whatever the bitmap is rather than whatever of it means anything, which
-     * measured as the difference between beating the old whole-bitmap mirror on
-     * a full-screen repaint and losing to it. Dividing instead of truncating —
-     * three columns of 360 rather than two of 512 and one of 56 — makes the
-     * padding nothing and keeps every tile the <em>same</em> size, which is what
-     * lets the RealVNC backend allocate its native scale buffer once.
+     * bottom row mostly padding: 3&times;5 tiles of 512 over a 1080&times;2400
+     * desktop is 3.96 MP of texture for 2.59 MP of picture, and hwui uploads the
+     * whole bitmap, padding included, which measured as the difference between
+     * beating the old whole-bitmap mirror on a full-screen repaint and losing to
+     * it. Dividing the desktop evenly (three columns of 360 rather than two of
+     * 512 and one of 56) removes the padding and keeps every tile the
+     * <em>same</em> size, which lets the RealVNC backend allocate its native
+     * scale buffer once.
      */
     private final int tileW, tileH;
     private final int cols, rows;
 
     private final Bitmap[] tiles;
-    private final boolean[] ready; // ever read? nothing is drawn from a tile that has not been
+    private final boolean[] ready; // read at least once; unread tiles are not drawn
 
     /** Guards {@link #dirty}, {@link #owed} and {@link #damageRects} only. */
     private final Object lock = new Object();
     private final boolean[] dirty;
     /**
-     * What of each dirty tile changed, as {@code x0, y0, x1, y1} in desktop
-     * coordinates — the union of the damage that landed in it.
+     * The changed area of each dirty tile, as {@code x0, y0, x1, y1} in desktop
+     * coordinates: the union of the damage in it.
      *
      * <p>A tile could be read whole, as the original reads its 128×128 ones.
-     * Measured, that amplification is free when damage is large and expensive
-     * when it is small and frequent: a remote cursor moving at 60 Hz damages
-     * some tens of pixels and was costing a 480×480 read every frame, doubling
-     * the main thread's share during a pan.
+     * Measured, that costs nothing when damage is large but is expensive when it
+     * is small and frequent: a remote cursor moving at 60 Hz damages a few tens
+     * of pixels and was costing a 480×480 read every frame, doubling the main
+     * thread's share during a pan.
      */
     private final int[] owed;
     private long damageRects;
@@ -130,8 +129,8 @@ final class Mirror {
         ready = new boolean[n];
         dirty = new boolean[n];
         owed = new int[4 * n];
-        // Nothing has been read, so all of everything is owed: the session's own
-        // damage-everything on the way in is then a belt rather than braces.
+        // Nothing has been read, so every tile is fully dirty, and the session's
+        // initial full damage is redundant rather than required.
         Arrays.fill(dirty, true);
         for (int r = 0; r < rows; r++) {
             for (int c = 0; c < cols; c++) {
@@ -141,7 +140,7 @@ final class Mirror {
     }
 
     // A tile's extent in desktop coordinates, apron included: what its bitmap
-    // holds, what damage is clipped to, and what a whole-tile read reads.
+    // holds, what damage is clipped to, and what a whole-tile read covers.
     private int left(int c) {
         return Math.max(0, c * tileW - APRON);
     }
@@ -177,7 +176,7 @@ final class Mirror {
     /** Any thread. This rectangle of the desktop changed. */
     void damaged(int x, int y, int w, int h) {
         // Grown by the apron first, because a tile's copy of its neighbour's edge
-        // pixel is as stale as the pixel it copies.
+        // pixel is stale when that pixel is.
         final int x0 = Math.max(0, x - APRON), y0 = Math.max(0, y - APRON);
         final int x1 = Math.min(desktopW, x + w + APRON);
         final int y1 = Math.min(desktopH, y + h + APRON);
@@ -192,8 +191,8 @@ final class Mirror {
                 final int base = r * cols;
                 for (int c = fc; c <= lc; c++) {
                     final int i = base + c;
-                    // Clipped to the tile, so the union of two rectangles in
-                    // different tiles cannot grow either of them.
+                    // Clipped to the tile, so damage in another tile cannot
+                    // grow this tile's union.
                     final int tx0 = Math.max(x0, left(c)), ty0 = Math.max(y0, top(r));
                     final int tx1 = Math.min(x1, right(c)), ty1 = Math.min(y1, bottom(r));
                     if (tx1 <= tx0 || ty1 <= ty0) {
@@ -219,9 +218,9 @@ final class Mirror {
     }
 
     /**
-     * Read whatever is dirty and visible. {@code vx0..vy1} is the part of the
-     * desktop the viewport can see, in desktop pixels; anything outside it
-     * keeps its damage until it is looked at.
+     * Read every dirty, visible tile. {@code vx0..vy1} is the visible part of
+     * the desktop, in desktop pixels; tiles outside it stay dirty until they
+     * are visible.
      */
     void update(Backend backend, float vx0, float vy0, float vx1, float vy1) {
         c0 = clamp((int) Math.floor(vx0 / tileW), 0, cols - 1);
@@ -241,8 +240,8 @@ final class Mirror {
                     dy0 = owed[4 * i + 1];
                     dx1 = owed[4 * i + 2];
                     dy1 = owed[4 * i + 3];
-                    // Cleared before the read, not after: damage that arrives
-                    // while we are reading has to survive us.
+                    // Cleared before the read, not after, so damage arriving
+                    // during the read is not lost.
                     dirty[i] = false;
                 }
                 if (tiles[i] == null) {
@@ -250,7 +249,7 @@ final class Mirror {
                             Bitmap.Config.ARGB_8888);
                     allocated++;
                 }
-                // Exactly what changed, where it belongs inside the tile.
+                // Only the changed area, at its position inside the tile.
                 final int tx0 = left(c), ty0 = top(r);
                 final boolean ok = backend.readRegion(dx0, dy0, dx1 - dx0, dy1 - dy0,
                         tiles[i], dx0 - tx0, dy0 - ty0);
@@ -258,8 +257,8 @@ final class Mirror {
                     ready[i] = true;
                     lastRead++;
                 } else {
-                    // Nothing to read yet, or no room to read it into — owed
-                    // again, and all of it, not lost.
+                    // Nothing to read yet, or no room to read it into: mark the
+                    // whole area dirty again rather than losing it.
                     synchronized (lock) {
                         if (dirty[i]) {
                             setOwed(i, Math.min(owed[4 * i], dx0), Math.min(owed[4 * i + 1], dy0),
@@ -276,9 +275,9 @@ final class Mirror {
     }
 
     /**
-     * Draw the visible tiles. The canvas is already in desktop coordinates —
-     * translated to the viewport origin and scaled — so a tile goes at its own
-     * position in the desktop.
+     * Draw the visible tiles. The canvas is already in desktop coordinates
+     * (translated to the viewport origin and scaled), so each tile is drawn at
+     * its position in the desktop.
      */
     void draw(Canvas c, Paint paint) {
         for (int r = r0; r <= r1; r++) {
@@ -290,21 +289,21 @@ final class Mirror {
                 final int x = col * tileW, y = r * tileH;
                 final int w = Math.min(tileW, desktopW - x);
                 final int h = Math.min(tileH, desktopH - y);
-                // Where this tile's own pixels start inside its bitmap: after
-                // whatever apron there was room for in front of them.
+                // Where this tile's own pixels start inside its bitmap, after
+                // the apron (absent at the desktop's top and left edges).
                 final int ax = x - left(col), ay = y - top(r);
                 src.set(ax, ay, ax + w, ay + h);
                 dst.set(x, y, x + w, y + h);
-                // The apron is outside src and is meant to be sampled from all
-                // the same: hwui draws this with Skia's "fast" source
-                // constraint, which allows filtering to reach past the source
-                // rectangle rather than clamping to it.
+                // The apron is outside src but is still sampled: hwui draws
+                // this with Skia's "fast" source constraint, which lets
+                // filtering reach past the source rectangle rather than
+                // clamping to it.
                 c.drawBitmap(tiles[i], src, dst, paint);
             }
         }
     }
 
-    // ---- what the HUD reads ------------------------------------------------
+    // ---- HUD statistics -----------------------------------------------------
 
     long damageRects() {
         synchronized (lock) {
@@ -337,7 +336,7 @@ final class Mirror {
         return allocated;
     }
 
-    /** Tiles in the visible range, which is what a frame's cost is set by. */
+    /** Tiles in the visible range, which determines a frame's cost. */
     int visibleTiles() {
         return (r1 - r0 + 1) * (c1 - c0 + 1);
     }

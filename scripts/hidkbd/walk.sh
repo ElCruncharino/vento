@@ -1,10 +1,10 @@
 #!/bin/bash
 # Every key a keyboard has, through the playground's key trace.
 #
-# Opens the playground with the trace armed, walks the whole keyboard past it —
-# the printing keys, the navigation block, the function row, the keypad with Num
+# Opens the playground with the trace armed, walks the whole keyboard past it
+# (the printing keys, the navigation block, the function row, the keypad with Num
 # Lock both ways, the modifiers left against right, the media keys and the chords
-# a phone takes for itself — and pulls the trace off. One line per key event,
+# a phone takes for itself) and pulls the trace off. One line per key event,
 # with what Android delivered and what keysym was made of it.
 #
 #   go run . &                 # the keyboard; this drives it over HTTP

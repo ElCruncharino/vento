@@ -142,7 +142,7 @@ public final class KeyTrace implements KeySink {
     /**
      * An edge with no key event behind it, which is what letting go of
      * everything on the way out of a session looks like. Worth a line of its
-     * own: the far end was told something nobody pressed.
+     * own: the far end was told something no key press caused.
      */
     private void unprompted(String edge, int keysym, int keyId) {
         if (!inEvent) {

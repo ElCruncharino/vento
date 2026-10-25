@@ -5,19 +5,18 @@
 
     The connection editor.
 
-    A form rather than a panel, which is why it is the one thing here that is a
-    full-screen dialog and not a sheet: nothing in it takes effect until Save,
-    leaving it with changes asks, and a form with a keyboard under it wants the
-    whole window rather than the top of one.
+    A form rather than a panel, which is why it is a full-screen dialog and not
+    a sheet: nothing in it takes effect until Save, leaving it with changes
+    asks first, and a form with the keyboard open needs the whole window.
 
-    So the frame is fixed heading, scrolling rows, fixed footer — the heading
-    says what is being edited and carries the pin, and Save is reachable without
-    scrolling to the end of a backend's options. The rows are all PanelOptions',
-    the record's own fields included, so the renderer never learns which half of
-    the form it is drawing.
+    The frame is a fixed heading, scrolling rows and a fixed footer: the
+    heading says what is being edited, and Save and the pin are reachable
+    without scrolling to the end of a backend's options. All rows, the
+    record's own fields included, are drawn by PanelOptions, which does not
+    distinguish the two halves of the form.
 -->
-<!-- Not overdraw: this is a dialog's content and the colour is the sheet's own,
-     which is a different surface from the screen behind it. -->
+<!-- Not overdraw: this is a dialog's content, and its colour is a different
+     surface from the screen behind it. -->
 <LinearLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
@@ -63,9 +62,9 @@
         style="@style/Widget.RemoteDesktop.PanelDivider" />
 
     <!--
-        The only thing that scrolls. Zero height plus a weight, so it takes what
-        the heading and the footer leave and no more — a form shorter than the
-        window must not push the footer off the bottom of it.
+        The only scrolling part. Zero height plus a weight, so it takes the
+        space the heading and footer leave and no more, and a form taller than
+        the window does not push the footer off screen.
     -->
     <androidx.core.widget.NestedScrollView
         android:layout_width="match_parent"
@@ -78,7 +77,7 @@
             android:orientation="vertical"
             android:paddingBottom="8dp">
 
-            <!-- What this connection is. -->
+            <!-- The connection's name and address. -->
             <LinearLayout
                 android:id="@+id/fields"
                 android:layout_width="match_parent"
@@ -88,11 +87,10 @@
                 android:orientation="vertical" />
 
             <!--
-                What is left of the two fields that used to be here. A user name
-                and a password are learnt by connecting — the prompt that asks
-                for them is the one that offers to keep them — so the editor's
-                job is not to set one but to take one away, and a form that
-                cannot show a password has one less place to leak it from.
+                In place of user name and password fields. Credentials are
+                entered when connecting, and the prompt that asks for them
+                offers to save them, so the editor only clears them, and a form
+                that cannot show a password is one less place to leak it.
             -->
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/credentials"
@@ -113,10 +111,10 @@
                 android:textColor="?android:attr/textColorSecondary" />
 
             <!--
-                What speaks to it, under what is kept for it: the picker is last
-                of the three because it is the one a person sets once, and
-                because everything under the heading below belongs to whatever
-                it says. Absent, rather than empty, in a build with one backend.
+                The backend picker, below the credentials: it comes last of the
+                three because it is usually set once, and because everything
+                under the heading below depends on it. Hidden in a build with
+                one backend.
             -->
             <LinearLayout
                 android:id="@+id/protocol"
@@ -124,8 +122,8 @@
                 android:layout_height="wrap_content"
                 android:orientation="vertical" />
 
-            <!-- The same heading a settings screen's category is, since what
-                 is under it is the same list of options. -->
+            <!-- Styled like a settings screen's category heading, since the
+                 same options are listed under it. -->
             <TextView
                 android:id="@+id/options_title"
                 android:layout_width="match_parent"
@@ -138,7 +136,7 @@
                 android:textAppearance="?attr/textAppearanceTitleSmall"
                 android:textColor="?attr/colorPrimary" />
 
-            <!-- Backends.options(id) at Scope.CONNECTION, rendered by PanelOptions. -->
+            <!-- The backend's per-connection options and AppOptions, rendered by PanelOptions. -->
             <LinearLayout
                 android:id="@+id/options"
                 android:layout_width="match_parent"
@@ -176,16 +174,15 @@
             android:layout_weight="1" />
 
         <!--
-            The other place this connection can be put, and next to the pin
-            because they are one question asked twice: where does this machine
-            appear. Not a toggle, unlike its neighbour — what is on the home
-            screen is the launcher's to say and this app is not told, so the
-            button can only ever offer, and a control that showed a state it
-            cannot read would be guessing.
+            Adds the connection to the launcher's home screen. Next to the pin
+            because both are about where the connection appears. Unlike the pin
+            it is not a toggle: the launcher does not tell this app what is on
+            the home screen, so the button can only request, and a toggle would
+            show a state it cannot know.
 
-            Which is also why it is drawn without the outline its neighbour
-            has: on a toggle that container is what fills in when it is on, so
-            an action wearing one is a switch that is always off.
+            For the same reason it has no outline: on a toggle the outlined
+            container fills in when on, so an outlined action would look like
+            a switch that is always off.
         -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/home_screen"
@@ -198,9 +195,9 @@
 
         <!--
             Pinned is a state rather than an action, so the control is a toggle
-            that shows it and not a button that inverts it. Down here beside
-            Save because it is the other thing this sheet writes, even though
-            it writes straight through and Save does not.
+            that shows it, not a button that inverts it. Beside Save because it
+            is the other thing the editor writes, although it is written
+            immediately and Save's changes are not.
         -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/pin"

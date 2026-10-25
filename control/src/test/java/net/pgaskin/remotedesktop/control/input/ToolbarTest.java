@@ -18,7 +18,7 @@ import java.util.List;
 /**
  * The toolbar: four buttons and a grip on the left edge of the harness's
  * 2400×1080 view at density 2.625, so a button is 115.5 px (44 dp) square, the
- * grip is 63 px (24 dp), and the whole column is 525 px — the 200 dp the
+ * grip is 63 px (24 dp), and the whole column is 525 px: the 200 dp the
  * platform will give back per edge.
  */
 public class ToolbarTest {
@@ -221,8 +221,7 @@ public class ToolbarTest {
 
     /**
      * A shorter list is how a view-only session offers three buttons rather than
-     * four greyed ones, and one item is what proves the column is not four
-     * things in a trench coat.
+     * four greyed ones, and a single item checks that nothing assumes four.
      */
     @Test
     public void aListOfOneWorks() {

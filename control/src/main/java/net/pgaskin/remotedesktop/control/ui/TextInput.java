@@ -18,20 +18,20 @@ import java.util.Set;
  * The system soft keyboard, turned into keysyms.
  *
  * <p>The extension keyboard is a <em>row of the keys a soft keyboard lacks</em>,
- * which only means anything if the soft keyboard is there supplying the rest —
+ * which only means anything if the soft keyboard is there supplying the rest,
  * so a screen that hosts the row opens a real IME against this connection and
  * forwards whatever it produces to the same {@link KeySink} the extension keys
  * use.
  *
  * <p>It is a <em>dummy</em> {@code BaseInputConnection} over an editor declaring
  * {@code TYPE_NULL}, the way terminal emulators do it: with no text field to
- * edit, an IME falls back to sending key events, which is exactly what a remote
- * machine wants. Committed text is handled as well, because prediction and
+ * edit, an IME falls back to sending key events, which is what a remote machine
+ * wants. Committed text is handled as well, because prediction and
  * emoji arrive that way regardless.
  *
  * <p><b>Every call in and every keysym out can be traced</b>, because what an
  * IME does with an editor it cannot read is not documented anywhere and differs
- * between keyboards — the only way to know is to watch:
+ * between keyboards; the only way to know is to watch:
  *
  * <pre>adb shell setprop log.tag.TextInput VERBOSE</pre>
  *
@@ -60,7 +60,7 @@ public final class TextInput extends BaseInputConnection {
 
         /**
          * The IME asked for the clipboard to be pasted, and there is no document
-         * here to paste into — so it is typed out, as the row's Paste key does.
+         * here to paste into, so it is typed out, as the row's Paste key does.
          */
         void pasteRequested();
     }
@@ -107,12 +107,12 @@ public final class TextInput extends BaseInputConnection {
 
     /**
      * <b>The one an editor gets for free and a remote does not.</b> An IME with
-     * a clipboard key — AOSP's own, on the comma key's long press
-     * ({@code LatinIME}, {@code CODE_CLIPBOARD_PASTE}) — does not commit text
-     * for it: it asks the <em>editor</em> to paste, through the same context
-     * menu action a text field's own Paste item uses. {@code BaseInputConnection}
-     * answers that with a no-op, so before this the key looked like it worked
-     * and typed nothing at all.
+     * a clipboard key (AOSP's own, on the comma key's long press:
+     * {@code LatinIME}, {@code CODE_CLIPBOARD_PASTE}) does not commit text for
+     * it: it asks the <em>editor</em> to paste, through the same context menu
+     * action a text field's own Paste item uses. {@code BaseInputConnection}
+     * answers that with a no-op, so without this override the key appears to
+     * work and types nothing at all.
      *
      * <p>Cut, copy and select-all are refused rather than faked: they are about
      * a selection in a document, and the document is on the other machine.
@@ -142,8 +142,8 @@ public final class TextInput extends BaseInputConnection {
     /**
      * Composing text is sent as it is typed, as a <em>difference</em> against
      * what was sent before it ({@link TextDelta}): holding it back until the IME
-     * decides would make typing feel broken, and a revision of the region —
-     * which is most of what an IME does — has to correct the far end rather than
+     * decides would make typing feel broken, and a revision of the region
+     * (which is most of what an IME does) has to correct the far end rather than
      * append to it.
      */
     @Override
@@ -163,8 +163,8 @@ public final class TextInput extends BaseInputConnection {
 
     /**
      * <b>Refused, and this is the honest answer.</b> The IME wants text it
-     * believes is in the document back in a composing region, so that a later
-     * {@code setComposingText} replaces it — but the document is the far end's
+     * expects to be in the document back in a composing region, so that a later
+     * {@code setComposingText} replaces it, but the document is the far end's
      * and cannot be read back, so the replacement would be typed without the
      * original being removed. Saying no leaves the IME to commit its revision as
      * an ordinary insertion.
@@ -179,7 +179,7 @@ public final class TextInput extends BaseInputConnection {
     public boolean deleteSurroundingText(int beforeLength, int afterLength) {
         trace("deleteSurroundingText(" + beforeLength + ", " + afterLength + ")");
         // A deletion is measured against a document this end does not have, so
-        // where it lands relative to the composing region is unknowable — and
+        // where it lands relative to the composing region is unknowable, and
         // once one has gone out, what the far end holds is no longer what the
         // region says it holds.
         delta.finish();
@@ -195,9 +195,8 @@ public final class TextInput extends BaseInputConnection {
     /**
      * The same request counted in code points. An IME deleting an emoji or an
      * accented character uses this one, and {@code BaseInputConnection}'s
-     * default works on its own empty editable — so without it a backspace over
+     * default works on its own empty editable, so without it a backspace over
      * anything outside the BMP does nothing.
-     *
      */
     @Override
     public boolean deleteSurroundingTextInCodePoints(int beforeLength, int afterLength) {
@@ -226,8 +225,8 @@ public final class TextInput extends BaseInputConnection {
         delta.finish();
         int keysym = Keysym.fromAndroidKeyCode(event.getKeyCode());
         if (keysym == 0) {
-            // Only the modifiers that choose the character, exactly as the
-            // physical keyboard masks them: a layout asked about Ctrl+C answers
+            // Only the modifiers that choose the character, as the physical
+            // keyboard masks them: a layout asked about Ctrl+C answers
             // with nothing, and the shortcut would be lost rather than sent.
             final int cp = event.getUnicodeChar(PhysicalKeyboard.charMeta(event.getMetaState()));
             if (cp == 0) {
@@ -252,8 +251,8 @@ public final class TextInput extends BaseInputConnection {
 
     /**
      * {@link Keysym#forCharacter}, not {@code fromUnicode}: an IME can commit a
-     * newline as <em>text</em> rather than send it as a key — LatinIME does,
-     * depending on what it was in the middle of — and the X11 encoding of code
+     * newline as <em>text</em> rather than send it as a key (LatinIME does,
+     * depending on what it was in the middle of), and the X11 encoding of code
      * point 10 arrives as {@code NoSymbol}, which is what an Enter that only
      * sometimes works looks like.
      */

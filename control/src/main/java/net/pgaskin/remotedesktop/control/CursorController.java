@@ -31,7 +31,7 @@ public final class CursorController implements MouseSink {
 
         /**
          * How far the pointer moved, in whole desktop pixels, for a far end that
-         * owns the cursor — see {@link CursorController#setRelative}. Defaulted
+         * owns the cursor (see {@link CursorController#setRelative}). Defaulted
          * because a sink that never asks for relative mode never sees one.
          */
         default void pointerEventRelative(int dx, int dy, int buttons) {
@@ -42,8 +42,8 @@ public final class CursorController implements MouseSink {
         void onCursorChanged();
 
         /**
-         * Every button somebody clicks with has just been let go, whichever
-         * source was holding them — so a click, or a drag, has ended. The
+         * Every button in {@link Button#CLICK_MASK} has just been let go,
+         * whichever source was holding them, so a click or a drag has ended. The
          * wheel's pseudo-buttons are not among them: a scroll is not a click.
          *
          * <p>Separate from {@link #onCursorChanged} because that one fires for
@@ -84,7 +84,7 @@ public final class CursorController implements MouseSink {
     private int eventCount;
     private int suppressedCount;
 
-    // The last triple actually handed to out, for the dedupe.
+    // The last triple handed to out, for the dedupe.
     private float sentX, sentY;
     private int sentButtons;
     private boolean everSent;
@@ -106,7 +106,7 @@ public final class CursorController implements MouseSink {
      * <p>Relative means the far end does, and the centre-follow behaviour in
      * {@link #mouseMove} stops running: the deltas go out as deltas, {@link #x}
      * and {@link #y} stand still, and the viewport has nothing to follow. What
-     * survives is everything that was about the finger rather than the cursor —
+     * survives is everything that was about the finger rather than the cursor:
      * the gesture recognition, the button masks, the wheel, and bump scroll,
      * which measures the finger against the edge of the <em>screen</em>.
      * {@code ARCHITECTURE.md} §3.16 has the rest.
@@ -149,7 +149,7 @@ public final class CursorController implements MouseSink {
         return viewport.toScreenY(y);
     }
 
-    /** Number of pointer events actually emitted so far (for the HUD). */
+    /** Number of pointer events emitted so far (for the HUD). */
     public int eventCount() {
         return eventCount;
     }
@@ -167,8 +167,8 @@ public final class CursorController implements MouseSink {
     }
 
     /**
-     * The window the desktop gets has changed shape — an overlay came up, the
-     * IME appeared, a system bar went away — and the picture must not jump.
+     * The window the desktop gets has changed shape (an overlay came up, the
+     * IME appeared, a system bar went away), and the picture must not jump.
      *
      * <p>It would otherwise, and by half the inset. The viewport's origin is not
      * independent state: after every move it is
@@ -185,7 +185,7 @@ public final class CursorController implements MouseSink {
      *
      * <p>All of which is about a cursor this end owns. Where the far end does,
      * {@link #x} and {@link #y} stand still and mean nothing, so there is
-     * nothing here to keep in the middle of anything — and the viewport is
+     * nothing here to keep in the middle of anything, and the viewport is
      * following its own focus, which a pinch has been moving ({@code
      * Viewport.panBy}). Re-centring that on the cursor would throw the pan away,
      * which is the whole of how a desktop is navigated in that mode.
@@ -225,7 +225,7 @@ public final class CursorController implements MouseSink {
         changed();
     }
 
-    /** CursorDriver.b — put the cursor back at the middle of the viewport. */
+    /** CursorDriver.b: put the cursor back at the middle of the viewport. */
     public void centreCursor(boolean send) {
         x = Viewport.clamp(viewport.toDesktopX(viewport.centreScreenX()),
                 0, viewport.desktopWidth() - 1);
@@ -274,14 +274,15 @@ public final class CursorController implements MouseSink {
     // ---- button sources ---------------------------------------------------
 
     /**
-     * A second, independent producer of button presses — the mouse overlay.
+     * A second, independent producer of button presses, such as the mouse
+     * overlay.
      *
      * <p>One owner of the mask cannot mean "last writer wins": the overlay holds
      * {@code LEFT} for a long drag, and a tap on the touchpad during it makes
      * the gesture layer press {@code LEFT} and release it 250 ms later, dropping
      * whatever was being dragged. So each producer keeps its own mask and the
-     * remote is told the union — a button stays down until everyone holding it
-     * lets go.
+     * remote is told the union: a button stays down until every source holding
+     * it lets go.
      */
     public MouseSink newButtonSource() {
         final int[] mask = newSourceMask();
@@ -311,7 +312,7 @@ public final class CursorController implements MouseSink {
     }
 
     // A button is part of what the cursor is, so a listener hears about one the
-    // same way it hears about a move — after the event has gone, since the sink
+    // same way it hears about a move: after the event has gone, since the sink
     // may act on it. A host that draws the pointer's buttons, or one whose
     // "remote" is the same process and so sends no frame back, has nothing else
     // to repaint on: a press with no movement is invisible without this.
@@ -331,8 +332,8 @@ public final class CursorController implements MouseSink {
         changed();
     }
 
-    // After the flush, so that whatever the host does about the click — letting
-    // go of a modifier it was holding for it — reaches the far end after the
+    // After the flush, so that whatever the host does about the click (letting
+    // go of a modifier it was holding for it) reaches the far end after the
     // click itself rather than in the middle of it.
     private void clickEdge() {
         final int now = buttons & Button.CLICK_MASK;
@@ -374,7 +375,7 @@ public final class CursorController implements MouseSink {
 
     /**
      * Hand the current state to the remote, unless it is byte-for-byte what the
-     * remote was last told. Only the wire message is skipped — the local cursor
+     * remote was last told. Only the wire message is skipped; the local cursor
      * and viewport have already been updated by the caller.
      */
     private void emit() {
@@ -399,7 +400,7 @@ public final class CursorController implements MouseSink {
      * The relative half of {@link #emit}: send what is owed, keep the fraction.
      *
      * <p>The dedupe is the other one's mirror image: nothing has changed if
-     * there is no movement owed and the mask has not moved. A second delta
+     * there is no movement owed and the mask has not changed. A second delta
      * identical to the first is a second real movement, and dropping it would
      * make a steady drag stop after one frame.
      */

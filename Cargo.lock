@@ -228,6 +228,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
+name = "bindgen"
+version = "0.73.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "787ef8ef523575546b106a58213d6e6b06198a05c2f757258c68a74273670cfa"
+dependencies = [
+ "bitflags 2.13.1",
+ "cexpr",
+ "clang-sys",
+ "log",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "regex",
+ "rustc-hash",
+ "shlex",
+ "syn 3.0.3",
+]
+
+[[package]]
 name = "bit_field"
 version = "0.10.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -319,14 +338,23 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.4.2"
+version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d262e149917187838d5b42777c8253bcb64500067342904e7d429499a6f277e"
+checksum = "6651c9ed80effdc7db0ff72512157f901af5e3549e341e24b1dd4887d836d838"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
  "libc",
  "shlex",
+]
+
+[[package]]
+name = "cexpr"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6fac387a98bb7c37292057cffc56d62ecb629900026402633ae9160df93a8766"
+dependencies = [
+ "nom",
 ]
 
 [[package]]
@@ -377,6 +405,17 @@ dependencies = [
  "block-buffer 0.12.1",
  "crypto-common 0.2.2",
  "inout 0.2.2",
+]
+
+[[package]]
+name = "clang-sys"
+version = "1.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "157a8ba7b480713b56f4c09fd13fc3e0a22a5dfab8097ba61cbc5feef950788a"
+dependencies = [
+ "glob",
+ "libc",
+ "libloading 0.8.9",
 ]
 
 [[package]]
@@ -887,9 +926,9 @@ checksum = "64cd1e32ddd350061ae6edb1b082d7c54915b5c672c389143b9a63403a109f24"
 
 [[package]]
 name = "find-msvc-tools"
-version = "0.1.10"
+version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26b73573e6edcd2af0cdf47bd6cb58f0b3839491263c314eaad1ccf24430e1de"
+checksum = "aedcfb3409746eddb02b9e19ebda1c3394f759a152e48ee875a0844d1b955484"
 
 [[package]]
 name = "flagset"
@@ -1078,6 +1117,12 @@ checksum = "2eecf2d5dc9b66b732b97707a0210906b1d30523eb773193ab777c0c84b3e8d5"
 dependencies = [
  "polyval",
 ]
+
+[[package]]
+name = "glob"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
 
 [[package]]
 name = "group"
@@ -1454,12 +1499,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "ironrdp-rdpdr"
+version = "0.7.0"
+dependencies = [
+ "bitflags 2.13.1",
+ "getrandom 0.3.4",
+ "ironrdp-core",
+ "ironrdp-error",
+ "ironrdp-pdu",
+ "ironrdp-svc",
+ "tracing",
+]
+
+[[package]]
 name = "ironrdp-rdpei"
 version = "0.1.0"
 dependencies = [
  "bitflags 2.13.1",
  "ironrdp-core",
  "ironrdp-dvc",
+ "ironrdp-pdu",
+ "ironrdp-svc",
+ "tracing",
+]
+
+[[package]]
+name = "ironrdp-rdpsnd"
+version = "0.9.0"
+dependencies = [
+ "bitflags 2.13.1",
+ "ironrdp-core",
  "ironrdp-pdu",
  "ironrdp-svc",
  "tracing",
@@ -2214,6 +2283,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "prettyplease"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bfe0f4c752e450fc2faf62654f1c134747922825d5b04ca717b8874f41a40c0"
+dependencies = [
+ "proc-macro2",
+ "syn 3.0.3",
+]
+
+[[package]]
 name = "primefield"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2461,18 +2540,39 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
-name = "remotedesktop-common"
+name = "remotedesktop-api"
 version = "0.0.1"
 dependencies = [
- "jni",
+ "bindgen",
+ "libloading 0.8.9",
  "log",
+ "remotedesktop-runtime",
+ "serde_json",
+]
+
+[[package]]
+name = "remotedesktop-codegen"
+version = "0.0.1"
+dependencies = [
+ "remotedesktop-api",
+ "remotedesktop-platform-android",
+]
+
+[[package]]
+name = "remotedesktop-freerdp"
+version = "0.0.1"
+dependencies = [
+ "bindgen",
+ "libloading 0.8.9",
+ "log",
+ "remotedesktop-api",
+ "remotedesktop-platform-android",
 ]
 
 [[package]]
 name = "remotedesktop-ironrdp"
 version = "0.0.1"
 dependencies = [
- "android_logger",
  "ironrdp-blocking",
  "ironrdp-cliprdr",
  "ironrdp-connector",
@@ -2482,43 +2582,97 @@ dependencies = [
  "ironrdp-graphics",
  "ironrdp-input",
  "ironrdp-pdu",
+ "ironrdp-rdpdr",
+ "ironrdp-rdpsnd",
  "ironrdp-session",
  "ironrdp-svc",
- "jni",
  "log",
- "remotedesktop-common",
- "remotedesktop-tls",
+ "remotedesktop-api",
+ "remotedesktop-platform-android",
+ "remotedesktop-runtime",
  "rustls",
  "x509-cert 0.2.5",
+]
+
+[[package]]
+name = "remotedesktop-libvnc"
+version = "0.0.1"
+dependencies = [
+ "bindgen",
+ "libloading 0.8.9",
+ "log",
+ "remotedesktop-api",
+ "remotedesktop-platform-android",
+]
+
+[[package]]
+name = "remotedesktop-platform-android"
+version = "0.0.1"
+dependencies = [
+ "android_logger",
+ "jni",
+ "log",
+ "remotedesktop-api",
+ "remotedesktop-runtime",
+]
+
+[[package]]
+name = "remotedesktop-platform-linux"
+version = "0.0.1"
+dependencies = [
+ "cc",
+ "log",
+ "remotedesktop-runtime",
+]
+
+[[package]]
+name = "remotedesktop-realvnc"
+version = "0.0.1"
+dependencies = [
+ "bindgen",
+ "libloading 0.8.9",
+ "log",
+ "remotedesktop-api",
 ]
 
 [[package]]
 name = "remotedesktop-rfb"
 version = "0.0.1"
 dependencies = [
- "android_logger",
  "cipher 0.5.2",
  "des",
  "flate2",
- "jni",
  "log",
- "remotedesktop-common",
- "remotedesktop-tls",
+ "remotedesktop-api",
+ "remotedesktop-platform-android",
+ "remotedesktop-runtime",
  "rustls",
  "sha2 0.11.0",
+]
+
+[[package]]
+name = "remotedesktop-runtime"
+version = "0.0.1"
+dependencies = [
+ "libc",
+ "log",
+ "rustls",
+ "sha2 0.11.0",
+ "socket2",
 ]
 
 [[package]]
 name = "remotedesktop-rustdesk"
 version = "0.0.1"
 dependencies = [
- "android_logger",
  "dryoc",
- "jni",
  "log",
  "protobuf",
  "protobuf-codegen",
- "remotedesktop-common",
+ "remotedesktop-api",
+ "remotedesktop-platform-android",
+ "remotedesktop-platform-linux",
+ "remotedesktop-runtime",
  "sha2 0.11.0",
  "socket2",
  "zstd",
@@ -2528,12 +2682,11 @@ dependencies = [
 name = "remotedesktop-spice"
 version = "0.0.1"
 dependencies = [
- "android_logger",
  "flate2",
- "jni",
  "log",
- "remotedesktop-common",
- "remotedesktop-tls",
+ "remotedesktop-api",
+ "remotedesktop-platform-android",
+ "remotedesktop-runtime",
  "rustls",
  "shakenfist-spice-compression",
  "shakenfist-spice-protocol",
@@ -2542,12 +2695,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "remotedesktop-tls"
+name = "remotedesktop-tigervnc"
 version = "0.0.1"
 dependencies = [
+ "bindgen",
+ "libloading 0.8.9",
  "log",
- "rustls",
- "sha2 0.11.0",
+ "remotedesktop-api",
+ "remotedesktop-platform-android",
 ]
 
 [[package]]
@@ -2611,6 +2766,12 @@ dependencies = [
  "spki 0.8.0",
  "zeroize",
 ]
+
+[[package]]
+name = "rustc-hash"
+version = "2.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b1e7f9a428571be2dc5bc0505c13fb6bf936822b894ec87abf8a08a4e51742d"
 
 [[package]]
 name = "rustc_version"

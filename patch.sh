@@ -93,10 +93,10 @@ for path in $paths; do
             echo "error: submodule $name has unapplied patches; run: ./patch.sh" >&2
             status=1
         fi
-        # A gitlink always names the pristine upstream commit, and `git add -A`
-        # in the outer repository happily records the patched one instead —
-        # after which the patches look applied to nothing and the next clone
-        # gets them twice. The base tag is what remembers which is which.
+        # A gitlink always names the pristine upstream commit, but `git add` in
+        # the outer repository can record the patched one instead, after which
+        # the patches look applied to nothing and the next clone gets them
+        # twice. The base tag records the upstream commit.
         if tagged=$(git -C "$path" rev-parse -q --verify 'refs/tags/base^{commit}'); then
             if [ "$tagged" != "$base" ]; then
                 echo "error: submodule $name is pinned at $base, which is not the upstream commit its patches apply to ($tagged)" >&2

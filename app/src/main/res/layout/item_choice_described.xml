@@ -3,12 +3,12 @@
     SPDX-FileCopyrightText: 2026 Patrick Gaskin
     SPDX-License-Identifier: GPL-3.0-or-later
 
-    One value of a BackendOption.Type.CHOICE whose choices carry a line each:
-    what it is called, why you would pick it, and a radio saying which one is
-    picked now. The whole row is the target, so the radio is not clickable in
-    its own right.
+    One value of a BackendOption.Type.CHOICE whose choices each have a
+    description: the label, the description, and a radio button showing the
+    current selection. The whole row is the touch target, so the radio button
+    is not clickable itself.
 -->
-<!-- Not overdraw: a row of a dialog's list is nowhere near the window's own
+<!-- Not overdraw: a row in a dialog's list does not cover the window
      background, and the background here is the ripple. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"

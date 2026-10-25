@@ -27,43 +27,36 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * The desktop, photographed and handed to the share sheet.
+ * A screenshot of the desktop, sent to the share sheet.
  *
- * <p>What is captured is the <em>desktop</em>, whole and at the size the far
- * end has it — not what is on this phone, which is a viewport onto part of it
- * at some zoom with a cursor drawn on top by this app. A screenshot of a remote
- * machine that came back cropped to a phone's window, with a pointer in it that
- * does not exist over there, would be a picture of the client rather than of the
- * machine.
+ * <p>It captures the whole desktop at the far end's size, not the phone's view
+ * of it (a zoomed viewport onto part of it, with a cursor drawn by this app),
+ * which would show the client rather than the remote machine.
  *
- * <p>Nothing is needed below the seam for that. {@link Backend#thumbnail} is
- * already "the whole framebuffer, no bigger than", so asking it for the
- * desktop's own size asks for a scale of one — the same call the home card
- * takes its preview through, with the only bound it has set to the size that
- * does not bind.
+ * <p>No backend changes are needed for this: {@link Backend#thumbnail} already
+ * returns the whole framebuffer scaled to fit a bound, so passing the desktop's
+ * own size gives a scale of one. The home card preview uses the same call.
  *
- * <p>Where it goes is the other half. The file is written to this app's cache
- * and handed over as a read grant on one URI, so a picture of somebody's
- * desktop reaches the app that was chosen and nothing else: not the gallery,
- * not the media scanner, and not another app that went looking. The grant dies
- * with the receiving task, and the file is deleted the next time this runs.
+ * <p>The file is written to this app's cache and shared as a read grant on one
+ * URI, so only the chosen app can read it: not the gallery, the media scanner,
+ * or any other app. The grant ends with the receiving task, and the file is
+ * deleted the next time this runs.
  */
 final class Screenshot {
 
     private static final String TAG = "Screenshot";
 
-    /** Under the cache, and the only thing {@code xml/shared_files} exposes. */
+    /** Under the cache, and the only directory {@code xml/shared_files} exposes. */
     private static final String DIR = "screenshots";
 
-    /** Sortable, and the same in every locale — this ends up in a file name. */
+    /** Sortable and locale-independent, since it goes in a file name. */
     private static final DateTimeFormatter STAMP =
             DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
 
     /**
-     * One thread, off the main one. A 4K desktop is 33 MB of bitmap and PNG is
-     * not a fast encoder; on the main thread that is the whole UI stopped for
-     * as long as it takes, on the one screen where a stall reads as the
-     * connection having died.
+     * A background thread. A 4K desktop is 33 MB of bitmap and PNG encoding is
+     * slow; on the main thread it would freeze the UI, on the screen where a
+     * stall looks like a dropped connection.
      */
     private static final ExecutorService writer = Executors.newSingleThreadExecutor(r -> {
         final Thread t = new Thread(r, "screenshot-writer");
@@ -77,12 +70,12 @@ final class Screenshot {
     }
 
     /**
-     * Capture what is connected and open the share sheet on it. Returns at
-     * once; the encoding happens elsewhere and the sheet opens when it is done.
+     * Capture the session and open the share sheet on it. Returns at once; the
+     * encoding runs on the writer thread and the sheet opens when it is done.
      *
-     * <p>The capture itself is here rather than on the writer thread on
-     * purpose: the seam allows a backend to expect its own thread, and this is
-     * the one the rest of the panel already asks on.
+     * <p>The capture runs here rather than on the writer thread because the
+     * {@link Backend} contract only promises calls from the main thread, which
+     * is also where the rest of the panel calls it.
      */
     static void share(Activity activity, Session session) {
         final Bitmap shot = capture(session);
@@ -91,15 +84,15 @@ final class Screenshot {
             return;
         }
         final String name = fileName(session);
-        // The application context on the way to the worker, so an encode that
-        // outlives the screen is not also holding it.
+        // The application context, so an encode that outlives the activity does
+        // not keep it alive.
         final Context app = activity.getApplicationContext();
         writer.execute(() -> {
             final Uri uri = write(app, shot, name);
             shot.recycle();
             main.post(() -> {
-                // The panel is over a session, and a session can be left while
-                // its desktop is still being encoded.
+                // The session screen can be closed while the screenshot is
+                // still being encoded.
                 if (activity.isFinishing() || activity.isDestroyed()) {
                     return;
                 }
@@ -113,13 +106,12 @@ final class Screenshot {
     }
 
     /**
-     * The framebuffer at 1:1, or null when there is nothing to photograph —
-     * a session that is connecting, or one that has gone since the panel
-     * opened.
+     * The framebuffer at 1:1, or null if there is nothing to capture (the
+     * session is still connecting, or has closed since the panel opened).
      *
-     * <p>Every backend's {@code thumbnail} takes its step from the bound it is
-     * given, so the desktop's own size is a step of one in all of them; none of
-     * this depends on which protocol is underneath.
+     * <p>Every backend's {@code thumbnail} derives its scale step from the bound
+     * it is given, so the desktop's own size gives a step of one regardless of
+     * the protocol.
      */
     private static Bitmap capture(Session session) {
         if (session.isClosed()) {
@@ -134,21 +126,20 @@ final class Screenshot {
         try {
             return backend.thumbnail(w, h);
         } catch (OutOfMemoryError e) {
-            // A desktop at 1:1 is four bytes a pixel and a phone's heap is not
-            // large: 3840x2400 is 35 MB in one allocation, and the alternative
-            // to catching it is the session dying to photograph itself. Caught
-            // rather than pre-empted by a size limit because what a given phone
-            // will give out is not a number this can compute.
+            // A desktop at 1:1 is four bytes per pixel and a phone's heap is
+            // small: 3840x2400 is 35 MB in one allocation, and not catching it
+            // would crash the session. Caught rather than prevented by a size
+            // limit because the available heap cannot be computed in advance.
             Log.w(TAG, "not enough memory for a " + w + "x" + h + " screenshot", e);
             return null;
         }
     }
 
     /**
-     * Write it, and take the last one with it: a share is a copy handed to
-     * somebody else, so what is left here afterwards is a picture of a desktop
-     * nobody asked to keep. Clearing on the way in rather than on the way out
-     * because the app it went to may not have read it yet.
+     * Write the screenshot, deleting the previous one: a share hands a copy to
+     * another app, so the file left here is not meant to be kept. It is cleared
+     * before the next write rather than after sharing because the receiving app
+     * may not have read it yet.
      */
     private static Uri write(Context ctx, Bitmap shot, String name) {
         final File dir = new File(ctx.getCacheDir(), DIR);
@@ -159,9 +150,8 @@ final class Screenshot {
         }
         final File file = new File(dir, name);
         try (FileOutputStream out = new FileOutputStream(file)) {
-            // PNG rather than JPEG, and not for the usual reason: a desktop is
-            // mostly text, which is exactly what chroma subsampling ruins, and
-            // a screenshot somebody is going to read is worth the bytes.
+            // PNG rather than JPEG: a desktop is mostly text, which chroma
+            // subsampling blurs.
             if (!shot.compress(Bitmap.CompressFormat.PNG, 100, out)) {
                 Log.w(TAG, "could not encode the screenshot");
                 file.delete();
@@ -175,9 +165,8 @@ final class Screenshot {
         try {
             return FileProvider.getUriForFile(ctx, ctx.getPackageName() + ".files", file);
         } catch (IllegalArgumentException e) {
-            // The provider and xml/shared_files disagreeing about this
-            // directory, which is a build-time mistake rather than a state a
-            // phone can get into.
+            // The provider paths in xml/shared_files do not include this
+            // directory, which is a build mistake rather than a runtime state.
             Log.w(TAG, "the screenshot is not under a shared path", e);
             file.delete();
             return null;
@@ -196,10 +185,10 @@ final class Screenshot {
     }
 
     /**
-     * The share sheet, with no title of its own: the system has not shown one
-     * since Android 13, and what it does show is the picture — which is why the
-     * URI is in the clip data as well as the extra rather than being left to
-     * the migration that would otherwise put it there.
+     * Open the share sheet, without a title: the system has not shown one since
+     * Android 13. It shows a preview of the image instead, which is why the URI
+     * is set in the clip data as well as the extra rather than relying on the
+     * system to copy it there.
      */
     private static void send(Activity activity, Uri uri, String name) {
         final Intent send = new Intent(Intent.ACTION_SEND);
@@ -211,10 +200,9 @@ final class Screenshot {
     }
 
     /**
-     * What it is called wherever it lands: the machine, and when. The desktop's
-     * own name is not used even though the panel has one — it arrives from the
-     * far end, and a file name is not the place to find out what a server can
-     * put in a string.
+     * The file name: the connection title and the time. The desktop name is not
+     * used even though the panel has one, because it comes from the far end and
+     * could contain anything.
      */
     private static String fileName(Session session) {
         final StringBuilder b = new StringBuilder();

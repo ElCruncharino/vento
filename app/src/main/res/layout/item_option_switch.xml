@@ -3,12 +3,11 @@
     SPDX-FileCopyrightText: 2026 Patrick Gaskin
     SPDX-License-Identifier: GPL-3.0-or-later
 
-    A BackendOption.Type.BOOL, live. The whole row is the target and the switch
-    is decoration on it — a 48 dp strip is easier to hit than a switch, and this
-    is a panel opened one-handed over a desktop.
+    A BackendOption.Type.BOOL. The whole row is the touch target and the switch
+    only shows the state: a full-width row is easier to hit than a switch in a
+    panel used one-handed over a desktop.
 
-    The background is the group's, put on by RowGroups, and carries the ripple
-    with it.
+    RowGroups sets the group background, which includes the ripple.
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"

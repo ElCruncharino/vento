@@ -42,12 +42,12 @@ public final class SecurityDlgBindings {
          * it derives its "warn about encryption" flag from the second being 1,
          * which is {@link #ENC_UNENCRYPTED_WARN}.
          *
-         * <p>Reading them the other way round tells someone that an encrypted
-         * connection is in plain text and that a server they have never seen is
+         * <p>Reading them the other way round tells the user that an encrypted
+         * connection is in plain text and that a server never seen before is
          * already known.
          *
-         * <p>The strings are ordered the same way — by which field of the
-         * viewer's dialog each one lands in, not by the order their invented
+         * <p>The strings are ordered the same way: by the field of the viewer's
+         * dialog each one lands in, not by the order their decompiler-assigned
          * names suggest.
          *
          * @param identityState   one of the {@code ID_*} constants
@@ -69,8 +69,8 @@ public final class SecurityDlgBindings {
 
     /**
      * @param accept         proceed with the connection
-     * @param saveIdentity   remember this server's identity, which is what turns
-     *                       a later {@link #ID_NEW} into {@link #ID_OK}
+     * @param saveIdentity   remember this server's identity, which turns a later
+     *                       {@link #ID_NEW} into {@link #ID_OK}
      * @param saveEncryption remember the encryption decision
      */
     public static native void securityResult(long cookie, boolean accept, boolean saveIdentity,

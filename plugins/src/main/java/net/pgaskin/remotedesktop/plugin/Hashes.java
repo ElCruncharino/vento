@@ -13,9 +13,8 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 
 /**
- * SHA-256, which is the whole of what makes loading somebody else's binary
- * decidable: a copy either is the build the declarations were read from or it is
- * not, and there is no third answer to act on.
+ * SHA-256, which makes loading a third-party binary a yes-or-no decision: a
+ * copy either is the build the declarations were read from or it is not.
  */
 public final class Hashes {
 
@@ -45,16 +44,15 @@ public final class Hashes {
         return hex(digest.digest());
     }
 
-    /** Copies, and returns what went past. */
+    /** Copies, and returns the SHA-256 of what was copied. */
     public static String copy(InputStream in, OutputStream out) throws IOException {
         return copy(in, out, Long.MAX_VALUE);
     }
 
     /**
-     * Copies at most {@code limit} bytes, and refuses rather than truncating:
-     * everything on the other end of one of these streams is somebody else's
-     * archive or somebody else's server, and a compressed entry declares one
-     * size and delivers another.
+     * Copies at most {@code limit} bytes, and fails rather than truncating:
+     * these streams come from third-party archives or servers, and a
+     * compressed entry can declare one size and deliver another.
      */
     public static String copy(InputStream in, OutputStream out, long limit) throws IOException {
         final MessageDigest digest = sha256();

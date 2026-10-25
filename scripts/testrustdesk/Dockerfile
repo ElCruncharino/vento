@@ -1,9 +1,9 @@
-# A RustDesk far end that is not somebody's Windows machine.
+# A RustDesk far end other than a Windows machine.
 #
-# The rig this stage started against is the Windows box, which is the honest
-# one — it is what people run — and the wrong one to develop against: it cannot
-# be reset, its display geometry changes under you, and a session on it is
-# visible to whoever is sitting there. This is the reproducible half.
+# The other RustDesk far end in use is a Windows machine, which is the realistic
+# one (it is what people run) and the wrong one to develop against: it cannot be
+# reset, its display geometry changes under the client, and a session on it is
+# visible on its own screen. This is the reproducible one.
 #
 # Their released .deb rather than a build from source, pinned by SHA-256, which
 # is `third_party/`'s rule for a tarball and for the same reason: building

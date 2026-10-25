@@ -1,0 +1,160 @@
+From aa34a4b4496b5103abf362fa95343b2669c0baf6 Mon Sep 17 00:00:00 2001
+From: "Claude Opus 5.5" <noreply@anthropic.com>
+Date: Thu, 15 Oct 2026 13:59:27 -0400
+Subject: [PATCH 5/7] x11: keep _NET_WM_STATE until the window manager changes
+ it
+
+is_minimized and is_maximized read the window's _NET_WM_STATE from
+the server on every call, a GetProperty and a wait for its reply, so
+an application asking once a frame, as one that stops presenting while
+minimized must, made a round trip to the X server a frame for a
+property that changes when the user minimizes or maximizes the window.
+
+The window already selects PropertyChangeMask, so the state is now
+read once and kept in the window's shared state, and a PropertyNotify
+for _NET_WM_STATE on the window drops it, to be read again on the
+next call. A count of those notifies keeps a read that raced one from
+being kept, and a failed read (the window gone) is not kept either.
+Between the window manager's change and its PropertyNotify being
+processed the answer is the old one, as for every state winit keeps
+from events.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/src/changelog/unreleased.md b/src/changelog/unreleased.md
+index aa9e18c..57cd023 100644
+--- a/src/changelog/unreleased.md
++++ b/src/changelog/unreleased.md
+@@ -49,3 +49,4 @@ changelog entry.
+ - On X11, fix a wheel that arrives as button presses (XTEST, Xvnc, xrdp) scrolling twice per notch.
+ - On X11, fix a panic in `Window::inner_size` and other getters when another client destroyed the window.
+ - On Wayland, fix `Window::set_cursor` copying a custom cursor into a new buffer when it is already the window's cursor, and panicking when the buffer could not be allocated.
++- On X11, `Window::is_minimized` and `Window::is_maximized` no longer make a round trip to the X server on every call; `_NET_WM_STATE` is kept until a `PropertyNotify` says it changed.
+diff --git a/src/platform_impl/linux/x11/event_processor.rs b/src/platform_impl/linux/x11/event_processor.rs
+index 3c8d352..bec52dc 100644
+--- a/src/platform_impl/linux/x11/event_processor.rs
++++ b/src/platform_impl/linux/x11/event_processor.rs
+@@ -857,6 +857,10 @@ impl EventProcessor {
+             || atom == atoms[_XSETTINGS_SETTINGS]
+         {
+             self.process_dpi_change(&mut callback);
++        } else if atom == atoms[_NET_WM_STATE] {
++            // The window manager changed one of our windows' states (minimized, maximized,
++            // fullscreen, ...): what the window keeps of it is out of date.
++            self.with_window(xev.window as xproto::Window, |window| window.net_wm_state_changed());
+         }
+     }
+ 
+diff --git a/src/platform_impl/linux/x11/window.rs b/src/platform_impl/linux/x11/window.rs
+index 9f82faa..b86e7ee 100644
+--- a/src/platform_impl/linux/x11/window.rs
++++ b/src/platform_impl/linux/x11/window.rs
+@@ -63,6 +63,11 @@ pub struct SharedState {
+     pub has_focus: bool,
+     // Use `Option` to not apply hittest logic when it was never requested.
+     pub cursor_hittest: Option<bool>,
++    /// The window's `_NET_WM_STATE` as last read, kept until a `PropertyNotify` says it changed
++    /// (see `UnownedWindow::net_wm_state_changed`).
++    pub net_wm_state: Option<Vec<xproto::Atom>>,
++    /// Counts those `PropertyNotify`s, so that a read which raced one is not kept.
++    pub net_wm_state_changes: u64,
+ }
+ 
+ #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+@@ -101,6 +106,8 @@ impl SharedState {
+             base_size: None,
+             has_focus: false,
+             cursor_hittest: None,
++            net_wm_state: None,
++            net_wm_state_changes: 0,
+         })
+     }
+ }
+@@ -860,23 +867,49 @@ impl UnownedWindow {
+         Some(self.xconn.primary_monitor().expect("Failed to get primary monitor"))
+     }
+ 
+-    #[inline]
+-    pub fn is_minimized(&self) -> Option<bool> {
++    /// The window's `_NET_WM_STATE`, which the window manager keeps: read from the server once,
++    /// and then again only after it has changed. `is_minimized` and `is_maximized` are asked of
++    /// it, and an application may well ask once a frame, which as a property read every time was
++    /// a round trip to the server a frame.
++    fn net_wm_state(&self) -> Vec<xproto::Atom> {
++        let changes = {
++            let shared_state = self.shared_state_lock();
++            if let Some(state) = &shared_state.net_wm_state {
++                return state.clone();
++            }
++            shared_state.net_wm_state_changes
++        };
++
+         let atoms = self.xconn.atoms();
+-        let state_atom = atoms[_NET_WM_STATE];
+-        let state = self.xconn.get_property(
++        let state = match self.xconn.get_property(
+             self.xwindow,
+-            state_atom,
++            atoms[_NET_WM_STATE],
+             xproto::Atom::from(xproto::AtomEnum::ATOM),
+-        );
+-        let hidden_atom = atoms[_NET_WM_STATE_HIDDEN];
++        ) {
++            Ok(state) => state,
++            // The window is gone, or the property was not atoms; nothing to keep.
++            Err(_) => return Vec::new(),
++        };
+ 
+-        Some(match state {
+-            Ok(atoms) => {
+-                atoms.iter().any(|atom: &xproto::Atom| *atom as xproto::Atom == hidden_atom)
+-            },
+-            _ => false,
+-        })
++        // A change the event loop heard of while the reply was on its way may be newer than it.
++        let mut shared_state = self.shared_state_lock();
++        if shared_state.net_wm_state_changes == changes {
++            shared_state.net_wm_state = Some(state.clone());
++        }
++        state
++    }
++
++    /// A `PropertyNotify` said the window's `_NET_WM_STATE` changed (or went).
++    pub(crate) fn net_wm_state_changed(&self) {
++        let mut shared_state = self.shared_state_lock();
++        shared_state.net_wm_state = None;
++        shared_state.net_wm_state_changes = shared_state.net_wm_state_changes.wrapping_add(1);
++    }
++
++    #[inline]
++    pub fn is_minimized(&self) -> Option<bool> {
++        let hidden_atom = self.xconn.atoms()[_NET_WM_STATE_HIDDEN];
++        Some(self.net_wm_state().contains(&hidden_atom))
+     }
+ 
+     /// Refresh the API for the given monitor.
+@@ -965,22 +998,10 @@ impl UnownedWindow {
+     #[inline]
+     pub fn is_maximized(&self) -> bool {
+         let atoms = self.xconn.atoms();
+-        let state_atom = atoms[_NET_WM_STATE];
+-        let state = self.xconn.get_property(
+-            self.xwindow,
+-            state_atom,
+-            xproto::Atom::from(xproto::AtomEnum::ATOM),
+-        );
+         let horz_atom = atoms[_NET_WM_STATE_MAXIMIZED_HORZ];
+         let vert_atom = atoms[_NET_WM_STATE_MAXIMIZED_VERT];
+-        match state {
+-            Ok(atoms) => {
+-                let horz_maximized = atoms.contains(&horz_atom);
+-                let vert_maximized = atoms.contains(&vert_atom);
+-                horz_maximized && vert_maximized
+-            },
+-            _ => false,
+-        }
++        let state = self.net_wm_state();
++        state.contains(&horz_atom) && state.contains(&vert_atom)
+     }
+ 
+     fn set_maximized_inner(&self, maximized: bool) -> Result<VoidCookie<'_>, X11Error> {

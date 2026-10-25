@@ -19,9 +19,9 @@ public class ConfigTest {
      * {@link Config#copyFrom} is a hand-written list of assignments, and it has
      * to be: the input stack holds one {@code Config} by reference so that
      * flipping the {@code PRESET} square swaps every setting live, without
-     * rebuilding anything. The failure mode is adding a tunable and forgetting
-     * the copy — silently, since the new setting would simply never follow a
-     * preset change. So walk the fields reflectively and check every one moves.
+     * rebuilding anything. A tunable added without its copy fails silently: the
+     * new setting never follows a preset change. So walk the fields
+     * reflectively and check every one moves.
      */
     @Test
     public void copyFromCopiesEveryField() throws IllegalAccessException {
@@ -48,7 +48,7 @@ public class ConfigTest {
         assertEquals("Config.copyFrom does not copy " + missed, 0, missed.size());
     }
 
-    /** Every instance field; {@code density} is final and set at construction. */
+    /** Every non-final instance field ({@code density} is final, set at construction). */
     private static List<Field> mutableFields() {
         final List<Field> out = new ArrayList<>();
         for (Field f : Config.class.getDeclaredFields()) {

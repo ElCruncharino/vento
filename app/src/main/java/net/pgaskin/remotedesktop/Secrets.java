@@ -18,41 +18,37 @@ import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 
 /**
- * What this app keeps under a key: a saved connection's password, and the
- * desktop preview on its home card.
+ * Encryption for what this app stores under a key: a saved connection's
+ * password, and the desktop preview on its home card.
  *
- * <p>The preview is the more revealing of the two: a password is a string
- * somebody chose, and a preview is a photograph of whatever was on that
- * machine's screen when the session ended, written to disk without anyone
- * asking for it. It gets the same treatment under a key of its own.
+ * <p>The preview is the more revealing of the two: it is an image of the remote
+ * screen when the session ended, written to disk without the user asking. It
+ * is encrypted the same way, under a separate key.
  *
- * <p>AES-256-GCM under a key generated inside the Android keystore, which means
- * the key material never exists in this process. Whether it is also beyond the
- * reach of anything but the processor is the platform's guarantee rather than
- * one this code checks: nothing here asks for StrongBox or consults
- * {@code KeyInfo.isInsideSecureHardware}, because a phone that cannot offer
- * that should still be able to save a password. Everything else about a connection — its name, address and user name
- * — stays in plain text, because it is not a secret and hiding it would only
- * make the file harder to read while protecting nothing.
+ * <p>AES-256-GCM under a key generated inside the Android keystore, so the key
+ * material never exists in this process. Whether it is also hardware-backed is
+ * up to the platform: nothing here requests StrongBox or checks
+ * {@code KeyInfo.isInsideSecureHardware}, because a phone without it should
+ * still be able to save a password. The rest of a connection (name, address,
+ * user name) stays in plain text, since it is not secret.
  *
- * <p>Android's auto-backup takes the preference file, and the ciphertext in it
- * is useless anywhere else — on another device, whose keystore has no such key,
- * and on the same one, because a keystore entry belongs to an app installation
- * and clearing the app's data takes the key with it. That is intended, and all
- * it requires is that failing to decrypt be <em>ordinary</em>: it means "there
- * is no saved password here", the connection still opens, the server still
- * asks, and the prompt still offers to remember.
+ * <p>Android's auto-backup includes the preference file, but the ciphertext in
+ * it cannot be decrypted anywhere else: not on another device, whose keystore
+ * lacks the key, and not on the same one after a reinstall or clearing the app
+ * data, which deletes the key. This is intended, and it only requires that a
+ * decryption failure be handled as "no saved password": the connection still
+ * opens, the server asks for the password, and the prompt offers to save it.
  *
- * <p>Failing closed: if the keystore will not produce a key at all,
- * {@link #protect} returns null and nothing is saved. A password that cannot be
- * encrypted is not written in plain text as a consolation.
+ * <p>Fails closed: if the keystore cannot produce a key, {@link #protect}
+ * returns null and nothing is saved. A password is never stored in plain text
+ * as a fallback.
  */
 final class Secrets {
 
     private static final String TAG = "Secrets";
     private static final String KEYSTORE = "AndroidKeyStore";
     private static final String ALIAS = "connection-password";
-    /** A separate key, because a preview is not a password. */
+    /** A separate key for previews. */
     private static final String ALIAS_PREVIEW = "connection-preview";
     private static final String TRANSFORM = "AES/GCM/NoPadding";
     /** Marks a value as ciphertext, and leaves room to change the scheme. */
@@ -65,7 +61,7 @@ final class Secrets {
 
     /**
      * @return the stored form of {@code plaintext}, or null if it cannot be
-     * encrypted — in which case the caller stores nothing
+     * encrypted, in which case the caller stores nothing
      */
     static String protect(String plaintext) {
         if (plaintext == null || plaintext.isEmpty()) {
@@ -81,16 +77,16 @@ final class Secrets {
     }
 
     /**
-     * The other direction. Returns "" for anything this device cannot open,
-     * which is the same answer as "nothing was saved" — see the class comment.
+     * The inverse of {@link #protect}. Returns "" for anything this device
+     * cannot decrypt, the same as "nothing was saved" (see the class comment).
      */
     static String reveal(String stored) {
         if (stored == null || stored.isEmpty()) {
             return "";
         }
         if (!stored.startsWith(PREFIX)) {
-            // Written before the passwords were encrypted. Taken as it is, and
-            // re-written encrypted by the next save of that connection.
+            // Written before passwords were encrypted. Used as is, and stored
+            // encrypted on the next save of that connection.
             return stored;
         }
         try {
@@ -100,9 +96,9 @@ final class Secrets {
             }
             return new String(open(blob, ALIAS), StandardCharsets.UTF_8);
         } catch (Exception e) {
-            // A restored backup, a cleared app, a re-installed app: the key is
-            // gone and this is not openable by anything, ever. Say "no password"
-            // and let the server ask.
+            // A restored backup, cleared app data or a reinstall: the key is
+            // gone and this can never be decrypted. Return no password and let
+            // the server ask.
             Log.i(TAG, "no usable key for the saved password (" + e.getClass().getSimpleName()
                     + "); it will be asked for");
             return "";
@@ -121,7 +117,7 @@ final class Secrets {
         return out;
     }
 
-    /** The other direction. The caller has checked that there is an IV to read. */
+    /** The inverse of {@link #seal}. The caller has checked that there is an IV to read. */
     private static byte[] open(byte[] sealed, String alias) throws Exception {
         final Cipher cipher = Cipher.getInstance(TRANSFORM);
         cipher.init(Cipher.DECRYPT_MODE, key(alias),
@@ -130,12 +126,12 @@ final class Secrets {
     }
 
     /**
-     * The device's key for this app, made once and kept in the keystore.
+     * The key for {@code alias}, generated once and kept in the keystore.
      *
-     * <p>{@code setUnlockedDeviceRequired} because a password is only ever
-     * needed while someone is looking at the screen, and {@code randomizedEncryptionRequired}
-     * (the default, stated for the record) because GCM with a repeated IV is
-     * not encryption.
+     * <p>{@code setUnlockedDeviceRequired} because a password is only needed
+     * while the device is in use, and {@code randomizedEncryptionRequired}
+     * (the default, stated explicitly) because GCM with a repeated IV is
+     * insecure.
      */
     private static SecretKey key(String alias) throws Exception {
         final KeyStore ks = KeyStore.getInstance(KEYSTORE);
@@ -157,15 +153,13 @@ final class Secrets {
         return gen.generateKey();
     }
 
-    // ---- bytes, for the desktop preview ------------------------------------
+    // ---- byte arrays, for the desktop preview ------------------------------
 
     /**
-     * A preview, sealed as it goes to disk — no Base64 and no prefix, because
-     * this goes into a file of its own rather than into a preference string.
+     * Encrypt a preview for writing to disk. No Base64 and no prefix, because
+     * it goes into its own file rather than a preference string.
      *
      * @return null if it cannot be encrypted, in which case nothing is written
-     * — a preview is worth less than the guarantee that what is on disk is
-     * unreadable
      */
     static byte[] sealBytes(byte[] plaintext) {
         if (plaintext == null || plaintext.length == 0) {
@@ -179,7 +173,7 @@ final class Secrets {
         }
     }
 
-    /** Null for anything this device cannot open, which is not an error. */
+    /** Null for anything this device cannot decrypt, which is not an error. */
     static byte[] openBytes(byte[] sealed) {
         if (sealed == null || sealed.length <= IV_BYTES) {
             return null;

@@ -1,0 +1,16 @@
+// SPDX-FileCopyrightText: 2026 Patrick Gaskin
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+//! TLS as this app means it: **pinned rather than verified**, and shared
+//! between the thread that reads and the thread that writes.
+//!
+//! Both halves were written for one protocol and reused unchanged by the next,
+//! and they are one module because they are always used together: a client
+//! that pins a certificate has a connection to pin it on.
+//!
+//! [`pinning`] is what "trusted" means when nothing vouches for a remote
+//! desktop's certificate; [`stream`] is the locking that lets one connection
+//! carry two threads.
+
+pub mod pinning;
+pub mod stream;

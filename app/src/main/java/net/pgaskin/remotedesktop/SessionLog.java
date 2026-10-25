@@ -24,15 +24,14 @@ import java.util.ArrayDeque;
 import java.util.Deque;
 
 /**
- * This process's own log, on screen.
+ * A dialog showing this process's log.
  *
- * <p>A failed connection puts one sentence on the session screen, and the
- * sentence is whatever the protocol thought was worth saying. Everything that
- * led to it — which security types a server offered, which encoding was
- * negotiated, what the library said on its way out — is in the log, and until
- * now the only way to read that was a cable and {@code adb}.
+ * <p>A failed connection shows one message on the session screen, chosen by the
+ * protocol. The details that led to it (the security types the server offered,
+ * the negotiated encoding, the library's last messages) are in the log, which
+ * otherwise needs {@code adb} to read.
  *
- * <p>An app may read its own log entries without any permission: the log daemon
+ * <p>An app can read its own log entries without any permission: the log daemon
  * filters by uid, so {@code --pid} is a second filter rather than the only one.
  * Nothing else on the device is readable from here.
  */
@@ -55,8 +54,8 @@ final class SessionLog {
         final int pad = Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 16,
                 ctx.getResources().getDisplayMetrics()));
         view.setPadding(pad, pad / 2, pad, 0);
-        // Horizontally too: a log line is as long as it is, and wrapping one at
-        // a phone's width is what makes a log unreadable.
+        // Horizontal scrolling too: log lines wrapped at a phone's width are
+        // hard to read.
         final HorizontalScrollView wide = new HorizontalScrollView(ctx);
         wide.addView(view);
         final ScrollView tall = new ScrollView(ctx);
@@ -70,17 +69,15 @@ final class SessionLog {
                 .setNeutralButton(R.string.log_copy, (d, w) -> copy(ctx, text[0]))
                 .show();
 
-        // Forking logcat and draining a whole log buffer is tens to hundreds of
-        // milliseconds, and both places this is reachable from are moments the
-        // app is already in trouble. The dialog goes up empty and fills in.
+        // Running logcat and reading a whole log buffer takes tens to hundreds
+        // of milliseconds, so the dialog opens empty and fills in.
         final Handler main = new Handler(Looper.getMainLooper());
         new Thread(() -> {
             final String read = read(ctx);
             main.post(() -> {
                 text[0] = read;
                 view.setText(read);
-                // Showing the top of a log is showing the oldest thing in it;
-                // what somebody opening this wants is what just happened.
+                // Scroll to the newest lines, which are the relevant ones.
                 tall.post(() -> tall.fullScroll(ScrollView.FOCUS_DOWN));
             });
         }, "session-log").start();

@@ -1,0 +1,59 @@
+# The RFB backend's native half. The client is plain Rust, and on Android the
+# library is that client as an `api::Backend` (`src/backend.rs`) registered
+# through the platform crate's shared JNI layer, so `cargo test` and `cargo run
+# --features probe --example rfb-probe` exercise everything except that
+# registration on the host.
+[package]
+name = "remotedesktop-rfb"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+# `lib` for the tests and the example, `cdylib` for the library the app loads:
+# one crate per protocol. The name is the `.so`'s: librfb.so is too generic a
+# name to put in an APK.
+name = "remotedesktop_rfb"
+crate-type = ["lib", "cdylib"]
+
+[dependencies]
+log.workspace = true
+remotedesktop-runtime.workspace = true
+# Pure-Rust inflate for ZRLE's zlib stream: no C toolchain beyond the NDK's
+# linker, the same reason as for rustls below.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+# VncAuth is DES with the key's bits reversed. A hand-rolled cipher for one
+# handshake is an easy place for a subtle bug.
+des = "0.9"
+cipher = "0.5"
+sha2 = "0.11"
+# TLS for VeNCrypt. `ring` because aws-lc-rs needs cmake and bindgen for
+# Android. No `webpki-roots`: a VNC server signs its own certificate, so a
+# fingerprint pinned per address replaces a certificate authority
+# (`src/transport.rs`).
+rustls = { version = "0.23", default-features = false, features = [
+    "ring",
+    "std",
+    "tls12",
+    "logging",
+] }
+
+# `src/backend.rs`, the protocol as an `api::Backend`: used directly by the
+# Linux client, and behind the JNI layer on Android.
+remotedesktop-api.workspace = true
+
+# The probe is a development tool, built only on request: `cargo run
+# --features probe --example rfb-probe`. Without the feature, `cargo test` and
+# `clippy --all-targets` skip it.
+[features]
+probe = []
+
+[[example]]
+name = "rfb-probe"
+required-features = ["probe"]
+
+# The only Android-specific part of this crate: the line in `src/lib.rs` that
+# passes the backend to the platform crate's JNI layer.
+[target.'cfg(target_os = "android")'.dependencies]
+remotedesktop-platform-android.workspace = true

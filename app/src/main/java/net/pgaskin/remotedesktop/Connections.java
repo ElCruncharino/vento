@@ -31,12 +31,11 @@ import java.util.function.Consumer;
  * The saved connections, and their desktop previews.
  *
  * <p>One JSON array in one preference file, rewritten whole on every change.
- * A list somebody scrolls through on a phone is a few dozen entries at the
- * outside, so anything cleverer would be paying for a problem nobody has.
+ * The list is a few dozen entries at most, so nothing more elaborate is needed.
  *
- * <p>What a connection's options <em>mean</em> is {@link Options}': this holds
- * the record, and the ladder that turns one into the map a backend is created
- * with is a question about every layer rather than about this file.
+ * <p>Resolving a connection's options is {@link Options}' job: this holds the
+ * record, and turning it into the map a backend is created with involves every
+ * settings layer, not just this file.
  */
 public final class Connections {
 
@@ -65,18 +64,15 @@ public final class Connections {
         } catch (Exception e) {
             Log.w(TAG, "reading connections", e);
         }
-        // Stable, so pinning one card does not reshuffle the rest — the file's
-        // order is the order things were added, unless somebody has said
-        // otherwise with {@link #reorder}, and either way that is what they have
-        // learned the shape of.
+        // Stable, so pinning one card does not reshuffle the rest: the file's
+        // order is the order connections were added, or the order set with
+        // reorder, and the user expects it to stay that way.
         //
-        // Every write goes through this list, so the file comes back out of a
-        // write already in this order. Which is what settles the two questions
-        // pinning would otherwise raise: a newly pinned connection is behind
-        // every pinned one in the file and therefore lands at the end of them,
-        // and an unpinned one is ahead of every unpinned one and lands at the
-        // start of those. Both are where somebody looking for what they just
-        // did would look.
+        // Every write goes through this list, so the file is written back in
+        // this order. That decides where pinning moves a connection: a newly
+        // pinned one is behind every pinned one in the file and so lands at the
+        // end of them, and a newly unpinned one is ahead of every unpinned one
+        // and lands at their start. Both are where the user would look for it.
         out.sort((x, y) -> Boolean.compare(y.pinned(), x.pinned()));
         return out;
     }
@@ -84,15 +80,14 @@ public final class Connections {
     /**
      * Put these connections in this order, leaving every other one where it is.
      *
-     * <p>What moves is the occupants of the places they already had between
-     * them, rather than the places: the ids given are shuffled among their own
-     * slots, so reordering the pinned ones cannot disturb the unpinned list
-     * underneath — the pins are a contiguous run at the front by the time
-     * {@link #all} has sorted, but nothing here needs them to be.
+     * <p>The given ids are rearranged among the positions they already occupy,
+     * so reordering the pinned ones cannot disturb the unpinned ones. The pinned
+     * ones are a contiguous run at the front after {@link #all} sorts, but this
+     * does not depend on it.
      *
-     * <p>Ignored if the list is no longer the one that was ordered — a
-     * connection deleted from another window while the sheet was open — since
-     * the alternative is applying half of somebody's arrangement.
+     * <p>Ignored if the list has changed since (a connection deleted from
+     * another window while the sheet was open), rather than applying half of
+     * the new order.
      */
     public static void reorder(Context ctx, List<String> idsInOrder) {
         final List<Connection> list = all(ctx);
@@ -115,7 +110,7 @@ public final class Connections {
         write(ctx, list);
     }
 
-    /** Pin or unpin several at once, which is what the selection acts on. */
+    /** Pins or unpins the given connections in one write. */
     public static void setPinned(Context ctx, Collection<String> ids, boolean pinned) {
         final List<Connection> list = all(ctx);
         for (int i = 0; i < list.size(); i++) {
@@ -135,7 +130,7 @@ public final class Connections {
         return null;
     }
 
-    /** Add if new, replace in place if it is one we already have. */
+    /** Adds the connection if new, or replaces the existing one in place. */
     public static void save(Context ctx, Connection conn) {
         final List<Connection> list = all(ctx);
         boolean replaced = false;
@@ -153,9 +148,8 @@ public final class Connections {
     }
 
     /**
-     * Add several at the end, in one write. An import is the only bulk add
-     * there is, and doing it a record at a time would rewrite the whole file
-     * once per connection.
+     * Adds several at the end in one write, for an import; adding one at a time
+     * would rewrite the whole file once per connection.
      */
     public static void addAll(Context ctx, List<Connection> added) {
         if (added.isEmpty()) {
@@ -181,15 +175,13 @@ public final class Connections {
     }
 
     /**
-     * Every connection, gone, and its preview with it — how many there were is
-     * the answer, since a screen that destroys something has to be able to say
-     * what it destroyed.
+     * Deletes every connection and its preview, and returns how many there were
+     * so the settings screen can report it.
      *
-     * <p>Not {@link #delete} over all the ids: this also takes the previews of
-     * connections that are no longer in the list, which is where the pictures of
-     * a machine somebody deleted on an older build would otherwise still be.
-     * "Delete everything" means the directory rather than the records it can
-     * account for.
+     * <p>Not {@link #delete} over all the ids: this also removes previews of
+     * connections no longer in the list, such as those deleted on an older
+     * build. It clears the whole preview directory, not only the files the
+     * records account for.
      */
     public static int deleteAll(Context ctx) {
         final int had = all(ctx).size();
@@ -209,36 +201,32 @@ public final class Connections {
             return;
         }
         prefs(ctx).edit().putString(KEY, a.toString()).apply();
-        // Every add, edit, pin, import and delete comes through here, which is
-        // why the launcher is told from here rather than from each of them: a
-        // shortcut menu and a home screen icon are the list seen from outside
-        // the app, and there is no such thing as a change to the list that they
-        // are not a change to.
+        // Every add, edit, pin, import and delete comes through here, so the
+        // launcher shortcuts are updated here rather than from each caller:
+        // they mirror the list, so every change to it is a change to them.
         Shortcuts.publish(ctx);
     }
 
     // ---- thumbnails ---------------------------------------------------------
 
     /**
-     * The desktop preview on the home card. Written when a session goes away,
-     * read when the list is drawn — one file per connection in the app's files
-     * directory, because a bitmap does not belong in a preference file and the
-     * one thing RealVNC's connection store was needed for was exactly this.
+     * The desktop preview on the home card. Written when a session goes away
+     * and read when the list is drawn. One file per connection in the app's
+     * files directory, because a bitmap does not belong in a preference file.
      *
-     * <p>A PNG sealed with {@link Secrets}, not a PNG. It is a photograph of
-     * whatever was on that machine's screen when the session ended, written by
-     * us without anyone asking for it, and it is the most revealing thing this
-     * app puts on disk — more so than the password beside it. The extension
-     * says what it is.
+     * <p>A PNG encrypted with {@link Secrets}, hence the extension. It shows
+     * whatever was on that machine's screen when the session ended, is written
+     * without the user asking, and is the most revealing thing this app puts
+     * on disk, more so than the password.
      */
     public static File thumbnailFile(Context ctx, String id) {
         return new File(thumbnailDir(ctx), id + ".sealed");
     }
 
     /**
-     * Where the previews were kept before they were sealed. Read once, so a
-     * card does not go blank on upgrade, and then removed — leaving a readable
-     * copy behind would make the sealing decorative.
+     * Where previews were kept before they were encrypted. Read once, so a card
+     * does not go blank on upgrade, and then removed, since leaving a readable
+     * copy would defeat the encryption.
      */
     private static File legacyThumbnailFile(Context ctx, String id) {
         return new File(thumbnailDir(ctx), id + ".png");
@@ -252,25 +240,23 @@ public final class Connections {
     }
 
     /**
-     * Which version of a connection's preview is on disk, counted from the
-     * moment this process started.
+     * Which version of a connection's preview is on disk, counted from when this
+     * process started.
      *
-     * <p>What a cache of decoded previews compares against. A preview costs a
-     * keystore round trip and a PNG decode, so it is worth keeping — and the
-     * only thing that can have changed one while a list was away is a session
-     * that has just left, which is <em>one</em> connection. Dropping the whole
-     * cache on every resume made returning from a session re-decode every card
-     * on the screen to pick up one of them.
+     * <p>A cache of decoded previews compares against this. A preview costs a
+     * keystore round trip and a PNG decode, so it is worth caching, and while
+     * the list is not visible only a session ending can change a preview, for
+     * <em>one</em> connection. Dropping the whole cache on every resume would
+     * re-decode every card to update one of them.
      *
-     * <p>Not a file timestamp: that is a stat call per card per bind, and the
-     * question is not when the picture was taken but whether it is the one
-     * already in hand.
+     * <p>Not a file timestamp: that is a stat call per card per bind, and what
+     * matters is whether the cached picture is current, not when it was taken.
      */
     public static int previewVersion(String id) {
         return previewEpoch + previewVersions.getOrDefault(id, 0);
     }
 
-    /** Every preview at once, for the two things that take all of them. */
+    /** Invalidates every preview at once, for {@link #clearThumbnails}. */
     private static volatile int previewEpoch;
     private static final Map<String, Integer> previewVersions = new ConcurrentHashMap<>();
 
@@ -279,13 +265,12 @@ public final class Connections {
     }
 
     /**
-     * The preview, decoded off the main thread and handed back on it.
+     * The preview, decoded off the main thread and delivered on it.
      *
-     * <p>On the same one thread the writes go through, which is what makes
-     * "the version asked for is the version that comes back" true with no lock
-     * of its own: a session leaving bumps the number and queues its write
-     * before this screen is resumed, so a read is behind that write rather
-     * than racing it.
+     * <p>On the same single thread as the writes, so the version requested is
+     * the version returned without a lock: a session ending bumps the version
+     * and queues its write before this screen resumes, so a read is queued
+     * behind that write rather than racing it.
      */
     public static void readThumbnail(Context ctx, String id, Consumer<Bitmap> then) {
         final Context app = ctx.getApplicationContext();
@@ -297,15 +282,15 @@ public final class Connections {
 
     private static final Handler main = new Handler(Looper.getMainLooper());
 
-    /** Blocking, and so private: {@link #readThumbnail} is the way in. */
+    /** Blocking, and so private: callers use {@link #readThumbnail}. */
     private static Bitmap thumbnail(Context ctx, String id) {
         final File sealed = thumbnailFile(ctx, id);
         if (sealed.exists()) {
             try {
                 final byte[] png = Secrets.openBytes(readAll(sealed));
-                // Null means this device has no key for it any more — a restored
-                // backup or a reinstall. Not an error: the preview is redrawn
-                // the next time this connection is used.
+                // Null means this device no longer has the key (a restored
+                // backup or a reinstall). Not an error: the preview is saved
+                // again the next time this connection is used.
                 return png == null ? null : BitmapFactory.decodeByteArray(png, 0, png.length);
             } catch (Exception e) {
                 Log.w(TAG, "reading preview", e);
@@ -324,11 +309,10 @@ public final class Connections {
     }
 
     /**
-     * Forget every preview there is.
+     * Deletes every preview.
      *
-     * <p>What the preference turns off is the writing; this is what makes
-     * turning it off mean something, since the pictures already taken are the
-     * ones somebody is switching it off about.
+     * <p>The preference only stops new previews being written; this deletes the
+     * existing ones when it is turned off.
      */
     public static void clearThumbnails(Context ctx) {
         final File[] files = thumbnailDir(ctx).listFiles();
@@ -344,14 +328,14 @@ public final class Connections {
     }
 
     /**
-     * Encode, seal and write the desktop's last screenful.
+     * Encodes, encrypts and writes the desktop's last frame.
      *
-     * <p>On a worker, because the caller is {@code onPause} and this is a PNG
-     * encode, a keystore round trip and a file write — in the callback the
-     * system is timing the transition animation with. The single thread is what
-     * keeps two leaves in quick succession from writing the same file at once;
-     * the bitmap has to be fetched by the caller, since by the time this runs
-     * the session may be gone.
+     * <p>On a worker thread, because the caller is {@code onPause} and this is a
+     * PNG encode, a keystore round trip and a file write, in the callback the
+     * system times the transition animation against. The single thread keeps
+     * two sessions ending in quick succession from writing the same file at
+     * once. The caller has to fetch the bitmap, since by the time this runs the
+     * session may be gone.
      */
     public static void saveThumbnail(Context ctx, String id, Bitmap bmp) {
         if (bmp == null || !AppSettings.previews(ctx)) {
@@ -359,17 +343,17 @@ public final class Connections {
         }
         final Context app = ctx.getApplicationContext();
         // Before the write is queued rather than after it completes: a list
-        // resuming behind this must see a number it does not have a picture
-        // for, and then read behind the write on the same thread.
+        // resuming behind this must see a version it has no picture for, and
+        // then read after the write on the same thread.
         previewChanged(id);
         previewIo.execute(() -> writeThumbnail(app, id, bmp));
     }
 
     /**
-     * One thread for the preview directory, reads and writes alike. Single
-     * because two leaves in quick succession must not write the same file at
-     * once, and because a grid of cards decoding all at the same moment is a
-     * burst of allocations for pictures that are drawn one after another.
+     * One thread for the preview directory, for reads and writes. Single
+     * because two sessions ending in quick succession must not write the same
+     * file at once, and because a grid of cards decoding at the same moment
+     * would be a burst of allocations for pictures drawn one after another.
      */
     private static final java.util.concurrent.ExecutorService previewIo =
             java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
@@ -383,8 +367,8 @@ public final class Connections {
         bmp.compress(Bitmap.CompressFormat.PNG, 100, png);
         final byte[] sealed = Secrets.sealBytes(png.toByteArray());
         if (sealed == null) {
-            // Nothing is written rather than a plain PNG as a consolation, the
-            // same rule Secrets.protect follows for a password.
+            // Nothing is written rather than an unencrypted PNG, the same rule
+            // Secrets.protect follows for a password.
             Log.w(TAG, "no key for the preview; it will not be saved");
             return;
         }

@@ -5,11 +5,11 @@ plugins {
     id 'com.android.application'
 }
 
-// The one add-on: RealVNC's backend, the JNI surface under it, and the screen
-// that acquires their library on the phone. Nothing of theirs is in this APK
-// either — what makes it a separate artefact is that everything which *knows*
-// about them is in it, so the app names no protocol and carries no downloader
-// for somebody else's blob.
+// The RealVNC add-on: RealVNC's backend, the JNI surface under it, and the
+// screen that acquires RealVNC's library on the phone. Nothing of RealVNC's is
+// in this APK either; it is a separate artefact because all code that *knows*
+// about RealVNC is in it, so the app names no protocol and carries no
+// downloader for a third-party binary.
 android {
     namespace = 'net.pgaskin.remotedesktop.realvnc'
     compileSdk 36
@@ -19,26 +19,25 @@ android {
         minSdk 34
         targetSdk 36
         // Checked for equality against the app's before this APK's dex is
-        // loaded: the seam between the two is a set of Java interfaces that no
-        // release has promised to keep stable, so they ship together.
+        // loaded: the `:backends` interfaces the two share have no stability
+        // guarantee across releases, so they ship together.
         versionCode 6
         versionName "6"
 
-        // Where the build of this add-on for some other version of the app is,
-        // and what the file there is signed with — meta-data on this APK's
-        // manifest, since the app reads it out of a package whose dex it has
-        // refused to load. `{versionCode}` is the app's own, filled in by
-        // whoever is asking: the release tag is `v<versionCode>` because the
-        // release workflow refuses to publish one where the two differ.
+        // Where the build of this add-on for another version of the app is, and
+        // the key the file there is signed with: meta-data in this APK's
+        // manifest, since the app reads it from a package whose dex it has
+        // refused to load. `{versionCode}` is the app's own, filled in by the
+        // app: the release tag is `v<versionCode>` because the release workflow
+        // refuses to publish a release where the two differ.
         //
         // The fingerprint is the release keystore's certificate, as `apksigner
         // verify --print-certs` prints it. It is here rather than passed in by
-        // the workflow that holds the key so that what an installed APK claims
-        // about a download is a thing somebody can read in this repository. The
-        // app follows it only where it is the key the app is itself signed with,
-        // which is the whole of what makes the claim worth anything: a file
-        // signed with another one is a download that ends at the installer
-        // refusing it.
+        // the workflow holding the key, so that what an installed APK claims
+        // about a download can be read in this repository. The app follows it
+        // only where it is the key the app itself is signed with, which is what
+        // makes the claim meaningful: the installer refuses a file signed with
+        // another key.
         manifestPlaceholders = [
                 updateUrl      : 'https://github.com/pgaskin/vento/releases/download/v{versionCode}/vento-rvnc.apk',
                 updateSignature: '08d46917a818ad0c479733b458acb7488a4cc39f0a5a20ccc6a39181b2fb8f55',
@@ -81,15 +80,15 @@ android {
 }
 
 dependencies {
-    // The seam, which the app also has: loaded parent-first, so both sides mean
-    // the same `Backend`.
+    // The backend interface, which the app also has: loaded parent-first, so
+    // both sides use the same `Backend` class.
     implementation project(':backends')
 
     // The add-on side of the arrangement: the setup screen's shape, the
     // provider, and the verified store behind both.
     implementation project(':plugins')
 
-    // What this add-on exists to carry.
+    // The backend this add-on carries.
     implementation project(':backends:realvnc')
 }
 

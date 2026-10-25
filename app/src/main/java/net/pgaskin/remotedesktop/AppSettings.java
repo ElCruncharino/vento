@@ -12,9 +12,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * App-level preferences: the ones that are about this program rather than about
- * a backend or about the feel of the input stack, which have their own files.
- * Separate files so each can be exported or reset on its own.
+ * App-level preferences: those about this app rather than about a backend or
+ * the input stack's tuning, which have their own files. Separate files so each
+ * can be exported or reset on its own.
  */
 public final class AppSettings {
 
@@ -29,7 +29,7 @@ public final class AppSettings {
     public static final String KEY_MODIFIER_RESETS_IME = "modifierResetsIme";
     public static final String KEY_TWO_LINE_KEYS = "twoLineKeys";  // the extension row's shape
     public static final String KEY_MAC_KEYS = "macKeys";           // Option and CMD on it
-    public static final String KEY_CONTROLS = "controls";          // which affordance the session has
+    public static final String KEY_CONTROLS = "controls";          // which controls the session has
     public static final String KEY_TOOLBAR_POS = "toolbarPos";     // ... and where that one sits, %
     public static final String KEY_CLIPBOARD_OUT = "clipboardOut";
     public static final String KEY_CLIPBOARD_IN = "clipboardIn";
@@ -39,16 +39,14 @@ public final class AppSettings {
     public static final String KEY_DEVELOPER_MODE = "developerMode";    // the hidden rows
 
     /**
-     * Every key in this file with the answer it gives when nothing is stored.
-     * The getters below read it, an export walks it and an import checks a
-     * file's keys against it — one table, because a default written in two
-     * places is one that will differ in two places. A setting added above and
-     * not added here is one that does not travel.
+     * Every key in this file with its default value. The getters below read it,
+     * an export walks it and an import checks a file's keys against it: one
+     * table, so the defaults cannot diverge. A setting added above but not here
+     * is not exported.
      *
-     * <p>A value's <em>class</em> is what says how the key is stored, which is
-     * the whole of the type information here: everything was a switch until the
-     * timeout, and an import checks what a file offers against it rather than
-     * against a second table of types.
+     * <p>A value's <em>class</em> says how the key is stored, and is the only
+     * type information here: an import checks a file's values against it rather
+     * than against a second table of types.
      */
     static final Map<String, Object> DEFAULTS = defaults();
 
@@ -88,9 +86,9 @@ public final class AppSettings {
     }
 
     /**
-     * What this phone answers for {@code key}, stored or not, as the class the
-     * table says it is. What an export writes, so that the reading of the file
-     * and the reading of the preference cannot drift apart.
+     * The value of {@code key}, stored or default, as the class the table gives
+     * it. An export writes this, so the exported value and the value read by the
+     * app cannot differ.
      */
     static Object value(Context ctx, String key) {
         final Object def = DEFAULTS.get(key);
@@ -112,15 +110,15 @@ public final class AppSettings {
     }
 
     /**
-     * On by default: what is typed at a remote machine is as likely to be a
-     * secret as what is typed into a text field here, and there is no way to
-     * mark only part of a desktop, so the whole of it is treated as one.
+     * On by default: text typed into a remote machine is as likely to be a
+     * secret as text typed into a field here, and there is no way to mark only
+     * part of a desktop, so the whole desktop is treated as a password field.
      */
     public static boolean privateIme(Context ctx) {
         return get(ctx, KEY_PRIVATE_IME);
     }
 
-    /** Whether a session leaves a picture of its last screenful behind. */
+    /** Whether a session saves a preview of its last frame for the home screen. */
     public static boolean previews(Context ctx) {
         return get(ctx, KEY_PREVIEWS);
     }
@@ -128,14 +126,11 @@ public final class AppSettings {
     /**
      * Whether the home screen draws its connections as rows rather than cards.
      *
-     * <p>Answered on the home bar rather than in here, because it is asked
-     * while looking at the list — this file is where it is remembered, and the
-     * settings tree deliberately does not offer it a second time.
+     * <p>Switched from the home screen's bar, where the list is visible; it is
+     * only stored here, and the settings tree deliberately does not offer it.
      *
-     * <p>On by default: rows are the shape that still works at twenty
-     * connections, and the shape somebody has not chosen yet should be the one
-     * that does not stop working. Cards remain a tap away, and a phone that has
-     * been switched to them stays switched.
+     * <p>On by default: rows still work with twenty connections, so they are
+     * the safer default. Cards are a tap away, and the choice persists.
      */
     public static boolean listView(Context ctx) {
         return get(ctx, KEY_LIST_VIEW);
@@ -146,23 +141,22 @@ public final class AppSettings {
     }
 
     /**
-     * Whether pressing a modifier on the extension keyboard sends the soft
+     * Whether pressing a modifier on the extension keyboard switches the soft
      * keyboard back to its letters, as RealVNC's viewer does: a chord is a
-     * modifier on the row above and a letter on the row below, and reaching for
-     * Ctrl while the IME shows symbols otherwise means going back by hand.
+     * modifier on the row above and a letter on the keyboard below, and pressing
+     * Ctrl while the IME shows symbols otherwise means switching back by hand.
      */
     public static boolean modifierResetsIme(Context ctx) {
         return get(ctx, KEY_MODIFIER_RESETS_IME);
     }
 
     /**
-     * Whether the extension keyboard is drawn as two lines of keys grouped the
-     * way a keyboard groups them, rather than as the one scrolling line this app
-     * has always had.
+     * Whether the extension keyboard is drawn as two lines of keys grouped as on
+     * a physical keyboard, rather than as one scrolling line.
      *
-     * <p>Off by default: the second line costs 40 dp of somebody else's desktop,
-     * and what it buys — the F-keys without scrolling for them — is worth that to
-     * the people who use them and to nobody else.
+     * <p>Off by default: the second line covers 40 dp of the desktop, and the
+     * benefit (the F-keys without scrolling) only matters to users of those
+     * keys.
      */
     public static boolean twoLineKeys(Context ctx) {
         return get(ctx, KEY_TWO_LINE_KEYS);
@@ -172,17 +166,15 @@ public final class AppSettings {
      * Whether the extension keyboard keeps the two modifiers that are there for
      * a Mac at the far end: Option and Command.
      *
-     * <p>They are not the same loss. Command is {@code XK_Super_L} and so is
-     * Windows, so taking it away takes a label rather than a capability. Option
-     * is {@code XK_ISO_Level3_Shift}, which is AltGr and not a Mac key at all
-     * outside the original's labelling — it is the one key here that genuinely
-     * goes, and somebody driving a German or French desktop has no other route
-     * to it, since neither the soft keyboard nor a phone's physical one will
-     * produce that keysym. Which is why the row names the two keys instead of
-     * saying "Mac".
+     * <p>Removing them has different effects. Command is {@code XK_Super_L}, as is
+     * Windows, so removing it removes a label rather than a capability. Option is
+     * {@code XK_ISO_Level3_Shift}, which is AltGr and only a Mac key in RealVNC
+     * Viewer's labelling. It is the only key here that is actually lost: on a
+     * German or French desktop there is no other way to send it, since neither
+     * the soft keyboard nor a physical keyboard on the phone produces that
+     * keysym. This is why the row names the two keys instead of saying "Mac".
      *
-     * <p>On by default, so no phone that has the app today changes behaviour
-     * without being asked.
+     * <p>On by default, so existing installs keep their behaviour.
      */
     public static boolean macKeys(Context ctx) {
         return get(ctx, KEY_MAC_KEYS);
@@ -191,12 +183,11 @@ public final class AppSettings {
     /**
      * Whether a session shares this phone's clipboard, in each direction.
      *
-     * <p>Here rather than with a backend's own settings, though two of the three
-     * protocols have a message for it: the question is about this phone's
-     * clipboard, one answer covers every connection, and a switch per protocol
-     * would be the same decision made three times. Neither touches the Paste
-     * key, which types the clipboard out as keystrokes — that is somebody
-     * asking, once, for the text they are looking at.
+     * <p>Here rather than with a backend's own settings, though most protocols
+     * have their own clipboard messages: the setting is about this phone's
+     * clipboard, one value covers every connection, and a switch per backend
+     * would repeat the same decision. Neither affects the Paste key, which types
+     * the clipboard out as keystrokes on an explicit request.
      */
     public static boolean clipboardOut(Context ctx) {
         return get(ctx, KEY_CLIPBOARD_OUT);
@@ -207,13 +198,13 @@ public final class AppSettings {
     }
 
     /**
-     * Whether a session still explains its controls on the first frame — and,
-     * since {@link #KEY_CONTROLS} exists, asks which of them it should have.
+     * Whether a session explains its controls on the first frame and asks which
+     * of them ({@link #KEY_CONTROLS}) it should have.
      *
-     * <p>Turned off by the dialog's own "do not ask again", and turned back on
-     * in the settings tree — dismissing something by accident should not be the
-     * last time it can be read. The choice it offers is saved as it is made,
-     * whether or not that box is ticked: they are different questions.
+     * <p>Turned off by the dialog's own "do not ask again", and back on in the
+     * settings tree, so dismissing it by accident is not permanent. The controls
+     * choice in the dialog is saved when made, whether or not that box is
+     * ticked.
      */
     public static boolean regionHints(Context ctx) {
         return get(ctx, KEY_REGION_HINTS);
@@ -222,17 +213,15 @@ public final class AppSettings {
     /**
      * Whether leaving a session lets go of every key still held at the far end.
      *
-     * <p>On by default. "Held" means held over there and stays that way until
-     * something says otherwise, so a session left mid-chord — the home gesture
-     * with Ctrl down, a call arriving — leaves a modifier stuck on the remote
-     * machine for the rest of the session, where every keystroke afterwards is
-     * a shortcut. The session screen already releases each key it knows about;
-     * this is the sweep for the ones it does not, and it is here rather than in
-     * five backends because the question is about this phone.
+     * <p>On by default. A key stays held at the far end until it is released, so
+     * a session left mid-chord (the home gesture with Ctrl down, an incoming
+     * call) leaves a modifier stuck on the remote machine, turning every later
+     * keystroke into a shortcut. The session screen already releases each key it
+     * knows about; this releases the rest, and it is here rather than in each
+     * backend because it is about this phone.
      *
-     * <p>Off is for the one case it costs something: a chord meant to survive
-     * the app going away, which is what somebody driving a remote machine
-     * through a second window would want.
+     * <p>Off is for a chord meant to survive the app going away, as when
+     * controlling a remote machine through a second window.
      */
     public static boolean releaseKeys(Context ctx) {
         return get(ctx, KEY_RELEASE_KEYS);
@@ -248,19 +237,16 @@ public final class AppSettings {
     public static final String CONTROLS_BOTH = "both";
 
     /**
-     * Which affordance the session screen offers: the toolbar, the tap regions,
+     * Which controls the session screen offers: the toolbar, the tap regions,
      * or both.
      *
-     * <p>The regions are the default, which is what every phone that has this
-     * app already has: the toolbar is the visible one and the one the first
-     * frame's dialog offers, and a phone that has not been asked keeps what it
-     * was doing.
+     * <p>The regions are the default, since existing installs already have them;
+     * the toolbar is the visible option and the one the first frame's dialog
+     * offers, and an install that has not been asked keeps its behaviour.
      *
      * <p>One key with three values rather than two switches, because two
-     * switches have a fourth state — neither — in which the session screen has
-     * no affordance at all beyond the notification and the system's own back
-     * gesture, and a preference that can be set to "no way out" is one that will
-     * be.
+     * switches have a fourth state (neither) in which the session screen has no
+     * controls beyond the notification and the system back gesture.
      */
     public static String controls(Context ctx) {
         final String v = (String) value(ctx, KEY_CONTROLS);
@@ -282,10 +268,10 @@ public final class AppSettings {
     /**
      * Where the toolbar sits, as a fraction of the band it may be dragged in.
      *
-     * <p>Per phone rather than per connection: where a thumb reaches is about
-     * the hand holding it. Stored as a percentage in a string, and parsed
-     * leniently for the reason the session timeout is — a file from another
-     * phone can say anything, and the middle of the band is a safe answer.
+     * <p>Per phone rather than per connection: where a thumb reaches depends on
+     * the hand holding the phone. Stored as a percentage in a string, and parsed
+     * leniently as the session timeout is, since an imported file can contain
+     * anything; an unparseable value falls back to the default of 35%.
      */
     public static float toolbarPosition(Context ctx) {
         try {
@@ -302,16 +288,15 @@ public final class AppSettings {
     }
 
     /**
-     * How long a session may stay connected with nothing looking at it, in
-     * minutes, or 0 for never — which is where a phone that has not been asked
-     * stays, since a connection ending by itself is a surprise until somebody
-     * has asked for it.
+     * How long a session may stay connected while not on screen, in minutes, or
+     * 0 for never. Never is the default, since a connection ending by itself is
+     * unexpected unless the user asked for it.
      *
-     * <p>Global rather than per connection: whether to drop a session nobody is
-     * watching is about how this phone is used, not about the machine at the
-     * other end. Stored as text because that is what a list row persists, and
-     * parsed leniently because a file from another phone can say anything —
-     * where 0 is the safe answer, being the one that changes nothing.
+     * <p>Global rather than per connection: whether to drop a session that is
+     * not being watched depends on how this phone is used, not on the remote
+     * machine. Stored as text because that is what a list row persists, and
+     * parsed leniently because an imported file can contain anything; 0 is the
+     * safe fallback since it changes nothing.
      */
     public static int sessionTimeout(Context ctx) {
         final String v = (String) value(ctx, KEY_SESSION_TIMEOUT);
@@ -323,22 +308,18 @@ public final class AppSettings {
     }
 
     /**
-     * Whether this phone has asked to be shown the rows that are not for
-     * everybody: the playground's two recorders and the row that deletes what
-     * they wrote.
+     * Whether the developer rows are shown: the playground's two recorders and
+     * the row that deletes their recordings.
      *
-     * <p>Unlocked the way Android's own developer options are — ten taps on the
-     * version row — because what is behind it is worth nothing to somebody who
-     * was not looking for it: a fixture recorder writes raw touch and key
-     * streams to a folder, which is a thing to pull off the phone and commit,
-     * not a thing to find. Hidden rather than absent, since the alternative is a
-     * separate build, and then what is tested is not what ships.
+     * <p>Unlocked like Android's own developer options, with ten taps on the
+     * version row, because the recorders are of no use to other users: they
+     * write raw touch and key streams to a folder, to be pulled off the phone
+     * and committed as test fixtures. Hidden rather than left out of the build,
+     * since a separate build would mean testing something other than what ships.
      *
-     * <p>A switch and not a one-way door: "Restore defaults" clears this file,
-     * and this key with it, which is the way back for a phone that got here by
-     * curiosity. It travels in an export like everything else in the table —
-     * what it unlocks is a test surface, so a second phone of the same person's
-     * arriving already unlocked is the answer they gave the first one.
+     * <p>Reversible: "Restore defaults" clears this file, including this key. It
+     * is exported like everything else in the table, since it only unlocks a
+     * test surface.
      */
     public static boolean developerMode(Context ctx) {
         return get(ctx, KEY_DEVELOPER_MODE);
@@ -348,11 +329,11 @@ public final class AppSettings {
         prefs(ctx).edit().putBoolean(KEY_DEVELOPER_MODE, on).apply();
     }
 
-    /** What the row offers, in minutes, in the order it offers them. */
+    /** The row's choices, in minutes, in the order shown. */
     public static final List<Integer> SESSION_TIMEOUTS =
             List.of(0, 1, 5, 15, 30, 45, 60, 120, 240, 480, 720, 1440);
 
-    /** What one of those is called, on the row and on a session that hit one. */
+    /** The label for one of those, on the row and on a session that timed out. */
     public static String timeoutLabel(Context ctx, int minutes) {
         if (minutes <= 0) {
             return ctx.getString(R.string.settings_session_timeout_never);

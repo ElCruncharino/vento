@@ -10,11 +10,11 @@
     android:viewportWidth="960"
     android:viewportHeight="960">
     <!--
-        Half size, centred: an adaptive icon's outer quarter can be masked away
-        by the launcher, and the monochrome layer is cropped harder still.
+        Half size, centred: the launcher can mask away an adaptive icon's outer
+        quarter, and crops the monochrome layer further.
 
-        The glyph's own grid is Material's, which runs y from -960 to 0, so
-        centring it costs 240 across and 240 + 480 down.
+        The glyph uses Material's grid, where y runs from -960 to 0, so
+        centring it takes 240 across and 240 + 480 down.
     -->
     <group
         android:scaleX="0.50"

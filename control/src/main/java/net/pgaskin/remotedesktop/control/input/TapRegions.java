@@ -13,18 +13,18 @@ import java.util.List;
  * <p>This replaces the original's floating toolbar, which is large, in the way,
  * and has to be dismissed. The layout in {@link #standard()} is vncpatch's, but
  * the mechanism is not: vncpatch puts real {@code View}s over the desktop, so
- * <em>any</em> touch in a band is swallowed — including a drag that merely
- * starts near an edge, and including the bump scroll that deliberately lives in
- * those same bands. Here the regions hang off {@link GestureRecognizer}'s tap
- * path, so only a gesture already classified as a tap can trigger one.
+ * <em>any</em> touch in a band is swallowed, including a drag that starts near
+ * an edge and the bump scroll that lives in those same bands. Here the regions
+ * hang off {@link GestureRecognizer}'s tap path, so only a gesture already
+ * classified as a tap can trigger one.
  *
  * <p>Two rules follow from that placement. <b>One finger only</b>: a two- or
  * three-finger tap is a right or middle click everywhere on the screen, bands
- * included. And <b>the handler decides</b> — {@link RegionSink#regionTapped}
+ * included. And <b>the handler decides</b>: {@link RegionSink#regionTapped}
  * returns whether it consumed the tap, so a region that is inactive right now
  * needs no set-swapping.
  *
- * <p>Names are the caller's: which one means what is the app's business.
+ * <p>Names are the caller's; what each one does is up to the app.
  */
 public final class TapRegions {
 
@@ -58,7 +58,7 @@ public final class TapRegions {
 
     /**
      * The region containing screen position {@code (x, y)} in a {@code viewW ×
-     * viewH} view, or {@code null} — including when the view has no size yet.
+     * viewH} view, or {@code null} (also when the view has no size yet).
      */
     public Region hit(float x, float y, int viewW, int viewH) {
         if (viewW <= 0 || viewH <= 0) {

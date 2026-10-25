@@ -15,17 +15,17 @@ import java.util.function.Function;
 /**
  * The input stack's tunables, as preferences.
  *
- * <p>{@link Config} has some sixty fields and nearly all of them are
- * reverse-engineered constants that exist to be compared against the original,
- * not settings anybody wants. What is offered here is the part a person can
- * have an opinion about — plus the four wheel numbers, which can only be
- * judged against a document that really scrolls.
+ * <p>{@link Config} has about ninety fields and nearly all of them are
+ * reverse-engineered constants for comparison against RealVNC Viewer, not user
+ * settings. Offered here are the ones that are a matter of preference, plus
+ * the four scroll bar numbers, which can only be judged against a document
+ * that really scrolls.
  *
  * <p>The table is read twice: once to build the screen and once to build a
- * {@link Config}, which is what keeps a preference that does nothing from
- * existing. The same idea as {@link net.pgaskin.remotedesktop.backend.BackendOption},
- * one layer up — except that here the app owns both ends, so a tunable is a
- * pair of lambdas onto a field rather than a string key into a map.
+ * {@link Config}, so every preference shown has an effect. The same idea as
+ * {@link net.pgaskin.remotedesktop.backend.BackendOption}, except that the app
+ * owns both ends, so a tunable is a pair of lambdas on a field rather than a
+ * string key into a map.
  *
  * <p>A preference that has never been touched is <em>absent</em>, and
  * {@link #defaults} answers for it.
@@ -37,7 +37,7 @@ public final class InputSettings {
     /**
      * One field of {@link Config}, in both directions.
      *
-     * @param read  its value in a given config, as a preference string — used
+     * @param read  its value in a given config, as a preference string; used
      *              for the default shown when nothing is stored
      * @param write parse a stored string back into the config
      */
@@ -72,7 +72,7 @@ public final class InputSettings {
                 });
     }
 
-    /** "3" rather than "3.0", since these end up in a text box someone edits. */
+    /** "3" rather than "3.0", since these are shown in an editable text box. */
     private static String trim(float v) {
         return v == Math.rint(v) ? Integer.toString((int) v) : Float.toString(v);
     }
@@ -163,7 +163,7 @@ public final class InputSettings {
         return Config.improved(density);
     }
 
-    /** The defaults with the stored overrides applied — what a session runs on. */
+    /** The defaults with the stored overrides applied, as a session uses them. */
     public static Config config(Context ctx, float density) {
         final Config c = defaults(density);
         final SharedPreferences p = prefs(ctx);
@@ -176,7 +176,7 @@ public final class InputSettings {
         return c;
     }
 
-    /** Forget every override, so the defaults answer for all of them again. */
+    /** Removes every override, restoring the defaults. */
     public static void clearOverrides(Context ctx) {
         final SharedPreferences.Editor e = prefs(ctx).edit();
         for (Tunable t : TUNABLES) {

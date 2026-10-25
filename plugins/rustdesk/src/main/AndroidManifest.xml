@@ -7,26 +7,25 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <!--
-        Both of these come from `:plugins`, where an add-on that acquires
-        something needs them. This one acquires nothing: its backend runs in the
-        app's process and spends the app's network permission, and a package
-        asking for one it never uses is a package saying something untrue about
-        itself.
+        Both of these come from `:plugins`, where an add-on that downloads
+        something needs them. This one downloads nothing: its backend runs in
+        the app's process and uses the app's network permission, and requesting
+        an unused permission would misrepresent the package.
     -->
     <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" tools:node="remove" />
 
     <!--
-        Nothing is stored here and nothing is acquired: this add-on is the
-        backend and its library, and the only reason it is a package of its own
-        is what it would put on the app's listing. So there is no activity, no
-        provider, and no data directory worth carrying anywhere.
+        Nothing is stored or downloaded here: this add-on is the backend and its
+        library, and it is a separate package only because of what it would put
+        on the app's listing. So there is no activity, no provider, and no data
+        worth backing up.
 
-        The marker service the app discovers by comes from `:plugins`, along
-        with the two permissions an acquiring add-on needs and this one does
-        not use.
+        The marker service the app discovers it by comes from `:plugins`, along
+        with the two permissions that a downloading add-on needs and this one
+        removes.
     -->
-    <!-- No icon, because there is no launcher entry to put one on. -->
+    <!-- No icon, because there is no launcher entry. -->
     <application
         android:label="@string/app_name"
         android:allowBackup="false"
@@ -34,14 +33,13 @@
         tools:ignore="MissingApplicationIcon">
 
         <!--
-            The one thing this package says about itself that is for the app to
-            read: where a build of it for the app's version is, and what the
-            file there is signed with. Both values are in this module's
-            build.gradle, which is where the reasoning about them is.
+            Read by the app: where to find a build of this add-on for the app's
+            version, and the certificate that file is signed with. Both values,
+            and the reasons for them, are in this module's build.gradle.
 
-            Meta-data because this is read out of a package whose dex the app
-            has refused to load — being built for another version of the app is
-            the whole reason anybody is asking.
+            Meta-data because the app reads it from a package whose dex it has
+            refused to load: the app only needs it when this package was built
+            for another version of the app.
         -->
         <meta-data
             android:name="net.pgaskin.remotedesktop.plugin.updateUrl"

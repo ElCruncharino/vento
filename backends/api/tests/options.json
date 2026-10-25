@@ -1,0 +1,45 @@
+{
+  "about": [
+    "settle: every choice whose required switch is off goes back to what the option",
+    "falls back to: its default, or the first choice on offer where the default needs a",
+    "switch that is off too. 'values' is every option's value going in, 'settled' what",
+    "they are after, and 'changed' the keys that moved, in the options' order. The specs",
+    "are written out here rather than taken from a backend's list, so that the rule is",
+    "tested apart from what any one backend happens to offer."
+  ],
+  "specs": [
+    { "key": "Encoding", "type": "choice", "default": "tight", "choices": [
+      { "value": "tight" },
+      { "value": "h264", "requires": "H264" },
+      { "value": "zrle" }
+    ] },
+    { "key": "Codec", "type": "choice", "default": "hevc", "choices": [
+      { "value": "hevc", "requires": "Hardware" },
+      { "value": "av1", "requires": "Hardware" },
+      { "value": "vp9" },
+      { "value": "vp8" }
+    ] },
+    { "key": "H264", "type": "bool", "default": "false" },
+    { "key": "Hardware", "type": "bool", "default": "true" }
+  ],
+  "settle": [
+    { "values": { "Encoding": "h264", "Codec": "hevc", "H264": "true", "Hardware": "true" },
+      "settled": { "Encoding": "h264", "Codec": "hevc", "H264": "true", "Hardware": "true" },
+      "changed": [] },
+    { "values": { "Encoding": "h264", "Codec": "hevc", "H264": "false", "Hardware": "true" },
+      "settled": { "Encoding": "tight", "Codec": "hevc", "H264": "false", "Hardware": "true" },
+      "changed": ["Encoding"] },
+    { "values": { "Encoding": "zrle", "Codec": "vp8", "H264": "false", "Hardware": "false" },
+      "settled": { "Encoding": "zrle", "Codec": "vp8", "H264": "false", "Hardware": "false" },
+      "changed": [] },
+    { "values": { "Encoding": "h264", "Codec": "av1", "H264": "false", "Hardware": "false" },
+      "settled": { "Encoding": "tight", "Codec": "vp9", "H264": "false", "Hardware": "false" },
+      "changed": ["Encoding", "Codec"] },
+    { "values": { "Encoding": "tight", "Codec": "hevc", "H264": "TRUE", "Hardware": "False" },
+      "settled": { "Encoding": "tight", "Codec": "vp9", "H264": "TRUE", "Hardware": "False" },
+      "changed": ["Codec"] },
+    { "values": { "Encoding": "nonsense", "Codec": "hevc", "H264": "false", "Hardware": "yes" },
+      "settled": { "Encoding": "nonsense", "Codec": "vp9", "H264": "false", "Hardware": "yes" },
+      "changed": ["Codec"] }
+  ]
+}

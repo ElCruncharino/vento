@@ -1,14 +1,76 @@
 # Every crate is under `backends/`, inside the Gradle module that packages it,
-# but the workspace root is here because that is where cargo and rust-analyzer
-# look for one. Members are globs: adding a protocol is adding a directory.
+# but the workspace root is here because cargo and rust-analyzer look for it
+# here. The members are listed one by one: a backend's crate is its module's
+# directory, `backends/modules/<name>/`, so adding a protocol adds a line to
+# each list below.
+#
+# `backends/runtime` is the layer protocols are written against and platforms
+# implement: the handler, the events, the session thread, TLS, and the picture
+# and sound (`runtime::media`), which a protocol passes on without knowing
+# which decoders or outputs consume them. `backends/api` is what a client holds
+# a session by: the `Backend` trait, the events, the options and the rules
+# shared by all clients. Each backend's adapter to it is in that backend's
+# crate under `backends/modules/`: the protocol crate for the four in Rust, a
+# small crate beside the C library for the others (RealVNC's is used only by
+# the Linux client and is empty on Android). None of them is Android-specific.
+# `backends/platform/*` holds each platform's glue: JNI and MediaCodec in
+# `android` (and, in `android/codegen`, the host tool that generates its Java),
+# libavcodec in `linux`.
+#
+# A platform supplies its parts by implementing `runtime` traits (`Callbacks`,
+# `media::video::Decoders`, `media::audio::Outputs`) and passing them to the
+# session, so no protocol crate names its platform. A protocol crate depends on
+# a platform crate only under a target cfg (`android` for the library the app
+# loads, `not(target_os = "android")` for an optional probe), so neither build
+# sees the other's.
+#
+# The other client is `linux/`: a desktop binary that holds a session on any of
+# the eight backends through those adapters, with the C libraries built by
+# CMake from its build.rs. It is a separate workspace, excluded here, because
+# Cargo unifies features across a workspace for all platforms at once: as a
+# member, its GUI stack enabled optional features of crates shared with the app
+# (`bytemuck/derive`, `zerocopy/derive`) and their proc-macro crates appeared
+# in the app's licence page (`cargo metadata --filter-platform` filters
+# packages, not features). Its own lock file keeps all of that out of this
+# graph; it reaches these crates by path.
 [workspace]
 resolver = "2"
 members = [
-    "backends/common",
-    "backends/tls",
-    "backends/*/src/main/rust",
+    "backends/runtime",
+    "backends/api",
+    "backends/platform/android",
+    "backends/platform/android/codegen",
+    "backends/platform/linux",
+    "backends/modules/rfb",
+    "backends/modules/ironrdp",
+    "backends/modules/spice",
+    "backends/modules/rustdesk",
+    "backends/modules/libvnc",
+    "backends/modules/tigervnc",
+    "backends/modules/freerdp",
+    "backends/modules/realvnc",
 ]
-exclude = ["third_party"]
+# Every member but the Linux platform crate, whose build script builds dav1d
+# and FFmpeg (minutes, once per target directory): a bare `cargo build`, `test`
+# or `clippy` here covers the Android crates and the backends, and none of
+# those needs it without its `probe` feature. The Linux client builds it
+# through its own workspace; use `--workspace` or `-p
+# remotedesktop-platform-linux` for its tests.
+default-members = [
+    "backends/runtime",
+    "backends/api",
+    "backends/platform/android",
+    "backends/platform/android/codegen",
+    "backends/modules/rfb",
+    "backends/modules/ironrdp",
+    "backends/modules/spice",
+    "backends/modules/rustdesk",
+    "backends/modules/libvnc",
+    "backends/modules/tigervnc",
+    "backends/modules/freerdp",
+    "backends/modules/realvnc",
+]
+exclude = ["third_party", "linux"]
 
 [workspace.package]
 version = "0.0.1"
@@ -17,12 +79,37 @@ license = "GPL-3.0-or-later"
 publish = false
 
 [workspace.dependencies]
-remotedesktop-common = { path = "backends/common", version = "0.0.1" }
-remotedesktop-tls = { path = "backends/tls", version = "0.0.1" }
+remotedesktop-runtime = { path = "backends/runtime", version = "0.0.1" }
+remotedesktop-api = { path = "backends/api", version = "0.0.1" }
+remotedesktop-platform-android = { path = "backends/platform/android", version = "0.0.1" }
+remotedesktop-platform-linux = { path = "backends/platform/linux", version = "0.0.1" }
 log = "0.4"
-# One version across the crates: a `Callbacks` built in one is used in another.
+# Only `remotedesktop-platform-android` has it, and no other crate may (its
+# manifest says why).
 jni = "0.22"
 android_logger = "0.15"
+# One version for every crate that reads the C headers: `remotedesktop-api`
+# the shared ones, each C backend's crate its own over those.
+bindgen = "0.73"
+# The upstreams that are submodules rather than registry crates, declared here
+# so that member crates don't need their own relative paths to `third_party/`:
+# IronRDP at a commit (why: `modules/ironrdp/Cargo.toml`) and ryll's SPICE
+# crates, patched (`modules/spice/Cargo.toml`).
+ironrdp-blocking = { path = "third_party/ironrdp/crates/ironrdp-blocking" }
+ironrdp-cliprdr = { path = "third_party/ironrdp/crates/ironrdp-cliprdr" }
+ironrdp-connector = { path = "third_party/ironrdp/crates/ironrdp-connector" }
+ironrdp-core = { path = "third_party/ironrdp/crates/ironrdp-core" }
+ironrdp-displaycontrol = { path = "third_party/ironrdp/crates/ironrdp-displaycontrol" }
+ironrdp-dvc = { path = "third_party/ironrdp/crates/ironrdp-dvc" }
+ironrdp-graphics = { path = "third_party/ironrdp/crates/ironrdp-graphics" }
+ironrdp-input = { path = "third_party/ironrdp/crates/ironrdp-input" }
+ironrdp-pdu = { path = "third_party/ironrdp/crates/ironrdp-pdu" }
+ironrdp-rdpdr = { path = "third_party/ironrdp/crates/ironrdp-rdpdr" }
+ironrdp-rdpsnd = { path = "third_party/ironrdp/crates/ironrdp-rdpsnd" }
+ironrdp-session = { path = "third_party/ironrdp/crates/ironrdp-session" }
+ironrdp-svc = { path = "third_party/ironrdp/crates/ironrdp-svc" }
+shakenfist-spice-protocol = { path = "third_party/ryll/shakenfist-spice-protocol", default-features = false }
+shakenfist-spice-compression = { path = "third_party/ryll/shakenfist-spice-compression", default-features = false }
 
 [profile.release]
 panic = "abort" # cannot unwind across jni

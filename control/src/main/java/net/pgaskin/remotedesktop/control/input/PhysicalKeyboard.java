@@ -9,12 +9,12 @@ import java.util.Arrays;
 import java.util.function.IntConsumer;
 
 /**
- * A real keyboard — Bluetooth, USB, or the one built into a dock — turned into
+ * A real keyboard (Bluetooth, USB, or the one built into a dock) turned into
  * keysyms for the remote.
  *
  * <p><b>The phone owns the layout; the remote is told characters.</b> A printing
- * key sends whatever character the phone's own keyboard layout produces for it —
- * Shift, AltGr and Caps Lock included — and a non-printing key sends the keysym
+ * key sends whatever character the phone's own keyboard layout produces for it,
+ * Shift, AltGr and Caps Lock included, and a non-printing key sends the keysym
  * for its <em>position</em>. It is the same rule the system IME's path follows
  * ({@code control/ui/TextInput}), which is what lets the two coexist without
  * either knowing about the other. Three consequences, each of which could have
@@ -44,8 +44,8 @@ import java.util.function.IntConsumer;
 public final class PhysicalKeyboard {
 
     /**
-     * A key's character under a given modifier state — {@code KeyEvent}'s
-     * {@code getUnicodeChar(int)}. {@code 0} when the key has none.
+     * A key's character under a given modifier state ({@code KeyEvent}'s
+     * {@code getUnicodeChar(int)}). {@code 0} when the key has none.
      */
     public interface CharMap {
         int unicode(int keyCode, int metaState);
@@ -76,7 +76,7 @@ public final class PhysicalKeyboard {
     // apart from a fresh press.
     //
     // Grown to fit rather than sized once: Android's keycodes are a list that
-    // gets longer with each release — F13 is 326 — and a key past the end of a
+    // gets longer with each release (F13 is 326), and a key past the end of a
     // fixed table can only be refused, since a press it cannot record is a key
     // held down at the far end for ever.
     private int[] held = new int[256];
@@ -116,7 +116,7 @@ public final class PhysicalKeyboard {
     }
 
     /**
-     * A key went down. Returns whether it was sent — {@code false} means the key
+     * A key went down. Returns whether it was sent; {@code false} means the key
      * is not ours and the caller should let Android have it.
      *
      * @param repeat the event's repeat count; anything above zero is Android's
@@ -132,8 +132,8 @@ public final class PhysicalKeyboard {
         }
         // A repeat re-sends the keysym recorded at press time rather than looking
         // it up again: the far end keys its held-key map on the id, so a repeat
-        // that arrived as a different keysym — hold "a", press Shift, Android
-        // says "A" — would overwrite the entry, and the release would let go of
+        // that arrived as a different keysym (hold "a", press Shift, Android
+        // says "A") would overwrite the entry, and the release would let go of
         // "A" while "a" stayed down at the far end for ever.
         if (repeat > 0 && held[keyCode] != 0) {
             sink.keyDown(held[keyCode], KeySink.ID_SYSTEM_KEYBOARD + keyCode);
@@ -154,7 +154,7 @@ public final class PhysicalKeyboard {
 
     /**
      * A key came up. Returns the keysym that was released, or {@code 0} if this
-     * keyboard was not holding that key — which is also how a reserved key's up
+     * keyboard was not holding that key. That is also how a reserved key's up
      * is refused as its down was, and how a key held across a
      * {@link #releaseAll()} avoids releasing twice.
      *
@@ -205,7 +205,7 @@ public final class PhysicalKeyboard {
     }
 
     /**
-     * {@link #CHAR_META}, plus AltGr when — and only when — it is right Alt.
+     * {@link #CHAR_META}, plus AltGr when (and only when) it is right Alt.
      * Public because the system IME's key events go through the same rule:
      * which modifiers may choose a character is a property of this client, not
      * of where the event came from ({@code ui/TextInput}).
@@ -233,8 +233,8 @@ public final class PhysicalKeyboard {
 
     /**
      * Let go of every key this keyboard is holding at the far end: a key held
-     * when the host is switched away from never gets an up, and a stuck Ctrl on
-     * somebody's desktop is indistinguishable from a broken keyboard.
+     * when the host is switched away from never gets an up, and a stuck Ctrl at
+     * the far end is indistinguishable from a broken keyboard.
      */
     public void releaseAll() {
         for (int keyCode = 0; keyCode < held.length; keyCode++) {

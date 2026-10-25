@@ -10,8 +10,7 @@ package net.pgaskin.remotedesktop.control.input;
  * 4.9.1.60165; {@code ARCHITECTURE.md} §1.15 lists them in one table. Two
  * presets are provided: {@link #faithful} reproduces the original bug-for-bug,
  * {@link #improved} applies the deliberate changes (§2 and §3 there).
- * Flipping between them at runtime is the point — it is how the "feel" gets
- * A/B'd.
+ * They can be swapped at runtime to compare how each feels.
  */
 public final class Config {
 
@@ -83,7 +82,7 @@ public final class Config {
 
     /**
      * Zero the minor axis of a slow, near-axial movement, so a horizontal or
-     * vertical drag does not wander — text selection is what it is for.
+     * vertical drag does not wander (for text selection).
      */
     public boolean axisLockEnabled;
     public float axisLockMaxSpeedPx;         // only engages below this, px/ms
@@ -103,9 +102,9 @@ public final class Config {
     public float hoverAssistSpanPx;         // finger travel a detent lasts
     public float hoverAssistGain = 0.25f;   // the factor at the catch; 1 is no assist
     /**
-     * The four tests that keep an animated cursor from making the whole desktop
-     * feel like treacle, and a fifth that keeps a far end whose news arrives too
-     * late from decorating open desktop with detents.
+     * Four tests that keep an animated cursor from slowing the pointer
+     * everywhere on the desktop, and a fifth that keeps a far end whose news
+     * arrives too late from putting detents on empty desktop.
      */
     public float hoverAssistMaxSpeedPx;     // above this the finger is not aiming at anything
     public long hoverAssistIdleMs = 120;    // a change with nothing moving was not caused by us
@@ -126,10 +125,10 @@ public final class Config {
      * acceleration, no adaptive gate, no axis lock, and no glide after a flick.
      *
      * <p>All four are ways of deciding how far a cursor goes for a given
-     * finger, and in that mode the far end decides that — it applies its own
-     * acceleration to whatever deltas arrive, which is the acceleration that
-     * machine's own user lives with. Ours then compounds it, and a curve on top
-     * of a curve is nobody's.
+     * finger, and in that mode the far end decides that: it applies its own
+     * acceleration to whatever deltas arrive, the same as for its own local
+     * mouse. Ours would compound it, and a curve on top of a curve matches
+     * neither.
      *
      * <p>What it does <em>not</em> turn off is dividing by the viewport scale,
      * which is not shaping: a finger crossing a zoomed-in screen still covers
@@ -147,8 +146,8 @@ public final class Config {
      * {@code axisLockTurnSpanPx} of path and the angle between two such spans is
      * the turn. Longer sees gentler curves, shorter re-locks sooner afterwards.
      * A turn past {@code axisLockCornerDeg} is a corner rather than a curve, so
-     * the history is dropped outright and the next straight leg — the across of
-     * an L-shaped text selection — locks a few events later instead of a whole
+     * the history is dropped outright and the next straight leg (the across of
+     * an L-shaped text selection) locks a few events later instead of a whole
      * span later.
      */
     public float axisLockTurnSpanPx;
@@ -175,10 +174,9 @@ public final class Config {
      * row on its own: 46 dp twice over is most of what is left of a phone, and
      * a line with another above or below it is aimed at against its neighbour
      * rather than against the picture, so it can lose a little padding and still
-     * be hit. 40 dp is where it stops — the size of the overlay's dismiss
-     * button, which is the smallest target this screen already asks a finger
-     * for, and a key that is hard to hit sends the wrong keysym to somebody
-     * else's machine with no undo at that end.
+     * be hit. 40 dp is where it stops: the size of the overlay's dismiss
+     * button, which is the smallest target this screen already has, and a key
+     * that is hard to hit sends the wrong keysym to the far end with no undo.
      */
     public float keyboardKeyHeightMultiPx;
     public float keyboardInfoHeightPx;  // the info bar above the keys, 30 dp
@@ -203,7 +201,7 @@ public final class Config {
     /**
      * Whether the key row buzzes at all: the system's own keyboard setting does
      * not reach a view that draws its own keys. Checked here rather than in the
-     * view so that the model simply does not ask.
+     * view so that the model does not ask.
      */
     public boolean keyboardHaptics = true;
     public int keyboardInfoMaxChars = 256; // of the typed line kept; the bar shows the tail
@@ -223,7 +221,7 @@ public final class Config {
      * A square button, and the grip under the column of them. Four buttons and a
      * grip come to exactly 200 dp, which is what the platform will let an app
      * take back from the system's own edge gesture
-     * ({@code setSystemGestureExclusionRects}) — so the size is that limit
+     * ({@code setSystemGestureExclusionRects}), so the size is that limit
      * divided up rather than Material's 48 dp.
      */
     public float toolbarButtonPx;
@@ -262,7 +260,7 @@ public final class Config {
      * ({@link net.pgaskin.remotedesktop.control.Viewport#setPanMargins}): a pan
      * may carry each edge in by whatever the caller measures that edge to cost,
      * leaving blank beside it. Off is the original: an edge of the desktop stops
-     * at the edge of the window, which on a phone is not a rectangle — a rounded
+     * at the edge of the window, which on a phone is not a rectangle. A rounded
      * corner, a camera cutout and a system bar all sit over the picture, and the
      * last row of pixels against one of them cannot be looked at squarely or
      * clicked comfortably.
@@ -278,8 +276,8 @@ public final class Config {
      * not over it there.
      *
      * <p>Independent of {@link #panMarginInsets}, which is a different reason
-     * to want the same thing — either alone is a margin, and both is the sum.
-     * Zero by default, like the other off.
+     * to want the same thing: either alone is a margin, and both is the sum.
+     * Zero by default, as the other is off.
      */
     public float panMarginPx;
 
@@ -289,7 +287,7 @@ public final class Config {
      * Ask for the pointer when the session has focus, so a real mouse reports
      * relative motion and the local cursor cannot leave the window. Off falls
      * back to deriving deltas from the local pointer's position, which stops
-     * dead at the screen edge — which is why the original, which never captures,
+     * dead at the screen edge. That is why the original, which never captures,
      * needs an edge auto-scroll at all.
      */
     public boolean mouseCapture = true;
@@ -450,7 +448,7 @@ public final class Config {
         return c;
     }
 
-    /** The version we actually want to ship. */
+    /** The preset that ships. */
     public static Config improved(float density) {
         Config c = new Config(density);
         c.faithfulPreset = false;

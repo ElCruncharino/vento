@@ -3,13 +3,13 @@
     SPDX-FileCopyrightText: 2026 Patrick Gaskin
     SPDX-License-Identifier: GPL-3.0-or-later
 
-    What an EditTextPreference opens, in place of androidx's own: the same
-    outlined box the editor and the panel type into, rather than the underlined
-    field of two Material versions ago.
+    The dialog an EditTextPreference opens, replacing androidx's: the same
+    outlined box as the editor and the connection panel, rather than the
+    underlined field of older Material versions.
 
-    The two ids are androidx's and cannot be renamed — its dialog fragment
+    The two ids are androidx's and cannot be renamed: its dialog fragment
     looks up `message` and `edit` by them, and expects the second to be an
-    EditText, which is what a TextInputEditText is.
+    EditText, which TextInputEditText is.
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"

@@ -9,11 +9,11 @@
  * of the argument list are all part of the address; and the <b>callbacks</b>,
  * which the core resolves by class name and caches a method id per member, so an
  * interface's name, its nesting, its method names and their descriptors are
- * equally fixed — as are the constructor signatures of the classes it builds.
+ * equally fixed, as are the constructor signatures of the classes it builds.
  *
- * <p>Everything else is ours, and each class says at the top what requires the
- * name it carries. {@code check-jni-abi.sh} is the last word on all of it,
- * because it asks the binary rather than a decompiler.
+ * <p>Everything else is this project's choice, and each class says at the top
+ * what requires the name it carries. {@code check-jni-abi.sh} is authoritative
+ * on all of it, because it checks the binary rather than a decompiler's output.
  *
  * <p>This is the subset one client needs rather than a reproduction of the
  * surface; the module's README lists what is left out and why, and says why the

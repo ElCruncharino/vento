@@ -3,32 +3,31 @@
     SPDX-FileCopyrightText: 2026 Patrick Gaskin
     SPDX-License-Identifier: GPL-3.0-or-later
 
-    Left to right: what the list is arranged as, what shape it is drawn in, and
-    then everything else. The two that are about the list in front of you come
-    before the one that leaves it, and the one that only sometimes applies is
-    outermost — so nothing moves when it appears and disappears.
+    Left to right: the pinned order, the view mode, then settings. The two that
+    affect the list come before the one that leaves it, and the one that is
+    only sometimes shown is leftmost, so nothing moves when it appears or
+    disappears.
 -->
 <!--
-    All three are always in the bar rather than in an overflow: there is room for
-    three icons on the narrowest phone this runs on, and a menu that reveals itself
-    is a menu the two list controls are hidden behind.
+    All three are always in the bar rather than in an overflow menu: there is
+    room for three icons on the narrowest supported phone, and an overflow menu
+    would hide the two list controls.
 -->
 <menu xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     tools:ignore="AlwaysShowAction">
-    <!-- Only while there is an order to change: two pinned connections are the
-         fewest that can be in the wrong one, and HomeActivity hides the item
-         below that rather than opening a sheet with nothing to drag. -->
+    <!-- Shown only when there is an order to change: HomeActivity hides it with
+         fewer than two pinned connections rather than opening a sheet with
+         nothing to drag. -->
     <item
         android:id="@+id/action_reorder"
         android:icon="@drawable/ic_low_priority"
         android:title="@string/home_reorder"
         android:visible="false"
         app:showAsAction="always" />
-    <!-- The icon and the title are the shape being switched *to*, and
-         HomeActivity sets both: this is one item in two states rather than two
-         items of which one is always wrong. -->
+    <!-- The icon and the title show the mode being switched to; HomeActivity
+         sets both. One item with two states rather than two items. -->
     <item
         android:id="@+id/action_view_mode"
         android:icon="@drawable/ic_view_list"

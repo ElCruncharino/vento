@@ -1,0 +1,233 @@
+// SPDX-FileCopyrightText: 2026 Patrick Gaskin
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+package net.pgaskin.remotedesktop.backend;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.function.BiConsumer;
+import java.util.function.Function;
+import java.util.function.Predicate;
+
+/**
+ * One setting a backend understands, described well enough for the app to
+ * <em>offer</em> it without knowing what it means.
+ *
+ * <p>A backend is built with an opaque {@code Map<String, String>}, which is
+ * enough to pass options and useless for building a screen out of them. The
+ * alternative to this is a hard-coded list of each backend's parameters in
+ * the app's settings tree, which is the coupling that keeping each backend in
+ * its own module is meant to prevent.
+ *
+ * <p>The values are strings, because that is what the backends' own
+ * configuration layers take: RealVNC's parameter registry parses
+ * {@code "true"}/{@code "30"}/{@code "ZRLE2"} out of strings itself.
+ * {@link Type} says how to ask for one, not how to store it.
+ *
+ * @param key          the backend's own name for it; the map key
+ * @param label        one line, for a preference title
+ * @param summary      the longer explanation, or null
+ * @param type         which control to offer
+ * @param choices      for {@link Type#CHOICE}, in display order; empty otherwise
+ * @param defaultValue what the backend does when nothing is set
+ * @param scope        whose setting it is: the connection's or the backend's
+ * @param live         whether {@link Backend#setOption} does anything mid-session
+ * @param gate         what another option must say for this one to be offered at
+ *                     all, or null
+ */
+public record BackendOption(String key, String label, String summary, Type type,
+                            List<Choice> choices, String defaultValue, Scope scope,
+                            boolean live, Gate gate) {
+
+    public enum Type {
+        /** {@code "true"} / {@code "false"}. */
+        BOOL,
+        /** One of {@link #choices}. */
+        CHOICE,
+        /** A decimal integer. */
+        INT,
+        /** Free text. */
+        TEXT
+    }
+
+    public enum Scope {
+        /**
+         * Belongs to one connection: offered in the editor, stored on the
+         * connection record. View-only and the desktop size are examples:
+         * they are about one machine, and two servers on the same phone want
+         * different answers.
+         */
+        CONNECTION,
+        /**
+         * Belongs to the backend: offered in its settings screen, stored in its
+         * own preference file, and applied to every connection that uses it.
+         * The file is its own so that a backend's settings live and die with
+         * the backend.
+         */
+        GLOBAL,
+        /**
+         * The connection's, with the backend's answer as its default: offered in
+         * both screens, and read from the connection where it has one and from
+         * the backend where it has not. The encoding and how much of the picture
+         * may be thrown away are examples: mostly a fact about the link this
+         * phone is on rather than about one machine, but with one machine always
+         * able to disagree.
+         *
+         * <p>An editor stores an override only where the answer differs from
+         * what the connection would do anyway, so moving the backend's answer
+         * moves every connection that agreed with it and leaves the rest.
+         */
+        LAYERED
+    }
+
+    /**
+     * A value and what to call it on screen.
+     *
+     * @param summary  why to pick this one over the others, or null. A value
+     *                 whose label says everything has none, which is nearly all
+     *                 of them; where one is given, the choice is offered as a
+     *                 list of described items rather than as a menu of labels,
+     *                 since a menu has no room for a line of prose. Only the
+     *                 connection editor draws these.
+     * @param requires the key of a {@code BOOL} option this choice depends on,
+     *                 or null. A choice whose dependency is off is not offered
+     *                 at all. This is for something a backend can do but should
+     *                 not do unasked (a lossy encoding, say): offering it as a
+     *                 preference while it is switched off would offer something
+     *                 that cannot happen. One already chosen when the switch
+     *                 goes off goes back to the option's default; see
+     *                 {@link #stranded}.
+     */
+    public record Choice(String value, String label, String summary, String requires) {
+        public Choice(String value, String label) {
+            this(value, label, null, null);
+        }
+    }
+
+    public static BackendOption bool(String key, String label, String summary,
+                                     boolean defaultValue, Scope scope, boolean live) {
+        return new BackendOption(key, label, summary, Type.BOOL, List.of(),
+                Boolean.toString(defaultValue), scope, live, null);
+    }
+
+    public static BackendOption integer(String key, String label, String summary,
+                                        int defaultValue, Scope scope, boolean live) {
+        return new BackendOption(key, label, summary, Type.INT, List.of(),
+                Integer.toString(defaultValue), scope, live, null);
+    }
+
+    public static BackendOption text(String key, String label, String summary,
+                                     String defaultValue, Scope scope, boolean live) {
+        return new BackendOption(key, label, summary, Type.TEXT, List.of(),
+                defaultValue, scope, live, null);
+    }
+
+    public static BackendOption choice(String key, String label, String summary,
+                                       String defaultValue, Scope scope, boolean live,
+                                       Choice... choices) {
+        return new BackendOption(key, label, summary, Type.CHOICE, List.of(choices),
+                defaultValue, scope, live, null);
+    }
+
+    /**
+     * The same option, offered only where another one says one of
+     * {@code values}.
+     *
+     * <p>For a setting a backend <em>has</em> and does not always consult: not a
+     * capability, which is a fact about a live session and belongs on
+     * {@link Backend}, and not a choice that depends on a switch, which is
+     * {@link Choice#requires}. The case it is for is a mode dial that owns
+     * several settings until it is set to the value that hands them back. There,
+     * leaving the row on screen offers a control that does nothing, and greying
+     * it out says "not now" where the accurate answer is "not here".
+     *
+     * <p>The gate is read from the same values the rows are drawn from, so a
+     * screen where the controlling option is missing offers nothing that depends
+     * on it.
+     */
+    public BackendOption when(String key, String... values) {
+        return new BackendOption(this.key, label, summary, type, choices, defaultValue,
+                scope, live, new Gate(key, List.of(values)));
+    }
+
+    /**
+     * @param key    another option's key
+     * @param values the values of it that make this option worth offering
+     */
+    public record Gate(String key, List<String> values) {
+        public boolean open(String value) {
+            return value != null && values.contains(value);
+        }
+    }
+
+    /**
+     * For a {@link Type#CHOICE}: the choice {@code value} names, where it
+     * {@link Choice#requires requires} a switch that {@code on} says is off, or
+     * null. Such a value is left over after its switch went off, and is not
+     * what the backend would do either (TigerVNC's {@code h264} without
+     * {@code H264} negotiates something else), so a screen must not keep it
+     * selected. {@code api::options::Spec::stranded}, used by the Linux client,
+     * is the same rule.
+     *
+     * @param on whether the {@code BOOL} option with that key is on
+     */
+    public Choice stranded(String value, Predicate<String> on) {
+        for (Choice c : choices) {
+            if (c.value().equals(value)) {
+                return c.requires() != null && !on.test(c.requires()) ? c : null;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * What a {@link #stranded} choice falls back to: the default, as if it had
+     * never been picked, or the first choice on offer where the default is
+     * stranded too (no list has one that is).
+     */
+    public String fallback(Predicate<String> on) {
+        if (stranded(defaultValue, on) == null) {
+            return defaultValue;
+        }
+        for (Choice c : choices) {
+            if (c.requires() == null || on.test(c.requires())) {
+                return c.value();
+            }
+        }
+        return defaultValue;
+    }
+
+    /**
+     * Every {@link #stranded} choice in {@code options} put back to its
+     * {@link #fallback}, through {@code set}; the keys that moved, in the
+     * options' order. Every screen applies this whenever a switch moves, as
+     * the Linux client does with {@code api::options::Options::settle}; the two
+     * are held to the same cases by {@code backends/api/tests/options.json}.
+     *
+     * @param value what an option says now
+     * @param on    whether the {@code BOOL} option with that key is on
+     */
+    public static List<String> settle(List<BackendOption> options,
+                                      Function<BackendOption, String> value,
+                                      Predicate<String> on,
+                                      BiConsumer<BackendOption, String> set) {
+        final List<String> changed = new ArrayList<>();
+        for (BackendOption o : options) {
+            if (o.type == Type.CHOICE && o.stranded(value.apply(o), on) != null) {
+                set.accept(o, o.fallback(on));
+                changed.add(o.key);
+            }
+        }
+        return changed;
+    }
+
+    /** For a {@link Type#CHOICE}: what to show for {@code value}, or the value itself. */
+    public String labelFor(String value) {
+        for (Choice c : choices) {
+            if (c.value().equals(value)) {
+                return c.label();
+            }
+        }
+        return value;
+    }
+}

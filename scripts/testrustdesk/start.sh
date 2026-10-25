@@ -7,7 +7,7 @@ GEOMETRY="${GEOMETRY:-1920x1200}"
 PASSWORD="${PASSWORD:-rustdeskpass}"
 DIRECT_PORT="${DIRECT_PORT:-21118}"
 # Empty means their default, the public network, which is what makes the id
-# path testable with nothing stood up — the server only introduces the two ends
+# path testable with nothing stood up: the server only introduces the two ends
 # and a punch on one LAN keeps the session off it. A self-hosted hbbs goes here
 # as host:port; `none` registers with nothing and leaves direct IP as the only
 # way in.
@@ -51,8 +51,9 @@ mkdir -p /root/.config/rustdesk
 if [ ! -f /root/.config/rustdesk/RustDesk.toml ]; then
     printf "password = '%s'\n" "$PASSWORD" > /root/.config/rustdesk/RustDesk.toml
 fi
-# verification-method, or a permanent password is set and connections are still
-# asked about on a desktop with nobody at it; approve-mode goes with it.
+# verification-method has to be set as well, or a permanent password is set and
+# connections are still asked about on an unattended desktop; approve-mode goes
+# with it.
 {
     printf "rendezvous_server = '%s'\n" "$RENDEZVOUS"
     printf "nat_type = 0\nserial = 0\n\n[options]\n"
@@ -60,7 +61,7 @@ fi
     printf "direct-access-port = '%s'\n" "$DIRECT_PORT"
     printf "verification-method = 'use-permanent-password'\n"
     printf "approve-mode = 'password'\n"
-    printf "enable-audio = 'N'\n"
+    printf "enable-audio = '%s'\n" "${AUDIO_ENABLE:-N}"
     [ -n "$RENDEZVOUS" ] && printf "custom-rendezvous-server = '%s'\n" "$RENDEZVOUS"
     [ -n "$KEY" ] && printf "key = '%s'\n" "$KEY"
 } > /root/.config/rustdesk/RustDesk2.toml
@@ -72,7 +73,7 @@ SERVER_PID=$!
 
 # The id is not printed here, and that is deliberate. It is generated on first
 # start and written in their obfuscated form, so the only way to read it is to
-# ask their own binary — which is a second process against the same config, and
+# ask their own binary, which is a second process against the same config, and
 # one racing the server as it settles rewrote the file with the permanent
 # password gone. `run.sh id` asks once, later, which is what a person would do.
 

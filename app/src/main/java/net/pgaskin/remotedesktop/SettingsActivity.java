@@ -53,11 +53,11 @@ import java.util.function.Supplier;
 
 /**
  * The settings tree: one activity, a section per screen, and every screen built
- * in code from the same two descriptions the editor uses.
+ * in code from setting descriptions ({@link OptionScreen}).
  *
- * <p>The sections keep separate preference files, which is not tidiness: a
- * backend's settings live and die with the backend, and the input tuning can be exported or reset on its
- * own. {@link AppSettings}, {@link InputSettings} and
+ * <p>The sections keep separate preference files so that a backend's settings
+ * are removed with the backend, and the input tuning can be exported or reset
+ * on its own. {@link AppSettings}, {@link InputSettings} and
  * {@link Options#backendPrefs} are those three files.
  */
 public final class SettingsActivity extends AppCompatToolbarActivity {
@@ -70,16 +70,16 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
     public static final String SECTION_BACKEND = "backend";
     public static final String SECTION_TRANSFER = "transfer";
 
-    /** The host of this is also the source row's summary, in strings.xml. */
+    /** Also the source row's summary in strings.xml, without the scheme. */
     private static final String SOURCE_URL = "https://github.com/pgaskin/vento";
 
-    /** Which section this is, worked out once and before the fragment asks. */
+    /** Which section this is, resolved once before the fragment reads it. */
     private String section;
 
     /**
-     * The extra where there is one, and otherwise what the component that was
-     * started says it is: the system's "Manage space" button can only name a
-     * component, so the alias it names carries the section as meta-data (see the
+     * The extra if there is one, and otherwise the started component's
+     * meta-data: the system's "Manage space" button can only name a component,
+     * so the alias it names carries the section as meta-data (see the
      * manifest). Null for the root, which is how every other caller opens this.
      */
     private String resolveSection() {
@@ -125,9 +125,8 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
 
         /**
          * Each section configures where its values are stored <em>before</em>
-         * building the screen — a preference persists through whatever the
-         * manager was pointed at when it was attached, so the order is not a
-         * matter of taste.
+         * building the screen: a preference persists through whatever store the
+         * manager had when the preference was attached, so the order matters.
          */
         @Override
         public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
@@ -152,17 +151,14 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
          * The rows as groups: contiguous rows on a container with large corners,
          * a group ending wherever a category does.
          *
-         * <p>This is the whole of the mechanism. {@code androidx.preference} has
-         * one background per row and no idea that a run of them is one thing, so
-         * where a row sits in its run is worked out here — from its neighbours,
-         * since that is what a run is — and {@link RowGroups} turns the answer
-         * into a background and the gaps around it.
+         * <p>{@code androidx.preference} has one background per row and no
+         * concept of a group of rows, so a row's position in its group is worked
+         * out here from its neighbours, and {@link RowGroups} turns that into a
+         * background and the gaps around it.
          */
         // PreferenceGroupAdapter is androidx-internal, and subclassing it is the
-        // only way to see a row's neighbours: the adapter is what knows the
-        // flattened order, and onCreateAdapter is where a screen is allowed to
-        // supply its own. Their alternative is one background per row, which is
-        // the thing this exists to replace.
+        // only way to see a row's neighbours: the adapter knows the flattened
+        // order, and onCreateAdapter is where a screen can supply its own.
         @SuppressLint("RestrictedApi")
         @Override
         protected RecyclerView.Adapter<PreferenceViewHolder> onCreateAdapter(
@@ -182,18 +178,17 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
                             gapAfter(position, row));
                 }
 
-                /** A heading, or the end of the screen, which bounds a run alike. */
+                /** A heading or the end of the screen, either of which ends a group. */
                 private boolean heading(int position) {
                     return position < 0 || position >= getItemCount()
                             || getItem(position) instanceof PreferenceCategory;
                 }
 
                 /**
-                 * Under the last row of a group there is nothing, because a
-                 * heading brings its own space — unless the next category has no
-                 * title, which is how a screen asks for a break with no heading
-                 * over it. Then this row is the only thing holding the two
-                 * groups apart.
+                 * No gap under the last row of a group, because a heading has
+                 * its own space, unless the next category has no title, which is
+                 * how a screen asks for a break with no heading. Then this gap is
+                 * the only thing separating the two groups.
                  */
                 private int gapAfter(int position, View row) {
                     if (position + 1 >= getItemCount()) {
@@ -211,9 +206,8 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
         @Override
         public void onViewCreated(View view, Bundle savedInstanceState) {
             super.onViewCreated(view, savedInstanceState);
-            // The rule between two rows was what said they belonged together;
-            // now the container does, and a line across it would cut a group in
-            // half.
+            // The group's container shows that rows belong together, and a
+            // divider would cut through it.
             setDivider(null);
             setDividerHeight(0);
             final RecyclerView list = getListView();
@@ -233,9 +227,8 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
                     () -> a.open(SECTION_INPUT)));
             screen.addPreference(heading(R.string.settings_group_backends));
             for (String id : Backends.ids()) {
-                // A backend still waiting for something it has to be given
-                // offers that instead of its screen: what is behind this row is
-                // a set of answers for a connection that cannot be made yet.
+                // A backend that still needs setup opens its setup instead of
+                // its settings screen, since it cannot connect yet.
                 final Preference p = link(0, 0, () -> Backends.isSetup(a, id, ready -> {
                     if (ready) {
                         a.openBackend(id);
@@ -265,22 +258,21 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
 
         /**
          * The root screen's backend rows, by id, and empty on every other
-         * screen. Coming back from an add-on's setup activity is the only
-         * report there is that it worked, so what a row says and does is
-         * decided again each time this screen resumes.
+         * screen. Returning from an add-on's setup activity is the only sign
+         * that setup worked, so each row's summary is updated on every resume.
          */
         private final Map<String, Preference> backendRows = new LinkedHashMap<>();
 
         @Override
         public void onResume() {
             super.onResume();
-            versionTaps = 0; // a count that spans two visits is not a run of taps
+            versionTaps = 0; // taps across two visits do not count as one run
             final String notSetUp = getString(R.string.settings_backend_setup);
             for (Map.Entry<String, Preference> row : backendRows.entrySet()) {
                 final Preference p = row.getValue();
-                // `isAdded` as well as the rule the seam applies: the activity
-                // outlives this fragment by a whole screen, and a row of one
-                // that has been replaced is not one anybody is looking at.
+                // `isAdded` in addition to Backends.isSetup's own check on the
+                // activity: the activity can outlive this fragment, and the
+                // rows of a replaced fragment are no longer shown.
                 Backends.isSetup(requireContext(), row.getKey(), ready -> {
                     if (isAdded()) {
                         p.setSummary(ready ? null : notSetUp);
@@ -299,9 +291,9 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
             return c;
         }
 
-        /** Caught rather than guarded: a phone with nothing to open a link with
-         *  cannot be asked about one either, since resolving an https intent
-         *  needs a package-visibility declaration to answer at all. */
+        /** Caught rather than checked first: resolving an https intent needs a
+         *  package-visibility declaration, so the app cannot ask in advance
+         *  whether anything will open it. */
         private void openSource() {
             try {
                 startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(SOURCE_URL)));
@@ -311,10 +303,9 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
         }
 
         /**
-         * Which build this is, under the licences and the source it was built
-         * from. An informational row that is nonetheless selectable, because it
-         * is also the way in to {@link #tapVersion the developer rows} and a row
-         * that cannot be selected cannot be tapped ten times either.
+         * Which build this is, under the licences and the source link. An
+         * informational row that is still selectable, because tapping it is
+         * also how {@link #tapVersion the developer rows} are unlocked.
          */
         private Preference version() {
             final Preference p = new Preference(requireContext());
@@ -330,22 +321,21 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
             return p;
         }
 
-        /** Where the count is kept, and reset by leaving the screen. */
+        /** The tap count, reset by leaving the screen. */
         private int versionTaps;
 
-        /** The last thing said about it, cancelled so taps do not queue up. */
+        /** The last toast shown, cancelled so toasts do not queue up. */
         private Toast versionToast;
 
         /**
-         * The way in, and the same one Android uses for its own developer
-         * options: ten taps on the version, silent for the first six so that
-         * nobody arrives here by mistake, then counting down so that somebody
-         * who has started can tell they are getting somewhere.
+         * Unlocks developer mode the same way as Android's own developer
+         * options: ten taps on the version, silent for the first six so it is
+         * not found by accident, then counting down so the user can see
+         * progress.
          *
-         * <p>Toasts rather than this screen's snackbars: what is being said is
-         * about the tapping rather than about the row, it has to survive the
-         * next tap replacing it, and a countdown that shoves the list up and
-         * down nine times is a worse joke than the one being told.
+         * <p>Toasts rather than this screen's snackbars: the message is about the
+         * tapping rather than the row, each tap replaces the previous one, and a
+         * snackbar countdown would push the list up and down repeatedly.
          */
         private void tapVersion() {
             final Context ctx = requireContext();
@@ -416,9 +406,9 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
             screen.addPreference(switchPref(AppSettings.KEY_MAC_KEYS,
                     R.string.settings_mac_keys,
                     R.string.settings_mac_keys_summary, true));
-            // The two rows about the session's controls, beside each other:
-            // which affordance it has, and whether it says so on the first
-            // frame — where the same choice is offered again.
+            // The two rows about the session's controls, next to each other:
+            // which controls it has, and whether the first frame explains them
+            // (and offers the same choice again).
             screen.addPreference(controls());
             screen.addPreference(switchPref(AppSettings.KEY_REGION_HINTS,
                     R.string.settings_region_hints,
@@ -433,9 +423,9 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
                     R.string.settings_release_keys,
                     R.string.settings_release_keys_summary, true));
 
-            // Turning previews off deletes the ones already taken. Leaving them
-            // would make the switch a promise about the future only, and the
-            // pictures on disk are what somebody turning it off means.
+            // Turning previews off deletes the existing ones too, not only
+            // future ones: the previews already on disk are the reason to turn
+            // it off.
             final SwitchPreferenceCompat previews = switchPref(AppSettings.KEY_PREVIEWS,
                     R.string.settings_previews, R.string.settings_previews_summary, true);
             previews.setOnPreferenceChangeListener((p, v) -> {
@@ -448,7 +438,7 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
             store.built();
         }
 
-        /** Which affordance a session offers, of the two and the pair of them. */
+        /** Which controls a session offers: toolbar, tap regions, or both. */
         private ListPreference controls() {
             final ListPreference p = new ListPreference(requireContext());
             p.setKey(AppSettings.KEY_CONTROLS);
@@ -475,9 +465,9 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
         }
 
         /**
-         * The one row on this screen that is not a switch. Its values are
-         * minutes, which is what {@link AppSettings} parses, and its labels are
-         * the same ones a session that closed itself explains with.
+         * The session timeout. Its values are minutes, as {@link AppSettings}
+         * parses them, and its labels are the same ones a session that timed
+         * out shows.
          */
         private ListPreference sessionTimeout() {
             final ListPreference p = new ListPreference(requireContext());
@@ -493,15 +483,15 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
                     .toArray(CharSequence[]::new));
             p.setDefaultValue("0");
             // The label rather than the row's own entry, which is null for a
-            // value that is not one of the twelve — a file from another build
-            // is allowed to say four hours and a half.
+            // value not in the list: an imported file may contain any number
+            // of minutes.
             p.setSummaryProvider(x -> AppSettings.timeoutLabel(requireContext(),
                     AppSettings.sessionTimeout(requireContext()))
                     + "\n" + getString(R.string.settings_session_timeout_summary));
             // Every live session's deadline is computed from when it left the
-            // screen, so a change here is a re-arm and nothing else — and the
-            // listener runs before the value is stored, which is why the
-            // re-arm is posted rather than done from inside it.
+            // screen, so a change here only re-arms the timers. The listener
+            // runs before the value is stored, so the re-arm is posted rather
+            // than run inside it.
             p.setOnPreferenceChangeListener((x, v) -> {
                 requireView().post(Sessions::timeoutChanged);
                 return true;
@@ -531,8 +521,8 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
             OptionScreen.addTunables(screen, InputSettings.tunables(),
                     InputSettings.defaults(getResources().getDisplayMetrics().density));
 
-            // On a break of its own: an action among the values it acts on
-            // reads as one more of them.
+            // In a separate group, so the action does not look like one of the
+            // values it resets.
             screen.addPreference(heading(0));
             final Preference reset = new Preference(requireContext());
             reset.setTitle(R.string.settings_reset);
@@ -554,12 +544,11 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
             getPreferenceManager().setPreferenceDataStore(store);
             final PreferenceScreen screen = newScreen();
             OptionScreen.addOptions(screen, Backends.options(id), BackendOption.Scope.GLOBAL);
-            // Under a heading of their own, because these rows answer a
-            // different question from the ones above them: not "what does this
-            // backend do" but "what does a connection do when it has not been
-            // told". With nothing above them there is nothing to tell them
-            // apart from, and a screen whose whole content is one heading says
-            // less than no heading at all.
+            // Under their own heading, because these rows differ from the ones
+            // above: they are not the backend's settings but the defaults for
+            // connections that do not override them. With nothing above them
+            // the heading is left out, since a screen with one heading and
+            // nothing to contrast it with is clearer without it.
             PreferenceGroup into = screen;
             if (screen.getPreferenceCount() > 0) {
                 final PreferenceCategory defaults = new PreferenceCategory(requireContext());
@@ -570,19 +559,17 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
             }
             OptionScreen.addOptions(into, Backends.options(id), BackendOption.Scope.LAYERED);
 
-            // A backend that came out of an add-on says so, and the row is the
-            // way to the thing itself: the system's own page for that package,
-            // which is where it is uninstalled, its storage cleared and its
-            // version read. In a group of its own because it is a fact about
-            // where this backend is, not a setting.
+            // A backend from an add-on says so, and the row opens the system's
+            // page for that package, where it can be uninstalled, its storage
+            // cleared and its version seen. In its own group because it is
+            // information about the backend, not a setting.
             final String plugin = Backends.packageOf(id);
             if (plugin != null) {
                 screen.addPreference(heading(0));
-                // An add-on carrying anything of anybody else's generates a
-                // licence page of its own, since it is a separate build under
-                // its own terms and the app's page says nothing about it. It
-                // has no screen to show one on, so it is shown here, above the
-                // row that leads out of the app.
+                // An add-on containing third-party code generates its own
+                // licence page, since it is a separate build under its own terms
+                // and the app's page does not cover it. It is shown from here,
+                // above the row that leads out of the app.
                 if (LicensesActivity.has(requireContext(), plugin)) {
                     screen.addPreference(link(R.string.settings_licenses, 0,
                             () -> startActivity(LicensesActivity.of(requireContext(), plugin))));
@@ -607,16 +594,13 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
                     () -> exportSettings.launch(fileName(Transfer.KIND_SETTINGS))));
             screen.addPreference(link(R.string.transfer_import,
                     R.string.transfer_import_summary,
-                    // Anything, because a file that came back from somebody's
-                    // mail or a cloud drive arrives with whatever type that
-                    // service decided on, and the only check worth trusting is
-                    // of what is inside it.
+                    // Any type, because a file from email or a cloud drive
+                    // arrives with whatever type that service assigned, and the
+                    // only reliable check is of its contents.
                     () -> importFile.launch(new String[]{"*/*"})));
-            // Beside the import and the export because they act on the whole of
-            // what is stored at once, and in a group of their own because they
-            // are the ones that destroy something. Each is one store: what a row
-            // deletes is said on the row, and nothing here deletes two things
-            // out of a person's answer to one question.
+            // Next to import and export because they act on everything stored
+            // at once, and in their own group because they delete data. Each
+            // row deletes one store, named on the row, and no row deletes two.
             screen.addPreference(heading(0));
             screen.addPreference(link(R.string.settings_reset_all,
                     R.string.settings_reset_all_summary, this::confirmResetAll));
@@ -625,20 +609,17 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
                     this::confirmDeleteConnections));
             screen.addPreference(link(R.string.settings_forget_hosts,
                     R.string.settings_forget_hosts_summary, this::confirmForgetHosts));
-            // Only where there is a plugin to have handed a library over, or a
-            // copy left by one that has gone: on a phone with neither, the row
-            // is a question about a thing that does not exist here.
+            // Only when a plugin is installed that could have provided a
+            // library, or a copy is left from one that has been removed.
             if (!Backends.installedPlugins(requireContext()).isEmpty()
                     || Plugins.hasLibraries(requireContext())) {
                 screen.addPreference(link(R.string.settings_clear_libraries,
                         R.string.settings_clear_libraries_summary, this::confirmClearLibraries));
             }
-            // Same rule as the row above it, and for the same reason: only where
-            // there is something for it to be about. Nothing writes a recording
-            // on a phone that has not asked for the playground's recorders, and
-            // one that has since stopped asking — "Restore defaults" clears the
-            // flag — still gets the row while its recordings are on disk, since
-            // a folder with no way to empty it is worse than a row nobody needs.
+            // Likewise only when relevant. Recordings are only written in
+            // developer mode, and after it is turned off ("Restore defaults"
+            // clears the flag) the row stays while recordings remain on disk, so
+            // there is always a way to delete them.
             if (AppSettings.developerMode(requireContext())
                     || Recordings.any(requireContext())) {
                 screen.addPreference(link(R.string.settings_delete_recordings,
@@ -648,14 +629,13 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
         }
 
         /**
-         * Both directions through the storage access framework: no permission to
-         * ask for, and the file is somewhere the person picked rather than
-         * somewhere this app decided on.
+         * Both directions use the storage access framework: no permission is
+         * needed, and the user picks the file's location.
          *
          * <p>Registered as fields, since a launcher has to exist before the
-         * fragment is started — and one per document, which is what keeps the
-         * result callback from having to remember which button was pressed
-         * across a process that may have died while the picker was up.
+         * fragment is started, and one per document, so the result callback
+         * does not have to remember which button was pressed across a process
+         * that may have died while the picker was open.
          */
         private final ActivityResultLauncher<String> exportConnections =
                 registerForActivityResult(
@@ -670,19 +650,17 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
                 new ActivityResultContracts.OpenDocument(), this::read);
 
         /**
-         * Whether the export being picked a destination for is taking the
-         * passwords with it, which is the one thing the launcher above cannot
-         * carry. False if this screen has been rebuilt since — a process that
-         * died while the picker was up writes the file without them, which is
-         * the harmless way for that to go wrong.
+         * Whether the export awaiting a destination includes the passwords,
+         * which the launcher above cannot carry. False if this screen has been
+         * rebuilt since: a process that died while the picker was open writes
+         * the file without them, which is the harmless failure.
          */
         private boolean withPasswords;
 
         /**
-         * The passwords are the whole of the question here, so it is asked
-         * before the destination is: on, this writes every saved password in
-         * plain text and the lock screen comes first; off, the file is a list of
-         * machines with no keys to them and there is nothing to gate.
+         * Asks about the passwords before the destination: if included, every
+         * saved password is written in plain text, so the lock screen comes
+         * first; if not, the file has no secrets and nothing needs a lock.
          */
         private void exportConnections() {
             final View view = LayoutInflater.from(requireContext())
@@ -710,15 +688,13 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
         }
 
         /**
-         * The lock screen, in front of a file that is about to contain every
-         * saved password in the clear — {@code BiometricPrompt} with a device
-         * credential allowed, which is the platform's own class and so brings
-         * nothing new into the build.
+         * The lock screen, before writing a file with every saved password in
+         * the clear: {@code BiometricPrompt} with a device credential allowed,
+         * a platform class, so it adds no dependency.
          *
-         * <p>Before the picker rather than after it, so a prompt that is
-         * cancelled leaves no empty document behind at the destination. A phone
-         * with no credential set goes ahead: the gate is the lock screen, and
-         * there is not one to put in the way.
+         * <p>Before the picker rather than after it, so a cancelled prompt leaves
+         * no empty document at the destination. A phone with no credential set
+         * goes ahead, since there is no lock screen to show.
          */
         private void credential(Runnable then) {
             final Context ctx = requireContext();
@@ -733,9 +709,9 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
             new BiometricPrompt.Builder(ctx)
                     .setTitle(getString(R.string.transfer_unlock_title))
                     .setDescription(getString(R.string.transfer_unlock_message))
-                    // No negative button, which is not a choice: the builder
-                    // refuses one alongside a device credential, since the
-                    // credential screen brings its own way out.
+                    // No negative button: the builder rejects one together with
+                    // a device credential, since the credential screen has its
+                    // own cancel.
                     .setAllowedAuthenticators(allowed)
                     .build()
                     .authenticate(new CancellationSignal(), ctx.getMainExecutor(),
@@ -752,7 +728,7 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
 
         private void write(Uri uri, String kind) {
             if (uri == null) {
-                return; // the picker was left rather than used
+                return; // the picker was cancelled
             }
             final Context ctx = requireContext().getApplicationContext();
             final boolean passwords = withPasswords;
@@ -760,9 +736,9 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
             io(() -> {
                 try {
                     final Transfer.Document doc = Transfer.write(ctx, kind, passwords);
-                    // "wt", not "w": an existing document is opened as it is,
-                    // and a shorter export written over a longer one would
-                    // otherwise keep the tail of what was there.
+                    // "wt", not "w": "w" does not truncate an existing document,
+                    // so a shorter export written over a longer one would keep
+                    // the old tail.
                     try (OutputStream out = ctx.getContentResolver().openOutputStream(uri, "wt")) {
                         if (out == null) {
                             throw new IOException("nothing to write to at " + uri);
@@ -790,8 +766,8 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
                     if (in == null) {
                         throw new IOException("nothing to read at " + uri);
                     }
-                    // One byte past what this app would ever write, so a video
-                    // picked by mistake is refused rather than decoded.
+                    // One byte more than this app ever writes, so a video
+                    // picked by mistake is rejected rather than decoded.
                     final byte[] bytes = in.readNBytes(Transfer.MAX_BYTES + 1);
                     if (bytes.length > Transfer.MAX_BYTES) {
                         throw new IOException("larger than any file this app writes");
@@ -807,9 +783,9 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
         }
 
         /**
-         * What the file turned out to hold, said before anything is applied —
-         * and the one destructive way to apply it, which is the same offer for
-         * either kind: what is here goes first, so what lands is the file.
+         * Shows what the file contains before anything is applied, with the
+         * one destructive option, the same for either kind: delete the
+         * existing data first, so the result matches the file.
          */
         private void confirmImport(Transfer.Document doc) {
             final boolean connections = Transfer.KIND_CONNECTIONS.equals(doc.kind());
@@ -848,8 +824,8 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
                             r.total(), r.applied(), r.total());
                     if (!connections) {
                         // The screens behind this one are built from the values
-                        // that have just moved, and so is every running
-                        // session's deadline.
+                        // that just changed, and so is every running session's
+                        // deadline.
                         Sessions.timeoutChanged();
                         rebuild();
                     }
@@ -857,12 +833,12 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
             });
         }
 
-        // ---- reset, and the other four ways of destroying something -------
+        // ---- reset, and the other four destructive actions --------------
 
         /**
-         * The shape all five share: the row's own summary as the question, since
-         * what a row says it will delete is exactly what has to be confirmed,
-         * and saying it twice in two wordings is how the two come to disagree.
+         * The dialog all five share, using the row's own summary as the
+         * question: it states exactly what the row deletes, and a second
+         * wording could come to disagree with it.
          */
         private void confirm(int title, int message, int action, Runnable go) {
             new MaterialAlertDialogBuilder(requireContext(),
@@ -891,8 +867,8 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
 
         /**
          * The records and their previews. A session that is already open is not
-         * touched: it is a connection to a machine rather than a row in a file,
-         * and ending one is something the person is doing elsewhere.
+         * affected: it is a live connection rather than a saved record, and is
+         * ended from its own screen.
          */
         private void confirmDeleteConnections() {
             confirm(R.string.settings_delete_connections_confirm,
@@ -913,9 +889,9 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
         }
 
         /**
-         * The app's copies of what an add-on has handed over. Nothing is lost
-         * that the add-on cannot hand over again, which is why this asks in
-         * plainer terms than the rows above it.
+         * The app's copies of libraries provided by add-ons. Nothing is lost
+         * that the add-on cannot provide again, which is why this is worded
+         * less strongly than the rows above it.
          */
         private void confirmClearLibraries() {
             confirm(R.string.settings_clear_libraries_confirm,
@@ -923,8 +899,8 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
                     R.string.settings_clear, () -> {
                         Plugins.clearLibraries(requireContext());
                         said(R.string.settings_clear_libraries_done);
-                        // The row is offered only while there is something to
-                        // delete, and there no longer is unless a plugin is
+                        // The row is only shown while there is something to
+                        // delete, which is now only the case if a plugin is
                         // installed.
                         rebuild();
                     });
@@ -936,9 +912,8 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
                     R.string.settings_delete, () -> {
                         final int deleted = Recordings.clear(requireContext());
                         saidCount(R.plurals.settings_delete_recordings_done, deleted, deleted);
-                        // As with the libraries: on a phone that is no longer a
-                        // developer, this row was the last of them and has just
-                        // finished being needed.
+                        // As with the libraries: with developer mode off, the
+                        // row is no longer needed.
                         rebuild();
                     });
         }
@@ -948,10 +923,10 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
         private static final String TAG = "Settings";
 
         /**
-         * A document provider is another process and sealing a password is a
-         * keystore round trip each, so both directions run off the main thread.
-         * What the work returns is what to tell the person, run back here and
-         * only while there is still a screen to say it on.
+         * A document provider is another process, and encrypting or decrypting
+         * a password is a keystore round trip, so both directions run off the
+         * main thread. The work returns the result report, which runs back on
+         * the main thread and only while the screen is still there.
          */
         private static final ExecutorService IO = Executors.newSingleThreadExecutor(r -> {
             final Thread t = new Thread(r, "transfer");
@@ -971,18 +946,18 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
             });
         }
 
-        /** What an import or an export did, on the screen it was asked from. */
+        /** Reports the result of an action on the screen it was started from. */
         private void said(int text, Object... args) {
             Snackbar.make(requireView(), getString(text, args), Snackbar.LENGTH_LONG).show();
         }
 
-        /** The same, where the number in the sentence decides its wording. */
+        /** The same, with a plural chosen by {@code count}. */
         private void saidCount(int text, int count, Object... args) {
             Snackbar.make(requireView(), getResources().getQuantityString(text, count, args),
                     Snackbar.LENGTH_LONG).show();
         }
 
-        /** Long enough to read and not going anywhere, which a toast is not. */
+        /** A dialog rather than a toast, so it stays until it is read. */
         private void problem(int message) {
             new MaterialAlertDialogBuilder(requireContext(),
                     R.style.ThemeOverlay_RemoteDesktop_Dialog)
@@ -992,15 +967,15 @@ public final class SettingsActivity extends AppCompatToolbarActivity {
                     .show();
         }
 
-        /** Dated, because the useful thing to do with two of these is compare them. */
+        /** Dated, so two exports can be told apart and compared. */
         private String fileName(String kind) {
             return kind + "-" + LocalDate.now() + ".json";
         }
 
         /**
-         * Redraw the screen from the stored values. Every row here defaults to
-         * something computed — the stack's own value — so clearing an override
-         * has to rebuild the rows rather than just refresh them.
+         * Rebuilds the screen from the stored values. Rows default to computed
+         * values (such as the input stack's own), so clearing an override has to
+         * rebuild the rows rather than refresh them.
          */
         private void rebuild() {
             requireActivity().getSupportFragmentManager().beginTransaction()

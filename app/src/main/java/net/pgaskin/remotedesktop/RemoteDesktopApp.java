@@ -10,13 +10,12 @@ import com.google.android.material.color.DynamicColors;
 import net.pgaskin.remotedesktop.backend.Backends;
 
 /**
- * Material You, in one line: every activity gets the system palette.
+ * Applies Material You: every activity gets the system palette.
  *
- * <p>minSdk 34 is well past the API 31 floor for
- * {@code android.R.color.system_accent1_*}, so there is no fallback path to
- * write. The session screen takes none of this — it draws
- * itself, over somebody else's desktop, where a phone's accent colour has no
- * business.
+ * <p>minSdk 34 is well past the API 31 minimum for
+ * {@code android.R.color.system_accent1_*}, so there is no fallback path. The
+ * session screen does not use the palette: it draws over a remote desktop,
+ * where the phone's accent colour does not belong.
  */
 public final class RemoteDesktopApp extends Application {
 
@@ -25,16 +24,15 @@ public final class RemoteDesktopApp extends Application {
         super.onCreate();
         DynamicColors.applyToActivitiesIfAvailable(this);
 
-        // Before anything can ask what this app can connect with, and here
-        // rather than in an activity because the service is an entry point too.
+        // Before anything queries the available backends, and here rather than
+        // in an activity because the service is an entry point too.
         Backends.discover(this);
 
         // The launcher's copy of the connection list, which is otherwise only
-        // rewritten when the list is. Every other way one can be wrong happens
-        // while this app is not running: a restored backup, or an upgrade from
-        // a version that published none. Off the main thread, and cheap enough
-        // that asking on every start is simpler than remembering whether it
-        // has been asked.
+        // rewritten when the list is. It can also go stale while this app is
+        // not running: a restored backup, or an upgrade from a version that
+        // published none. Off the main thread, and cheap enough to do on every
+        // start rather than tracking whether it is needed.
         Shortcuts.publish(this);
     }
 }

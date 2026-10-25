@@ -3,8 +3,8 @@
 package com.realvnc.vncviewer.jni;
 
 /**
- * The session's status line — "Connecting…", "Authenticating…", and the rest of
- * the core's own account of what it is doing. Localised by the core.
+ * The session's status line: "Connecting…", "Authenticating…" and the core's
+ * other progress messages. Localised by the core.
  *
  * <p>Required by
  * {@code Java_com_realvnc_vncviewer_jni_StatusNotificationBindings_setStatusNotifier}

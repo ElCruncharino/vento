@@ -3,10 +3,10 @@
     SPDX-FileCopyrightText: 2026 Patrick Gaskin
     SPDX-License-Identifier: GPL-3.0-or-later
 
-    A dialog that says something and asks one more thing on the way past: an
-    export asked whether to take the passwords, an import whether to delete what
-    is already here. A message and a list are the two things an AlertDialog will
-    not show at once, so the pair is a view of its own.
+    A dialog with a message and one checkbox: an export asks whether to include
+    the passwords, an import whether to delete the existing data first. An
+    AlertDialog cannot show a message and a choice list together, so this is a
+    custom view.
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"

@@ -1230,6 +1230,12 @@ layer, this claims pointers before the gesture layer sees them — so nothing
 arbitrates between them, and both hand the host the same four names, which is
 what stops them drifting apart in what they do.
 
+**Nothing on it that the regions lack**, and the reverse: a person may have
+either one alone, so a button only the toolbar has is a thing the other half
+cannot reach. A host with more to offer puts it where both can get to it — the
+app's sound switch is on the connection panel, which the `information` button
+and region both open. It keeps the column at the 200 dp below, too.
+
 **Flush to the left edge**, whatever that edge costs — a column indented by a
 corner radius reads as a panel that has come loose — and held off the top and
 the bottom, which is where a bar, a cutout or the key row is.

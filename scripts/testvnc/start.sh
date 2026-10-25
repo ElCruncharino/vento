@@ -8,12 +8,12 @@ VNC_PASSWORD="${VNC_PASSWORD:-vncpass}"
 # the same password is the whole of the setup, and it is a throwaway container.
 PLAIN_USER="${PLAIN_USER:-root}"
 # VncAuth alone by default, so a connection always exercises the password
-# prompt. Set SECURITY_TYPES=None for a server that needs no answer at all —
+# prompt. Set SECURITY_TYPES=None for a server that needs no answer at all,
 # useful for isolating "did the prompt hang?" from "did the connection fail?".
 # X509Vnc / X509None / X509Plain put VeNCrypt in front of that, which is what
 # the client's TLS was developed against; RA2 and RA2ne are RSA-AES, which is
-# what a RealVNC Server offers and the one security type only the TigerVNC
-# backend can do.
+# what a RealVNC Server offers, and of the open-source backends only TigerVNC
+# implements it.
 SECURITY_TYPES="${SECURITY_TYPES:-VncAuth}"
 # Whether the desktop may be resized from the viewer. It could not until the
 # viewer could ask, and both answers are worth having: 0 makes the server
@@ -24,7 +24,7 @@ ACCEPT_RESIZE="${ACCEPT_RESIZE:-1}"
 # The server's own certificate, made once per container and self-signed,
 # because that is what a VNC server anywhere actually presents. Its fingerprint
 # is printed here so that what the phone shows can be checked against something
-# that is not the phone — the whole point of pinning a key nobody vouches for.
+# that is not the phone, which is the point of pinning a key no CA vouches for.
 mkdir -p /root/.vnc
 if [ ! -f /root/.vnc/cert.pem ]; then
     openssl req -new -x509 -days 3650 -nodes -batch \
@@ -38,8 +38,8 @@ echo "certificate: $(openssl x509 -in /root/.vnc/cert.pem -noout -fingerprint -s
 # The RSA key the RSA-AES security types authenticate the *server* with, which
 # is a different key from the certificate above and a different check: no
 # certificate, no authority, just a key whose fingerprint the client shows. The
-# eight bytes printed here are TigerVNC's own fingerprint of it — SHA-1 over the
-# key length and then the modulus and exponent, each padded to the key size —
+# eight bytes printed here are TigerVNC's own fingerprint of it (SHA-1 over the
+# key length and then the modulus and exponent, each padded to the key size),
 # so that what the phone shows can again be checked against something else.
 if [ ! -f /root/.vnc/rsa_key ]; then
     openssl genrsa -out /root/.vnc/rsa_key -traditional 2048 >/dev/null 2>&1

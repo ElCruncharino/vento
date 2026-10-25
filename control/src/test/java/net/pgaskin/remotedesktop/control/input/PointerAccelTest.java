@@ -26,8 +26,8 @@ public class PointerAccelTest {
 
     /**
      * The ported curve on its own. {@code improved} ships the adaptive gate and
-     * the axis lock on; the tests for those turn
-     * them back on one at a time, so that what each one adds stays visible.
+     * the axis lock on; the tests for those turn them back on one at a time, so
+     * that what each one adds stays visible.
      */
     private static Config cfg() {
         final Config c = Config.improved(Harness.DENSITY);
@@ -146,7 +146,7 @@ public class PointerAccelTest {
                 c.accelMin, run(c, SLOW, 16)[2], 1e-4);
     }
 
-    /** The whole point of the gate is that a flick is untouched by it. */
+    /** The gate must leave a flick untouched. */
     @Test
     public void adaptiveLeavesFastMovementExactlyAlone() {
         final Config c = cfg();
@@ -188,7 +188,7 @@ public class PointerAccelTest {
     /**
      * A circle is near-axial four times per revolution, so the ratio test on its
      * own flattens four arcs of it. What tells a circle apart from a drag along
-     * an axis is that its direction keeps turning while the ratio test is happy.
+     * an axis is that its direction keeps turning while the ratio test passes.
      */
     @Test
     public void aSlowCircleIsNotLocked() {

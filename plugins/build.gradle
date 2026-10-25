@@ -5,11 +5,11 @@ plugins {
     id 'com.android.library'
 }
 
-// The add-on side of the arrangement `:backends` holds the app side of: where a
-// verified file lives, how it crosses from one uid to the other, and the shape
-// of the screen that acquires it. One consumer today, and it is written as a
-// contract anyway for the reason `:backends` is — a contract that lives inside
-// its only implementation is not one.
+// The add-on side of the contract whose app side is in `:backends`: where a
+// verified file is stored, how it is passed from one uid to the other, and the
+// layout of the screen that obtains it. It has one consumer so far, and is a
+// separate module for the same reason `:backends` is: a contract kept inside
+// its only implementation is not enforced.
 android {
     namespace = 'net.pgaskin.remotedesktop.plugin'
     compileSdk 36
@@ -25,8 +25,8 @@ android {
 }
 
 dependencies {
-    // For the discovery action and, in the app's process, which add-on a class
-    // was loaded from. Nothing here names a protocol.
+    // For the discovery action and, in the app's process, finding which add-on
+    // a class was loaded from. Nothing here depends on a protocol.
     api project(':backends')
 }
 

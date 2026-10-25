@@ -1,0 +1,21 @@
+# Generates the Android app's Java: a host tool that writes the sources each
+# module compiles from `remotedesktop-api`, so a backend's name, options and
+# JNI surface are defined once, in Rust. Gradle runs it as a generated-source
+# task (`GenerateJavaTask` in `backends/buildSrc`); its output is not checked
+# in.
+[package]
+name = "remotedesktop-codegen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "vento-codegen"
+path = "src/main.rs"
+
+[dependencies]
+remotedesktop-api.workspace = true
+# Only its `surface` table (the natives each module's class declares), the
+# only part of it that builds on a host.
+remotedesktop-platform-android.workspace = true

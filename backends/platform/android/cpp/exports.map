@@ -1,0 +1,11 @@
+/* The exports of a C backend's library: only the entry point the runtime
+   looks up by name. Everything else (the session, the library under it, the
+   Rust crate and its standard library) is reached through the natives
+   `JNI_OnLoad` registers, so nothing else needs to be in the dynamic symbol
+   table, and the linker can drop anything unreachable. */
+{
+    global:
+        JNI_OnLoad;
+    local:
+        *;
+};

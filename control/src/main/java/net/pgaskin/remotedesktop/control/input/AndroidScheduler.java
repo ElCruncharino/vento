@@ -31,9 +31,8 @@ public final class AndroidScheduler implements Scheduler {
     public void postFrame(Runnable r) {
         Choreographer.FrameCallback cb = frames.get(r);
         if (cb != null) {
-            // Already queued for the next frame. Posting the same callback
-            // again would run it twice, which is not what "post this for the
-            // next frame" can be taken to mean.
+            // Already queued for the next frame; posting the same callback
+            // again would run it twice.
             return;
         }
         cb = frameTimeNanos -> {

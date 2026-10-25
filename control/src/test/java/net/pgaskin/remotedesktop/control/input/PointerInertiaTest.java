@@ -136,8 +136,8 @@ public class PointerInertiaTest {
     /**
      * Two move events do not glide. The original's sentinel makes the span it
      * divides by an absolute clock reading, so on a phone this has always been
-     * true and under a test clock starting at zero it was not — which is the
-     * one place a fixture could record something a device never does.
+     * true and under a test clock starting at zero it was not. That was the one
+     * place a fixture could record something a device never does.
      */
     @Test
     public void twoSamplesDoNotGlide() {

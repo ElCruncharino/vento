@@ -11,28 +11,27 @@ import net.pgaskin.remotedesktop.control.input.ExtensionKeyboard;
 import net.pgaskin.remotedesktop.control.input.MouseOverlay;
 
 /**
- * What is showing along the bottom of the desktop, and keeping the system's own
- * keyboard in step with it.
+ * The overlays along the bottom of the desktop, and keeping the system
+ * keyboard in sync with them.
  *
- * <p>There are three of them and only room for so much: the extension row, the
- * mouse overlay, and the system IME under whichever of those asked for it. The
- * rules between them are what this is for — showing one overlay hides the
- * other and a displaced one comes back; the row and the IME are one keyboard as
- * far as anybody using them is concerned, so dismissing either takes both.
+ * <p>There are three, with limited room: the extension row, the mouse overlay,
+ * and the system IME under the extension row. This class enforces the rules
+ * between them: showing one overlay hides the other, and a hidden one comes
+ * back afterwards; the row and the IME act as one keyboard, so dismissing
+ * either dismisses both.
  *
- * <p>The awkward part is that the IME is a window rather than a widget, so
- * "showing" is a request and "shown" is an inset that arrives later. Both are
- * tracked, because the gap between them is where the mistakes are: an inset
- * saying the IME is down, read while a request for it is outstanding, is this
- * window's own stale state rather than news.
+ * <p>The IME is a window rather than a widget, so "showing" is a request and
+ * "shown" is an inset that arrives later. Both are tracked, because the gap
+ * between them causes errors: an inset saying the IME is down, read while a
+ * request for it is outstanding, is stale rather than a dismissal.
  */
 final class SoftInput {
 
     interface Listener {
 
         /**
-         * One of the two came or went. What follows is the host's: the
-         * toolbar's stateful buttons, and the insets the viewport clamps in.
+         * The extension row or the overlay was shown or hidden. The host
+         * updates the toolbar's toggle buttons and the viewport insets.
          */
         void chromeChanged();
     }
@@ -42,12 +41,12 @@ final class SoftInput {
     private final MouseOverlay overlay;
     private final Listener listener;
 
-    private boolean overlayHiddenByKeyboard;  // put it back when the keyboard goes
+    private boolean overlayHiddenByKeyboard;  // show it again when the keyboard hides
     private boolean overlayShown;
     private boolean keyboardShown;
     private int imeHeight;                    // the system IME's, from the window insets
-    private boolean imeUp;                    // ... which is not the same as it being up
-    private boolean imeRequested;             // asked for and not arrived yet
+    private boolean imeUp;                    // tracked separately from the height
+    private boolean imeRequested;             // requested and not shown yet
 
     SoftInput(View view, ExtensionKeyboard keyboard, MouseOverlay overlay, Listener listener) {
         this.view = view;
@@ -57,9 +56,9 @@ final class SoftInput {
     }
 
     /**
-     * How much of the bottom of this window the system IME covers. Wanted on
-     * its own, and not only as part of what the row insets by, because it can
-     * outlive the row that asked for it.
+     * How much of the bottom of this window the system IME covers. Needed on
+     * its own, not only as part of the row's inset, because the IME can outlive
+     * the row that requested it.
      */
     int imeHeight() {
         return imeHeight;
@@ -74,8 +73,8 @@ final class SoftInput {
             overlayHiddenByKeyboard = overlay.visible();
             overlay.setVisible(false);
         }
-        // Everything else follows from the model changing, in keyboardChanged()
-        // — because the model can also hide itself, from its own ✕.
+        // Everything else happens in keyboardChanged(), because the model can
+        // also hide itself from its own ✕.
         keyboard.setVisible(show);
     }
 
@@ -93,10 +92,9 @@ final class SoftInput {
     }
 
     /**
-     * Both away, and neither owed a return. For a session that has become
-     * view-only, where they are not inactive but absent: a row of keys that
-     * types nothing is indistinguishable from a session that has stopped
-     * answering.
+     * Hide both, and do not show the overlay again later. For a session that
+     * has become view-only, where they are hidden rather than disabled: a row of
+     * keys that types nothing looks like a session that has stopped responding.
      */
     void hideAll() {
         setKeyboardVisible(false);
@@ -104,7 +102,7 @@ final class SoftInput {
         overlayHiddenByKeyboard = false;
     }
 
-    /** The extension row's model changed — from here, or from its own ✕. */
+    /** The extension row's model changed, from here or from its own ✕. */
     void keyboardChanged() {
         if (keyboardShown != keyboard.visible()) {
             keyboardShown = keyboard.visible();
@@ -113,7 +111,7 @@ final class SoftInput {
         }
     }
 
-    /** The overlay's did. It has no IME to keep in step, so only the chrome. */
+    /** The overlay's model changed. It has no IME to sync, so only the listener is called. */
     void overlayChanged() {
         if (overlayShown != overlay.visible()) {
             overlayShown = overlay.visible();
@@ -122,21 +120,22 @@ final class SoftInput {
     }
 
     /**
-     * Put the system keyboard where the extension row now says it should be.
+     * Show or hide the system keyboard to match the extension row.
      *
      * <p>Called on every focus gain as well as on every change, in both
-     * directions and unconditionally. Shown: the IME went with an app switch
-     * and does not come back on its own, so the row would have nothing under
-     * it. Hidden: something hid the row while another window held the focus —
-     * turning on view-only from the connection panel — and an IMM call made
-     * then is dropped, leaving a soft keyboard up under a row that is gone.
+     * directions and unconditionally. When shown: the IME closes on an app
+     * switch and does not come back on its own, leaving the row with nothing
+     * under it. When hidden: the row may have been hidden while another window
+     * had the focus (turning on view-only from the connection panel), and an
+     * IMM call made then is dropped, leaving the soft keyboard up without the
+     * row.
      */
     void sync() {
         final InputMethodManager imm = view.getContext().getSystemService(InputMethodManager.class);
         if (keyboard.visible()) {
             view.requestFocus();
-            // Asked for and not yet seen: until the insets say it is up, an
-            // inset saying it is down is this window's own stale state.
+            // Requested and not yet shown: until the insets say it is up, an
+            // inset saying it is down is stale.
             imeRequested = true;
             imm.showSoftInput(view, 0);
         } else {
@@ -150,33 +149,32 @@ final class SoftInput {
     }
 
     /**
-     * The IME's height, so the extension keyboard sits on top of it rather than
-     * behind it and the desktop insets by the pair. A soft keyboard dismissed
-     * with the back gesture takes the extension row with it.
+     * Track the IME's height, so the extension keyboard sits on top of it
+     * rather than behind it and the desktop is inset by both. A soft keyboard
+     * dismissed with the back gesture also hides the extension row.
      *
-     * @return whether any of that moved, so the caller can re-inset once for
-     * this and its own reasons together
+     * @return whether anything changed, so the caller can update the insets
+     * once for this and its own changes together
      */
     boolean imeInsets(WindowInsets insets) {
         final int ime = insets.getInsets(WindowInsets.Type.ime()).bottom;
-        // Whether it is up, asked separately from how much of this window it
-        // covers. In multi-window the two part company: the window is resized
-        // around the IME rather than overlapped by it, so the inset is 0 the
-        // whole time one is showing, and a height that never rises is a height
-        // that never falls. Reading the dismissal off the height alone left the
-        // extension row up after a back gesture had taken the system keyboard.
+        // Whether it is up, checked separately from how much of this window it
+        // covers. In multi-window the two differ: the window is resized around
+        // the IME rather than overlapped by it, so the inset stays 0 while it
+        // is showing and never drops on dismissal. Detecting the dismissal from
+        // the height alone left the extension row up after a back gesture
+        // closed the system keyboard.
         final boolean up = insets.isVisible(WindowInsets.Type.ime());
         if (ime == imeHeight && up == imeUp) {
             return false;
         }
-        // Only while this window has focus, and only while we are not asking
-        // for the IME back. An IME also closes when the app is switched away
-        // from, and a sheet over this screen takes the focus and the IME with
-        // it; either read as a dismissal hides the extension row, and the
-        // second one is a race between two windows — so closing the
-        // connection panel would put the system keyboard back with no row.
-        // The back gesture this rule is for happens with the session in
-        // front and no request outstanding.
+        // Only while this window has focus and no IME request is outstanding.
+        // An IME also closes on an app switch, and a sheet over this screen
+        // takes the focus and the IME with it; treating either as a dismissal
+        // would hide the extension row, and the second is a race between two
+        // windows, so closing the connection panel would bring back the system
+        // keyboard without the row. The back gesture this rule handles happens
+        // with the session focused and no request outstanding.
         final boolean closed = imeUp && !up && view.hasWindowFocus() && !imeRequested;
         if (up) {
             imeRequested = false;

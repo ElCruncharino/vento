@@ -1,7 +1,7 @@
-From 522ccd6ce632a114e7200241f5a835109a90136a Mon Sep 17 00:00:00 2001
+From fc5f31c825e4d82db020a3d4ffd9b9c1b449e64a Mon Sep 17 00:00:00 2001
 From: Claude Opus 5 <noreply@anthropic.com>
 Date: Sun, 16 Aug 2026 14:45:46 -0400
-Subject: [PATCH 5/5] rfb: anonymous TLS is the client's question, and never
+Subject: [PATCH 5/6] rfb: anonymous TLS is the client's question, and never
  its first choice
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

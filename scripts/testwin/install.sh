@@ -5,7 +5,7 @@
 #
 # The machine itself is not reproducible and is not meant to be: it is the one
 # real far end here, with three VNC servers and an RDP one on it. What this
-# makes reproducible is the *instrumentation* — the six things a measurement
+# makes reproducible is the *instrumentation*: the six things a measurement
 # needs to be able to do to a desktop it cannot reach over ssh.
 set -euo pipefail
 cd "$(dirname "$0")"

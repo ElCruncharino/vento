@@ -1,0 +1,128 @@
+# The Linux client: one process that can hold a session on any of the eight
+# backends, written against the neutral layer and nothing of a phone's.
+#
+# Every backend comes in as a crate holding its adapter to the one `Backend`
+# trait of `remotedesktop-api`, which the phone shares: the four Rust
+# protocols' own crates, and the four C libraries' small crates over the
+# vtable in `vento/backend.h`, whose shared libraries `build.rs` has CMake
+# make out of `backends/`. This crate adds the window (`src/gui/`), the
+# known-hosts file, and a headless probe.
+#
+# A workspace of its own rather than a member of the repository's, and the
+# root `Cargo.toml` says why at length: Cargo unifies features across a
+# workspace for every platform at once, so the GUI stack here switched on
+# optional features of crates the phone shares and their proc-macro crates
+# appeared in the app's licence page. With its own lock file nothing of this
+# crate's graph reaches the phone's, so there is nothing to gate on a target
+# cfg either: this builds for the host and for nothing else. The protocol and
+# platform crates are reached by path, the same sources the root builds.
+[workspace]
+
+[package]
+name = "vento"
+version = "0.0.1"
+edition = "2024"
+license = "GPL-3.0-or-later"
+publish = false
+build = "build.rs"
+
+[[bin]]
+name = "vento"
+path = "src/main.rs"
+
+[dependencies]
+log = "0.4"
+# The platform interface (`runtime::media`: the sound switch and controls,
+# the decoded picture's conversion), which the window reaches directly rather
+# than through `api`.
+remotedesktop-runtime = { path = "../backends/runtime" }
+# The interface every backend implements. Its `c` feature, the adapter over
+# the C vtable, is enabled by the C backends' crates, and nothing here names
+# it.
+remotedesktop-api = { path = "../backends/api" }
+# libavcodec, for video: RustDesk's picture, and the C backends' H.264
+# through `vento/video.h`. Its build script builds FFmpeg and dav1d from
+# `third_party/` statically, and says where (`links`), so that `build.rs`
+# hands the same libraries to FreeRDP for its scaling: no system FFmpeg is
+# linked.
+remotedesktop-platform-linux = { path = "../backends/platform/linux" }
+# The backends, each with its adapter in its own crate: the four protocols,
+# and the four C libraries' crates, whose libraries `build.rs` has CMake
+# make and each crate opens at run time (`api::c::library`), so that one that
+# cannot be loaded, or RealVNC's where no clang made it, is one backend not
+# available.
+remotedesktop-rfb = { path = "../backends/modules/rfb" }
+remotedesktop-ironrdp = { path = "../backends/modules/ironrdp" }
+remotedesktop-rustdesk = { path = "../backends/modules/rustdesk" }
+remotedesktop-spice = { path = "../backends/modules/spice" }
+remotedesktop-libvnc = { path = "../backends/modules/libvnc" }
+remotedesktop-tigervnc = { path = "../backends/modules/tigervnc" }
+remotedesktop-freerdp = { path = "../backends/modules/freerdp" }
+remotedesktop-realvnc = { path = "../backends/modules/realvnc" }
+# The window. winit owns the event loop and the Wayland connection, egui
+# draws into it through egui-winit and egui-wgpu, and the three wayland
+# crates are for the one protocol winit does not speak (the keyboard
+# shortcuts inhibitor), reached over winit's own connection through the
+# window's raw handles (see `gui/wayland.rs`). egui-winit without its
+# clipboard, whose reads waited on the owner on the main thread: the window
+# has its own (`gui/clipboard/`), which never does.
+egui = "0.36"
+egui-winit = { version = "0.36", default-features = false, features = ["wayland", "x11"] }
+egui-wgpu = { version = "0.36", features = ["winit"] }
+wgpu = "30"
+# Vulkan's own calls, for the one question wgpu-hal does not ask before it
+# imports a DMA-BUF: whether the device takes its layout modifier (see
+# `gui/zerocopy.rs`). Already in the graph through wgpu-hal, with these
+# features, so it adds nothing to the build.
+ash = "0.38"
+winit = "0.30"
+pollster = "0.4"
+raw-window-handle = "0.6"
+wayland-client = "0.31"
+wayland-backend = { version = "0.3", features = ["client_system"] }
+wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
+# X11's pieces winit does not do for us: the keyboard grab that stands in
+# for Wayland's shortcuts inhibitor, sent over winit's own connection (see
+# `gui/x11.rs`), and the clipboard, on a connection of its own (see
+# `gui/clipboard/x11.rs`). Both are already in the graph through winit, with
+# these features, so they add nothing to the build.
+x11rb = { version = "0.13", features = ["allow-unsafe-code", "dl-libxcb"] }
+x11-dl = "2.21"
+# poll(2), pipe2(2) and the reads and writes on the clipboard's pipes (see
+# `gui/clipboard/`). Already in the graph through winit and the backends.
+libc = "0.2"
+# The X11 keysym table and the Unicode mapping, so a key goes to the far end
+# as the keysym every protocol here takes.
+xkeysym = "0.2"
+bytemuck = "1"
+
+[build-dependencies]
+# Runs `backends/CMakeLists.txt` with VENTO_SHARED on, which is how the C
+# backends are built; `build.rs` says where the libraries land.
+cmake = "0.1"
+
+[dev-dependencies]
+# For the test that every toolbar symbol is in the bundled font (icons.rs).
+# Already in the graph through egui's fonts, so it costs nothing new.
+ttf-parser = "0.25"
+
+# winit from the submodule, at the tag of the release on crates.io, with
+# `patches/winit/` applied by `./patch.sh`: the same source plus seven fixes of
+# ours, each written to go upstream and each saying what it fixes (X11's
+# wheel notch counted twice, a window destroyed by another client,
+# _NET_WM_STATE cached, RandR 1.5 monitors and their changes; Wayland's
+# suspended state, the custom cursor's buffer).
+# `dpi` comes along as winit's path dependency, from the same tag.
+[patch.crates-io]
+winit = { path = "../third_party/winit" }
+
+# The conversion every decoded frame goes through
+# (`runtime::media::video::convert`), optimised even in a debug build, which is
+# what `cargo run` builds. Unoptimised its row loop is most of a RustDesk
+# session's processor, and the SSE2 one is slower still, every intrinsic a call:
+# 53 and 94 ms of a 1920×1200 frame, where optimised they are 21 and 1. The
+# crate it is in, `remotedesktop-runtime`, is small (rustls and ring are crates
+# of their own, which this leaves alone), so this costs seconds of a build, and
+# its debug info is kept.
+[profile.dev.package.remotedesktop-runtime]
+opt-level = 3

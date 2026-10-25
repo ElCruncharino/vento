@@ -3,13 +3,12 @@
     SPDX-FileCopyrightText: 2026 Patrick Gaskin
     SPDX-License-Identifier: GPL-3.0-or-later
 
-    A BackendOption.Type.CHOICE, live: the value is a button that drops a menu
-    under itself. A menu rather than a dialog because the rule for this panel is
-    that nothing in it opens a second window over the first — and rather than a
-    segmented control because the number of choices belongs to the backend, and
-    four short ones is a coincidence of this backend's quality parameter. A
-    choice whose values carry a line each opens a dialog from the same button,
-    since there is nowhere in a menu to put one.
+    A BackendOption.Type.CHOICE in the connection panel: the value is a button
+    that opens a dropdown menu. A menu rather than a dialog, to avoid a second
+    window over the panel, and rather than a segmented control because the
+    backend decides the number of choices. A choice whose
+    values each have a description opens a dialog from the same button
+    instead, since a menu has no room for the descriptions.
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"

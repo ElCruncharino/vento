@@ -23,7 +23,7 @@ import java.util.List;
  * <p>{@link #handle(TouchFrame)} is the whole implementation and touches no
  * Android APIs, so the stack below it runs in a plain JVM test;
  * {@link #onTouchEvent(MotionEvent)} is only an adapter, and
- * {@link #optionalRecorder} taps the same seam to record fixtures.
+ * a {@link Tap} sees the same frames to record fixtures.
  */
 public final class TouchRouter {
 
@@ -44,7 +44,7 @@ public final class TouchRouter {
 
     /**
      * First refusal on every new pointer, for a widget sharing the touch
-     * surface with the touchpad — the mouse overlay ({@link MouseOverlay}) and
+     * surface with the touchpad: the mouse overlay ({@link MouseOverlay}) and
      * the extension keyboard ({@link ExtensionKeyboard}).
      *
      * <p>A claimed pointer belongs to the claimant for the rest of its life and

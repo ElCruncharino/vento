@@ -17,10 +17,10 @@ import java.util.Map;
  * The session leaving the screen, from the input stack's side.
  *
  * <p>One question, asked of every way this stack can be holding something down:
- * after {@code Harness.suspend()} — the three calls a host makes when its
- * session leaves the screen — is the remote holding anything? It must not be. A button or a
- * modifier held here is held <em>there</em>, and there is nobody left to lift
- * it: the finger that would have is gone with the screen.
+ * after {@code Harness.suspend()} (the three calls a host makes when its
+ * session leaves the screen), is the remote holding anything? It must not be.
+ * A button or a modifier held here is held <em>there</em>, and nothing is left
+ * to release it: the finger that would have is gone with the screen.
  *
  * <p>The other half is that suspending is not a teardown. The stack has to work
  * afterwards, because the same view comes back when the session does.
@@ -34,9 +34,9 @@ public class SuspendTest {
     // ---- what a suspend has to let go of ----------------------------------
 
     /**
-     * The 250 ms click window is the case worth having: the gesture is over,
-     * every finger is up, and a button is deliberately still down — which is
-     * exactly the state a normal cancel is defined to leave alone.
+     * The 250 ms click window is the important case: the gesture is over, every
+     * finger is up, and a button is deliberately still down, which is the state
+     * a normal cancel is defined to leave alone.
      */
     @Test
     public void aButtonHeldByTheClickWindowIsReleased() {
@@ -80,8 +80,8 @@ public class SuspendTest {
     }
 
     /**
-     * A locked modifier is the longest-lived hold in the stack — it survives
-     * every gesture by design, which is what "locked" means — so it is the one
+     * A locked modifier is the longest-lived hold in the stack (it survives
+     * every gesture by design, which is what "locked" means), so it is the one
      * most likely to be left behind at the far end.
      */
     @Test
@@ -97,7 +97,7 @@ public class SuspendTest {
         assertEquals("the far end is holding nothing", Map.of(), h.held);
     }
 
-    /** A glide would go on moving somebody's cursor around an unwatched desktop. */
+    /** A glide would go on moving the remote cursor around an unwatched desktop. */
     @Test
     public void aGlideIsStopped() {
         final Harness h = Harness.improved();
@@ -130,8 +130,8 @@ public class SuspendTest {
         assertEquals(List.of("ovl down LEFT", "ovl up LEFT"), h.overlayEvents());
     }
 
-    /** The keyboard is the other half of that, on its own view: the two
-     *  widgets share the bottom of the screen and never share a session. */
+    /** The keyboard is the other half of that, tested on its own: the two
+     *  widgets share the bottom of the screen and are never shown together. */
     @Test
     public void theKeyboardStillWorksAfterwards() {
         final Harness h = Harness.improved().withKeyboard().reset();

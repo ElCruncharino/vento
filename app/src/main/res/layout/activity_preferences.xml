@@ -6,12 +6,10 @@
     A header over a fragment or a view: the settings tree's frame, and the
     licence page's.
 
-    The header is built here rather than being a toolbar, which is what this
-    was. A toolbar lays its navigation button out where it decides — 8 dp in,
-    whatever it is told about padding or content insets — and the back button
-    has to line up with the header of every other screen, all of which are
-    built like this one. What a toolbar was giving in exchange was a title and
-    a click listener.
+    The header is built here rather than with a toolbar. A toolbar places its
+    navigation button 8 dp in regardless of padding or content insets, and the
+    back button has to line up with the headers of the other screens, which
+    are all built like this one.
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"

@@ -15,7 +15,8 @@ import java.util.List;
  * <p>It exists because the gesture layer can only hold a button for as long as
  * the 250 ms window in {@link GestureRecognizer} allows, and because a
  * three-finger tap is a poor way to middle-click. Hold a button here with one
- * finger and drag with another and the drag lasts as long as you want.
+ * finger and drag with another and the drag lasts as long as the button is
+ * held.
  *
  * <p>This class is the <em>model</em> and draws nothing: the view asks it for
  * {@link #parts()} and {@link #pressed(Part)} and paints them.
@@ -23,7 +24,7 @@ import java.util.List;
  * <p>Touches reach it through {@link TouchRouter.Claim}: a pointer landing on
  * the overlay is claimed for its whole life and never reaches the gesture
  * layer, and every other pointer is untouched. The original arrives at the same
- * place from the other end — its buttons are real {@code View}s, and
+ * place from the other end: its buttons are real {@code View}s, and
  * {@code InterceptingRelativeLayout} has an explicit special case re-routing a
  * second finger on the desktop into the gesture layer while the first is here.
  *
@@ -86,8 +87,8 @@ public final class MouseOverlay implements TouchRouter.Claim {
     private final List<Bounds> parts = new ArrayList<>();
     private boolean visible;
 
-    // Claimed pointers: which part each one is on. Several at once is the point
-    // — a thumb on LEFT and a finger on the strip is a legitimate combination.
+    // Claimed pointers: which part each one is on. Several at once is the point:
+    // a thumb on LEFT and a finger on the strip is a legitimate combination.
     private final int[] ptrId = new int[TouchFrame.MAX_POINTERS];
     private final Part[] ptrPart = new Part[TouchFrame.MAX_POINTERS];
     private int ptrCount;
@@ -205,8 +206,8 @@ public final class MouseOverlay implements TouchRouter.Claim {
      * centre and clamp inside the part of the window that is still visible, or
      * the cursor ends up behind the buttons. Zero while hidden.
      *
-     * <p>The original insets by a constant — the <em>extension keyboard's</em>
-     * height — whichever overlay is up, so its own button row overlaps live
+     * <p>The original insets by a constant (the <em>extension keyboard's</em>
+     * height) whichever overlay is up, so its own button row overlaps live
      * desktop by 26 dp and its wheel strip by all 60.
      */
     public float insetRightPx() {
@@ -245,8 +246,8 @@ public final class MouseOverlay implements TouchRouter.Claim {
     /**
      * The original's layout: a strip up the right edge and a row across the
      * bottom holding left / middle / right in weights 2:1:2 plus the dismiss
-     * button. Together they are an L, so the top-left of the screen — where the
-     * dragging happens — stays clear.
+     * button. Together they are an L, so the top-left of the screen, where the
+     * dragging happens, stays clear.
      */
     private void layout() {
         parts.clear();
@@ -399,7 +400,7 @@ public final class MouseOverlay implements TouchRouter.Claim {
      * Position on the strip <em>is</em> the scroll rate: the middle is stopped,
      * the ends are {@code overlayWheelMaxRate} clicks per
      * {@code overlayWheelTicksPerClick} ticks. The rate is re-read on every
-     * move, so it is a throttle rather than a per-pixel wheel — which is why
+     * move, so it is a throttle rather than a per-pixel wheel, which is why
      * the strip does not need the gesture layer's 8 px-per-click rule.
      */
     private void drag(float y) {
@@ -415,17 +416,17 @@ public final class MouseOverlay implements TouchRouter.Claim {
 
     private void setRate(float r) {
         if (rate == 0.0f && r != 0.0f) {
-            // First click immediately, then a pause before the repeat starts —
-            // key repeat, so a single click is easy to land.
+            // First click immediately, then a pause before the repeat starts
+            // (like key repeat), so a single click is easy to land.
             click(r);
             ticks = -cfg.overlayWheelStartDelayTicks;
             rate = r;
             schedule();
         } else if (r == 0.0f) {
-            // The finger is still on the strip — it is at the middle, where the
-            // rate is zero. Anything that forgot which pointer owned the strip
-            // here would stop reading it for the rest of the gesture, and a
-            // slow drag through the centre lands on it exactly.
+            // The finger is still on the strip, at the middle where the rate is
+            // zero. Forgetting which pointer owns the strip here would stop
+            // reading it for the rest of the gesture, and a slow drag through
+            // the centre lands on it exactly.
             pauseScrolling();
         } else {
             rate = r;

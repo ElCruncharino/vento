@@ -3,15 +3,13 @@
     SPDX-FileCopyrightText: 2026 Patrick Gaskin
     SPDX-License-Identifier: GPL-3.0-or-later
 
-    One fact about the connection: what it is on the left, what it says on the
-    right. Deliberately not the original's value-over-label with an icon —
-    that shape is for a full screen with six rows of breathing space, and this
-    is a sheet over somebody's desktop.
+    One fact about the connection: the label at the start, the value at the
+    end. One line rather than value over label, since this is a sheet over the
+    desktop rather than a full screen.
 
-    Tighter than a row that can be touched, and on purpose: a fact is read, and
-    the eight of them are read together. The container around them is what says
-    they are one thing; the 56 dp a target needs would make the readout twice as
-    tall as the controls above it.
+    Tighter than a touchable row: facts are only read, and are read together.
+    The container around them groups them; a 56 dp touch-target height would
+    make the list twice as tall as the controls above it.
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"

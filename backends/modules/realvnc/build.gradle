@@ -1,0 +1,98 @@
+// SPDX-FileCopyrightText: 2026 Patrick Gaskin
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+plugins {
+    id 'com.android.library'
+}
+
+// `Backend` implemented over RealVNC's viewer core. A protocol module like the
+// others: `:realvnc-jni` holds the declarations, and this module holds the
+// session lifecycle, the prompts, the options, and a small native library that
+// reads a counter the core's exported functions do not offer. This directory's
+// `cpp/` also holds the host side of this backend (`realvnc_session.cxx`,
+// built by `backends/CMakeLists.txt` and never by this file), which runs the
+// same core in a Linux process, and the module root holds the Linux client's
+// adapter over that (`Cargo.toml`, `src/`), a crate no Gradle build uses.
+//
+// Nothing of RealVNC's is in this module or in anything built from it. It is
+// the only backend shipped in an add-on rather than in the app, because all
+// code that knows where the RealVNC library comes from has to live outside
+// the app.
+android {
+    namespace = 'net.pgaskin.remotedesktop.backend.realvnc'
+    compileSdk 36
+    ndkVersion = project(':backends').nativeNdkVersion
+
+    defaultConfig {
+        minSdk 34
+        externalNativeBuild {
+            cmake {
+                targets 'remotedesktop_realvnc'
+                // Set only by scripts/check-warnings.sh, never when building
+                // the app: see backends/cmake/warnings.cmake.
+                if (project.hasProperty('strictWarnings')) {
+                    arguments '-DSTRICT_WARNINGS=ON'
+                }
+            }
+        }
+        ndk {
+            // x86_64 is in that list; lint reads the literal and not the value.
+            //noinspection ChromeOsAbiSupport
+            abiFilters project(':backends').nativeAbis as String[]
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path 'cpp/CMakeLists.txt'
+            version = '3.30.5'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_21
+        targetCompatibility JavaVersion.VERSION_21
+    }
+
+    // Not AGP's `src/main/`, as in every module here: the Java is in `java/`
+    // with no package directories (javac uses the `package` line), the
+    // provider's registration is in `resources/`, and the C is in `cpp/`
+    // (above).
+    sourceSets.main {
+        java.srcDirs = ['java']
+        resources.srcDirs = ['resources']
+    }
+
+    publishing {
+        singleVariant('release') {
+            withSourcesJar()
+        }
+    }
+}
+
+dependencies {
+    // `Backend` and the interfaces around it: the only part of the app this
+    // module may depend on.
+    api project(':backends')
+
+    // RealVNC's JNI declarations, and the pin on the build they bind to.
+    api project(':realvnc-jni')
+
+    // The add-on side of the library transfer: the library crosses from the
+    // add-on's uid to the app's (`Libraries`), and the add-on's setup screen
+    // is started through `Plugin.ACTION_SETUP`.
+    implementation project(':plugins')
+}
+
+// Generates `RealVncCatalog`, this backend's catalog entry: see :backends.
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        project(':backends').generateCatalog(project, variant, 'realvnc', 'RealVncCatalog')
+    }
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}

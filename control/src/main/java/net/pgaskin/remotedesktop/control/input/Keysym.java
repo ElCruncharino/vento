@@ -14,9 +14,9 @@ public final class Keysym {
     private Keysym() {
     }
 
-    // Modifiers. The right-hand ones are keys of their own, which Android says
-    // and every backend here can carry; right Alt is the exception and is a
-    // level rather than a modifier (see fromAndroidKeyCode).
+    // Modifiers. The right-hand ones are keys of their own, which Android
+    // distinguishes and every backend here can carry; right Alt is the
+    // exception and is a level rather than a modifier (see fromAndroidKeyCode).
     public static final int SHIFT_L = 0xffe1;             // 65505
     public static final int SHIFT_R = 0xffe2;
     public static final int CONTROL_L = 0xffe3;           // 65507
@@ -24,7 +24,7 @@ public final class Keysym {
     public static final int ALT_L = 0xffe9;               // 65513
     public static final int SUPER_L = 0xffeb;             // 65515
     public static final int SUPER_R = 0xffec;
-    public static final int ISO_LEVEL3_SHIFT = 0xfe03;    // 65027 — AltGr / macOS Option
+    public static final int ISO_LEVEL3_SHIFT = 0xfe03;    // 65027, AltGr / macOS Option
 
     // Editing and navigation.
     public static final int BACKSPACE = 0xff08;
@@ -52,7 +52,7 @@ public final class Keysym {
     public static final int MUHENKAN = 0xff22;
     public static final int HENKAN_MODE = 0xff23;
     public static final int HIRAGANA_KATAKANA = 0xff27;
-    // The three dedicated editing keys, which core X11 never named — these are
+    // The three dedicated editing keys, which core X11 never named; these are
     // XFree86's, and are what a Linux desktop binds them to.
     public static final int XF86_COPY = 0x1008ff57;
     public static final int XF86_CUT = 0x1008ff58;
@@ -105,12 +105,12 @@ public final class Keysym {
     }
 
     /**
-     * What {@code KeyEvent.getUnicodeChar} returned, as a keysym — which is not
+     * What {@code KeyEvent.getUnicodeChar} returned, as a keysym. This is not
      * the same question as {@link #fromUnicode}, because the value is not always
      * a code point. A layout with dead keys answers with the accent and bit 31
-     * set, and that value read as a code point is negative: one path here made
-     * {@code 0x81000300} of it, a keysym in no encoding, and the other took it
-     * for a control character and dropped it.
+     * set, and that value read as a code point is negative: {@link #fromUnicode}
+     * would make {@code 0x81000300} of it, a keysym in no encoding, and a
+     * control-character check would drop it.
      */
     public static int fromKeyChar(int unicodeChar) {
         if (unicodeChar == 0) {
@@ -149,7 +149,7 @@ public final class Keysym {
     }
 
     /**
-     * A code point from a <em>string</em> as a keysym — committed text, a
+     * A code point from a <em>string</em> as a keysym: committed text, a
      * clipboard, anything typed out character by character.
      *
      * <p>Not the same question as {@link #fromUnicode}, which is the X11 encoding
@@ -182,14 +182,14 @@ public final class Keysym {
      * modifiers down at the far end.
      *
      * <p>A soft keyboard cannot see those modifiers, so it reports the character
-     * it would have produced on its own — and the far end, asked for that
+     * it would have produced on its own, and the far end, asked for that
      * character while a Shift it is holding says otherwise, resolves the
      * disagreement by letting go of the Shift. Ctrl+Shift+C arrives as Ctrl+C.
      *
      * <p>So the character is put in the case the held modifiers imply: upper
      * under Shift, lower under any other modifier without Shift (so a keyboard
      * that capitalised on its own does not turn Ctrl+c into Ctrl+Shift+c), and
-     * as typed under nothing. Only letters — which character Shift and {@code 1}
+     * as typed under nothing. Only letters: which character Shift and {@code 1}
      * make is a property of a layout at the far end, and guessing is worse than
      * leaving it.
      */
@@ -206,7 +206,7 @@ public final class Keysym {
     /**
      * An {@code android.view.KeyEvent} keycode as a keysym, for the
      * non-printing keys a hardware keyboard or an IME's own edit keys produce.
-     * {@code 0} when there is no sensible mapping — printing keys included,
+     * {@code 0} when there is no sensible mapping, printing keys included,
      * since those carry a character and belong in {@link #fromUnicode}.
      *
      * <p>Literal keycodes rather than {@code KeyEvent} constants so this class
@@ -248,9 +248,10 @@ public final class Keysym {
             case 214 -> HENKAN_MODE;
             case 215 -> HIRAGANA_KATAKANA;   // KATAKANA_HIRAGANA
             // Not KANA (218) and not EISU (212), which look like the other two
-            // and are not: this phone's own key layout gives those two keycodes
-            // to a Korean board's Hangul and Hanja keys, so a keysym chosen here
-            // would be right for one keyboard and wrong for the other.
+            // and are not: the key layout of the phone this was tested on gives
+            // those two keycodes to a Korean board's Hangul and Hanja keys, so a
+            // keysym chosen here would be right for one keyboard and wrong for
+            // the other.
             case 277 -> XF86_CUT;
             case 278 -> XF86_COPY;
             case 279 -> XF86_PASTE;

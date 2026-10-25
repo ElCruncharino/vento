@@ -19,14 +19,15 @@ import net.pgaskin.remotedesktop.control.input.Toolbar;
 import java.util.function.Function;
 
 /**
- * Draws the on-screen controls — the mouse overlay, the extension keyboard and
- * its info bar — from the geometry those models compute.
+ * Draws the on-screen controls (the mouse overlay, the extension keyboard and
+ * its info bar, the toolbar, the tap regions) and the cursor from the geometry
+ * those models compute.
  *
  * <p>Those are models, not views: they decide where every part is and what
  * state it is in, and know nothing about a {@code Canvas}, which is what lets
  * them run under the JVM test harness. Something still has to put ink on the
- * screen, and two screens need the same ink — the playground and a real
- * session — so it lives here rather than in either.
+ * screen, and two screens need the same ink (the playground and a real
+ * session), so it lives here rather than in either.
  */
 public final class Chrome {
 
@@ -126,8 +127,8 @@ public final class Chrome {
             final boolean down = overlay.pressed(b.part());
             // Faint on purpose: the overlay shares the touch surface with the
             // desktop rather than covering it, and a zoomed-in picture runs
-            // underneath these. The fills carry the state — pressed is the same
-            // colour half again as opaque — and the outline carries the shape,
+            // underneath these. The fills carry the state (pressed is the same
+            // colour half again as opaque), and the outline carries the shape,
             // which is why it is the one part that is not faint.
             panel.setColor(b.part() == MouseOverlay.Part.DISMISS
                     ? (down ? 0x99404a58 : 0x5005090e)
@@ -171,12 +172,12 @@ public final class Chrome {
 
     /**
      * Round {@link #path} into a rounded rectangle whose corners against the
-     * edge of {@code (wl, wt, wr, wb)} — the window, or whatever the thing is
-     * flush against — are square.
+     * edge of {@code (wl, wt, wr, wb)} (the window, or whatever the thing is
+     * flush against) are square.
      *
      * <p>The button row is flush with the bottom of the screen and the wheel
      * strip with the right of it, and a 3 dp arc against a screen edge reads as
-     * a slip rather than as a corner — there is a sliver of desktop in it. The
+     * a slip rather than as a corner, with a sliver of desktop in it. The
      * inner corners keep the radius, so the parts still read as separate
      * targets. The ✕ and the wheel's handle are inset from everything and so
      * come out fully round, which is the same rule and not an exception to it.
@@ -204,7 +205,7 @@ public final class Chrome {
      *
      * @param cursorY where the cursor is on screen; the info bar gets out of
      *                its way (see {@link #barFade})
-     * @return whether another frame is wanted — a ripple is mid-flight
+     * @return whether another frame is wanted (a ripple is mid-flight)
      */
     public boolean drawKeyboard(Canvas c, ExtensionKeyboard keyboard, int viewWidth,
                                 float cursorY) {
@@ -239,7 +240,7 @@ public final class Chrome {
             if (icon != null) {
                 drawIcon(c, icon, x + (cell - ink) / 2, barMid - ink / 2, ink, colour);
             } else {
-                // The original's info bar draws Ctrl and Alt as a bare C and A —
+                // The original's info bar draws Ctrl and Alt as a bare C and A:
                 // the initial is all the room there is, and all that is needed.
                 final String initial = m.label().substring(0, 1);
                 barPaint.getTextBounds(initial, 0, initial.length(), bounds);
@@ -255,7 +256,7 @@ public final class Chrome {
         }
 
         // The line being typed, ellipsized from the start: the tail is the part
-        // you are still working on.
+        // still being typed.
         barPaint.setTextAlign(Paint.Align.LEFT);
         barPaint.setTextSize(keyboard.masked() ? cfg.dp(10) : cfg.dp(11));
         barPaint.setColor(alpha(0x99ffffff, fade));
@@ -280,7 +281,7 @@ public final class Chrome {
         // ---- the key row ---------------------------------------------------
         // Solid, unlike the info bar above it. The eye reads a key's face against
         // its background, and desktop content showing through turns forty faint
-        // glyphs into forty ambiguities — worst over a light window, where the
+        // glyphs into forty ambiguities, worst over a light window, where the
         // labels vanish altogether. The bar above is a readout with nothing to
         // aim at, so letting the desktop through there costs nothing.
         box.set(0, rowTop, viewWidth, rowBottom);
@@ -338,17 +339,15 @@ public final class Chrome {
      * How opaque a thing floating over the desktop should be, given how far the
      * cursor is from it.
      *
-     * <p>The desktop insets above the whole keyboard, so the info bar covers no
-     * remote pixels — but it does cover the <em>cursor</em>: the viewport clamps
-     * the desktop into the content rect, so a cursor at the bottom edge sits on
-     * the bar's top edge and an arrow drawn from its hotspot extends into it.
-     * The chrome is drawn after the cursor, so the bar would swallow it exactly
+     * <p>Unless {@link Config#keyboardInfoSolid} is set, the desktop insets only
+     * above the key row, and the info bar floats over the bottom of the desktop
+     * and so over the <em>cursor</em> once it is pushed to the bottom edge. The
+     * chrome is drawn after the cursor, so the bar would swallow it exactly
      * while the pointer was being pushed downwards. Fading rather than
      * reordering, because only one of them can be on top; ramped rather than
      * switched, so it does not blink as the cursor grazes the boundary.
      *
-     * <p>The toolbar wants the same thing for a stronger version of the same
-     * reason — the desktop runs under it, not merely the cursor — so the ramp is
+     * <p>The toolbar wants the same thing for the same reason, so the ramp is
      * one piece of code and the distance is to a rectangle. The info bar is the
      * degenerate case of a rect that spans the window, where the horizontal
      * distance is never positive and this is {@code barTop - cursorY} exactly.
@@ -371,13 +370,13 @@ public final class Chrome {
     /**
      * The column of buttons on the left edge, and the grip under it.
      *
-     * <p>Two rules the info bar does not have. <b>The hit test does not fade</b>
-     * — a toolbar at a tenth is still a target at full size, which is the answer
-     * to "can I press what I can barely see" — and <b>a finger on it cancels the
+     * <p>Two rules the info bar does not have. <b>The hit test does not fade</b>:
+     * a toolbar at a tenth is still a target at full size, which is the answer
+     * to "can I press what I can barely see". And <b>a finger on it cancels the
      * fade</b>, since the widget under the finger must not be the faintest thing
      * on the screen.
      *
-     * @return whether another frame is wanted — a ripple is mid-flight
+     * @return whether another frame is wanted (a ripple is mid-flight)
      */
     public boolean drawToolbar(Canvas c, Toolbar toolbar, int viewWidth, int viewHeight,
                                float cursorX, float cursorY) {
@@ -389,7 +388,7 @@ public final class Chrome {
                         cursorX, cursorY);
 
         // Fainter than the info bar, which is a readout with nothing behind it:
-        // this covers 200 dp of somebody's picture, and what it has to do is be
+        // this covers 200 dp of the picture, and what it has to do is be
         // findable rather than be looked at.
         final float l = toolbar.left(), top = toolbar.top();
         final float r = toolbar.right(), bottom = toolbar.bottom();
@@ -455,12 +454,13 @@ public final class Chrome {
 
     /**
      * A material-style ripple from where the finger landed, on the one thing it
-     * belongs to. Hand-drawn because neither widget is a view per target — which
-     * is the whole point of the claim-based routing — so there is no
+     * belongs to. Hand-drawn because neither widget is a view per target (which
+     * is the whole point of the claim-based routing), so there is no
      * {@code Drawable} to hang a {@code RippleDrawable} on.
      *
      * <p>Keyed on the object rather than on a key, so a toolbar button and an
-     * extension key are the same case: whoever last reported a press owns it.
+     * extension key are the same case: whichever was last reported pressed owns
+     * it.
      */
     private boolean drawRipple(Canvas c, Object owner,
                                float left, float top, float right, float bottom) {
@@ -513,7 +513,7 @@ public final class Chrome {
     // ---- the tap regions ---------------------------------------------------
 
     /**
-     * The tap regions, which are invisible in earnest — drawn only so that "did
+     * The tap regions, which are otherwise invisible, drawn only so that "did
      * my finger land in the band?" is answerable while testing. Screen
      * coordinates, so this goes outside the viewport transform.
      */
@@ -532,7 +532,8 @@ public final class Chrome {
     }
 
     /**
-     * The tap regions shown to somebody who does not know they are there.
+     * The tap regions shown as a hint to a user who does not know they are
+     * there.
      *
      * <p>The bands are the whole affordance this surface has: there is no
      * toolbar to notice and no button to find, which is the point of them and
@@ -576,10 +577,12 @@ public final class Chrome {
     // ---- the cursor --------------------------------------------------------
 
     /**
-     * {@code CursorView.b} — cap the bitmap at 32 logical px and apply the
-     * hotspot, which arrives here as a positive offset into the bitmap. Callers
-     * that get it from a protocol may have to negate it: RFB carries a cursor
-     * as a rectangle whose origin is already {@code -hot}.
+     * {@code CursorView.b}: cap the bitmap at 32 logical px and apply the
+     * hotspot, which arrives here as a positive offset into the bitmap. The
+     * original translates by {@code pos + hot*scale} with a <em>negated</em>
+     * hotspot, because its native parser rewrites the cursor's rect to
+     * {@code Rect(-hot, size - hot)}; subtracting the positive one gives the
+     * same result.
      */
     public void drawCursor(Canvas c, android.graphics.Bitmap shape, float hotX, float hotY,
                            float screenX, float screenY, Paint bitmapPaint) {

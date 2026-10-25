@@ -7,16 +7,16 @@
 # than downloaded: Alpine's packages laid into a root of their own, an ext4
 # image made out of that root without root privileges (`mke2fs -d`), and the
 # kernel and initramfs beside it. That is a guest with an X server, a window
-# manager, `spice-vdagent`, and a serial console the host can run commands down
-# — which is what makes a clipboard test something a script can check rather
-# than something a person has to look at.
+# manager, `spice-vdagent`, and a serial console the host can run commands
+# down, which makes a clipboard test something a script can check rather than
+# something a person has to look at.
 #
 # The disk is attached with `snapshot=on`, so a run writes to a temporary
 # overlay and the image itself is the same desktop every time.
 
 FROM alpine:3.22 AS guest
 
-# `apk --root` builds somebody else's root out of this one's index; the keys
+# `apk --root` builds a separate root out of this system's index; the keys
 # and the repository list have to be put there first, since --initdb makes
 # neither.
 RUN apk add --no-cache e2fsprogs mkinitfs imagemagick
@@ -46,8 +46,8 @@ RUN chmod +x /guest/sbin/guest-init /guest/root/.xinitrc \
         /guest/usr/local/bin/apply-preferred-mode /guest/usr/local/bin/show-photo
 
 # The kernel out of the guest root, and an initramfs made for it: virtio for
-# the disk, ext4 to mount it, and nothing else — this guest has one device and
-# one filesystem.
+# the disk, ext4 to mount it, and nothing else, since this guest has one
+# device and one filesystem.
 RUN kver="$(ls /guest/lib/modules)" \
     && cp "/guest/boot/vmlinuz-virt" /vmlinuz \
     && mkinitfs -b /guest -F "base virtio ext4" -o /initramfs "$kver"
@@ -77,7 +77,7 @@ COPY --from=guest /guest.img /vmlinuz /initramfs /guest/
 
 # The same certificate arrangement `testqemu` has, and for the same reason: made
 # when the image is built, so the fingerprint a phone pins survives a restart
-# and changes only when somebody rebuilds on purpose.
+# and changes only on a deliberate rebuild.
 RUN mkdir -p /certs \
     && openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
         -keyout /certs/ca-key.pem -out /certs/ca-cert.pem \

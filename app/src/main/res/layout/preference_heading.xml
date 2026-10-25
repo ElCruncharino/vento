@@ -5,11 +5,10 @@
 
     A PreferenceCategory: the heading over a group, and nothing else.
 
-    The padding is on the text rather than on the row, which is what lets a
-    category with no title be a group break with no heading — androidx hides an
-    empty title, and an empty row of no height is exactly what a break is. The
-    gap it leaves is the adapter's, so that a break and a heading space a group
-    the same way.
+    The padding is on the text rather than on the row, so a category with no
+    title is a group break with no heading: androidx hides an empty title,
+    leaving a row of zero height. The adapter adds the gap, so a break and a
+    heading space a group the same way.
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"

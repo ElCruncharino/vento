@@ -27,13 +27,12 @@ import java.util.Locale;
  *
  * <p>A file is closed once the screen has been empty for {@link #idleMs()},
  * <em>not</em> when the last finger lifts: a tap-then-drag is two touches with
- * a gap in the middle, and it is only a right-button drag because the second
- * one lands inside the 250 ms click window. Splitting there would record two
+ * a gap in the middle, and it is only a button drag because the second one
+ * lands inside the 250 ms click window. Splitting there would record two
  * unrelated gestures and lose the thing being tested. So the boundary is "the
  * state machine is back to idle", which is the click window plus a margin.
  *
  * <pre>
- *   adb shell run-as net.pgaskin.remotedesktop ls files/touchlogs   # or:
  *   adb pull /sdcard/Android/data/net.pgaskin.remotedesktop/files/touchlogs
  * </pre>
  */
@@ -71,7 +70,7 @@ public final class TouchRecorder implements TouchRouter.Tap {
 
     /**
      * Which end owns the cursor. Recorded with the touches because it decides
-     * what the same fingers do — a pinch pans only in the relative mode — so a
+     * what the same fingers do (a pinch pans only in the relative mode), so a
      * replay that did not know would produce a different answer to the one the
      * gesture was recorded to check.
      */

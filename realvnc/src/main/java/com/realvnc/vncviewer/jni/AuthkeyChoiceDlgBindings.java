@@ -3,7 +3,7 @@
 package com.realvnc.vncviewer.jni;
 
 /**
- * "Which of your identities should authenticate this connection?" — asked when a
+ * "Which of your identities should authenticate this connection?", asked when a
  * server authenticates viewers by client certificate and more than one is
  * available. The list comes from {@link AuthkeyStoreAndroid}.
  *

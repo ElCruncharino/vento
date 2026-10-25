@@ -1,0 +1,90 @@
+// SPDX-FileCopyrightText: 2026 Patrick Gaskin
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+plugins {
+    id 'com.android.library'
+}
+
+// Both halves of the SPICE backend: the crate at this directory's root
+// (`Cargo.toml`, `src/`), built as the native library in the AAR, and the
+// provider in `java/`, which opens sessions on it as a `NativeBackend` through
+// the natives class generated below.
+android {
+    namespace = 'net.pgaskin.remotedesktop.backend.spice'
+    compileSdk 36
+    ndkVersion = project(':backends').nativeNdkVersion
+
+    defaultConfig {
+        minSdk 34
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_21
+        targetCompatibility JavaVersion.VERSION_21
+    }
+
+    // Not AGP's `src/main/`: `src/` here is the crate's. The Java is in
+    // `java/`, without package directories (javac goes by the `package`
+    // line), and the provider's registration is in `resources/`.
+    sourceSets.main {
+        java.srcDirs = ['java']
+        resources.srcDirs = ['resources']
+    }
+
+    publishing {
+        singleVariant('release') {
+            withSourcesJar()
+        }
+    }
+}
+
+dependencies {
+    // The only app project this module may depend on.
+    api project(':backends')
+}
+
+// The crate builds from a patched submodule, so it runs the same check as the
+// CMake modules: no build from sources that look pristine but are not, or from
+// an uninitialised submodule.
+def patchCheck = tasks.register('patchCheck', PatchCheckTask) {
+    patchScript.set(rootProject.file('patch.sh'))
+}
+
+tasks.named('preBuild') {
+    dependsOn patchCheck
+}
+
+// `libremotedesktop_spice.so`, compiled by cargo-ndk into a generated jniLibs
+// directory the AAR packages.
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        final cap = variant.name.substring(0, 1).toUpperCase(Locale.ROOT) + variant.name.substring(1)
+        final backends = project(':backends')
+
+        final cargoBuild = tasks.register("cargoBuild${cap}Native", CargoBuildTask) {
+            workspaceDir.set(backends.cargoWorkspace)
+            cargoPackage.set('remotedesktop-spice')
+            ndkDirectory.set(androidComponents.sdkComponents.ndkDirectory)
+            rustToolchainFile.set(backends.cargoRustToolchain)
+            cargoNdkVersion.set(backends.cargoNdkVersion)
+            abiFilters.set(backends.nativeAbis)
+            minSdkVersion.set(provider {
+                final v = android.defaultConfig.minSdk
+                (v instanceof com.android.build.api.variant.AndroidVersion) ? v.apiLevel : v
+            })
+            outputDir.set(layout.buildDirectory.dir("generated/rustNativeLibs/${variant.name}"))
+        }
+        variant.sources.jniLibs?.addGeneratedSourceDirectory(cargoBuild) { it.outputDir }
+
+        // `SpiceCatalog`, what the catalog says this backend is, and
+        // `SpiceNatives`, what the library registers its natives on: see :backends.
+        backends.generateCatalog(project, variant, 'spice', 'SpiceCatalog')
+        backends.generateNatives(project, variant, 'SpiceNatives', 'remotedesktop_spice')
+    }
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}

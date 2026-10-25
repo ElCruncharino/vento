@@ -1,0 +1,17 @@
+#!/bin/busybox sh
+# The audio guest's /init: mount what the sound card needs, load its driver,
+# and run tone on the first serial port for as long as the guest is up.
+/bin/busybox --install -s /bin
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+exec >/dev/tty0 2>&1
+echo "vento audio guest"
+sh /modules.sh
+for _ in $(seq 50); do [ -e /dev/snd/pcmC0D0p ] && break; sleep 0.1; done
+ls /dev/snd
+while :; do
+    /usr/bin/tone hw:0,0 /dev/ttyS0
+    echo "tone exited ($?); again in a second"
+    sleep 1
+done

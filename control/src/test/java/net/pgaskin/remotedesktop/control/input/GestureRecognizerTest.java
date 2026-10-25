@@ -17,9 +17,8 @@ import java.util.List;
  * The gesture state machine, driven on a virtual clock.
  *
  * <p>Every number here is one of the original's, listed in
- * {@code ARCHITECTURE.md} §1.15; at the
- * harness's 2.625 density the 12 dp displacement threshold is 31.5 px and the
- * 24 dp path threshold is 63 px.
+ * {@code ARCHITECTURE.md} §1.15; at the harness's 2.625 density the 12 dp
+ * displacement threshold is 31.5 px and the 24 dp path threshold is 63 px.
  */
 public class GestureRecognizerTest {
 
@@ -120,7 +119,7 @@ public class GestureRecognizerTest {
         assertEquals(asList("down RIGHT", "up RIGHT"), h.buttonEvents());
     }
 
-    /** A gesture that ends with a finger still down elsewhere must not click. */
+    /** A gesture ended by {@code ACTION_CANCEL} must not click. */
     @Test
     public void cancelledGestureClicksNothing() {
         final Harness h = Harness.improved();
@@ -132,8 +131,8 @@ public class GestureRecognizerTest {
 
     /**
      * vncpatch#1: a stationary tap on a high-report-rate screen emits more than
-     * ten ACTION_MOVEs, and the original counts that as a drag — so the tap is
-     * silently swallowed. The improved preset must not do that.
+     * ten ACTION_MOVEs, and the original counts that as a drag, so the tap is
+     * silently dropped. The improved preset must not do that.
      */
     @Test
     public void manyTinyMovesAreStillATap() {
@@ -159,8 +158,8 @@ public class GestureRecognizerTest {
      * The path threshold that replaced the move-count test is harder to trip,
      * but it is still an accumulator, so enough wobble eats the tap the same
      * way: 15 events at ±3 px is 87 px of path, past the 63 px threshold.
-     * How much path a real stationary tap accumulates is a question for the
-     * recorded fixtures, and {@link FixtureReplayTest} is where it is asked.
+     * How much path a real stationary tap accumulates is checked against the
+     * recorded fixtures in {@link FixtureReplayTest}.
      */
     @Test
     public void thePathThresholdIsStillAnAccumulatorAndCanEatALongWobblyTap() {
@@ -218,7 +217,7 @@ public class GestureRecognizerTest {
 
     /**
      * The pan is the midpoint's travel, so two fingers that keep their
-     * separation while both moving are still a pinch — the ratio decided that —
+     * separation while both moving are still a pinch (the ratio decided that),
      * and every pixel they travel is a pan.
      */
     @Test
@@ -245,8 +244,8 @@ public class GestureRecognizerTest {
         assertEquals(0f, totalPan(h)[1], 1e-3);
         assertEquals("the scale is unchanged by a pan", scale, h.viewport.getScale(), 1e-4);
         // Within a pixel or two: the fingers arrive one event at a time, so
-        // between them the separation — and with it the scale a pan is divided
-        // by — wobbles by one finger's step.
+        // between them the separation, and with it the scale a pan is divided
+        // by, wobbles by one finger's step.
         assertEquals("the picture followed the fingers",
                 originX + 80, h.viewport.originX(), 2.0);
         assertEquals("a pan tells the far end nothing", 0, h.pointer.size());
@@ -255,7 +254,7 @@ public class GestureRecognizerTest {
     // ---- a far end that owns the cursor -----------------------------------
 
     /**
-     * That end accelerates whatever arrives, so nothing here shapes it first:
+     * The far end accelerates whatever arrives, so nothing here shapes it first:
      * the finger's own deltas go out, and a flick leaves no glide behind to
      * keep sending more of them.
      */
@@ -280,7 +279,7 @@ public class GestureRecognizerTest {
         assertTrue("and the flick should be gliding", h.gestures.glideSpeed() > 0);
     }
 
-    /** And the switch is a switch: off, a relative session is shaped like any other. */
+    /** With the setting off, a relative session is shaped like any other. */
     @Test
     public void theShapingCanBeKeptInRelativeModeToo() {
         final Harness h = Harness.improved();

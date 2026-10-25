@@ -40,15 +40,15 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * The home screen: one saved connection per item, and the two buttons that
- * lead everywhere else.
+ * The home screen: one saved connection per item, plus the add button and the
+ * bar's actions.
  *
- * <p>An item is a card or a row, chosen from the bar and remembered. Cards are
- * how somebody recognises a machine by what was on its screen; rows are how
- * somebody finds one among twenty, since a name and an address on a line of
- * their own are read rather than scanned past. Both are the same bind — the
- * two layouts share their ids — so the only thing the mode decides is how big
- * the picture is and whether the items are joined into a group of rows.
+ * <p>An item is a card or a row, chosen from the bar and remembered. Cards let
+ * the user recognise a machine by its screen; rows make it easier to find one
+ * among twenty, since a name and address on their own line are easier to read.
+ * Both use the same bind (the two layouts share their ids), so the mode only
+ * decides the picture size and whether the items are joined into a group of
+ * rows.
  */
 public final class HomeActivity extends AppCompatActivity {
 
@@ -62,21 +62,21 @@ public final class HomeActivity extends AppCompatActivity {
     private boolean listView;
 
     /**
-     * The bar's own height, before the status bar is added to it — the theme's
-     * {@code actionBarSize}, taken from the layout rather than named again
-     * here, since every other header on the screen is that same attribute and
-     * Material 3's value is not appcompat's.
+     * The bar's own height, without the status bar: the theme's
+     * {@code actionBarSize}, read from the layout rather than resolved again
+     * here, since every other header uses that same attribute and Material 3's
+     * value differs from appcompat's.
      */
     private int barHeight;
 
-    /** The editor sheet, while one is open — a dialog does not survive a rotation. */
+    /** The editor, while one is open; a dialog does not survive a rotation. */
     private ConnectionEditorPanel editor;
 
     /**
-     * The reorder sheet, likewise. Nothing of it has to be carried across a
-     * rotation, unlike the editor's half-typed form: what it shows is read from
-     * the saved connections and what it does is written as it is done, so the
-     * bundle needs only to say that it was open.
+     * The reorder sheet, likewise. Unlike the editor's half-typed form, none of
+     * its state needs saving across a rotation: it reads the saved connections
+     * and writes each change immediately, so the bundle only records that it
+     * was open.
      */
     private PinnedOrderPanel reorder;
 
@@ -96,9 +96,8 @@ public final class HomeActivity extends AppCompatActivity {
         listView = AppSettings.listView(this);
         barHeight = toolbar.getLayoutParams().height;
         final GridLayoutManager grid = new GridLayoutManager(this, spanCount());
-        // A plugin's card is a statement about the screen rather than an item
-        // on it, so it takes the whole width whatever shape the items are and
-        // however many columns they are in.
+        // A plugin's card is a notice rather than a list item, so it takes the
+        // whole width regardless of the view mode and column count.
         grid.setSpanSizeLookup(new GridLayoutManager.SpanSizeLookup() {
             @Override
             public int getSpanSize(int position) {
@@ -106,18 +105,17 @@ public final class HomeActivity extends AppCompatActivity {
             }
         });
         list.setLayoutManager(grid);
-        // Every change here is a full reload, and the one change somebody sees
-        // is the switch between the two shapes — where cards morphing into rows
-        // is a distraction in a gesture whose whole content is "show me more of
-        // them".
+        // Every change here is a full reload, and the only visible one is the
+        // switch between cards and rows, where an animation morphing one into
+        // the other would only distract.
         list.setItemAnimator(null);
         list.setAdapter(adapter);
         liftToolbarOnScroll();
         applyInsets();
         setUpToolbar();
 
-        // An editor open across a rotation: the sheet went with the window, and
-        // what somebody had typed into it is in the bundle.
+        // An editor open across a rotation: the dialog was destroyed with the
+        // window, and the form's contents are in the bundle.
         final Bundle sheet = savedInstanceState == null
                 ? null : savedInstanceState.getBundle("editor");
         if (sheet != null) {
@@ -139,8 +137,8 @@ public final class HomeActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
-        // A dialog outliving its activity is a leaked window, and these are
-        // shown from a screen that is recreated on every rotation.
+        // A dialog outliving its activity is a leaked window, and this screen
+        // is recreated on every rotation.
         if (editor != null) {
             editor.dismiss();
             editor = null;
@@ -159,14 +157,14 @@ public final class HomeActivity extends AppCompatActivity {
     }
 
     /**
-     * The connected badges, while this screen is up. A session can come up or
-     * go while somebody is looking at the list — in the window beside this one,
-     * or from the notification — and the card would otherwise go on claiming a
+     * Updates the connected badges while this screen is visible. A session can
+     * start or end while the list is shown (in the window beside this one, or
+     * from the notification), and the card would otherwise keep showing a
      * connection that ended.
      *
-     * <p>Posted rather than applied where it arrives: this can land during a
-     * scroll, and a list is not allowed to be told its contents changed while
-     * it is working out where they go.
+     * <p>Posted rather than applied immediately: this can arrive during a
+     * scroll, and a RecyclerView must not be notified of changes during
+     * layout.
      */
     private final Sessions.Watcher sessionWatcher =
             () -> list.post(adapter::notifyDataSetChanged);
@@ -185,19 +183,18 @@ public final class HomeActivity extends AppCompatActivity {
 
     /**
      * As many columns of about 240 dp as fit, and never fewer than two: a
-     * roughly square card is a shape you scan rather than read, and one of them
-     * per row of a phone screen would be a very large button.
+     * roughly square card is scanned rather than read, and one per row on a
+     * phone would be a very large button.
      *
-     * <p>240 rather than the 190 this started at, because rounding put the
-     * boundary in the wrong place: at 190 a third column appears from 475 dp,
-     * which several ordinary phones are, and three cards across a phone are too
-     * small to be the picture they exist to be. A third column now wants 600 dp
-     * — a tablet or an unfolded foldable — and the cards simply grow until then.
+     * <p>240 rather than 190, because with rounding, 190 gives a third column
+     * from 475 dp, which several ordinary phones are, and three cards across a
+     * phone are too small to show the desktop. A third column needs 600 dp (a
+     * tablet or an unfolded foldable); until then the cards grow.
      *
-     * <p>A row is read left to right, so it wants twice the width and can be
-     * the only thing across a phone: 480 dp puts the second column on a tablet
-     * and nowhere else. A single 900 dp row with a name at one end and a badge
-     * at the other is not a list, it is a card that lost its picture.
+     * <p>A row is read left to right, so it needs twice the width and can be
+     * the only thing across a phone: 480 dp gives a second column only on a
+     * tablet. A single 900 dp row with a name at one end and a badge at the
+     * other would no longer read as a list.
      */
     private int spanCount() {
         final float dp = getResources().getDisplayMetrics().widthPixels
@@ -207,37 +204,37 @@ public final class HomeActivity extends AppCompatActivity {
     }
 
     /**
-     * The inset either side of the list. Zero for rows, whose own group inset
-     * is the whole of it — a card carries its margin in its layout, and a row
-     * takes the same 16 dp every other group of rows in this app is given.
+     * The padding either side of the list: 8 dp for cards, which add their own
+     * 8 dp margin, and zero for rows, which get the same 16 dp group inset as
+     * every other group of rows in this app.
      */
     private int listSidePadding() {
         return listView ? 0 : Math.round(8 * getResources().getDisplayMetrics().density);
     }
 
-    /** The same 8 dp under the bar, from whichever of the two supplies it. */
+    /** 8 dp under the bar for rows; a card's own margin provides it for cards. */
     private int listTopPadding() {
         return listView ? Math.round(8 * getResources().getDisplayMetrics().density) : 0;
     }
 
     /**
-     * The list scrolls behind the bar, so it is the padding that keeps the first
-     * card clear of it rather than the layout.
+     * The list scrolls behind the bar, so its padding, not the layout, keeps the
+     * first card clear of it.
      */
     private void applyInsets() {
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.root), (v, insets) -> {
             final Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
-            // The bar's own end padding, because a menu item is not content: a
-            // toolbar's content inset moves the title and does nothing to the
-            // buttons, which are laid out from its padding. 8 dp puts the last
-            // icon where the title starts, its cell being 12 dp wider than the
-            // glyph in it either side.
+            // The bar's own end padding, because menu items are not content: a
+            // toolbar's content inset moves the title but not the buttons, which
+            // are laid out from its padding. 8 dp mirrors the title's inset for
+            // the last icon, whose cell is 12 dp wider than the glyph on each
+            // side.
             final int menuInset = Math.round(8 * getResources().getDisplayMetrics().density);
             toolbar.setPadding(bars.left, bars.top, bars.right + menuInset, 0);
             toolbar.getLayoutParams().height = bars.top + barHeight;
-            // The FAB sits over the list, so the padding is its height and both
-            // margins as well as the bar — otherwise the last row is a card
-            // with a button on top of it.
+            // The FAB sits over the list, so the bottom padding includes its
+            // height and margins as well as the navigation bar; otherwise the
+            // button would cover the last item.
             final int fab = Math.round(72 * getResources().getDisplayMetrics().density);
             list.setPadding(listSidePadding(),
                     toolbar.getLayoutParams().height + listTopPadding(),
@@ -254,9 +251,9 @@ public final class HomeActivity extends AppCompatActivity {
     }
 
     /**
-     * The bar takes its shadow the moment anything is behind it. Its background
-     * is the window's, so at rest there is nothing to separate — and once a card
-     * has scrolled under it, a shadow is the only thing that says one is there.
+     * The bar gets its shadow as soon as anything is behind it. Its background
+     * is the window's, so at rest nothing needs separating, and once a card has
+     * scrolled under it, the shadow is the only sign of it.
      */
     private void liftToolbarOnScroll() {
         final float lifted = getResources().getDisplayMetrics().density * 4f;
@@ -296,7 +293,7 @@ public final class HomeActivity extends AppCompatActivity {
         });
     }
 
-    /** The button offers the other shape, which is also what it is called. */
+    /** The button shows and is titled with the mode it switches to. */
     private void showViewMode() {
         final MenuItem item = toolbar.getMenu().findItem(R.id.action_view_mode);
         item.setIcon(listView ? R.drawable.ic_view_grid : R.drawable.ic_view_list);
@@ -304,13 +301,13 @@ public final class HomeActivity extends AppCompatActivity {
     }
 
     /**
-     * Reordering is offered once there are two pins to be in the wrong order.
-     * One pin has no order, and none is a sheet that would open empty — and an
-     * item that is always there and does nothing on most phones is worse than
-     * one that appears when it means something.
+     * Reordering is offered once there are at least two pinned connections. One
+     * has no order, and with none the sheet would be empty; an item that is
+     * always shown but usually does nothing is worse than one that appears when
+     * it is useful.
      *
-     * <p>Counted off the front of the list rather than over all of it, because
-     * that is what {@link Connections#all} sorting pinned first means.
+     * <p>Counted from the front of the list, since {@link Connections#all}
+     * sorts pinned connections first.
      */
     private void showReorder() {
         int pinned = 0;
@@ -324,15 +321,14 @@ public final class HomeActivity extends AppCompatActivity {
     }
 
     /**
-     * The switch, which is a rebind of everything: the item type changes and so
-     * does the span count.
+     * Switches between cards and rows, which rebinds everything: the item type
+     * and the span count both change.
      *
-     * <p>Which is why the first visible item is taken first and scrolled back
-     * to afterwards. A full rebind starts the list at the top, and a screen
-     * that jumps to the top has lost the connection somebody was looking at —
-     * the one thing they were doing when they asked for the other shape.
+     * <p>So the first visible item is recorded and scrolled back to afterwards.
+     * A full rebind starts the list at the top, which would lose the
+     * connection the user was looking at.
      */
-    // Nothing more specific will do: every item's view type changes, so no bound
+    // Nothing more specific applies: every item's view type changes, so no bound
     // view survives the switch.
     @SuppressLint("NotifyDataSetChanged")
     private void toggleViewMode() {
@@ -365,42 +361,41 @@ public final class HomeActivity extends AppCompatActivity {
     }
 
     /**
-     * The editor is a sheet over this screen rather than a screen of its own,
-     * so the list behind it is what it is editing — and a save has to be reflected there rather than waiting for
-     * {@link #onResume}, which no longer happens.
+     * The editor is a dialog over this screen rather than a separate activity,
+     * so a save has to be reflected in the list behind it directly rather than
+     * on {@link #onResume}, which a dialog does not trigger.
      */
     private void editConnection(String id) {
         editor = ConnectionEditorPanel.show(this, id, adapter::reload);
     }
 
     /**
-     * The pinned connections, in a sheet that does nothing but let them be
-     * dragged past one another — see {@link PinnedOrderPanel} for why the drag
-     * is not on the cards themselves. Reloading behind it as it writes, since
-     * the list under the sheet is the thing being rearranged.
+     * The pinned connections in a sheet for reordering them by drag (see
+     * {@link PinnedOrderPanel} for why the drag is not on the cards
+     * themselves). The list behind it reloads on every write, since it is the
+     * list being rearranged.
      */
     private void reorderPinned() {
         reorder = PinnedOrderPanel.show(this, adapter::reload);
     }
 
     /**
-     * A session gets a window of its own, and this one goes.
+     * Opens the session in its own window and closes this one.
      *
-     * <p>The chooser is a way in rather than a place: leaving it behind the
-     * session would mean the launcher icon returns to whichever window is
-     * already open, and choosing a second machine would need a way back out of
-     * the first. Finishing it means the icon always offers the list — and since
-     * a session's window is a document task, the list opened from it can start
-     * a second session beside the first rather than instead of it.
+     * <p>The list is only an entry point: left open behind the session, the
+     * launcher icon would return to whichever window is already open, and
+     * choosing a second machine would need a way back out of the first.
+     * Finishing it means the icon always opens the list, and since a session's
+     * window is a document task, the list opened from it can start a second
+     * session beside the first rather than replacing it.
      *
-     * <p>The task goes with the activity, which is not the same thing: a
-     * finished activity leaves its task in the recents list, so the chooser
-     * lingered there as a window somebody could go back to — an empty one, since
-     * the only thing in it had gone.
+     * <p>The task is removed along with the activity: a finished activity
+     * leaves its task in the recents list, where it would remain as an empty
+     * window.
      *
-     * <p>The intent itself is {@link SessionActivity#intentFor}'s, and shared
-     * rather than built here because a launcher shortcut opens the same
-     * connection and the two must be the same document — see there.
+     * <p>The intent comes from {@link SessionActivity#intentFor}, shared rather
+     * than built here because a launcher shortcut opens the same connection and
+     * the two must be the same document.
      */
     private void openConnection(Connection conn) {
         startActivity(SessionActivity.intentFor(this, conn.id()));
@@ -413,24 +408,24 @@ public final class HomeActivity extends AppCompatActivity {
 
         private final List<Connection> items = new ArrayList<>();
         /**
-         * The plugins with something to say, above the connections. Recomputed
-         * with the list, since every one of them can change while the app is in
-         * the background and uninstalling from a card is how one usually does.
+         * The plugin notices, above the connections. Recomputed with the list,
+         * since any of them can change while the app is in the background, as
+         * when a plugin is uninstalled from its card.
          */
         private final List<Plugins.Card> cards = new ArrayList<>();
         /**
          * Decoded previews, by connection id, each with the
          * {@link Connections#previewVersion} it was decoded at.
          *
-         * <p>A preview is a sealed PNG, so one costs a keystore round trip and
-         * a decode — off the main thread, and kept, because a grid rebinds
-         * every time it is scrolled and a list survives every trip away from
-         * this screen. The version is what makes keeping it safe: returning
-         * from a session re-decodes the one card that session was of.
+         * <p>A preview is an encrypted PNG, so each costs a keystore round trip
+         * and a decode, done off the main thread and cached, because a grid
+         * rebinds whenever it is scrolled and the list survives leaving this
+         * screen. The version keeps the cache correct: returning from a session
+         * re-decodes only that session's card.
          *
-         * <p>A null bitmap is an answer rather than a miss — most connections
-         * have never been opened — so this holds the pair rather than the
-         * picture.
+         * <p>A null bitmap is a cached result rather than a miss (many
+         * connections have no preview), so this holds the pair rather than the
+         * bitmap.
          */
         private final Map<String, Preview> previews = new HashMap<>();
 
@@ -438,27 +433,27 @@ public final class HomeActivity extends AppCompatActivity {
         private record Preview(int version, Bitmap bitmap) {
         }
 
-        /** What has been asked for and not come back, so it is asked once. */
+        /** Previews being decoded, so each is requested only once. */
         private final Set<String> decoding = new HashSet<>();
 
-        // Deliberately the blunt notification, twice: what a card shows comes
-        // from three places that move independently — the record, the live
-        // session, and the preview — and a diff has no way to know that.
+        // Deliberately notifyDataSetChanged, twice: a card's content comes from
+        // three independent sources (the record, the live session and the
+        // preview), and a diff cannot account for that.
         @SuppressLint("NotifyDataSetChanged")
         void reload() {
             items.clear();
             items.addAll(Connections.all(HomeActivity.this));
-            // About the connections alone: a screen saying there are none is
-            // still true with a card above it, and a plugin waiting to be set
-            // up is a good deal of what somebody would do first.
+            // Based on the connections alone: "no connections" is still true
+            // with a plugin card above it, and setting up a plugin is often
+            // the first thing to do.
             empty.setVisibility(items.isEmpty() ? View.VISIBLE : View.GONE);
-            // Whether there is an order to change is a fact about the list, so
-            // it is answered wherever the list is read.
+            // Whether there is an order to change depends on the list, so it is
+            // updated whenever the list is read.
             showReorder();
             notifyDataSetChanged();
-            // The plugins land when they land: asking one whether it is set up
-            // can mean hashing a library, and the connections are not made to
-            // wait behind that. Where the answers are known it is this frame.
+            // The plugin cards arrive asynchronously: checking whether a plugin
+            // is set up can mean hashing a library, and the connections should
+            // not wait for that. Where the answers are cached it is this frame.
             Plugins.cards(HomeActivity.this, found -> {
                 cards.clear();
                 cards.addAll(found);
@@ -467,10 +462,9 @@ public final class HomeActivity extends AppCompatActivity {
         }
 
         /**
-         * This connection's preview if it is decoded and current, and null
-         * while it is not — which is also the answer for a connection that has
-         * never been opened, and is why the placeholder is what a card draws
-         * either way rather than a third state to design.
+         * This connection's preview if it is decoded and current, else null,
+         * which is also the result for a connection with no preview, so the
+         * card draws the placeholder in both cases.
          */
         private Bitmap preview(String id) {
             final int version = Connections.previewVersion(id);
@@ -482,9 +476,9 @@ public final class HomeActivity extends AppCompatActivity {
                 Connections.readThumbnail(HomeActivity.this, id, bmp -> {
                     decoding.remove(id);
                     previews.put(id, new Preview(version, bmp));
-                    // The one card, rather than the list: a decode that came
-                    // back while somebody was scrolling should not restart
-                    // every other card's.
+                    // Only this card rather than the whole list: a decode that
+                    // finishes during a scroll should not rebind every other
+                    // card.
                     final int at = indexOf(id);
                     if (at >= 0) {
                         notifyItemChanged(cards.size() + at);
@@ -504,9 +498,9 @@ public final class HomeActivity extends AppCompatActivity {
         }
 
         /**
-         * The shape, which is a property of the screen rather than of an item —
-         * but it is the view type all the same, because that is what makes a
-         * recycled card impossible to hand to a row.
+         * The view mode is a property of the screen rather than of an item, but
+         * it is still the view type, so that a recycled card view can never be
+         * bound as a row.
          */
         @Override
         public int getItemViewType(int position) {
@@ -539,14 +533,13 @@ public final class HomeActivity extends AppCompatActivity {
             final Connection c = items.get(index);
             h.title.setText(c.title());
             h.subtitle.setText(c.subtitle());
-            // INVISIBLE, not GONE: a connection with no name has one line to
-            // show and the one beside it may have two, and a grid row of cards
-            // that are not the same height is a ragged edge for nothing.
+            // INVISIBLE, not GONE: a connection with no name has one line and
+            // the one beside it may have two, and cards of different heights in
+            // one grid row would leave a ragged edge.
             h.subtitle.setVisibility(c.subtitle().isEmpty() ? View.INVISIBLE : View.VISIBLE);
 
-            // Hidden when there is only one backend to be on: a label that is
-            // the same on every card says nothing, and the free flavour with
-            // one backend is that case.
+            // Hidden when there is only one backend: a label that is the same
+            // on every card adds nothing.
             final String backend = Backends.shortName(c.backendId());
             h.badge.setText(backend);
             h.badge.setVisibility(Backends.ids().size() > 1 && !backend.isEmpty()
@@ -558,12 +551,10 @@ public final class HomeActivity extends AppCompatActivity {
                 h.preview.setImageTintList(null);
                 h.preview.setScaleType(ImageView.ScaleType.CENTER_CROP);
             } else {
-                // Nothing has been connected to yet, so: the band's own colour
-                // and one faint icon at its natural size in the middle of it.
-                // CENTER, not the CENTER_CROP a photograph wants — cropping a
-                // 24 dp glyph to fill 132 dp of card is what the first version
-                // of this did, and it draws two grey bars nobody can read as a
-                // computer.
+                // No preview yet: the band's own colour and one faint icon at
+                // its natural size in the middle. CENTER, not the CENTER_CROP a
+                // preview uses: cropping the glyph to fill the band leaves two
+                // grey bars that are not recognisable as a computer.
                 h.preview.setImageResource(R.drawable.ic_desktop);
                 h.preview.setImageTintList(ColorStateList.valueOf(
                         MaterialColors.compositeARGBWithAlpha(
@@ -573,10 +564,10 @@ public final class HomeActivity extends AppCompatActivity {
                 h.preview.setScaleType(ImageView.ScaleType.CENTER);
             }
 
-            // The one thing on a card that is about right now rather than about
-            // what was saved. Tinted here rather than in the drawable so it is
-            // the theme's accent on whatever the device's colours turn out to
-            // be, and so the other two badges keep sharing one shape.
+            // The only thing on a card about the current state rather than the
+            // saved connection. Tinted here rather than in the drawable so it
+            // uses the theme's accent with the device's dynamic colours, and so
+            // the other two badges keep sharing one drawable.
             final Session live = Sessions.byKey(Sessions.keyFor(c.id()));
             if (live != null && live.alive()) {
                 h.connected.setText(live.state() == Backend.State.CONNECTED
@@ -598,10 +589,9 @@ public final class HomeActivity extends AppCompatActivity {
             }
 
             h.card.setOnClickListener(v -> openConnection(c));
-            // Straight to the editor. There used to be a selection mode here,
-            // whose three actions were edit, delete and pin — and all three are
-            // in the editor, two of them only reachable that way. A mode whose
-            // whole content is one screen is a step in front of that screen.
+            // Straight to the editor rather than a selection mode: edit, delete
+            // and pin are all in the editor, so such a mode would only be an
+            // extra step in front of it.
             h.card.setOnLongClickListener(v -> {
                 editConnection(c.id());
                 return true;
@@ -609,10 +599,10 @@ public final class HomeActivity extends AppCompatActivity {
         }
 
         /**
-         * One plugin's card: what it is, what is wrong or missing, what its own
-         * failure said, and the one or two things to do about it. Uninstall is
-         * on every card about a package; the restart card is about the set and
-         * has the other button instead.
+         * One plugin's card: the plugin, what is wrong or missing, the error it
+         * reported, and the one or two actions for it. Uninstall is on every
+         * card about a package; the restart card is about all plugins and has
+         * the restart button instead.
          */
         private void bindCard(PluginHolder h, int position, Plugins.Card card) {
             spaceCard(h.itemView, position);
@@ -639,19 +629,18 @@ public final class HomeActivity extends AppCompatActivity {
         }
 
         /**
-         * A card's edges, which the two shapes below it disagree about.
+         * A plugin card's margins, which have to suit both view modes.
          *
-         * <p>It is the full width of either shape, so it has to line up with
+         * <p>It spans the full width in either mode, so it has to line up with
          * both: a row is inset 16 dp with the list flush to the screen, and a
-         * card carries 8 dp of its own with the list padded by 8. The inset is
-         * therefore the group's less whatever the list already contributes, and
-         * comes to the same 16 dp either way.
+         * card has its own 8 dp margin with the list padded by 8. The inset is
+         * therefore the group inset minus the list's padding, 16 dp either way.
          *
-         * <p>The gap is the one between two groups of rows, for the same reason
-         * that is the gap: a card is a statement about the screen, not an entry
-         * on it. Above the first, below every one, and less what the neighbour
-         * already brings — the list's own top padding, and a connection card's
-         * own margin where the shape below is cards.
+         * <p>The vertical gap is the one between two groups of rows, since a
+         * plugin card is a notice rather than a list item. Above the first and
+         * below each one, minus what the neighbour already provides: the
+         * list's own top padding, and a connection card's own margin in card
+         * mode.
          */
         private void spaceCard(View card, int position) {
             final int inset = getResources().getDimensionPixelSize(R.dimen.group_inset);
@@ -668,12 +657,12 @@ public final class HomeActivity extends AppCompatActivity {
         }
 
         /**
-         * A row's place in the group the whole list is: its background, its
-         * inset and the gap under it, the same three a settings row is given.
+         * A row's place in the group formed by the whole list: its background,
+         * its inset and the gap under it, as for a settings row.
          *
-         * <p>Ends are grid rows rather than items, since a wide enough screen
-         * puts two of them side by side — so the first span's worth are the top
-         * of the group and whatever shares the bottom grid row is its end.
+         * <p>The ends are grid rows rather than items, since a wide enough
+         * screen puts two rows side by side: the first span's worth are the top
+         * of the group, and the items in the last grid row are its bottom.
          */
         private void groupRow(View row, int position) {
             final int span = ((GridLayoutManager) list.getLayoutManager()).getSpanCount();
@@ -684,8 +673,8 @@ public final class HomeActivity extends AppCompatActivity {
     }
 
     /**
-     * One item, in either shape: the two layouts carry the same ids so that
-     * one bind fills both, and the live badge — the part most likely to drift —
+     * One item, in either view mode: the two layouts have the same ids so that
+     * one bind fills both, and the live badge, the part most likely to diverge,
      * is written once.
      */
     private static final class Holder extends RecyclerView.ViewHolder {
@@ -709,7 +698,7 @@ public final class HomeActivity extends AppCompatActivity {
         }
     }
 
-    /** A plugin's card, which shares nothing with a connection's but its list. */
+    /** A plugin's card, which shares only the list with a connection's. */
     private static final class PluginHolder extends RecyclerView.ViewHolder {
         final TextView title;
         final TextView message;

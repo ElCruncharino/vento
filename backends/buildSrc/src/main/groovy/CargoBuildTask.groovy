@@ -22,7 +22,16 @@ import java.util.regex.Pattern
 
 /**
  * Builds one crate of the workspace for every packaged ABI, with {@code cargo
- * ndk}, into a directory laid out the way {@code jniLibs} wants it.
+ * ndk}, into a directory laid out the way {@code jniLibs} wants it: one
+ * {@code <abi>/} directory each, holding the crate's library.
+ *
+ * <p>That library is a {@code cdylib} for a backend whose library is its Rust
+ * crate, and a {@code staticlib} for one whose library CMake links: the C
+ * backends, where the crate is the adapter and the JNI layer that go into the
+ * C library's {@code .so}, and CMake is told where to find it. The crate type
+ * is given on the command line ({@code cargo rustc --crate-type}) rather than
+ * declared in the crate, so that the host build, which links the crate as an
+ * ordinary dependency, does not also build an unused static library of it.
  *
  * <p>Three things here are not a {@code cargo} invocation. The NDK comes from
  * {@code androidComponents.sdkComponents.ndkDirectory}, so {@code ndkVersion} is
@@ -31,8 +40,8 @@ import java.util.regex.Pattern
  * is scrubbed, because an ambient {@code CC} or {@code RUSTFLAGS} would silently
  * change what is linked into the APK.
  *
- * <p>Not up-to-date checked: cargo does its own incremental build, and Gradle
- * second-guessing it is how a stale {@code .so} gets packaged.
+ * <p>Not up-to-date checked: cargo does its own incremental build, and a
+ * second up-to-date check in Gradle could package a stale {@code .so}.
  */
 abstract class CargoBuildTask extends DefaultTask {
 
@@ -58,8 +67,17 @@ abstract class CargoBuildTask extends DefaultTask {
     private static final Pattern RUSTC_VERSION = ~/^rustc (\S+)/
     private static final Pattern CARGO_NDK_VERSION = ~/^cargo-ndk (\S+)/
 
+    /** What {@code cargo ndk} calls each ABI, as the target triple cargo puts it under. */
+    private static final Map<String, String> TRIPLES = [
+            'arm64-v8a'  : 'aarch64-linux-android',
+            'armeabi-v7a': 'armv7-linux-androideabi',
+            'x86'        : 'i686-linux-android',
+            'x86_64'     : 'x86_64-linux-android',
+    ]
+
     CargoBuildTask() {
         outputs.upToDateWhen { false }
+        crateType.convention('cdylib')
     }
 
     /** The ABIs to build, as {@code jniLibs} names them. */
@@ -72,6 +90,10 @@ abstract class CargoBuildTask extends DefaultTask {
 
     @Input
     abstract Property<String> getCargoPackage()
+
+    /** {@code cdylib}, the default, or {@code staticlib}; see above. */
+    @Input
+    abstract Property<String> getCrateType()
 
     /** The one version of {@code cargo-ndk} this build is known to work with. */
     @Input
@@ -101,14 +123,19 @@ abstract class CargoBuildTask extends DefaultTask {
             throw new GradleException("${name}: no ABIs to build for (set android.defaultConfig.ndk.abiFilters)")
         }
 
+        final staticlib = crateType.get() == 'staticlib'
+        if (!staticlib && crateType.get() != 'cdylib') {
+            throw new GradleException("${name}: crateType is cdylib or staticlib, not ${crateType.get()}")
+        }
         final outDir = outputDir.get().asFile
-        outDir.deleteDir()
+        // A static library is replaced only when it changed (below), so that
+        // CMake, which links it, does not relink every library on every build.
+        if (!staticlib) {
+            outDir.deleteDir()
+        }
         outDir.mkdirs()
 
-        final env = new LinkedHashMap<String, String>(System.getenv())
-        env.keySet().removeIf { name ->
-            ENV_IGNORED.contains(name) || ENV_IGNORED_PREFIX.any { name.startsWith(it) }
-        }
+        final env = scrubbedEnvironment()
         env.put('ANDROID_NDK_HOME', ndkDirectory.get().asFile.absolutePath)
         env.put('CARGO_TERM_PROGRESS_WHEN', 'never')
         env.put('CARGO_TERM_COLOR', 'never')
@@ -124,20 +151,53 @@ abstract class CargoBuildTask extends DefaultTask {
 
         final cmd = ['cargo', 'ndk']
         abis.toSorted().each { cmd.addAll(['-t', it]) }
-        cmd.addAll([
-                '--platform', minSdkVersion.get().toString(),
-                '--output-dir', outDir.absolutePath,
-                'build',
-                '--locked',
-                '--release',
-                '--package', cargoPackage.get(),
-        ])
+        cmd.addAll(['--platform', minSdkVersion.get().toString()])
+        if (staticlib) {
+            cmd.addAll(['rustc', '--locked', '--release', '--package', cargoPackage.get(),
+                        '--crate-type', 'staticlib'])
+        } else {
+            cmd.addAll(['--output-dir', outDir.absolutePath, 'build', '--locked', '--release',
+                        '--package', cargoPackage.get()])
+        }
 
         execOperations.exec {
             it.workingDir = workspace
             it.commandLine = cmd
             it.environment = env
         }
+
+        if (staticlib) {
+            // cargo-ndk copies only shared libraries out, so the archive is
+            // taken from where cargo left it: the workspace's own target
+            // directory, since the environment above has no CARGO_TARGET_DIR.
+            final file = "lib${cargoPackage.get().replace('-', '_')}.a"
+            abis.each { abi ->
+                final triple = TRIPLES[abi]
+                if (triple == null) {
+                    throw new GradleException("${name}: no target triple known for ${abi}")
+                }
+                final built = new File(workspace, "target/${triple}/release/${file}")
+                final dest = new File(outDir, "${abi}/${file}")
+                if (!dest.exists() || java.nio.file.Files.mismatch(built.toPath(), dest.toPath()) != -1L) {
+                    dest.parentFile.mkdirs()
+                    java.nio.file.Files.copy(built.toPath(), dest.toPath(),
+                            java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+                }
+            }
+        }
+    }
+
+    /**
+     * This process's environment less everything that would change what cargo
+     * builds without being a pin: {@link #ENV_IGNORED} and the prefixes after
+     * it. {@link GenerateJavaTask} runs its generator under the same.
+     */
+    static Map<String, String> scrubbedEnvironment() {
+        final env = new LinkedHashMap<String, String>(System.getenv())
+        env.keySet().removeIf { name ->
+            ENV_IGNORED.contains(name) || ENV_IGNORED_PREFIX.any { name.startsWith(it) }
+        }
+        return env
     }
 
     /** See cargo's own {@code home::cargo_home}. */

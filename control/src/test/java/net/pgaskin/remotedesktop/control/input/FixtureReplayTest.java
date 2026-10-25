@@ -25,7 +25,7 @@ import java.util.List;
  *
  * <p>Fixtures live in {@code src/test/fixtures}: {@code NAME.touch} is the
  * recording ({@link TouchLog}), {@code NAME.expected} is what the stack does
- * with it. The script beside them records a new one — it arms the playground's
+ * with it. The script beside them records a new one: it arms the playground's
  * {@code RECORD} toggle on a device, prompts for each gesture, and pulls what
  * came back:
  *
@@ -87,8 +87,8 @@ public class FixtureReplayTest {
      * <p>Under {@code faithful} that is the vncpatch#1 margin: the worst of
      * these 20 hand taps emits 9 {@code ACTION_MOVE}s against the original's
      * "more than 10 ⇒ drag" test. One event of headroom, on this device, at
-     * this touch report rate — which is exactly why the bug is device
-     * dependent, and why the test is here.
+     * this touch report rate. That is why the bug is device dependent, and why
+     * the test is here.
      */
     @Test
     public void everyRecordedTapClicksUnderBothPresets() throws IOException {
@@ -114,9 +114,9 @@ public class FixtureReplayTest {
      * with the cursor ours it is the pinch it has always been, and with the far
      * end owning the cursor the same fingers also move the picture.
      *
-     * <p>The recording is from before the mode existed, which is the point of
-     * replaying it in both — the touches are identical, so the whole of the
-     * difference is what the stack does with them.
+     * <p>The recording is from before the mode existed. Replaying it in both
+     * keeps the touches identical, so any difference comes from what the stack
+     * does with them.
      */
     @Test
     public void aRecordedPinchThatTravelsPansOnlyWhenTheFarEndOwnsTheCursor() throws IOException {

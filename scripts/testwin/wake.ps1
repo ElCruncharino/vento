@@ -16,7 +16,7 @@ public class Wake {
 # HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER, -1 = on
 [Wake]::SendMessage([IntPtr]0xFFFF, 0x0112, [IntPtr]0xF170, [IntPtr](-1)) | Out-Null
 # ES_CONTINUOUS | ES_DISPLAY_REQUIRED, so it stays on for as long as this
-# process lives — which is not long, but the power setting is 0 anyway.
+# process lives; that is not long, but the power setting is 0 anyway.
 [Wake]::SetThreadExecutionState(0x80000002) | Out-Null
 for ($i = 0; $i -lt 6; $i++) {
     [Wake]::mouse_event(0x0001, 8, 6, 0, [IntPtr]::Zero)

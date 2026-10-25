@@ -174,8 +174,8 @@ public class HoverAssistTest {
                 catches++;
             }
         }
-        // Three per burst window, then two seconds of nothing, over four
-        // seconds of it.
+        // At most hoverAssistBurstCount per burst window, then two seconds
+        // locked out, twice over in four seconds.
         assertTrue("armed " + catches + " times", catches <= 2 * c.hoverAssistBurstCount);
     }
 
@@ -256,7 +256,7 @@ public class HoverAssistTest {
         final PointerAccel a = new PointerAccel(c, out);
 
         // Four gestures whose news arrives long after the finger has stopped,
-        // which is what a server that polls its own screen looks like.
+        // as from a server that polls its own screen.
         long t = 0;
         for (int g = 0; g < 4; g++) {
             for (int i = 0; i < 20; i++, t += GAP_MS) {

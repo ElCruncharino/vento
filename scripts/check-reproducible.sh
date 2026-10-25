@@ -2,7 +2,7 @@
 # Does this build depend on where it was run?
 #
 # Builds the app twice from the same sources, in two copies of this tree at two
-# different absolute paths, and compares the APKs with check-reproducible.go —
+# different absolute paths, and compares the APKs with check-reproducible.go,
 # which is the apksigcopier comparison rather than a hash of the file. A
 # reproducible build must not depend on the checkout's location, which is what
 # the two copies are for; everything else about the two builds is the same
@@ -13,13 +13,13 @@
 #   ./check-reproducible.sh -k release  # keep the copies, to diff by hand
 #
 # Every artefact is compared: the app and each add-on, which are released
-# together and none of which contains anything of anybody else's.
+# together and are all built from these sources.
 #
-# Neither build is this working tree's, which is deliberate: a tree somebody
-# develops in has a warm CMake cache, and a cache that has outlived the option
-# it holds produces a library the current sources would not. Both copies carry
-# everything tracked plus the two unpacked crypto trees and less every build
-# directory, so each compiles the native halves and the crates from scratch.
+# Neither build is this working tree's, which is deliberate: a development tree
+# has a warm CMake cache, and a cache that has outlived the option it holds
+# produces a library the current sources would not. Both copies carry the whole
+# working tree less every build directory, so each compiles the native halves
+# and the crates from scratch.
 #
 # To compare an APK you are about to ship against a rebuild, run the Go program
 # directly: it takes any two APKs, or a URL.
@@ -42,14 +42,11 @@ command -v go >/dev/null || { echo "error: go is not on the PATH" >&2; exit 1; }
 
 capitalized=$(echo "${buildType:0:1}" | tr '[:lower:]' '[:upper:]')${buildType:1}
 outputs=app/build/outputs/apk/$buildType
-# One per add-on: each is released with the app and none of them contains
-# anything of anybody else's.
 pluginModules=(realvnc rustdesk)
 
 here=$PWD
 # Two copies and two builds of them is around 40 GB, so they go beside the
-# repository rather than under $TMPDIR, which on a good many machines is a
-# tmpfs. $REPRO_BASE overrides where.
+# repository rather than under $TMPDIR, which on many machines is a tmpfs. $REPRO_BASE overrides where.
 #
 # Different lengths as well as different prefixes: a path baked into an object
 # usually shows up as a size difference first, and two paths of one length
@@ -65,6 +62,7 @@ for dir in "$a" "$b"; do
     mkdir -p "$dir"
     rsync -a \
         --exclude='/target/' \
+        --exclude='/linux/target/' \
         --exclude='build/' \
         --exclude='.cxx/' \
         --exclude='.gradle/' \
@@ -92,7 +90,7 @@ for out in "${artefacts[@]}"; do
         name=$(basename "$apk")
         echo
         echo "==> $name"
-        go run ./check-reproducible.go "$apk" "$b/$out/$name" || status=1
+        go run ./scripts/check-reproducible.go "$apk" "$b/$out/$name" || status=1
     done
 done
 

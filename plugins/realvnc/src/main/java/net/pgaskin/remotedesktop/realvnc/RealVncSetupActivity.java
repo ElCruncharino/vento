@@ -12,8 +12,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The one screen this add-on has: where RealVNC's library comes from, and the
- * three ways to get it.
+ * This add-on's only screen: where RealVNC's library comes from, picked from a
+ * local file or downloaded from one of the {@link Viewer} sources.
  */
 public final class RealVncSetupActivity extends SetupActivity {
 

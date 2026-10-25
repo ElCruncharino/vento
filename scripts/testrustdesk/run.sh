@@ -9,6 +9,23 @@ NAME="${NAME:-protorustdesk}"
 PORT="${PORT:-21118}"
 GEOMETRY="${GEOMETRY:-1920x1200}"
 PASSWORD="${PASSWORD:-rustdeskpass}"
+# The sound (usage.md): its own image, made on top of protorustdesk's, and one
+# more port, the tone's serial line, which is how a burst is asked for.
+AUDIO="${AUDIO:-}"
+TONE_PORT="${TONE_PORT:-5957}"
+# The image is protorustdesk's whatever the container is called, so a private
+# instance (NAME=..., PORT=...) is the same desktop.
+IMAGE="${IMAGE:-protorustdesk}"
+[ -n "$AUDIO" ] && IMAGE="$IMAGE-audio"
+
+build() {
+    if [ -n "$AUDIO" ]; then
+        docker image inspect protorustdesk:latest >/dev/null 2>&1 || docker build -t protorustdesk:latest .
+        docker build -t "$IMAGE:latest" -f Dockerfile.audio --build-context tonesrc=../testqemu/audio .
+    else
+        docker build -t "$IMAGE:latest" .
+    fi
+}
 
 case "$1" in
     stop)    docker rm -f "$NAME" >/dev/null 2>&1 || true; echo "stopped"; exit 0 ;;
@@ -16,9 +33,9 @@ case "$1" in
     # Their own binary, because the id is in the config in their obfuscated
     # form and nothing else can read it. Once, and not while the server is
     # starting: it is a second process against the same config, and one racing
-    # the server rewrote the file with the permanent password gone — which
+    # the server rewrote the file with the permanent password gone, which
     # looks from a client like a peer that has started refusing a password
-    # nobody changed.
+    # that did not change.
     id)      exec docker exec "$NAME" rustdesk --get-id ;;
     shot)    # what the far end currently looks like, without a viewer
              out="${2:-/tmp/$NAME.png}"
@@ -27,30 +44,37 @@ case "$1" in
              docker exec -e DISPLAY=:1 -e XAUTHORITY=/root/.Xauthority "$NAME" \
                  xwd -root -silent > "${out%.png}.xwd"
              echo "${out}"; exit 0 ;;
-    build)   docker build -t "$NAME:latest" . ; exit 0 ;;
+    build)   build; exit 0 ;;
 esac
 
-docker image inspect "$NAME:latest" >/dev/null 2>&1 || docker build -t "$NAME:latest" .
+docker image inspect "$IMAGE:latest" >/dev/null 2>&1 || build
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 # The host's GPU, where there is one: their server asks VA-API what it can
 # encode, and with nothing to ask it settles for VP9, VP8 and AV1 in software.
 # It is the only far end here that can be made to send H.264 or H.265, so the
-# codec row has something to be checked against — and it is the host's hardware
+# codec row has something to be checked against. The hardware is the host's
 # rather than the rig's, which is why a run says which machine it was on.
 DRI=()
 [ -e /dev/dri ] && DRI=(--device /dev/dri)
 
+audio=()
+[ -n "$AUDIO" ] && audio=(-p "$TONE_PORT:4555")
+
 docker run -d --name "$NAME" \
     -p "$PORT:21118" \
     "${DRI[@]}" \
+    "${audio[@]}" \
     -e GEOMETRY="$GEOMETRY" \
     -e PASSWORD="$PASSWORD" \
     ${RENDEZVOUS:+-e RENDEZVOUS="$RENDEZVOUS"} \
     ${KEY:+-e KEY="$KEY"} \
-    "$NAME:latest" >/dev/null
+    "$IMAGE:latest" >/dev/null
 
 ip="$(ip -4 -o addr show scope global | awk '{print $4}' | cut -d/ -f1 | head -1)"
 echo "$NAME up: $ip:$PORT  ($GEOMETRY, password $PASSWORD)"
+if [ -n "$AUDIO" ]; then
+    echo "     audio: the desktop's sound, a 440 Hz burst per 't' sent to $ip:$TONE_PORT"
+fi
 # After the server has settled, and asked once: see the `id` case above.
 sleep 3
 echo "peer id: $(docker exec "$NAME" rustdesk --get-id 2>/dev/null | grep -E '^[0-9]+$' || echo '(none yet)')"

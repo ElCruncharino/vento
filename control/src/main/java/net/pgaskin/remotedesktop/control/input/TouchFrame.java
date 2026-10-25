@@ -7,9 +7,9 @@ package net.pgaskin.remotedesktop.control.input;
  * One touch event, with no Android types in it: the action, the pointer it
  * applies to, and the full set of pointers currently on the screen.
  *
- * <p>This is the seam that makes the input stack testable — {@link TouchRouter}
- * works on these, and converting a {@code MotionEvent} into one is a dozen
- * lines. It is also the on-disk fixture format (see {@link TouchLog}).
+ * <p>This is what makes the input stack testable: {@link TouchRouter} works on
+ * these, and converting a {@code MotionEvent} into one is a dozen lines. It
+ * is also the on-disk fixture format (see {@link TouchLog}).
  *
  * <p>Semantics follow {@code MotionEvent}: {@link Action#DOWN} covers both
  * {@code ACTION_DOWN} and {@code ACTION_POINTER_DOWN} and the new pointer is

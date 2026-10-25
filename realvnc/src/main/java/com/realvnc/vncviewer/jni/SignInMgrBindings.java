@@ -7,12 +7,12 @@ import java.util.List;
 /**
  * RealVNC account sign-in, which this client does not support.
  *
- * <p>It is here at all because {@link Bindings#initViewer} has to pass a
+ * <p>It is here only because {@link Bindings#initViewer} has to pass a
  * {@link SignInUi}: the core resolves
  * {@code com/realvnc/vncviewer/jni/SignInMgrBindings$SignInUi} by name and
  * caches a method id for each of the eleven methods below. Nothing here is
- * public — the stub that answers them lives in {@link Bindings} — and none of
- * the class's twenty natives is declared.
+ * public (the stub implementing them is in {@link Bindings}), and none of the
+ * class's twenty natives is declared.
  *
  * <p>{@link Factor} and {@link SecondFactorRequest} are constructed <em>by</em>
  * the core, before it calls {@link SignInUi#signInSecondFactorsRequired}, so
@@ -24,7 +24,7 @@ import java.util.List;
  */
 final class SignInMgrBindings {
 
-    /** A second authentication factor offered to the person signing in. */
+    /** A second authentication factor offered to the user signing in. */
     record Factor(long type, String id, String totpName, String emailAddress,
                   long backupGeneratedAt, long backupDigits) {
     }

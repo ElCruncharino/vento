@@ -10,7 +10,7 @@ RELAY="${RELAY:-}"
 ALWAYS_USE_RELAY="${ALWAYS_USE_RELAY:-N}"
 export ALWAYS_USE_RELAY
 # Whether a client has to name the server's key to be answered at all. It does
-# by default — their `-k` defaults to the server's own public key — and turning
+# by default (their `-k` defaults to the server's own public key), and turning
 # it off is what makes a client with the *wrong* key reach the introduction and
 # fail to verify it, which is the only way to reach that path deliberately.
 ENFORCE_KEY="${ENFORCE_KEY:-Y}"

@@ -1,14 +1,14 @@
 # A remote desktop that sends H.264, which nothing else here does.
 #
 # The Open H.264 encoding (RFB encoding 50) has one server implementation worth
-# pointing a phone at — neatvnc, through wayvnc — and it will only use it for
+# pointing a phone at (neatvnc, through wayvnc), and it will only use it for
 # frames that arrive as GPU buffers. So this container is a wlroots compositor
 # rather than the Xvnc of scripts/testvnc: sway is what makes the frames
 # DMA-BUFs and wayvnc's --gpu is what lets neatvnc hand them to VAAPI.
 #
-# It nests in the host's own compositor, which is not a convenience: a headless
-# wlroots has no DRM file descriptor, so its linux-dmabuf never starts and every
-# frame reaches neatvnc as software — where it refuses H.264 outright.
+# It nests in the host's own compositor out of necessity: a headless wlroots
+# has no DRM file descriptor, so its linux-dmabuf never starts and every frame
+# reaches neatvnc as software, for which it refuses H.264 outright.
 #
 # The desktop content is scripts/testvnc's, through Xwayland, because what is
 # being judged is a decoder rather than the input stack: the same wallpaper (a

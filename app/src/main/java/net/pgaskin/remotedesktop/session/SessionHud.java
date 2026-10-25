@@ -18,18 +18,17 @@ import net.pgaskin.remotedesktop.control.input.PhysicalKeyboard;
 import net.pgaskin.remotedesktop.control.input.PhysicalMouse;
 import net.pgaskin.remotedesktop.control.ui.Hud;
 
+import java.util.Arrays;
 import java.util.Locale;
 
 /**
- * The playground's readout, on a real connection: the same lines in the same
- * order so the two screens can be read against each other, plus one for the
- * pixel path — which is the one the playground cannot have, and the only place
- * "is the mirror keeping up" is answered.
+ * The playground's HUD on a real connection: the same lines in the same order
+ * so the two screens can be compared, plus the pixel path statistics, which
+ * the playground lacks and which show whether the mirror is keeping up.
  *
- * <p>{@link Hud} draws the box and says why the box is shared; the lines are
- * this screen's, and this is where they are built. Separate from the view
- * because it is the one thing here that touches every collaborator at once,
- * and none of them for any reason the session has.
+ * <p>{@link Hud} draws the box (and documents why it is shared); this class
+ * builds the session screen's lines. Separate from the view because it reads
+ * every component at once, for no purpose of the session's own.
  */
 final class SessionHud {
 
@@ -67,16 +66,16 @@ final class SessionHud {
     }
 
     /**
-     * @param mirror    the pixel path's, or null before a desktop size arrived
-     * @param imeHeight the system IME's, which is neither the overlay's nor the
-     *                  row's and can outlive both
+     * @param mirror    the mirror, or null before a desktop size arrived
+     * @param imeHeight the system IME's height, which is separate from the
+     *                  overlay and the extension row and can outlive both
      */
     void draw(Canvas c, int viewW, int viewH, Mirror mirror, Backend.State state,
               String lastRegion, int imeHeight, boolean pointerCaptured) {
         final long now = System.nanoTime();
         final long rects = mirror == null ? 0 : mirror.damageRects();
         frames++;
-        final String[] lines = {
+        String[] lines = {
                 "state " + state
                         + "  desktop " + backend.desktopWidth() + "x" + backend.desktopHeight()
                         + "  fps " + frameRate.sample(frames, now)
@@ -117,16 +116,27 @@ final class SessionHud {
                         : "off")
                         + "   region " + lastRegion
                         + (backend.viewOnly() ? "   VIEW ONLY" : ""),
-                // The physical pair. "cap" is worth a column because an
-                // uncaptured mouse looks identical until it reaches the edge of
-                // the screen and stops.
+                // Physical mouse and keyboard. Capture state is shown because
+                // an uncaptured mouse looks the same until it reaches the edge
+                // of the screen and stops.
                 "mouse " + (pointerCaptured ? "captured"
                         : mouse.seen() ? "hover" : "-")
                         + " btn " + Button.maskName(mouse.heldMask())
                         + "   keys " + keys.heldCount() + " held",
         };
-        // heightPx(), not insetBottomPx(): the desktop is meant to run under the
-        // info bar and the HUD is not, so the two want different answers.
+        // Audio, if the session has a sound switch, in the same format as the
+        // desktop client: what is playing, the queue before the device and the
+        // device's own buffer (together, the playback latency), the queue's
+        // corrections for the far end's timing, and whether the far end is
+        // asked not to send audio or it is muted here. Only read here; the
+        // panel sets the switch.
+        final String sound = backend.soundLine();
+        if (sound != null) {
+            lines = Arrays.copyOf(lines, lines.length + 1);
+            lines[lines.length - 1] = sound;
+        }
+        // The keyboard's heightPx(), not its insetBottomPx(): the desktop runs
+        // under the info bar but the HUD does not.
         hud.draw(c, lines, viewW, viewH,
                 Math.max(Math.max(overlay.insetBottomPx(), keyboard.heightPx()), imeHeight));
     }

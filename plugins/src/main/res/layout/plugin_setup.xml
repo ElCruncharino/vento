@@ -15,7 +15,7 @@
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:padding="24dp"
-        android:focusableInTouchMode="true"><!-- or the first button takes focus and scrolls to itself -->
+        android:focusableInTouchMode="true"><!-- otherwise the first button takes focus and scrolls into view -->
 
         <TextView
             android:id="@+id/plugin_title"
@@ -70,7 +70,7 @@
 
         </LinearLayout>
 
-        <!-- Only for the one failure a person can do something about. -->
+        <!-- Shown only for the one failure the user can fix. -->
         <Button
             android:id="@+id/plugin_fix_network"
             android:layout_width="match_parent"

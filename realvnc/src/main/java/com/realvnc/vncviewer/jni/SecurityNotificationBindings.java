@@ -7,7 +7,7 @@ package com.realvnc.vncviewer.jni;
  * background to draw it on.
  *
  * <p>The background name is the only thing in the callback that distinguishes
- * the two states — the text is already localised prose — so the two values it
+ * the two states (the text is already localised prose), so the two values it
  * takes are worth having as constants even though they are the viewer's own
  * drawable keys and mean nothing outside it.
  *
@@ -21,7 +21,7 @@ public final class SecurityNotificationBindings {
     /** The line is encrypted. */
     public static final String BACKGROUND_SECURE = "StripesTileGreen";
 
-    /** It is not. */
+    /** The line is not encrypted. */
     public static final String BACKGROUND_INSECURE = "StripesTileRed";
 
     public interface SecurityNotifier {

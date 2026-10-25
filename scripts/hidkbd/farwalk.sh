@@ -2,8 +2,8 @@
 # The keys the extension row has never sent, through a live backend, with the
 # far end saying what arrived.
 #
-# 35b walked the control layer with no server: what Android delivers and what
-# keysym this client makes of it. This is the other half — the keysym on the
+# walk.sh walks the control layer with no server: what Android delivers and what
+# keysym this client makes of it. This is the other half: the keysym on the
 # wire, and what the far end resolves it to. So it needs a session already up
 # (scripts/session.sh) and a keyboard already registered (go run . in here).
 #
@@ -14,7 +14,7 @@
 #
 # Two far ends, because one cannot stand in for the other. An X server (testvnc
 # for the VNC backends, testrdp for the RDP ones) is reached in its container by
-# name and read with xev, which names the keysym the server resolved — for the
+# name and read with xev, which names the keysym the server resolved: for the
 # four VNC backends that is the whole answer and for the two RDP ones it is what
 # their scancode became. A Windows RDP server has no xev and resolves a scancode
 # to a virtual key rather than a keysym, so winkeys.ps1 is its instrument: it is
@@ -22,7 +22,7 @@
 # this reads back over ssh.
 #
 # Either way the app sends keys and not focus, so whatever the far end last
-# focused is where they go — under X every other window is closed first so
+# focused is where they go; under X every other window is closed first so
 # openbox has only xev to give focus to.
 #
 # One key at a time, segmenting the log by how many lines it grew: a key that
@@ -72,7 +72,7 @@ if [ -n "$CONTAINER" ]; then
     # truncated because xev holds the file open and a truncation it does not know
     # about leaves the fd writing past the old end.
     arm() {
-        # openbox grabs some keys before any window sees them — Print runs scrot,
+        # openbox grabs some keys before any window sees them: Print runs scrot,
         # whose failure dialog then steals focus from xev and swallows the rest of
         # the walk. Strip every binding so the far end forwards the lot to xev.
         far 'perl -0777 -pi -e "s{<keyboard>.*?</keyboard>}{<keyboard></keyboard>}s" /etc/xdg/openbox/rc.xml;
@@ -82,7 +82,7 @@ if [ -n "$CONTAINER" ]; then
         done
         # -9 and a wait: a plain kill leaves the old xev alive long enough to keep
         # the log open, and the fresh one's truncation is then undone by its next
-        # write — two writers, and a log that never resets.
+        # write: two writers, and a log that never resets.
         far 'pkill -9 xev 2>/dev/null; true'
         while [ "$(far 'pgrep -c xev || true')" != "0" ]; do sleep 0.2; done
         # Line-buffered, so a key read back right after it is sent is already in
@@ -94,8 +94,8 @@ if [ -n "$CONTAINER" ]; then
     lines() { far 'wc -l < /tmp/xev.log'; }
     # The KeyPress keysyms that arrived after the mark, as "name" tokens. A
     # dropped key grows the log by nothing, so grep matches nothing and exits
-    # non-zero — which under pipefail would end the walk at the first such key,
-    # exactly the case worth recording. The guard keeps it a "-" instead.
+    # non-zero, which under pipefail would end the walk at the first such key,
+    # the case worth recording. The guard keeps it a "-" instead.
     since() {
         far "tail -n +$(($1 + 1)) /tmp/xev.log" \
             | { grep -A2 KeyPress || true; } \
@@ -106,7 +106,7 @@ if [ -n "$CONTAINER" ]; then
 else
     # Quote-free inside, so the same string survives whichever shell OpenSSH was
     # configured with: cmd and powershell both hand a double-quoted argument on
-    # whole, and neither has anything to say about what is inside it.
+    # whole, and neither interprets what is inside it.
     # One connection for the whole walk: this is two round trips per key, and
     # setting a session up costs more than either of them.
     ctl=/tmp/farwalk-ssh-$$
@@ -116,8 +116,8 @@ else
             "$WINHOST" "powershell -NoProfile -Command \"$*\"" | tr -d '\r'
     }
 
-    # winkeys.ps1 is started by a person, in the session, with focus — nothing
-    # reached over ssh can put a window on somebody else's desktop. So arming is
+    # winkeys.ps1 is started by hand, in the session, with focus: nothing
+    # reached over ssh can put a window on the interactive desktop. So arming is
     # a probe rather than a restart: a key the far end always resolves, and a
     # run that captured nothing is a focus failure rather than a table of blanks.
     arm() { :; }

@@ -23,7 +23,7 @@ public final class SessionBindings {
      * <p>They arrive on the thread that called {@link #createSession}, which is
      * where the core registers its socket, so that thread must be running a
      * {@code Looper} and must not be given slow work. An implementation that
-     * wants them anywhere else marshals; nothing here posts.
+     * needs them on another thread posts them there itself; nothing here posts.
      */
     public interface DesktopCallback {
 
@@ -32,12 +32,12 @@ public final class SessionBindings {
         /** Connected and ready. */
         void connSuccess();
 
-        /** A region changed: x, y, <em>width</em>, <em>height</em> — not a rect. */
+        /** A region changed: x, y, <em>width</em>, <em>height</em>, not a rect. */
         void drawRegion(int x, int y, int width, int height);
 
         void framebufferUpdateEnd();
 
-        /** Our clipboard, for the server. */
+        /** The local clipboard, for the server. */
         String getClipboard();
 
         void setClipboard(String text);
@@ -58,17 +58,17 @@ public final class SessionBindings {
     }
 
     public interface SessionCallback {
-        /** The session ended, for any reason — remote, error, or our own close. */
+        /** The session ended, for any reason: remote, error, or a local close. */
         void sessionClosed(Session session);
     }
 
     /**
      * An opaque handle. {@code token} is the native {@code AndroidSession*},
-     * which the core reads back through {@code getToken} — a cached method id —
-     * on every call, so the object handed to any native below has to be the one
+     * which the core reads back through {@code getToken} (a cached method id) on
+     * every call, so the object passed to any native below has to be the one
      * {@link #createSession} returned.
      *
-     * <p>Static, and it matters: the constructor the core calls is
+     * <p>Static, necessarily: the constructor the core calls is
      * {@code <init>(J)V}, with no outer instance to pass.
      */
     public static final class Session {
@@ -120,8 +120,8 @@ public final class SessionBindings {
 
     /**
      * Starts a connection and returns in a few milliseconds; the rest of it
-     * arrives as callbacks on this thread. A failure reports nothing at all —
-     * no callback, no status, no exception — so a caller needs a timeout of its
+     * arrives as callbacks on this thread. A failure reports nothing at all
+     * (no callback, no status, no exception), so a caller needs a timeout of its
      * own.
      */
     public static native Session createSession(SessionCallback sessionCallback,

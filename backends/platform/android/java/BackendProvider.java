@@ -1,0 +1,128 @@
+// SPDX-FileCopyrightText: 2026 Patrick Gaskin
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+package net.pgaskin.remotedesktop.backend;
+
+import android.app.Activity;
+import android.content.Context;
+
+import java.util.List;
+import java.util.Map;
+
+/**
+ * A protocol module's statement that it is in this build.
+ *
+ * <p>One per protocol, declared as a {@code java.util.ServiceLoader} service in
+ * the module that implements it, so what a build can connect with is exactly
+ * what is on its classpath: adding a protocol is a dependency line, and
+ * dropping one is deleting that line. Nothing above this interface names a
+ * protocol.
+ *
+ * <p>It carries the description as well as the constructor because everything
+ * here is a fact about the protocol rather than about the app (its name, its
+ * options), and the module that implements it is the one that knows.
+ */
+public interface BackendProvider {
+
+    /** Stored in a connection record, so it must not change once shipped. */
+    String id();
+
+    /** For a picker and a title. */
+    String name();
+
+    /**
+     * A word or two, for a badge with no room for more. Two backends may speak
+     * the same protocol, so this sometimes has to name the implementation
+     * instead.
+     */
+    String shortName();
+
+    /**
+     * Why to choose this one, in a sentence or two, under {@link #name} in a
+     * picker.
+     *
+     * <p>A choice rather than a description: what it does that the others in the
+     * build do not, and what that costs. It is here rather than in the app
+     * because a build's list of backends is whatever is on its classpath, and
+     * the app does not name protocols, so a list of these kept in the app could
+     * only be a stale copy.
+     */
+    String description();
+
+    /** Where in a picker, lowest first; a build must not reshuffle its own list. */
+    int order();
+
+    /** What this backend can be told, for the editor and its settings screen. */
+    List<BackendOption> options();
+
+    /**
+     * A session for one connection, not yet started.
+     *
+     * <p>The address is as the user typed it, and every backend reads it the
+     * same way: {@code host}, {@code host:port}, {@code [literal]} or
+     * {@code [literal]:port}, where a host is a name or an IPv4 literal and an
+     * <b>IPv6 literal is always bracketed</b>. The VNC backends read a port
+     * under 100 as a display number, which is what {@code :1} has meant since
+     * the 1990s, so {@code ::1:1} would have to be an address and a display at
+     * once; a bare literal is an error with an explanation rather than a guess,
+     * because the possible guesses land on a different machine or on the
+     * wildcard address. What a port means is up to each protocol, and only the
+     * VNC ones have the display rule.
+     *
+     * <p>A backend whose {@link #addressLabel} says this field is not a host
+     * (an id a rendezvous server resolves) is outside all of that, and says so
+     * where it parses.
+     */
+    Backend create(Context context, String address, String userName, String password,
+                   Map<String, String> options);
+
+    /**
+     * What the editor's address field is called for this backend, or null for
+     * the app's own wording.
+     *
+     * <p>It takes the connection's options because for one protocol here the
+     * answer moves with them: a peer reached through a rendezvous server is
+     * named by digits rather than by a host and a port, and a field labelled
+     * for the other mode would be asking for the wrong thing. The app rebuilds
+     * the form when the answer changes.
+     */
+    default String addressLabel(Map<String, String> options) {
+        return null;
+    }
+
+    /**
+     * Whether this backend can be connected with yet.
+     *
+     * <p>False only for one that needs something the build cannot contain: a
+     * library it has to be given on the device. While this is false it still
+     * appears everywhere it otherwise would, because choosing it is one way to
+     * reach {@link #setup}.
+     */
+    default boolean isSetup(Context context) {
+        return true;
+    }
+
+    /**
+     * Ask for whatever {@link #isSetup} is waiting for, and return.
+     *
+     * <p>There is no callback: what this starts may be a screen in another
+     * process which can be killed behind a dialog, so the only answer that
+     * survives is the caller asking {@link #isSetup} again when it resumes.
+     */
+    default void setup(Activity host) {
+    }
+
+    /**
+     * Forget every server identity this backend has accepted.
+     *
+     * <p>Empty for all but the few that need it. {@link KnownHosts} is the
+     * store, and {@link Backends#forgetHosts} clears it for every backend; this
+     * is for a backend whose library pins the far end <em>itself</em> (RealVNC's
+     * core, with a blob only it can compare) or whose library once kept a
+     * known-hosts file of its own that earlier builds left behind (FreeRDP's,
+     * TigerVNC's), which nothing above this interface can find, since it is not
+     * a fact about the app.
+     */
+    default void forgetHosts(Context context) {
+    }
+}

@@ -19,53 +19,55 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * What keeps a session alive while nothing is looking at it.
+ * Keeps sessions alive while no screen is showing them.
  *
- * <p>The reason is measured: <b>about five seconds in the background costs the
- * connection</b>, because Android freezes a cached
- * process and takes its sockets with it. A foreground service is the only way
- * out of that, and the notification is not decoration — it is the price, and the
- * bargain is a fair one: something holding a live connection to somebody's
- * desktop ought to say so, and be one tap from being stopped.
+ * <p>Measured: <b>about five seconds in the background drops the
+ * connection</b>, because Android freezes a cached process along with its
+ * sockets. A foreground service is the only way around that, and it requires a
+ * notification, which is appropriate anyway: an app holding a live connection
+ * to a remote desktop should show it, and be one tap from stopping it.
  *
- * <p>It owns nothing. {@link Sessions} holds the sessions; this is the thing
- * that makes the process matter to the system, plus a notification per session
- * saying what is connected and offering to end it. Ending one here and ending it
- * from its screen are the same call.
+ * <p>It owns nothing. {@link Sessions} holds the sessions; this keeps the
+ * process in the foreground, and posts a notification per session showing what
+ * is connected with a button to disconnect. Disconnecting here and from the
+ * session screen is the same call.
  *
  * <p><b>One service, several notifications.</b> A foreground service has exactly
- * one notification the system counts as its own, so one live session is elected
- * to it and the rest are posted beside it — which is invisible from the shade
- * and matters in one place only: when the elected session ends while others are
- * still running, the election has to be re-run <em>before</em> its notification
- * is cancelled, or the service is left foreground with nothing to show for it.
+ * one notification of its own, so one live session is chosen for it and the
+ * rest are posted alongside. This is not visible in the shade and matters in
+ * one place: when the chosen session ends while others are still running, a
+ * new one has to be chosen <em>before</em> the old notification is cancelled,
+ * or the service is left in the foreground with no notification.
  *
  * <p><b>Swiping a session's window away ends that session.</b> A session
- * outlives its screen so that a phone call or a locked screen does not cost a
- * connection — not so that a window somebody threw away keeps one. The
- * notification is what makes the service hard to kill, what says which
- * connections are up, and what ends one that is wedged; it is not a second
- * lifetime. Which session went is read out of the removed task's own root
- * intent, since a session has a window each and the system says which one.
+ * outlives its screen so that a phone call or a locked screen does not drop
+ * the connection, not so that a dismissed window keeps one. The notification
+ * keeps the service hard to kill, shows which connections are up, and ends a
+ * stuck one; it does not extend a session's lifetime. The session is found from
+ * the removed task's root intent, since each session has its own window.
  */
 public final class SessionService extends Service implements Sessions.Watcher {
 
     private static final String CHANNEL = "session";
     private static final String GROUP = "net.pgaskin.remotedesktop.SESSIONS";
 
-    /** Posted only to keep the {@code startForeground} promise on the way out. */
-    private static final int NOTIFICATION_NONE = 1;
+    /**
+     * Posted only to satisfy the {@code startForeground} requirement while
+     * stopping. Negative so that it never collides with a session's id, which
+     * {@link Session#notificationId} counts up from 1.
+     */
+    private static final int NOTIFICATION_NONE = -1;
 
-    /** The notification's button, and the only action this service takes. */
+    /** The notification's button, and the only action this service handles. */
     private static final String ACTION_DISCONNECT = "net.pgaskin.remotedesktop.DISCONNECT";
     private static final String EXTRA_SESSION = "session";
 
     /**
      * Called by {@link Session#open}, and harmless when the service is already
-     * running. {@code startForegroundService} obliges us to call
+     * running. {@code startForegroundService} requires a call to
      * {@code startForeground} within a few seconds, which {@link #onStartCommand}
-     * does unconditionally — including when the session has already gone, where
-     * it starts and stops again rather than leaving the promise unkept.
+     * always makes, even when the session has already ended, in which case it
+     * starts and immediately stops.
      */
     static void start(Context ctx) {
         ctx.startForegroundService(new Intent(ctx, SessionService.class));
@@ -73,9 +75,8 @@ public final class SessionService extends Service implements Sessions.Watcher {
 
     @Override
     public IBinder onBind(Intent intent) {
-        // Nothing binds: a screen finds its session through Sessions, which is a
-        // map in this process rather than a connection to set up. A service that
-        // only needs to exist does not need an interface.
+        // Not bindable: a screen finds its session through Sessions, a map in
+        // this process.
         return null;
     }
 
@@ -96,28 +97,27 @@ public final class SessionService extends Service implements Sessions.Watcher {
         if (intent != null && ACTION_DISCONNECT.equals(intent.getAction())) {
             final Session s = Sessions.byKey(intent.getStringExtra(EXTRA_SESSION));
             if (s != null) {
-                // Which has already updated us, through the set: this is an
-                // ordinary start with no promise attached, so there is nothing
-                // to say afterwards.
+                // This has already called update() through Sessions. A start
+                // with this action does not require startForeground.
                 s.disconnect();
             }
             update();
             return START_NOT_STICKY;
         }
-        // A start from Session.open, and the only kind that owes a
-        // startForeground — including when the session it was started for died
-        // in between, where the goodbye has to be said again for this call.
+        // A start from Session.open, the only kind that requires
+        // startForeground, even if its session ended in the meantime, in which
+        // case the stop in update() has to run again for this call.
         stopped = false;
         update();
-        // Not sticky: a restarted service would have no session to be foreground
-        // for, and reconnecting behind somebody's back is not this app's job.
+        // Not sticky: a restarted service would have no session, and this app
+        // does not reconnect on its own.
         return START_NOT_STICKY;
     }
 
     /**
-     * The window is gone, so the connection is: {@link Session#disconnect} says
-     * the far end was told on purpose, which is what stops the next screen for
-     * this connection explaining that something went wrong.
+     * The window was removed, so the connection ends. {@link Session#disconnect}
+     * marks it as intentional, so the next screen for this connection does not
+     * report an error.
      */
     @Override
     public void onTaskRemoved(Intent rootIntent) {
@@ -129,10 +129,10 @@ public final class SessionService extends Service implements Sessions.Watcher {
     }
 
     /**
-     * Whose window that was. A session task is launched with the connection's
-     * own URI, or — from the command line, which has no record — with the
-     * address it was told to open; both are the key {@code SessionActivity}
-     * would compute for the same window.
+     * The session of a removed task. A session task is launched with the
+     * connection's URI, or (from the command line, with no saved connection)
+     * with the address extra; both give the key {@code SessionActivity} computes
+     * for the same window.
      */
     private static Session sessionOf(Intent rootIntent) {
         if (rootIntent == null) {
@@ -151,25 +151,23 @@ public final class SessionService extends Service implements Sessions.Watcher {
         update();
     }
 
-    /** What is posted, so that a session's notification goes when it does. */
+    /** Posted notification ids, so a session's notification is cancelled when it ends. */
     private final Set<Integer> posted = new LinkedHashSet<>();
 
-    /** Which of them the service is foreground for, or 0. */
+    /** The id of the service's own foreground notification, or 0. */
     private int elected;
 
-    /** Whether the goodbye below has already been said. */
+    /** Whether {@link #update} has already stopped the service. */
     private boolean stopped;
 
     /**
-     * The whole of the service's behaviour: whatever is alive gets a
-     * notification, whatever is not loses one, and a service with nothing alive
-     * left stops.
+     * Every alive session gets a notification, every other one loses its
+     * notification, and the service stops when none are alive.
      *
-     * <p>Called for every change to the set, and a session ending is two of
-     * them — the state, and then the letting go — which is why the goodbye is
-     * guarded. Said twice, the second one would post a notification for a
-     * session that is already gone, under an id nothing is going to cancel
-     * again.
+     * <p>Called for every change to the set, and a session ending is two changes
+     * (the CLOSED state, then the removal), which is why the stop is guarded.
+     * Running it twice would post a notification for a session that has already
+     * ended, under an id that is never cancelled.
      */
     private void update() {
         final List<Session> alive = Sessions.alive();
@@ -180,9 +178,9 @@ public final class SessionService extends Service implements Sessions.Watcher {
                 return;
             }
             stopped = true;
-            // The promise stands even here, so it is kept and then let go of in
-            // the same breath. Under the outgoing session's own id where there
-            // is one, so this posts nothing new for the moment it lasts.
+            // startForeground is still required here, so it is called and the
+            // service stopped right after. It reuses the outgoing session's id
+            // if there is one, so no new notification appears.
             startForeground(elected != 0 ? elected : NOTIFICATION_NONE, build(null),
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
             for (int id : posted) {
@@ -194,8 +192,8 @@ public final class SessionService extends Service implements Sessions.Watcher {
         }
         stopped = false;
 
-        // Re-elected only when the incumbent has gone, so that the foreground
-        // notification does not jump between sessions for no reason.
+        // A new session is chosen only when the current one has ended, so the
+        // foreground notification does not move between sessions.
         Session foreground = null;
         for (Session s : alive) {
             if (s.notificationId() == elected) {
@@ -216,8 +214,8 @@ public final class SessionService extends Service implements Sessions.Watcher {
                 nm.notify(s.notificationId(), build(s));
             }
         }
-        // After the election, never before it: cancelling the outgoing
-        // foreground notification first would take the service's own with it.
+        // After startForeground, never before: cancelling the old foreground
+        // notification first would leave the service without one.
         for (int id : new ArrayList<>(posted)) {
             if (!live.contains(id)) {
                 nm.cancel(id);
@@ -240,32 +238,29 @@ public final class SessionService extends Service implements Sessions.Watcher {
         final Notification.Builder b = new Notification.Builder(this, CHANNEL)
                 .setSmallIcon(R.drawable.ic_desktop)
                 .setContentTitle(s != null ? s.title() : getString(R.string.app_name))
-                // What the session has to say, or — when it has nothing, which
-                // is what a connected one says — which machine this is.
+                // The session status, or the address when there is no status
+                // (while connected).
                 .setContentText(s == null ? ""
                         : s.status().text().isEmpty() ? s.subtitle() : s.status().text())
                 .setOngoing(true)
                 .setShowWhen(false)
-                // Nobody wants a connection announced with a sound every time it
-                // reconnects, and IMPORTANCE_LOW already says so; this is for the
+                // IMPORTANCE_LOW already makes it silent; this is for the
                 // updates, which are frequent while connecting.
                 .setOnlyAlertOnce(true)
-                // No summary goes with it: the shade bundles them once there are
-                // enough to be worth bundling, and a summary the system may let
-                // somebody dismiss is not a thing to hang a foreground service on.
+                // No summary notification: the shade bundles the group once
+                // there are enough of them, and a summary may be dismissable,
+                // which would not suit a foreground service.
                 .setGroup(GROUP)
                 .setCategory(Notification.CATEGORY_SERVICE);
 
-        // The request code, on both of these, is what keeps several sessions'
-        // notifications apart: extras are not part of a PendingIntent's identity,
-        // so one code for all of them would leave every button pointing at
-        // whichever session was posted last.
+        // The request code keeps several sessions' pending intents apart:
+        // extras are not part of a PendingIntent's identity, so with one code
+        // every button would target whichever session was posted last.
         final int code = s != null ? s.notificationId() : 0;
         if (s != null && s.reopenIntent() != null) {
             // The intent the session was started from, which for a session
-            // opened from the home screen carries the document identity of its
-            // own window — so this lands in that window rather than making
-            // another one.
+            // opened from the home screen carries its window's document
+            // identity, so this reopens that window rather than creating one.
             final Intent open = new Intent(s.reopenIntent())
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
             b.setContentIntent(PendingIntent.getActivity(this, code, open,

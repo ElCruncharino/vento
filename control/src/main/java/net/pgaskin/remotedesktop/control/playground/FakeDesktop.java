@@ -22,8 +22,8 @@ import java.util.Map;
 
 /**
  * Stands in for the remote machine. It consumes <em>synthetic mouse events</em>
- * — absolute position plus a button mask — exactly as a real remote desktop
- * would, which is the point of it: the squares never see an Android
+ * (absolute position plus a button mask) as a real remote desktop would, which
+ * is the point of it: the squares never see an Android
  * {@code MotionEvent}. It consumes keysyms the same way, and
  * echoes them into a text field, so "did the remote get what I typed?" is
  * answerable by looking at the desktop rather than at a log.
@@ -37,7 +37,7 @@ public final class FakeDesktop implements CursorController.PointerSink, KeySink 
      * configuration lives in {@code Config}, not here.
      *
      * <p>Every one of them is drawn except the two recorders, which are there
-     * only when the host asked for them — see the constructor.
+     * only when the host asked for them (see the constructor).
      */
     public enum Toggle {
         PRESET, ACCEL, AXISLOCK, MOMENTUM, CURSOR, NATSCROLL, HUD, RECORD,
@@ -51,7 +51,7 @@ public final class FakeDesktop implements CursorController.PointerSink, KeySink 
         RELATIVE,
         /** The toolbar tap regions, drawn while they are on. */
         REGIONS,
-        /** The column of buttons on the left edge, which is the other answer. */
+        /** The column of buttons on the left edge, the alternative to REGIONS. */
         TOOLBAR,
         /** The mouse button / wheel overlay; the {@code mouse} region does this too. */
         MOUSE,
@@ -59,7 +59,7 @@ public final class FakeDesktop implements CursorController.PointerSink, KeySink 
         KEYBOARD,
         /** Which key list the row is drawn from: one line of keys, or two. */
         TWOLINE,
-        /** The hover detent, and the round trip its news is pretended to take. */
+        /** The hover detent, and the simulated round trip for its news. */
         HOVER, LAG
     }
 
@@ -102,11 +102,11 @@ public final class FakeDesktop implements CursorController.PointerSink, KeySink 
 
     private final List<Square> squares = new ArrayList<>();
     /**
-     * Targets for the hover detent, {@code x, y, radius} each — small round
-     * things with a cursor of their own, which a desktop is full of and this
-     * one had none of: every object on it is 180×120 and nothing needs aiming
-     * at. The smallest is under a screen pixel across once the desktop is
-     * fitted to a phone, which is the case the assist exists for.
+     * Targets for the hover detent, {@code x, y, radius} each: small round
+     * things with a cursor of their own, which a real desktop is full of and
+     * the squares are not, since each is 180×120 and nothing needs aiming at.
+     * The smallest is under a screen pixel across once the desktop is fitted to
+     * a phone, which is the case the assist exists for.
      */
     private final float[][] targets;
     private boolean targetsShown;
@@ -130,16 +130,16 @@ public final class FakeDesktop implements CursorController.PointerSink, KeySink 
     private final StringBuilder typed = new StringBuilder();
     /**
      * What the remote is currently holding, keyed by <em>key id</em> and
-     * remembering the keysym each was pressed with — which is exactly what
-     * RFB's own {@code CKeyboard} keeps, and what makes a release able to name
-     * a key rather than a keysym. Insertion
-     * ordered, so the readout lists them in the order they went down.
+     * remembering the keysym each was pressed with, which is what RFB's own
+     * {@code CKeyboard} keeps, and what makes a release able to name a key
+     * rather than a keysym. Insertion ordered, so the readout lists them in the
+     * order they went down.
      */
     private final Map<Integer, Integer> heldKeys = new LinkedHashMap<>();
 
     /**
      * Whatever was last drawn on the background, in desktop coordinates. It is
-     * what makes the shape of a gesture visible after the fact — a circle that
+     * what makes the shape of a gesture visible after the fact: a circle that
      * came out with four flat sides is the axis lock engaging on a curve, and
      * that is not a thing the HUD can show.
      */
@@ -184,14 +184,13 @@ public final class FakeDesktop implements CursorController.PointerSink, KeySink 
         final int[] colors = {0xff4a90d9, 0xffe0a33e, 0xff40c4a0, 0xffd95f6b, 0xff9b6bd9, 0xff6bd94a};
         // Sized like real desktop widgets rather than phone-sized buttons: on a
         // 1920x1200 remote a draggable object is ~180x120 px with ~15 px labels,
-        // and getting that scale right matters for judging cursor feel — the
+        // and getting that scale right matters for judging cursor feel: the
         // same cursor travel reads as much faster across oversized objects.
-        // Small on the phone is correct: that is what
-        // zoom is for, and it is how a real remote looks.
-        // Laid out clear of the toggle block (60..720 x 60..254) and the wheel
-        // readout (top right).
+        // Small on the phone is correct: that is what zoom is for, and it is how
+        // a real remote looks. Placed away from the toggle block (top left) and
+        // the wheel readout (top right).
         final float[][] at = {
-                {980, 120}, {1500, 260}, {200, 400}, {700, 620}, {1150, 500}, {1550, 800},
+                {980, 120}, {1500, 260}, {200, 500}, {700, 620}, {1150, 500}, {1550, 800},
         };
         for (int i = 0; i < at.length; i++) {
             squares.add(new Square("SQ" + (i + 1), colors[i], at[i][0], at[i][1], 180, 120, true, null));
@@ -235,11 +234,11 @@ public final class FakeDesktop implements CursorController.PointerSink, KeySink 
      *
      * <p>A far end that owns the cursor is one that integrates the deltas
      * itself and draws the result into the picture it sends, so this class does
-     * both — which is what makes the relative path exercisable with no server
-     * in the room. Everything else about it is unchanged, deliberately: the
-     * deltas are turned back into a position and go through the same handler,
-     * so the squares are still clickable and this square is still reachable to
-     * turn the mode off again.
+     * both, which makes the relative path testable without a server. Everything
+     * else about it is unchanged, deliberately: the deltas are turned back into
+     * a position and go through the same handler, so the squares are still
+     * clickable and the {@code RELATIVE} square is still reachable to turn the
+     * mode off again.
      */
     public void setRelative(boolean on, float x, float y) {
         relative = on;
@@ -324,10 +323,10 @@ public final class FakeDesktop implements CursorController.PointerSink, KeySink 
 
     /**
      * A remote machine sees only keysym edges, and what a key <em>means</em> is
-     * its business. This one behaves like a text field: printable keysyms are
+     * up to it. This one behaves like a text field: printable keysyms are
      * appended, Backspace erases, Return breaks the line, and everything else
-     * (including every modifier) is shown as held but changes no text — which is
-     * enough to see that Shift is really down while the IME's letter arrives.
+     * (including every modifier) is shown as held but changes no text, which is
+     * enough to see that Shift is down while the IME's letter arrives.
      */
     @Override
     public void keyDown(int keysym, int keyId) {
@@ -347,7 +346,7 @@ public final class FakeDesktop implements CursorController.PointerSink, KeySink 
         final int cp = Keysym.toUnicode(keysym);
         if (cp != 0) {
             // Shift is held by the extension keyboard, not folded into the
-            // character, so apply it here — the remote is what owns the layout.
+            // character, so apply it here: the remote owns the layout.
             typed.appendCodePoint(heldKeys.containsValue(Keysym.SHIFT_L)
                     || heldKeys.containsValue(Keysym.SHIFT_R)
                     ? Character.toUpperCase(cp) : cp);
@@ -357,8 +356,8 @@ public final class FakeDesktop implements CursorController.PointerSink, KeySink 
 
     /**
      * A release names the key, not the keysym, and lets go of whatever that key
-     * went down with — an id nobody pressed releases nothing, which is the
-     * failure a keysym-as-id client cannot show you.
+     * went down with. An id with no press releases nothing, which is the
+     * failure a keysym-as-id client cannot show.
      */
     @Override
     public void keyUp(int keyId) {
@@ -395,7 +394,7 @@ public final class FakeDesktop implements CursorController.PointerSink, KeySink 
      * The cursor a real desktop would be showing at this point, or null over
      * the wallpaper, where it is whatever the host is drawing anyway. What it
      * is worth is that the boundary's position is known exactly, which nothing
-     * at the far end of a protocol ever is — so the ink trail answers "did the
+     * at the far end of a protocol ever is, so the ink trail answers "did the
      * detent land where the edge was" rather than merely "did something
      * happen".
      */
@@ -474,7 +473,7 @@ public final class FakeDesktop implements CursorController.PointerSink, KeySink 
         text.setTextSize(20);
         c.drawText("WHEEL  V " + wheelV + "   H " + wheelH, tmp.centerX(), tmp.centerY() + 7, text);
 
-        // The remote's "text field": what the keyboard actually delivered.
+        // The remote's "text field": what the keyboard delivered.
         tmp.set(60, height - 160, width - 60, height - 60);
         fill.setColor(0xcc202531);
         c.drawRoundRect(tmp, 6, 6, fill);

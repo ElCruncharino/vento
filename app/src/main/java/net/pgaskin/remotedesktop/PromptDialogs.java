@@ -20,17 +20,15 @@ import com.google.android.material.textfield.TextInputLayout;
 import net.pgaskin.remotedesktop.backend.Prompt;
 
 /**
- * The three questions a connection can stop and ask, as dialogs over the
- * session that has stopped for them.
+ * The three kinds of question a connection can stop to ask, as dialogs over
+ * the waiting session.
  *
- * <p>Dialogs rather than screens of their own: the connection is stalled behind
- * each one either way, so putting it behind a navigation step would be
- * pretending otherwise.
+ * <p>Dialogs rather than separate screens: the connection is stalled until each
+ * one is answered either way, and a navigation step would hide that.
  *
- * <p>Every one of them owes an answer — the core blocks its session thread
- * until it gets one — which is why a dismissal counts as a no rather than as
- * nothing having happened, and why {@link Session} queues what arrives while
- * there is nobody to ask.
+ * <p>Every prompt must be answered, since the connection does not progress
+ * until it is, so a dismissal counts as a no, and {@link Session} queues
+ * prompts that arrive while no screen is showing.
  */
 final class PromptDialogs implements Prompt.Handler {
 
@@ -38,17 +36,16 @@ final class PromptDialogs implements Prompt.Handler {
 
         /**
          * Credentials typed with "remember" ticked. Held rather than saved:
-         * what was typed is only known to be right once the far end has taken
-         * it, which is a moment this class cannot see.
+         * they are only known to be right once the far end accepts them, which
+         * this class cannot see.
          */
         void rememberCredentials(String userName, String password);
 
         /**
-         * A question was answered with no, here. Worth telling from a
-         * connection that failed by itself: that one deserves its message on
-         * screen, and a declined prompt is an answer already given — leaving
-         * "Disconnected" over a black screen for it means pressing back to
-         * leave a room you just left.
+         * The user declined a prompt. Distinguished from a connection that
+         * failed by itself, which shows its message on screen: after a decline
+         * the user has already chosen to leave, and showing "Disconnected" over
+         * a black screen would make them press back to leave again.
          */
         void promptDeclined();
     }
@@ -56,7 +53,7 @@ final class PromptDialogs implements Prompt.Handler {
     private final Activity activity;
     private final Dialogs.Tracker dialogs;
     private final Host host;
-    /** Whether there is anywhere to put a password worth keeping. */
+    /** Whether there is a saved connection to store a password on. */
     private final boolean mayRemember;
 
     PromptDialogs(Activity activity, Dialogs.Tracker dialogs, Host host, boolean mayRemember) {
@@ -78,8 +75,8 @@ final class PromptDialogs implements Prompt.Handler {
             note.setText(prompt.instructions);
             form.addView(note);
         }
-        // Only the fields the scheme actually has. VncAuth has no user name,
-        // and a box for one is a question nobody can answer.
+        // Only the fields the scheme has: VncAuth has no user name, so it gets
+        // no box for one.
         final EditText user = field(form, R.string.prompt_username,
                 InputType.TYPE_CLASS_TEXT, prompt.needsUserName);
         user.setText(prompt.userName);
@@ -91,9 +88,9 @@ final class PromptDialogs implements Prompt.Handler {
             id.setText(activity.getString(R.string.prompt_catchphrase, prompt.catchphrase));
             form.addView(id);
         }
-        // Only for a saved connection: there is nowhere else to put the answer.
-        // Ours rather than the core's own credential store, which offers to save
-        // after a *failed* attempt as well as a successful one.
+        // Only for a saved connection, the only place to store it. Ours rather
+        // than the RealVNC core's credential store, which offers to save after
+        // a *failed* attempt as well as a successful one.
         final MaterialCheckBox remember = Dialogs.checkBox(activity,
                 R.string.prompt_remember_password);
         if (mayRemember && prompt.needsPassword) {
@@ -118,8 +115,8 @@ final class PromptDialogs implements Prompt.Handler {
     @Override
     public void trust(Prompt.Trust prompt) {
         final StringBuilder sb = new StringBuilder();
-        // OK, PRESHARED and ARD say nothing: this prompt is up because
-        // something else about the connection is worth asking about.
+        // OK, PRESHARED and ARD add no text: the prompt is shown for some other
+        // reason, such as an unencrypted connection.
         final String why = switch (prompt.identity) {
             case CHANGED -> activity.getString(R.string.prompt_trust_changed);
             case MATCHES_ANOTHER -> activity.getString(R.string.prompt_trust_another,
@@ -176,10 +173,10 @@ final class PromptDialogs implements Prompt.Handler {
     }
 
     /**
-     * A box to type in, in the shape every other form in this app uses — the
-     * option row's own layout, so a password is asked for the way an address
-     * is. Built whether or not it is wanted, since the caller reads it either
-     * way and an unasked field answers with the empty string.
+     * A text field, using the option row's layout like every other form in this
+     * app, so a password is entered the same way as an address. Built whether
+     * or not it is wanted, so the caller always has a field to reference; an
+     * unwanted one is not added to the form.
      */
     private EditText field(LinearLayout form, int hint, int inputType, boolean wanted) {
         final TextInputLayout box = (TextInputLayout) activity.getLayoutInflater()
@@ -196,8 +193,8 @@ final class PromptDialogs implements Prompt.Handler {
     }
 
     /**
-     * A dismissed dialog still owes the core an answer — the session is
-     * blocked until it gets one — so cancelling counts as declining.
+     * A dismissed dialog still has to answer the prompt, since the session
+     * waits for it, so cancelling counts as declining.
      */
     private void show(AlertDialog.Builder builder, Prompt prompt) {
         final AlertDialog dialog = builder.create();
@@ -206,7 +203,7 @@ final class PromptDialogs implements Prompt.Handler {
         dialog.show();
     }
 
-    /** Say no, and tell the screen it was us who did. */
+    /** Declines the prompt, and tells the host the user declined it. */
     private void decline(Prompt prompt) {
         host.promptDeclined();
         prompt.cancel();

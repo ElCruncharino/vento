@@ -14,8 +14,8 @@ import java.util.List;
  * A {@link Scheduler} on a virtual clock: nothing runs until the test advances
  * time, and then everything runs deterministically in due order.
  *
- * <p>This is what makes the 250 ms click window, the 100 ms bump-scroll repeat
- * and the 10 ms momentum ticks testable without sleeping.
+ * <p>This makes the 250 ms click window, the 100 ms bump-scroll repeat and the
+ * 10 ms momentum ticks testable without sleeping.
  */
 public final class FakeScheduler implements Scheduler {
 

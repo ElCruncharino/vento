@@ -7,10 +7,11 @@ description: Upgrade the third-party upstreams behind the backends (submodules u
 
 Every backend is a shim of ours over somebody else's client, pinned as a
 submodule under `third_party/` (or, for nettle and gnutls, as a release
-tarball named in `backends/build.gradle`). Upgrading one is moving that pin,
-carrying our patches across, regenerating whatever is generated, adapting the
-shim, and proving the build. This file is the procedure that came out of the
-first full round (September 2026), including the things that went wrong.
+tarball named in `backends/crypto-sources.txt`). Upgrading one is moving
+that pin, carrying our patches across, regenerating whatever is generated,
+adapting the shim, and proving the build. This file is the procedure that
+came out of the first full round (September 2026), including the things
+that went wrong.
 
 Read `patch.sh` and `.gitmodules` first: the gitlink names the *pristine*
 upstream commit, our changes live in `patches/<name>/`, and the `base` tag in
@@ -34,10 +35,48 @@ Nothing runs in parallel: every step needs a clean tree to commit from.
 
 1. libjpeg-turbo (libvnc, tigervnc)
 2. pixman (tigervnc)
-3. openssl (freerdp), via `backends/ports/openssl/gen.sh`
+3. openssl (freerdp), via `backends/platform/android/ports/openssl/gen.sh`
+   (the host build's `backends/platform/linux/cmake/openssl.cmake` has
+   nothing to regenerate)
 4. nettle, then gnutls (libvnc, tigervnc), via the tarball pins and
-   `backends/ports/{nettle,gnutls}/gen.sh`
+   `backends/platform/android/ports/{nettle,gnutls}/gen.sh`
 5. libvncserver, tigervnc, freerdp, ironrdp, hbb_common, ryll
+
+`third_party/winit` is not a backend's and not in this round: it is the
+Linux client's winit, pinned at the tag of the release `linux/Cargo.lock`
+names and taken in through `linux/Cargo.toml`'s `[patch.crates-io]`. It moves
+when that crate's winit does (a `cargo update` there, its own job): the pin to
+the new release's tag, `patches/winit/` rebased onto it, and any patch
+upstream has taken dropped.
+
+`third_party/ffmpeg` and `third_party/dav1d` are the Linux client's too, and
+not in this round either: the static FFmpeg `backends/platform/linux/build.rs`
+builds for every desktop decoder (the Rust ones, which TigerVNC's and
+FreeRDP's H.264 and FreeRDP's AAC and Opus sound go through too, and
+FreeRDP's scaling, which links libswscale alone), each pinned at a release
+tag. FFmpeg moves
+to a newer release's tag with `patches/ffmpeg/` rebased onto it; the decoders it
+is configured with are `DECODERS` and `HWACCELS` in that build script, so a
+consumer that starts using another codec adds it there. Proven by the desktop
+crate's fixture tests (`tests/decode.rs` for the video, `tests/sound.rs` for
+AAC and Opus), the RustDesk probe with each codec, the TigerVNC H.264 and
+FreeRDP AVC probes, and `scripts/testaudio/winbursts.py` for FreeRDP's AAC.
+Android builds neither.
+
+`third_party/libva` goes with FFmpeg: headers only, for its VAAPI decoders
+(`HWACCELS` in the same build script). Nothing of it is compiled or linked;
+libva is reached through `backends/platform/linux/cpp/va_shim.c`, which
+defines each libva function FFmpeg calls and loads the real one on first
+use. A newer FFmpeg may call a libva function the shim does not have yet,
+which is a link error naming it (`undefined symbol: va...`): add it to
+`VA_FUNCTIONS` there. `vento_video.c` calls two of them itself for a held
+picture (`vaSyncSurface`, `vaExportSurfaceHandle`) and reads FFmpeg's
+`AVVAAPIDeviceContext` for the display, which a new FFmpeg could rename.
+libva moves to a newer release's tag when FFmpeg wants newer headers (its
+configure says which `VA_CHECK_VERSION` a feature needs). Proven by the
+Linux platform crate's `hardware` and `hardware_auto` tests with
+`VENTO_TEST_HW=require` on a machine with a VAAPI device, and
+`hardware_off`.
 
 A shared library can be blocked by a consumer: nettle 4 could not move until
 TigerVNC had upstream's nettle-4 compatibility. When an evaluation says "stay"
@@ -113,12 +152,20 @@ Without patches: `checkout --detach`, `tag -f base`, `update-index`,
 `./patch.sh check`. A submodule with no `base` tag yet gets one at the
 target.
 
-A tarball: bump version, sha256 and both URLs in `backends/build.gradle`,
-verify the hash against upstream's signature or announcement (not against
-the download), `rm -rf third_party/<name>`, `./gradlew
-:backends:fetchCryptoSources`, then the port's `gen.sh`. gnutls' gen builds
+A tarball: bump `<name>.version`, `<name>.sha256` and both `<name>.url`
+lines in `backends/crypto-sources.txt`, the one place they live (Gradle's
+`fetchCryptoSources` and the host CMake build both read it), verify the
+hash against upstream's signature or announcement (not against the
+download), `./gradlew :backends:fetchCryptoSources` (it replaces a tree
+whose `.pin` is another hash), then the port's `gen.sh`. gnutls' gen builds
 nettle itself, so a nettle bump reruns gnutls' gen too and may change its
-`gen/`.
+`gen/`. The host build has no `gen/`: `platform/linux/cmake/gnutls.cmake`
+replaces a tree whose `.pin` is not the pinned hash at configure time, the
+same way, then runs both tarballs' own configure and make at build time,
+in a directory named after both versions, so a bump is a fresh build there
+with nothing to regenerate; a configure option the new release renames or
+drops shows up in its configure log (under that directory's
+`src/*-stamp/`).
 
 A port's `gen.sh` rerun at the same pin must produce an empty diff. If it
 does not, fix the script first as its own commit, regenerated at the old
@@ -130,6 +177,56 @@ under the host locale (`export LC_ALL=C`).
 
 ## Adapting the shim
 
+- A C backend's shim is one file in its module's `cpp/`, `<name>_session.c`
+  (`.cxx` for TigerVNC), which drives the library against the neutral C API
+  in `backends/api/include/vento/` and names no platform; what it offers
+  is declared in the backend's own header beside it,
+  `include/vento/<name>.h`. Above it is the crate at the module's root, which
+  reads that header into Rust (its `build.rs`, with bindgen), fills the
+  backend's `vento_<name>_config` from the options and words its rows; it is what the Linux client holds,
+  and on the phone it is linked into the module's library as a static
+  library (`rustStaticLibrary` in `backends/build.gradle`,
+  `backends/platform/android/cmake/vento_android.cmake`) with the one JNI layer in
+  `backends/platform/android`. On Linux the crate opens
+  `libvento_<name>.so` at run time (`api::c::library`) through the table
+  its `build.rs` has bindgen generate there, and calls the header's
+  functions with `api::call!`, which is the extern declaration on the phone;
+  a function added to `vento/<name>.h` is one more the table requires, so a
+  library without it is "not available". RealVNC's crate is the Linux
+  client's alone (the phone's RealVNC backend is its Java over the viewer's
+  JNI), and its library is built only under clang. An upstream
+  change reaches the session file;
+  the crate changes only when the config does, and so does `<name>_probe.c`,
+  the host probe's `main` beside them. The module's
+  CMakeLists is one file for both builds, `if(ANDROID)` and `else()` around
+  a shared middle: a vendored tree's new option goes in the middle, a new
+  port or NDK library in the Android half, a new system library in the host
+  half (see `backends/CMakeLists.txt`).
+- A Rust backend's shim is its protocol crate, and its adapter is that
+  crate's `src/backend.rs`: the `Kind`, the config read from the options, and
+  the rows. An upstream change (IronRDP, hbb_common, ryll) reaches the
+  protocol code; `backend.rs` changes only when an option or a row does.
+- Next to nothing about a protocol is in Java or JNI any more. The phone
+  reaches every backend but RealVNC through one JNI layer,
+  `backends/platform/android`, over the same `api::Backend` the Linux
+  client holds; what a module's Java keeps is its provider and, for RDP and
+  the two borrowed VNC clients, a `NativeBackend.Hooks`. An upgrade that
+  keeps the adapter's `Kind` building has nothing to change on that side.
+- TigerVNC's H.264 decoder context is the shim's own on both platforms
+  (`H264VentoDecoderContext`, selected by `H264_VENTO` in their factory; their
+  libav one is not built, `HAVE_LIBAV` unset), and hands each rectangle to
+  vento's video decoders through `vento/video.h`'s table. Its QEMU audio is
+  played on vento's sound output through `vento/audio.h`'s table
+  (`VentoAudio.h`; AAudio on the phone, ALSA on the host, both behind
+  `runtime::media::audio`'s queue), not their viewer's `AudioOutput`, which is
+  not compiled. An upstream change to `H264DecoderContext`
+  or `H264Decoder` (the reset flags, the 64-context limit) or to the QEMU
+  audio calls in `CConnection` reaches both platforms — in particular the
+  session's sound switch leans on `CConnection::framebufferUpdateEnd`
+  asking for audio (format, then enable) in the update that acknowledged
+  it, which the shim's own `framebufferUpdateEnd` follows with a disable
+  for a session started without sound, and on `writeQEMUAudioEnable`
+  staying public in `CMsgWriter`.
 - Every comment of ours that names an upstream version or behaviour ("in
   3.19.1", "the assembly is GAS", "returns Some") is a claim to re-verify
   against the target and correct or remove. Grep for the old version string
@@ -152,17 +249,90 @@ under the host locale (`export LC_ALL=C`).
 
 ## Options
 
-A backend advertises its settings as `BackendOption`s in its
-`*Provider.java`. When an upstream change adds something a person would
-switch (a new encoding or codec, a security type, a behaviour toggle), add a
-row in the shape, wording and scope of its neighbours, plumb it through Java,
-JNI and the client, and default it to upstream's answer. Do not add rows for
-what the app already decides, what nobody would set, or what cannot be
-exercised here (an H.264 path with no decoder behind it).
+A backend's settings are its table, `OPTIONS` in
+`backends/modules/<name>/catalog.rs` (compiled by the `api` crate, which
+names the file by path), one `Spec` per row, and the one copy: the Linux client builds its dialog and
+`-o key=value` from it, and on the phone `vento-codegen` writes it into the
+module's generated `<Name>Catalog` at build time, which the provider answers
+from. When an upstream change adds something a person would switch (a new
+encoding or codec, a security type, a behaviour toggle), add a row in the
+shape, wording and scope of its neighbours, read it in the adapter (`o.get`,
+`o.bool`, `o.int`) into the config — for a C backend a new field in
+`vento_<name>_config`, which the backend crate's `build.rs` reads into
+Rust with bindgen — and default it to upstream's answer, and add its key to the
+test `the_keys_are_the_ones_records_hold` in the same file, which is there
+because a stored key renamed is a setting forgotten. The value reaches a session
+in the options it is created with, every key and value as strings, so
+nothing in Java or JNI changes for a row. Where the phone's words are wrong
+on a desktop ("this phone"), give the row a `desktop_summary` or the choice
+a `desktop_label`. Do not add rows for what the app already decides, what nobody would set, or
+what cannot be exercised here (an H.264 path with no decoder behind it).
 
 The user-facing strings in this app are hand-written by its owner. A new
 row's label and summary are a draft; name them in the report so they get
 rewritten.
+
+## Adding a backend
+
+Not part of an upgrade round, but the same layers, so here once. A backend
+is a module under `backends/modules/<name>/`, and each layer of it is one
+line or one file somewhere that already has seven:
+
+- **The protocol.** A Rust crate at the module's root (`Cargo.toml`, `src/`,
+  `examples/`; `crate-type = ["lib", "cdylib"]`) written against
+  `remotedesktop-runtime` (its `media` too, where it has video or sound to
+  hand on), or a C shim in `cpp/` over
+  `vento/backend.h` with its config in its own header,
+  `cpp/include/vento/<name>.h` (on the include path of the module's targets
+  through `vento_backend_library` and `vento_android_library`), a host probe
+  `<name>_probe.c` (built with `-DVENTO_PROBES=ON`), and a small crate at the
+  module's root (`remotedesktop-api` with the `c` feature;
+  `api::c::start` and a `Behaviour` do the rest) whose `build.rs` reads
+  the header with bindgen, its own items only, over `api::c::ffi` —
+  libvnc's, copied.
+- **The catalog.** `modules/<name>/catalog.rs`: the backend's `About` (its
+  pinning and whether its user name carries a domain are data there, which
+  the shared rules read) and its `OPTIONS` table, with their tests; one
+  `#[path]` module, a `pub use` and a place in `ALL` in
+  `backends/api/src/catalog.rs`. The file is in `codegenSources`
+  (`backends/build.gradle`) by being there.
+- **The adapter.** In the backend's own crate a `Kind` (`api::kind`):
+  the `About`, the version, and `create`, which turns a `Connect` into an
+  `Arc<dyn Backend>`. Credentials prompts, the trust decision
+  (`api::trust::decide` over each client's `Store`), the bell and the
+  events are the `api` crate's and are not written again.
+- **The workspace.** The crate's directory in the root `Cargo.toml`'s
+  `members` and `default-members`, which name each one.
+- **The Linux client.** The crate in `linux/Cargo.toml` and its `KIND` in
+  `linux/src/backends/mod.rs`'s `all()`; a C module also goes into
+  `backends/CMakeLists.txt`, which `linux/build.rs` builds, and into the
+  lists of directories and libraries there that it watches and puts in
+  `lib/`.
+- **The phone's library.** One `platform_android::natives!` line in the
+  crate's `lib.rs` under `cfg(target_os = "android")`, naming the module's
+  natives class and the `Kind` (`decoders =` for a backend whose picture is
+  video, `on_load =` for a linked library that wanted a `JNI_OnLoad` of its
+  own), with `remotedesktop-platform-android` as an Android-only dependency.
+  A Rust module's `build.gradle` has cargo-ndk build the cdylib into its
+  `jniLibs` (rfb's, copied); a C module's builds the crate as a static library
+  (`rustStaticLibrary`), passes CMake `-DVENTO_RUST_LIBRARY_DIR`, and its
+  CMakeLists calls `vento_android_library(<target> <crate>)` from
+  `backends/platform/android/cmake/vento_android.cmake` in its Android half.
+- **The phone's Java.** The module's `build.gradle` registers
+  `generateCatalog` and `generateNatives` from `:backends`; its
+  `<Name>Provider` answers from `<Name>Catalog` and creates a
+  `NativeBackend` on `new <Name>Natives()`, and is declared in
+  `resources/META-INF/services/`, as a `BackendProvider`; the module's
+  `sourceSets` point AGP at `java/` (the files, no package directories)
+  and `resources/` (rfb's, copied).
+  What the protocol needs of the phone that the layer does not do goes in
+  a `NativeBackend.Hooks` (`RdpHooks` remembers RDP's desktop sizes and words
+  the prompt's hint, `VncHooks` words an anonymous TLS question); most
+  backends need none. `settings.gradle` includes the module, and the app
+  takes it from `backendModules` in `app/build.gradle` — or an add-on under
+  `plugins/` does, as RustDesk's.
+- **The checks.** A line in `scripts/check-jni-symbols.sh`'s `MODULES`, and
+  the probe (below) against a test desktop.
 
 ## Verification
 
@@ -171,6 +341,21 @@ Native modules:
     ./gradlew :backends:<module>:assembleRelease
     ./gradlew :backends:<module>:assembleRelease -PstrictWarnings
 
+The C backends again on the host, which is the one build that then runs — a
+probe per backend, against the test desktops under `scripts/` (README,
+Development). The three open ones build against the system's zlib, and
+the phone's other libraries (GnuTLS and nettle from the same tarballs and
+OpenSSL from the same submodule, by their own builds rather than the
+ports'); the
+RealVNC one builds under clang only and runs their pinned library out of
+the viewer APK, so a change to `realvnc/.../Library.java`'s pins, to
+`realvnc_traffic.h`'s walk or to the four host-only submodules is proven
+here and nowhere else:
+
+    CC=clang CXX=clang++ cmake -S backends -B build/scratch/host -G Ninja \
+        -DSTRICT_WARNINGS=ON -DVENTO_PROBES=ON
+    cmake --build build/scratch/host
+
 Rust modules:
 
     cargo check --locked --workspace
@@ -178,14 +363,32 @@ Rust modules:
     cargo clippy --locked --workspace
     ./gradlew :backends:<module>:assembleRelease
 
-Always: `./patch.sh check`, and `scripts/check-jni-symbols.sh` after any
-change to a native surface. At the end of the round:
-`./gradlew :app:assembleDebug :plugins:realvnc:assembleDebug
-:plugins:rustdesk:assembleDebug`.
+Every backend through `api::Backend`, on the host: the Linux client (`linux/`,
+its own workspace; see its claude-notes.md) builds all eight (RealVNC's library
+under clang only; without it the backend is listed as not available), and its headless probe connects one, writes the picture out and
+exits — the run that goes through the same adapters the phone does, RealVNC's
+aside:
 
-Nothing here runs on a device or against a real server. Say so in the
-report rather than implying otherwise; the test harnesses under `scripts/`
-need VMs.
+    (cd linux && cargo build && cargo test && cargo clippy --all-targets)
+    linux/target/debug/vento <backend> <address> --password ... --trust \
+        --probe wait=3,out=build/scratch/<backend>.ppm
+
+Always `./patch.sh check`. After an options change, `cargo test --locked -p
+remotedesktop-api` and `./gradlew :backends:testDebugUnitTest`: the
+first checks every table's defaults against its own rows and the keys
+records hold, and both hold `settle`, and its Java copy, to
+`backends/api/tests/options.json`. After
+any change to a native surface — `platform_android`'s `surface.rs`,
+`NativeBackend`, or a module's natives class or library —
+`scripts/check-jni-symbols.sh`. At the end of the round: `./gradlew :app:assembleDebug
+:plugins:realvnc:assembleDebug :plugins:rustdesk:assembleDebug`.
+
+Nothing in the Gradle or cargo steps runs on a device or against a real
+server. The probes are the exception: they run against the Docker desktops
+under `scripts/` (`testvnc`, `testrdp`, `testspice`, `testrustdesk`;
+`testh264` for TigerVNC's H.264, which needs a Wayland session and a GPU to
+nest in). Say in the report which were run and which were not, rather than
+implying otherwise; the other harnesses under `scripts/` need VMs.
 
 Build in the repository's own `target/` and `.cxx`. `/tmp` is a RAM-backed
 tmpfs: no cargo target directories, scratch workspaces, unpacks or clones
@@ -215,28 +418,92 @@ One commit per upstream, after review, by the lead:
   `main` is the 3.2 line; `3.1.x` is ESR. arm64 SIMD is Neon intrinsics;
   x86 SIMD stays off (needs NASM).
 - **pixman** 0.46.4. No patches. Hand-written source list in
-  `backends/tigervnc/src/main/cpp/cmake/pixman.cmake`; only the region API
-  is reached. The checkout's origin is freedesktop's gitlab while
+  `backends/modules/tigervnc/cpp/cmake/pixman.cmake`; only the region
+  API is reached. The checkout's origin is freedesktop's gitlab while
   `.gitmodules` names the X11Libre mirror; they match.
 - **openssl** 3.5.8, LTS to 2030. No patches. Moving to 4.x needs `no-ech`,
-  and the engine references in `gen.sh` and the port's CMakeLists go.
+  and the engine references in `gen.sh` and the port's CMakeLists go. The
+  host build (`platform/linux/cmake/openssl.cmake`) runs Configure with the
+  port's options without `no-legacy`, the assembly on as there, plus
+  `no-autoload-config` and OPENSSLDIR `/etc/ssl`, in a directory named after
+  the version, so a bump is a fresh build there; an option the new release
+  renames or drops shows up in its configure log (under that directory's
+  `src/*-stamp/`).
 - **nettle** 4.0, **gnutls** 3.8.13 (the release that added nettle-4
   support; newest in the 3.8 line). nettle 4.1 warns of further API changes.
   `MINI_GMP_ENABLE_FLOAT=0` is an answer configure puts in CFLAGS, so the
-  port sets it itself.
-- **libvncserver** at upstream master; five patches. No releases since
-  0.9.15.
-- **tigervnc** master dd416cbf, reporting 1.16.80; five patches (the PAM one
-  dropped). The certificate check and known-hosts store are the shim's now,
-  ported from `vncviewer/CConn.cxx`; audio is an AAudio sink behind the
-  `Audio` row. Builds `common/` only, with `config.h` written by our CMake
-  and an empty `pthread` target for the link.
-- **freerdp** 3.32.0. No patches. `LegacyTls` row for TLS 1.0 at level 0;
-  `remotedesktop_vendored_warnings` silences their tree.
+  port sets it itself. The host build (`platform/linux/cmake/gnutls.cmake`)
+  configures the same tarballs with the port's options but for the
+  assembly, which it leaves on, a CA bundle path and a system priority
+  file path.
+- **libvncserver** at upstream master; eight patches. No releases since
+  0.9.15. `0006` (as TigerVNC's `0006`) hands a certificate that verified
+  against the system's authorities, and is for the name dialled, to
+  `GetX509CertFingerprintMismatchDecision` too when it is installed, and
+  `0007` one that verified for another name, which upstream refuses outright
+  (TigerVNC's viewer asks about it, and so does that backend): so the shim's
+  `trust_needed` and the known hosts see every certificate. Should upstream
+  ever take them or change `verify_certificate_callback`, check that a
+  CA-signed certificate, for the name or not, still reaches the hook.
+  `0008` calls `GotCursorShape` with a 0x0 shape for a cursor update of no
+  pixels, the server hiding the pointer, which upstream returns from
+  before the callback.
+- **tigervnc** master dd416cbf, reporting 1.16.80; six patches (the PAM one
+  dropped, and the libav context's pixel format fix with that context). The certificate check is the shim's now: what cannot be excused is
+  refused and the rest goes to `trust_needed`, their viewer's known-hosts store
+  not used at all; the RSA-AES key question is ported from
+  `vncviewer/CConn.cxx`; audio is offered wherever there is an output, the
+  `Audio` row is where the session's Enable switch starts, and it plays on
+  vento's sound output through `vento/audio.h`'s table (`VentoAudio.h`).
+  Builds `common/` only, with `config.h` written by our
+  CMake and, on Android, an empty `pthread` target for the link.
+- **freerdp** 3.32.0; two patches: `0001`, codec/h264: `WITH_H264_EXTERNAL`,
+  a slot for an application's subsystem, `g_Subsystem_external`, tried
+  first, and `WITH_GFX_H264` following it; and `0002`, upstream's
+  190167212 cherry-picked, which 3.32.0's channel reassembly needs: without
+  it a static channel's message of more than one chunk whose length is not
+  a multiple of 128 (a far-end clipboard past 1600 bytes) is a "read error"
+  that ends the session. Drop `0002` at the first release that has it.
+  The module's `h264_vento.c` is built against `libfreerdp/codec/h264.h`,
+  which is internal: check that
+  `H264_CONTEXT_SUBSYSTEM` and the context's `pYUVData`, `iStride`,
+  `YUVWidth`, `YUVHeight` and `pSystemData` still mean the same, that
+  contexts are still made, reset and fed inside the GDI's SurfaceCommand
+  (the session sets whose they are around it), and that AVC444 still feeds
+  both pictures through the surface's one context. No `WITH_VIDEO_FFMPEG`,
+  `WITH_FFMPEG_HWACCEL` or `WITH_MEDIACODEC`. Its sound plays on vento's
+  output through the module's rdpsnd device (`rdpsnd_vento.c`), found with
+  no patch through the public `freerdp_register_addin_provider` (registered
+  after every `freerdp_client_context_new`, which puts the library's own
+  back) and named "sys:vento" in both rdpsnd channels' arguments: check that
+  the provider is still consulted for an rdpsnd device by subsystem name,
+  that `rdpsndDevicePlugin` (FormatSupported, Open, PlayEx returning the
+  latency, SetVolume, ServerFormatAnnounce) still means the same, that the
+  channel still offers the server what its DSP decodes *or* the device
+  plays, and hands a wave of a format the device claims to PlayEx as it
+  came (the device claims AAC, `WAVE_FORMAT_AAC_MS`, and Opus where vento's
+  decoders take them, and decodes them through `vento/audio.h`), and that
+  the Close PDU still does not reach the device (it closes its own stream
+  when idle). No `WITH_PULSE`, `WITH_ALSA`, `WITH_OSS`, `WITH_SNDIO`,
+  `WITH_OPENSLES` or `WITH_DSP_FFMPEG`; their "fake" device is still built
+  and is what Sound = off gets. On Linux `WITH_SWSCALE` is the one FFmpeg
+  switch on, and `WITH_FFMPEG` is off so that their swscale branch does not
+  link libavcodec for the camera channel's MJPEG; check that scaling still
+  needs only libswscale and libavutil, and that rdpgfx still offers 10.5
+  and 10.6 only with a scaler (the session is EGFX 10.4 without). Also on
+  Linux, `WITH_UNICODE_BUILTIN`: WinPR's own UTF-8/UTF-16 conversion
+  (`winpr/libwinpr/crt/unicode_builtin.c`) in place of ICU's, so the
+  library links no ICU; check that the option still exists under that name
+  and is still the only thing in their Linux build that looks for ICU
+  (`WITH_TIMEZONE_ICU` stays off by default), and that `readelf -d
+  libvento_freerdp.so` names no `libicu*`. Android keeps
+  `unicode_android.c`, Java's String.
+  `LegacyTls` row for TLS 1.0 at level 0; `remotedesktop_vendored_warnings`
+  silences their tree.
 - **ironrdp** master 9b151c4c. No patches. A submodule rather than crates.io
   because the bitmap stride fix (80bb81b3) is still unreleased; revisit at
-  the next ironrdp-session release. EGFX is deliberately off; the provider's
-  javadoc says why.
+  the next ironrdp-session release. EGFX is deliberately off; the doc
+  comment on IronRDP's `OPTIONS` (`modules/ironrdp/catalog.rs`) says why.
 - **hbb_common** 3d6fb2c, and terminal there: the next upstream commit moved
   `message.proto` into rustdesk's own repository
   (`libs/base/protos/message.proto`). Moving further means a second source
@@ -247,3 +514,9 @@ One commit per upstream, after review, by the lead:
 - **ryll** develop 3ba0f24; four patches, none merged upstream. No tag since
   v0.1.7. Only the protocol and compression crates are consumed; `client` is
   deliberately not (bundled root store).
+- **logger**, **libc-shim**, **mcpelauncher-linker** (branch `ng`, with its
+  nested `bionic` and `core`) and **libjnivm** (October 2026): the host-only
+  stack under `backends/modules/realvnc/cpp/host`, pinned at the commits
+  that stack was proven with and in no APK. No patches. Moving any of them
+  is proven by the RealVNC probe alone; the libc-shim gaps the hosting
+  layer closes from glibc (`Loader.cxx`) are the things to re-check.

@@ -7,8 +7,7 @@ package net.pgaskin.remotedesktop.control.input;
  * Everything the gesture layer can do to a pointer. Deltas are in <em>screen</em>
  * pixels; it is up to the consumer to convert to remote-desktop coordinates.
  *
- * <p>The same four calls the original's gesture layer makes: move, press,
- * release, and cancel an auto-scroll.
+ * <p>The calls the original's gesture layer makes: move, press and release.
  */
 public interface MouseSink {
     /** Relative pointer motion, in screen px, already accelerated. */

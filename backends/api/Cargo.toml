@@ -1,0 +1,53 @@
+# The session API shared by all backends and clients: the `Backend` trait the
+# Linux client and the phone are written against, the `Event`s a session
+# reports through a `Mailbox`, each backend's name and options (`catalog`,
+# with each entry compiled here by path from
+# `backends/modules/<name>/catalog.rs`; `options`, the shape of a row), and
+# the rules every client applies the same way: reading the answer to a
+# credentials prompt, and checking a far end's identity against the pins.
+#
+# It sits between `remotedesktop-runtime`, which a protocol is written
+# against, and the clients. Each backend's adapter is in that backend's own
+# crate (the protocol crate for the four in Rust, a small crate beside the C
+# library for the others) and is written against this one. The `c` feature
+# adds the adapter over the vtable in `vento/backend.h`, which the C
+# backends' crates fill in.
+#
+# Nothing here is platform-specific. The Linux client and the phone each
+# supply what a session needs from them (storage directories, video decoders,
+# the name the far end shows for this machine) through `Connect`.
+[package]
+name = "remotedesktop-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+name = "api"
+
+[features]
+# The adapter over `vento/backend.h`, for the C backends' crates, and the
+# declarations of the shared headers, generated rather than retyped.
+c = ["dep:bindgen", "dep:libloading"]
+
+[dependencies]
+log.workspace = true
+remotedesktop-runtime.workspace = true
+
+# The Linux client opens the C backends' libraries at run time
+# (`c::library`); on the phone they are linked.
+[target.'cfg(target_os = "linux")'.dependencies]
+libloading = { version = "0.8", optional = true }
+
+[build-dependencies]
+# Generates the declarations in `vento/backend.h`, `video.h` and `audio.h`
+# (and the constants of `text.h`) rather than retyping them: the vtable's
+# member order is the ABI, and a hand-written copy would duplicate it. Each C
+# backend's crate generates its own header on top of these.
+bindgen = { workspace = true, optional = true }
+
+[dev-dependencies]
+# For the options cases in `tests/options.json` (tests/vectors.rs),
+# which the Java tests read too. Already in the graph through IronRDP (picky).
+serde_json = "1"

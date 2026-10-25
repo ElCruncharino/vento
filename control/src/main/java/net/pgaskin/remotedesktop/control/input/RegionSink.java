@@ -4,8 +4,8 @@
 package net.pgaskin.remotedesktop.control.input;
 
 /**
- * Where {@link TapRegions} hits go. The gesture layer has no idea what a region
- * does — it only knows a tap landed in one and whether anybody wanted it.
+ * Where {@link TapRegions} hits go. The gesture layer does not know what a
+ * region does, only that a tap landed in one and whether it was consumed.
  */
 public interface RegionSink {
     /**

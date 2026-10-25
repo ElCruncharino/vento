@@ -25,8 +25,8 @@ public final class InteractiveTextDlgBindings {
     /**
      * One field of the form. The core constructs the members of this set
      * directly, so each record's name and canonical constructor is the ABI; the
-     * interface over them is not — it is here so that a caller can switch over
-     * the set and have the compiler notice when it misses one.
+     * interface over them is not: it lets a caller switch over the set and have
+     * the compiler report a missing case.
      */
     public sealed interface UiElement {
         String id();
@@ -76,8 +76,8 @@ public final class InteractiveTextDlgBindings {
     /**
      * The answers, as a native-side copy of {@code id → answer} that outlives
      * the map it was built from. {@link #close} frees it; it is a
-     * {@link Closeable} so that a caller can hand it to the result native inside
-     * a try-with-resources and not think about it again.
+     * {@link Closeable} so that a caller can pass it to the result native inside
+     * a try-with-resources.
      */
     public static final class UiResponses implements Closeable {
 

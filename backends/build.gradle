@@ -5,10 +5,11 @@ plugins {
     id 'com.android.library'
 }
 
-// The seam and nothing else: five files, no androidx, no app class, no
+// The interfaces the app holds a backend by (`Backend`, `BackendProvider` and
+// the types around them) and nothing else: no androidx, no app class, no
 // protocol. A protocol is a module under this one, depending on this and on
-// nothing else of the app's — so the compiler is what says the seam survived
-// another implementation unchanged.
+// nothing else of the app's, so the compiler checks that each implementation
+// needs nothing beyond these interfaces.
 android {
     namespace = 'net.pgaskin.remotedesktop.backend'
     compileSdk 36
@@ -21,6 +22,49 @@ android {
         sourceCompatibility JavaVersion.VERSION_21
         targetCompatibility JavaVersion.VERSION_21
     }
+
+    // Not AGP's `src/main/`: this project is `backends/` itself, the parent
+    // of every module and of the crates, and its Java is the Android half of
+    // the platform, so it is with the rest of that in `platform/android/`:
+    // the files in `java/`, with no package directories (javac uses the
+    // `package` line), and their tests beside it in `javatest/` rather than
+    // under it, since a source directory includes everything below it.
+    sourceSets {
+        main.java.srcDirs = ['platform/android/java']
+        test.java.srcDirs = ['platform/android/javatest']
+    }
+
+    // `BackendOption.settle` implements the same rule as the Linux client's
+    // `api::options::Options::settle`, tested against the same cases:
+    // `api/tests/options.json`, which `cargo test` reads too. The tests read
+    // it at run time from the module's directory, so the file is declared as
+    // an input of the task; otherwise a changed case would not make the task
+    // out of date.
+    testOptions {
+        unitTests.all {
+            testLogging {
+                events = ["failed"]
+                exceptionFormat = "full"
+            }
+            inputs.file('api/tests/options.json')
+                    .withPropertyName('options')
+                    .withPathSensitivity(PathSensitivity.RELATIVE)
+        }
+    }
+}
+
+// Nothing here differs between build types, so the release variant's copy of
+// the same suite is duplicate work.
+androidComponents {
+    beforeVariants(selector().withBuildType('release')) { variant ->
+        variant.enableUnitTest = false
+    }
+}
+
+dependencies {
+    // A plain JVM, as in `control/`: the tests cover rules, in classes that
+    // use no Android APIs.
+    testImplementation 'junit:junit:4.13.2'
 }
 
 // What every protocol module's native build needs, so that a protocol's own
@@ -37,33 +81,117 @@ ext {
 }
 
 /*
- * The two upstreams that arrive as a release rather than as a submodule, both
- * of them the encryption the borrowed VNC clients reach TLS through. Their git
- * trees have no `configure` — it is an autotools bootstrap output, and gnutls'
- * bootstrap wants gnulib and four host tools — so what a release carries is
- * what upstream *is* here, named by a hash rather than by a gitlink.
- *
- * Nothing in a build fetches these; `./gradlew fetchCryptoSources` does, and a
- * tree that is not there is a message from CMake saying so.
+ * The backend's description from Rust, as Java its module compiles:
+ * `vento-codegen` (`platform/android/codegen/`) writes the backend's catalog
+ * entry (id, name, description, position in a picker, and every option with
+ * its key as a constant), and the module's provider answers from it. The
+ * output is a generated source directory per variant, placed by AGP; none of
+ * it is in the tree. `codegenSources` is everything the generator can depend
+ * on, so the task is out of date exactly when the catalog may have changed.
+ * That includes each backend's own entry, `modules/<name>/catalog.rs`, which
+ * the `api` crate compiles by path from outside its own directory: without
+ * it, a changed option would leave the Java catalog stale.
  */
-ext.cryptoSources = [
-        nettle: [
-                version: '4.0',
-                sha256 : '3addbc00da01846b232fb3bc453538ea5468da43033f21bb345cb1e9073f5094',
-                urls   : [
-                        'https://ftp.gnu.org/gnu/nettle/nettle-4.0.tar.gz',
-                        'https://www.lysator.liu.se/~nisse/archive/nettle-4.0.tar.gz',
-                ],
-        ],
-        gnutls: [
-                version: '3.8.13',
-                sha256 : 'ffed8ec1bf09c2426d4f14aae377de4753b53e537d685e604e99a8b16ca9c97e',
-                urls   : [
-                        'https://www.gnupg.org/ftp/gcrypt/gnutls/v3.8/gnutls-3.8.13.tar.xz',
-                        'https://mirrors.dotsrc.org/gcrypt/gnutls/v3.8/gnutls-3.8.13.tar.xz',
-                ],
-        ],
-]
+ext.codegenSources = files(
+        '../Cargo.toml', '../Cargo.lock', '../rust-toolchain.toml',
+        'platform/android/codegen/Cargo.toml', 'platform/android/codegen/src',
+        'api/Cargo.toml', 'api/build.rs', 'api/src',
+        file('modules').listFiles().findAll { it.isDirectory() }.sort().collect { new File(it, 'catalog.rs') },
+        'platform/android/Cargo.toml', 'platform/android/src',
+        'runtime/Cargo.toml', 'runtime/src')
+
+ext.generateCatalog = { Project module, variant, String backend, String className ->
+    final cap = variant.name.substring(0, 1).toUpperCase(Locale.ROOT) + variant.name.substring(1)
+    final task = module.tasks.register("generate${cap}Catalog", GenerateJavaTask) {
+        workspaceDir.set(cargoWorkspace)
+        generatorSources.from(codegenSources)
+        arguments.set(['catalog', backend, module.android.namespace, className])
+    }
+    variant.sources.java?.addGeneratedSourceDirectory(task) { it.outputDir }
+}
+
+/*
+ * A Rust backend's natives class, `<className>` in the module's package: the
+ * `native` methods of `NativeBackend.Natives`, from the JNI table in
+ * `platform/android/src/surface.rs`, on a class that loads `library`. One per
+ * module rather than one shared class because each library registers its
+ * functions on a class from its `JNI_OnLoad`, and with two libraries
+ * registering on one class, the last one loaded would handle calls for both.
+ */
+ext.generateNatives = { Project module, variant, String className, String library ->
+    final cap = variant.name.substring(0, 1).toUpperCase(Locale.ROOT) + variant.name.substring(1)
+    final task = module.tasks.register("generate${cap}Natives", GenerateJavaTask) {
+        workspaceDir.set(cargoWorkspace)
+        generatorSources.from(codegenSources)
+        arguments.set(['natives', module.android.namespace, className, library])
+    }
+    variant.sources.java?.addGeneratedSourceDirectory(task) { it.outputDir }
+}
+
+/*
+ * A C backend's Rust half, for its CMake to link: the module's crate (the
+ * backend as an `api::Backend` over the C library's vtable, and the JNI layer
+ * in `platform/android` registered on the module's natives class) as a static
+ * library per ABI, under the returned directory, which the module passes to
+ * CMake as `VENTO_RUST_LIBRARY_DIR` (`platform/android/cmake/vento_android.cmake`
+ * links it).
+ *
+ * One task for every variant, since each builds the crate `--release` the same
+ * way, and it runs before any CMake build, which links its output; CMake only
+ * names the file, so configuring does not need it.
+ */
+ext.rustStaticLibrary = { Project module, String crate ->
+    final out = module.layout.buildDirectory.dir('generated/rustStaticLibs')
+    final task = module.tasks.register('cargoBuildStaticNative', CargoBuildTask) {
+        workspaceDir.set(cargoWorkspace)
+        cargoPackage.set(crate)
+        crateType.set('staticlib')
+        ndkDirectory.set(module.androidComponents.sdkComponents.ndkDirectory)
+        rustToolchainFile.set(cargoRustToolchain)
+        cargoNdkVersion.set(project.cargoNdkVersion)
+        abiFilters.set(nativeAbis)
+        minSdkVersion.set(module.provider {
+            final v = module.android.defaultConfig.minSdk
+            (v instanceof com.android.build.api.variant.AndroidVersion) ? v.apiLevel : v
+        })
+        outputDir.set(out)
+    }
+    module.tasks.matching { it.name.startsWith('buildCMake') }.configureEach {
+        dependsOn task
+    }
+    return out.get().asFile.absolutePath
+}
+
+/*
+ * The two upstreams that come as a release rather than as a submodule, both
+ * used for TLS by the vendored VNC clients. Their git trees have no
+ * `configure` (it is an autotools bootstrap output, and gnutls' bootstrap
+ * needs gnulib and four host tools), so the release tarball, pinned by its
+ * hash rather than by a gitlink, is the upstream source here.
+ *
+ * Their versions, hashes and mirrors are in `crypto-sources.txt`, which the
+ * host CMake build reads too: a host build unpacks a missing tree itself, as
+ * the tasks here do. The Android build fetches nothing;
+ * `./gradlew fetchCryptoSources` does, and its CMake fails with a message
+ * when a tree is missing.
+ */
+ext.cryptoSources = [:]
+file('crypto-sources.txt').eachLine { line ->
+    line = line.trim()
+    if (!line || line.startsWith('#')) {
+        return
+    }
+    final m = line =~ /^([a-z0-9]+)\.(version|sha256|url)\s*=\s*(\S+)$/
+    if (!m.matches()) {
+        throw new GradleException("crypto-sources.txt: not a `<name>.<key> = <value>` line: ${line}")
+    }
+    final pin = cryptoSources.computeIfAbsent(m.group(1)) { [urls: []] }
+    if (m.group(2) == 'url') {
+        pin.urls << m.group(3)
+    } else {
+        pin[m.group(2)] = m.group(3)
+    }
+}
 
 def fetchTasks = cryptoSources.collect { name, pin ->
     tasks.register("fetch${name.capitalize()}Sources", DownloadSourceTarball) {

@@ -5,6 +5,6 @@ package net.pgaskin.remotedesktop.realvnc;
 
 import net.pgaskin.remotedesktop.plugin.LibraryProvider;
 
-/** This add-on's copy of the library, on the way to the app that uses it. */
+/** Serves this add-on's copy of the library to the app. */
 public final class RealVncLibraryProvider extends LibraryProvider {
 }

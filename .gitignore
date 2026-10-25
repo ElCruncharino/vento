@@ -13,3 +13,4 @@ local.properties
 # fetched from release tarballs rather than submodules
 /third_party/gnutls/
 /third_party/nettle/
+/third_party/.fetch/

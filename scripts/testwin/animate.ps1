@@ -2,14 +2,14 @@
 # black, redrawn 30 times a second.
 #
 # Windows' own screen saver cannot be the workload. It runs on the screen-saver
-# desktop, which the VNC servers here do not follow — the phone is handed one
+# desktop, which the VNC servers here do not follow: the phone is handed one
 # frozen frame of it and nothing after, and a capture taken in the interactive
 # session comes back white. So the animation is a window on the normal desktop,
 # which is what a client would have to carry anyway.
 #
 # Drawn with DrawLine rather than DrawPolygon: an exception inside a WinForms
 # paint handler is swallowed, so a bad argument is a window that paints its
-# background and nothing else — which reads as a client with nothing to draw.
+# background and nothing else, which reads as a client with nothing to draw.
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 
 $script:form = New-Object System.Windows.Forms.Form

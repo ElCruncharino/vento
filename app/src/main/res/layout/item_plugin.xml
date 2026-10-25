@@ -3,15 +3,14 @@
     SPDX-FileCopyrightText: 2026 Patrick Gaskin
     SPDX-License-Identifier: GPL-3.0-or-later
 
-    A plugin with something to say about itself: what it is, one sentence, and
-    whatever its own failure said under that.
+    A notice about a plugin: its name, one sentence, and the error it reported
+    below that.
 
-    The same shape as a connection, since it is in the same list, and the
-    secondary container rather than the surface every other card and row here
-    wears: it is the one item on this screen that is not one of the things the
-    screen is a list of, and a notice that reads as an entry is one somebody
-    scrolls past. Nothing about it is clickable except its buttons, being a
-    statement about a package rather than a thing to open.
+    The same shape as a connection, since it is in the same list, but on the
+    secondary container colour rather than the surface colour of the other
+    cards and rows: it is the only item on this screen that is not a
+    connection, and a notice that looks like an entry is easy to scroll past.
+    Only its buttons are clickable, since there is nothing to open.
 -->
 <com.google.android.material.card.MaterialCardView
     xmlns:android="http://schemas.android.com/apk/res/android"
@@ -49,8 +48,8 @@
             android:textAppearance="?attr/textAppearanceBodyMedium"
             android:textColor="?attr/colorOnSecondaryContainer" />
 
-        <!-- The plugin's own words, where it had any: a version it was built
-             against, or what its code threw. -->
+        <!-- Text from the plugin, if any: the version it was built against, or
+             what its code threw. -->
         <TextView
             android:id="@+id/detail"
             android:layout_width="match_parent"
@@ -76,8 +75,8 @@
                 android:text="@string/plugin_uninstall"
                 android:textColor="?attr/colorOnSecondaryContainer" />
 
-            <!-- The last three are the ones that are not getting rid of it, and
-                 no card has two of them. -->
+            <!-- The last three are the alternatives to uninstalling, and no card
+                 shows more than one of them. -->
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/update"
                 style="@style/Widget.Material3.Button.TextButton"

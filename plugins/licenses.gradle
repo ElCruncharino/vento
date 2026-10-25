@@ -3,16 +3,16 @@
 
 // An add-on's licence page, in the APK that needs one.
 //
-// The app's page says what the *app* is made of, and an add-on is a different
-// build under different terms — so an add-on carrying anything of anybody
-// else's says so itself, in the same generated page, and the app shows it
-// beside that backend's own rows when the package it came from has one. An
-// add-on made only of this project's code needs none and applies nothing:
-// `plugins/realvnc` is that case, and the app's page already sets out those
-// terms in full for the same code.
+// The app's page lists what the *app* contains, and an add-on is a separate
+// build under different terms, so an add-on that includes third-party code
+// lists it in its own generated page, which the app shows next to that
+// backend's rows when the add-on's package has one. An add-on made only of
+// this project's code needs no page and does not apply this: `plugins/realvnc`
+// is that case, and the app's page already gives those terms in full for the
+// same code.
 //
-// The contract is the asset's path, `licenses/index.html`, which is where the
-// app looks. Applied as:
+// The contract is the asset's path, `licenses/index.html`, where the app
+// looks for it. Applied as:
 //
 //     apply from: rootProject.file('plugins/licenses.gradle')
 //     licensePage(
@@ -27,8 +27,8 @@ ext.licensePage = { Map spec ->
             final generate = tasks.register("generate${cap}Licenses", GenerateLicensesTask) {
                 cargoLock.set(rootProject.file('Cargo.lock'))
                 workspaceDir.set(project(':backends').cargoWorkspace)
-                // What this APK ships, which is a subset of the workspace: the
-                // page is about an artefact rather than about the repository.
+                // What this APK ships, a subset of the workspace: the page
+                // describes the artefact rather than the repository.
                 cargoPackages.set(spec.cargoPackages as Set)
                 abiFilters.set(android.defaultConfig.ndk.abiFilters as Set)
                 ownHeading.set('This add-on')

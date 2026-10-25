@@ -22,47 +22,47 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * The live connection, which is not the same thing as the screen showing it.
+ * A live connection, separate from the screen showing it.
  *
- * <p>The activity cannot own the backend, for a measured reason: <b>about five
- * seconds in the background costs the connection</b>, because Android freezes a
- * cached process and takes its sockets with it. So the session lives in a
- * process kept alive and visible by {@link SessionService}, and the screen
- * becomes something that <em>attaches</em> to it.
+ * <p>The activity cannot own the backend: <b>about five seconds in the
+ * background drops the connection</b> (measured), because Android freezes a
+ * cached process along with its sockets. So the session lives in a process kept
+ * in the foreground by {@link SessionService}, and the screen
+ * <em>attaches</em> to it.
  *
- * <p>That split is what the rest of this class is about:
+ * <p>Because of that split, this class:
  *
  * <ul>
- *   <li><b>It is the backend's listener</b>, and forwards to whatever view is
- *       attached — or to nothing, harmlessly, when none is.
- *   <li><b>It remembers what a new view needs to catch up</b>: the desktop size,
+ *   <li><b>Is the backend's listener</b>, and forwards to the attached view, or
+ *       to nothing when none is attached.
+ *   <li><b>Remembers what a new view needs to catch up</b>: the desktop size,
  *       the cursor, the connection state. A view attaching to a session that has
- *       been running for an hour has missed every one of those, and without them
- *       it has no framebuffer to draw into.
- *   <li><b>It queues prompts.</b> A password dialog needs an activity, the
- *       connection is stalled behind it either way, and one can perfectly well
- *       arrive while nothing is on screen. Held until someone can ask.
+ *       been running for an hour missed all of those, and without the size it
+ *       has no framebuffer to draw into.
+ *   <li><b>Queues prompts.</b> A password dialog needs an activity, the
+ *       connection is stalled until it is answered, and it can arrive while
+ *       nothing is on screen. It is held until a screen attaches.
  * </ul>
  *
- * <p>Several at once: {@link Sessions} holds them all, and each one has its own
- * window, its own notification and its own line in the service. What one
- * session may not have is two of itself, which is what the key is for.
+ * <p>Several sessions can run at once: {@link Sessions} holds them all, and each
+ * has its own window, notification and line in the service notification. The
+ * key prevents two sessions for the same target.
  */
 public final class Session implements Backend.Listener, Prompt.Handler {
 
     /**
-     * Take over {@code backend} — already built, not yet connected — and put it
-     * behind a foreground service.
+     * Take over {@code backend} (built, not yet connected) and keep it running
+     * under a foreground service.
      *
-     * @param key      what this session is of: a saved connection's id, or an
-     *                 address. {@link Sessions#byKey} compares it, so a screen
-     *                 opened for the same thing re-attaches instead of
-     *                 reconnecting, and a second one for the same machine
-     *                 replaces rather than joins.
+     * @param key      the session target: a saved connection's id, or an
+     *                 address. {@link Sessions#byKey} looks it up, so a screen
+     *                 opened for the same target re-attaches instead of
+     *                 reconnecting, and opening a new session for the same
+     *                 target replaces the existing one.
      * @param reopen   how to get back to the screen from the notification
-     * @param options  what the backend was built with, kept so the panel can
-     *                 show what this session is actually on — which is not the
-     *                 saved connection's answer once one of them has been edited
+     * @param options  the options the backend was built with, kept so the panel
+     *                 can show the session's actual settings, which differ from
+     *                 the saved connection's once either has been edited
      */
     public static Session open(Context ctx, String key, String title, String subtitle,
                                Intent reopen, Backend backend, Map<String, String> options) {
@@ -76,10 +76,9 @@ public final class Session implements Backend.Listener, Prompt.Handler {
         backend.setPromptHandler(s);
         Sessions.add(s);
         SessionService.start(s.context);
-        // A backend may be somebody else's code, loaded out of an add-on, and a
-        // throw out of `connect` must end this session rather than the process.
-        // The listener is already set, so the session says what happened in the
-        // window that is already open.
+        // A backend may be third-party code loaded from an add-on, and a throw
+        // from `connect` must end this session rather than the process. The
+        // listener is already set, so the error shows in the open window.
         try {
             backend.connect();
         } catch (Throwable t) {
@@ -91,7 +90,7 @@ public final class Session implements Backend.Listener, Prompt.Handler {
         return s;
     }
 
-    /** Never reset: a notification id outlives the session it was posted for. */
+    /** Never reset: a notification id can outlive the session it was posted for. */
     private static int nextNotification = 1;
 
     /** Which session an alarm is for, on the intent {@link Timeout} receives. */
@@ -107,13 +106,11 @@ public final class Session implements Backend.Listener, Prompt.Handler {
     private final int notification = nextNotification++;
 
     /**
-     * Where a callback goes when no screen is attached, so that "nobody is
-     * looking" is a state this class can be in rather than a condition each of
-     * nine forwarding methods has to remember to test.
+     * The listener used when no screen is attached, so the forwarding methods
+     * need no null checks.
      *
-     * <p>Nothing here is owed an answer except the clipboard, which is a pull
-     * rather than a push: null is all a session with no screen has to give,
-     * since the cache the answer comes out of is the view's.
+     * <p>Only the clipboard request returns a value: null, since the clipboard
+     * cache is the view's.
      */
     private static final Backend.Listener NOBODY = new Backend.Listener() {
         @Override
@@ -168,7 +165,7 @@ public final class Session implements Backend.Listener, Prompt.Handler {
     private boolean leaving;
     private boolean closed;
 
-    /** Whether a screen is showing this, and when one last was. */
+    /** Whether a screen is showing this session, and when one last did. */
     private boolean onScreen;
     private long lastOnScreenAt;
 
@@ -184,7 +181,7 @@ public final class Session implements Backend.Listener, Prompt.Handler {
         this.openedWith = options == null ? Map.of() : Map.copyOf(options);
     }
 
-    /** The options this session was opened with, whatever they came from. */
+    /** The options this session was opened with. */
     public Map<String, String> openedWith() {
         return openedWith;
     }
@@ -210,34 +207,29 @@ public final class Session implements Backend.Listener, Prompt.Handler {
     }
 
     /**
-     * What this session has to say for itself, in the one place that decides
-     * it. The notification, the status panel over the desktop and the
-     * connection panel's first line all show this, and three renderings of the
-     * same pair are three chances for them to disagree about what a session is
-     * doing.
+     * The session's status message, computed in one place. The notification,
+     * the status panel over the desktop and the connection panel's first line
+     * all show it, so they cannot disagree.
      *
-     * @param text    what to say; empty while a session is running normally,
-     *                which is the whole of "there is nothing to report"
-     * @param ended   whether there is a connection left to act on
-     * @param working whether it is on its way somewhere, so a spinner turns
+     * @param text    the message; empty while the session is running normally
+     * @param ended   whether the connection has ended
+     * @param working whether it is in progress, for a spinner
      */
     public record Status(String text, boolean ended, boolean working) {
 
         /**
-         * One pair, rendered.
+         * The status for a state and its detail.
          *
-         * <p>A detail is what a state says <em>about itself</em>, so it cannot
-         * outrank the state: a connected session shows its desktop and nothing
-         * over it, whatever the last message was. Without that rule a screen
-         * re-attaching to a session whose remembered detail is still
-         * "Connecting to …" — the one the backend sent on the way in — puts
-         * that over an hour-old desktop, which is what a phone coming back
-         * from a long sleep did.
+         * <p>A detail describes its state, so it cannot override it: a
+         * connected session shows only its desktop, whatever the last message
+         * was. Without this, a screen re-attaching to a session whose stored
+         * detail was still the "Connecting to …" sent while connecting showed
+         * it over a desktop that had been up for an hour, as happened after a
+         * phone woke from a long sleep.
          *
-         * <p>{@code IDLE} reads as {@code CONNECTING} rather than as silence:
-         * a backend that has not said anything yet is one nothing has come
-         * back from, and a blank window is a worse account of that than the
-         * word.
+         * <p>{@code IDLE} shows as {@code CONNECTING} rather than nothing: the
+         * backend has not reported anything yet, and a blank window explains
+         * that worse than the word does.
          */
         public static Status of(Context ctx, Backend.State state, String detail) {
             final boolean has = detail != null && !detail.isEmpty();
@@ -256,76 +248,74 @@ public final class Session implements Backend.Listener, Prompt.Handler {
         return Status.of(context, state, detail);
     }
 
-    /** What this session is of, which is what {@link Sessions} keys it by. */
+    /** The session target, which {@link Sessions} keys it by. */
     public String key() {
         return key;
     }
 
-    /** Is this a session of the same thing a screen is being opened for? */
+    /** Whether this open session is for the target {@code key}. */
     public boolean matches(String key) {
         return !closed && this.key != null && this.key.equals(key);
     }
 
     /**
-     * What the service posts this session's notification under, and cancels it
-     * by — and, since a {@code PendingIntent}'s identity does not include its
-     * extras, also the request code that keeps one session's Disconnect button
-     * from ending another's.
+     * The id of this session's notification. Since a {@code PendingIntent}'s
+     * identity does not include its extras, it is also the request code that
+     * keeps one session's Disconnect button from ending another's.
      */
     int notificationId() {
         return notification;
     }
 
     /**
-     * Still worth keeping a process alive for. False from the moment the far
-     * end goes, which is before anybody lets go of the session: the screen goes
-     * on showing why it stopped, and there is nothing left to be foreground for.
+     * Whether the process still needs to stay in the foreground for this
+     * session. False as soon as the connection ends, before the session is
+     * released: the screen keeps showing why it stopped, but there is nothing
+     * left to keep alive.
      */
     public boolean alive() {
         return !closed && state != Backend.State.CLOSED;
     }
 
-    /** True when the disconnect was asked for, so the screen should go too. */
+    /** True when the user asked to disconnect, so the screen should close too. */
     public boolean leaving() {
         return leaving;
     }
 
-    // ---- the screen coming and going ---------------------------------------
+    // ---- attaching a screen ------------------------------------------------
 
     /**
-     * Point the session at a screen, and bring that screen up to date — which is
-     * the whole difference between a listener and an attachment. A new view has
-     * no framebuffer until it is told the desktop size, no cursor until it is
-     * told the shape, and nothing to explain itself with until it is told the
-     * state; a session that connected first has sent all three to nobody.
+     * Attach a screen, and bring it up to date. A new view has no framebuffer
+     * until it gets the desktop size, no cursor until it gets the shape, and no
+     * status until it gets the state; a session that connected earlier sent all
+     * three to no view.
      */
     public void attach(SessionView v, Prompt.Handler handler) {
         view = v;
         ui = handler;
         if (desktopW > 0 && desktopH > 0) {
-            // SessionView answers this by allocating the mirror and damaging all
-            // of it, so the picture comes back with it.
+            // SessionView allocates a new mirror, which starts fully dirty, so
+            // the picture is read again too.
             v.desktopSize(desktopW, desktopH);
         }
         if (cursor != null) {
             v.cursor(cursor, cursorHotX, cursorHotY);
         }
-        // Asked of the backend rather than remembered from the callback, so there
-        // is one answer to "who owns the cursor". Told even when it is false: a
-        // new screen's controller is absolute only by default.
+        // Read from the backend rather than stored from the callback, so there
+        // is one source for which end owns the cursor. Sent even when false,
+        // since a new screen's controller is only absolute by default.
         v.pointerMode(backend.facts().pointerRelative());
-        // The backend's own answer, for the same reason and a sharper one: a
-        // screen coming back to a session that has been running for an hour was
-        // showing "Connecting…" over a desktop that had been up the whole time,
-        // because what it was told is what the last callback said rather than
-        // what is true now. The remembered detail goes with the remembered
-        // state and is dropped when they disagree — "Connecting to …" under
-        // CONNECTED is worse than nothing.
-        // A session that has already ended is not re-asked, which is the other
-        // half of the same rule: a backend that threw on the way up never
-        // reached a state of its own, so asking it turns the reason this
-        // session ended back into "Connecting…" on a window that will never
-        // connect. CLOSED is terminal here whatever the backend says.
+        // The backend's current state, for the same reason: a screen returning
+        // to a session running for an hour showed "Connecting…" over a live
+        // desktop, because it was given the state from the last callback rather
+        // than the current one. The stored detail belongs to the stored state
+        // and is dropped when they differ ("Connecting to …" under CONNECTED is
+        // worse than nothing).
+        // An ended session is not re-read: a backend that threw while
+        // connecting never reached a state of its own, so reading it would
+        // replace the reason this session ended with "Connecting…" on a window
+        // that will never connect. CLOSED is terminal here whatever the backend
+        // reports.
         final Backend.State live = state == Backend.State.CLOSED ? state : backend.state();
         if (live != state) {
             state = live;
@@ -337,26 +327,26 @@ public final class Session implements Backend.Listener, Prompt.Handler {
 
     public void detach(SessionView v) {
         if (view != v) {
-            // A newer screen has already attached — its view and its prompt
-            // handler are the live ones, and the two are set together.
+            // A newer screen has already attached; its view and prompt handler
+            // are the current ones, and the two are set together.
             return;
         }
         view = NOBODY;
         ui = null;
     }
 
-    // ---- closing itself after a while off screen ----------------------------
+    // ---- timeout while off screen ------------------------------------------
 
     /**
-     * Told by the screen at the two moments it becomes and stops being visible,
-     * which are the same pair the backend's pause hangs off — one definition of
-     * "on screen" in the app.
+     * Called by the screen when it becomes visible and when it stops being
+     * visible, the same two points the backend's pause uses, so the app has one
+     * definition of "on screen".
      *
-     * <p>Visibility rather than window focus, for the reason the pause has: a
-     * dialog over the session takes the focus without hiding anything. And
-     * rather than {@link #attach}/{@link #detach}, which are about the activity
-     * existing: a session backgrounded with its window intact is the ordinary
-     * case this is for, and would never arm.
+     * <p>Visibility rather than window focus, as with the pause: a dialog over
+     * the session takes the focus without hiding it. And not
+     * {@link #attach}/{@link #detach}, which track the activity's existence: a
+     * session backgrounded with its window intact is the usual case for the
+     * timeout, and would never arm it.
      */
     public void onScreen(boolean visible) {
         onScreen = visible;
@@ -367,31 +357,29 @@ public final class Session implements Backend.Listener, Prompt.Handler {
     }
 
     /**
-     * Set, move or drop the alarm that closes this session, from what the
-     * setting says now and when a screen last had it.
+     * Set, move or cancel the alarm that closes this session, from the current
+     * setting and when a screen last showed it.
      *
      * <p>The deadline is computed from {@link #lastOnScreenAt} rather than
-     * counted down from here, which is what makes three cases fall out for
-     * free: a rotation re-arms against the same instant and changes nothing, a
-     * setting shortened past what a session has already spent off screen sets a
-     * deadline in the past — which {@code AlarmManager} delivers at once, being
-     * what somebody choosing a shorter one means — and lengthening it moves the
-     * deadline out with no stored count to adjust.
+     * counted down from now, which handles three cases without extra code: a
+     * rotation re-arms against the same instant and changes nothing; shortening
+     * the setting below the time already spent off screen sets a deadline in
+     * the past, which {@code AlarmManager} delivers at once; and lengthening it
+     * moves the deadline out with no stored count to adjust.
      *
      * <p>{@code ELAPSED_REALTIME} because {@code uptimeMillis} does not advance
      * in deep sleep, so a {@link android.os.Handler} would fire an eight-hour
-     * timeout after eight hours <em>awake</em>, which on a phone in a pocket is
-     * never. Inexact and non-waking on purpose: nothing here needs the phone
-     * woken to drop a socket, and it keeps the feature clear of
-     * {@code SCHEDULE_EXACT_ALARM}, which this app would have to justify.
+     * timeout after eight hours <em>awake</em>, which for a phone in a pocket is
+     * never. Inexact and non-waking on purpose: dropping a socket does not need
+     * to wake the phone, and it avoids needing {@code SCHEDULE_EXACT_ALARM}.
      */
     void rearmTimeout() {
         final AlarmManager alarms = context.getSystemService(AlarmManager.class);
         final PendingIntent when = alarm();
         alarms.cancel(when);
         final int minutes = AppSettings.sessionTimeout(context);
-        // A session that has already ended is left exactly as it is: its window
-        // is showing why, and that reason is worth more than this one.
+        // An ended session is left as it is: its window shows why it ended, and
+        // a timeout must not replace that reason.
         if (!alive() || onScreen || minutes <= 0) {
             return;
         }
@@ -400,10 +388,10 @@ public final class Session implements Backend.Listener, Prompt.Handler {
     }
 
     /**
-     * The alarm, which is one per session and identified by the same number the
-     * notification is: a {@code PendingIntent}'s identity is its request code
-     * and its intent bar the extras, so without a distinct code one session's
-     * deadline would replace another's.
+     * The alarm, one per session, with the notification id as its request code:
+     * a {@code PendingIntent}'s identity is its request code and its intent
+     * excluding the extras, so without a distinct code one session's deadline
+     * would replace another's.
      */
     private PendingIntent alarm() {
         return PendingIntent.getBroadcast(context, notification,
@@ -412,12 +400,12 @@ public final class Session implements Backend.Listener, Prompt.Handler {
     }
 
     /**
-     * Where the alarm lands. A receiver rather than {@link SessionService},
-     * which is where the notification's Disconnect goes: the sessions are a map
-     * in this process, so there is nothing to start and nothing to be
-     * foreground for — and an alarm that outlived the process it was set from
-     * finds no session here and does nothing at all, where a service start
-     * would have owed a notification for a connection that no longer exists.
+     * Receives the alarm. A receiver rather than {@link SessionService} (which
+     * handles the notification's Disconnect): the sessions are a map in this
+     * process, so there is nothing to start. An alarm that outlived the process
+     * that set it finds no session and does nothing, whereas a service start
+     * would have required posting a notification for a connection that no
+     * longer exists.
      */
     public static final class Timeout extends BroadcastReceiver {
         @Override
@@ -430,20 +418,19 @@ public final class Session implements Backend.Listener, Prompt.Handler {
     }
 
     /**
-     * The alarm went off: end the connection, and leave the window saying so.
+     * The alarm went off: end the connection, and leave the window showing why.
      *
-     * <p>Not {@link #disconnect}, which sets {@link #leaving} and so takes the
-     * screen with it. Nobody asked for this one, so the window stays in the
-     * CLOSED state it already knows how to draw — a window that had quietly
-     * vanished would leave nothing to connect the setting to — and the reason
-     * names the length of time, since "Disconnected" on its own is what a far
-     * end going away says and would read as a fault in the connection.
+     * <p>Not {@link #disconnect}, which sets {@link #leaving} and so closes the
+     * screen. The user did not ask for this disconnect, so the window stays in
+     * the CLOSED state (a window that disappeared would give no hint of the
+     * setting), and the reason names the timeout length, since "Disconnected"
+     * alone is what a dropped connection shows and would look like a fault.
      */
     void timedOut() {
-        // An alarm already in flight is not cancellable, so everything that
-        // would have cancelled it is checked again here: a screen coming back
-        // in that moment, the row being set to Never, and the far end having
-        // gone by itself in the meantime.
+        // An alarm already being delivered cannot be cancelled, so everything
+        // that would have cancelled it is checked again here: a screen coming
+        // back, the setting changed to Never, and the connection having ended
+        // on its own in the meantime.
         final int minutes = AppSettings.sessionTimeout(context);
         if (!alive() || onScreen || minutes <= 0) {
             return;
@@ -451,26 +438,26 @@ public final class Session implements Backend.Listener, Prompt.Handler {
         final String reason = context.getString(R.string.session_timed_out,
                 AppSettings.timeoutLabel(context, minutes));
         backend.disconnect();
-        // After the far end has been told, so that whatever it says on the way
-        // out is not the last word: close() reports this one to the screen.
+        // Set after the disconnect so that a detail the backend reports while
+        // disconnecting does not replace it: close() reports this one.
         detail = reason;
         close();
     }
 
-    // ---- options changed while it runs --------------------------------------
+    // ---- options changed during the session --------------------------------
 
     /**
-     * What the connection panel has changed on this session, over whatever it
-     * connected with.
+     * Options the connection panel has changed on this session, overriding the
+     * ones it connected with.
      *
-     * <p>Here rather than on the screen for the same reason as everything else
-     * in this class: a quality lowered ten minutes ago is a fact about the
-     * connection, not about the window. The panel layers this over the saved
-     * connection's options and the backend's defaults to get a value to show.
+     * <p>Kept here rather than on the screen because, like the rest of this
+     * class, they belong to the connection, not the window. The panel layers
+     * these over the saved connection's options and the backend's defaults to
+     * get the value to show.
      *
-     * <p>Session-scoped on purpose, and never written back: the editor is where
-     * a stored connection is changed, and a control that quietly rewrote one
-     * would be a second editor.
+     * <p>Session-scoped on purpose, and never saved: stored connections are
+     * changed in the editor, and a panel control that rewrote them would be a
+     * second editor.
      */
     private final Map<String, String> liveOptions = new LinkedHashMap<>();
 
@@ -479,18 +466,18 @@ public final class Session implements Backend.Listener, Prompt.Handler {
         backend.setOption(key, value);
     }
 
-    /** What this session has been told since it came up, or null. */
+    /** The value set by {@link #setLiveOption} since the session opened, or null. */
     public String liveOption(String key) {
         return liveOptions.get(key);
     }
 
-    // ---- ending it ---------------------------------------------------------
+    // ---- disconnecting -----------------------------------------------------
 
     /**
-     * Ask the far end to go away, on purpose — the notification's button, the
-     * disconnect region, the back gesture's dialog. Recorded as
-     * {@link #leaving}, because a session told to end needs no message on
-     * screen, while one that ends by itself does.
+     * Disconnect at the user's request (the notification's button, the
+     * disconnect region, the back gesture's dialog). Recorded as
+     * {@link #leaving}, because a session ended by the user needs no message on
+     * screen, while one that ends on its own does.
      */
     public void disconnect() {
         leaving = true;
@@ -504,22 +491,21 @@ public final class Session implements Backend.Listener, Prompt.Handler {
             return;
         }
         closed = true;
-        // Which cancels, now that closed is set. An alarm outlives the process
-        // that set it, so one left behind for an ended session is a wake-up
-        // days later for a connection nobody has any memory of.
+        // Cancels the alarm, now that closed is set. An alarm outlives the
+        // process that set it, so one left behind would fire days later for a
+        // connection that no longer exists.
         rearmTimeout();
         Sessions.remove(this);
-        // Whatever is still queued is owed an answer, and there will never be
-        // anyone to give it: the core blocks its session thread until each one
-        // is dealt with, and destroy() below is what unblocks it.
+        // Every queued prompt must be answered or cancelled exactly once, and no
+        // screen will answer these now. The protocol thread may be blocked
+        // waiting on one.
         while (!pending.isEmpty()) {
             pending.poll().cancel();
         }
-        // The screen hears it from here rather than from the backend. A
-        // disconnect asked for on the notification frees the session before the
-        // far end's own "closed" can come back through it, so this is the only
-        // report the view is going to get — and, since the guard above is now
-        // shut, the only one it can get.
+        // The screen gets CLOSED from here rather than from the backend. A
+        // disconnect from the notification releases the session before the
+        // backend's own CLOSED arrives, and state() ignores callbacks once
+        // closed is set, so this is the only report the view gets.
         report(Backend.State.CLOSED, detail);
         backend.destroy();
     }
@@ -528,24 +514,20 @@ public final class Session implements Backend.Listener, Prompt.Handler {
         return closed;
     }
 
-    // ---- Backend.Listener: remember, then forward --------------------------
+    // ---- Backend.Listener: store, then forward ------------------------------
 
     /**
-     * The half of {@link Backend.Listener}'s contract that says "main thread",
-     * checked rather than merely written down.
+     * Checks the "main thread" part of {@link Backend.Listener}'s contract.
      *
-     * <p>Worth checking because this is where every backend's callbacks land,
-     * and because breaking it does not fail here: a view invalidated from a
-     * native thread, a mirror replaced while {@code onDraw} is reading it, a
-     * status set on a widget that is not this thread's — each fails later,
-     * somewhere else, with nothing left to say which of the eight backends did
-     * it. With a plugin ABI, "which one" includes code this repository has
-     * never seen.
+     * <p>Every backend's callbacks arrive here, and breaking the contract does
+     * not fail here: a view invalidated from a native thread, a mirror replaced
+     * while {@code onDraw} is reading it, a status set on a widget from another
+     * thread each fail later, elsewhere, with no indication of which backend
+     * caused it. With plugins, that includes code outside this repository.
      *
-     * <p>Debug builds only. Not about the cost, which is a flag and a branch,
-     * but about what a release build should do with a backend that breaks the
-     * contract: go on drawing somebody's desktop rather than throw their
-     * session away over it.
+     * <p>Debug builds only, not because of the cost (a flag and a branch) but
+     * because a release build should keep drawing the desktop rather than end
+     * the session over a backend that breaks the contract.
      */
     private static void assertMain(String what) {
         if (BuildConfig.DEBUG && Looper.myLooper() != Looper.getMainLooper()) {
@@ -557,10 +539,10 @@ public final class Session implements Backend.Listener, Prompt.Handler {
     @Override
     public void state(Backend.State s, String d) {
         assertMain("state");
-        // A backend that has been let go of is still finishing: its own "closed"
-        // arrives after close() has already reported one, and the last word has
-        // to be the session's. Without this a timeout says why on the window and
-        // then has it replaced by "Disconnected" a moment later.
+        // A released backend may still be finishing: its own CLOSED arrives
+        // after close() has already reported one, and the session's report has
+        // to be the last. Without this, a timeout's reason on the window was
+        // replaced by "Disconnected" a moment later.
         if (closed) {
             return;
         }
@@ -569,16 +551,15 @@ public final class Session implements Backend.Listener, Prompt.Handler {
 
     private void report(Backend.State s, String d) {
         state = s;
-        // Dropped rather than merely not shown, which Status already does:
-        // this is the detail close() reports CLOSED with, and a backend's last
-        // word before it came up — RealVNC's core says it is generating a key
-        // — is not why the session ended an hour later.
+        // Cleared rather than only hidden (which Status already does): close()
+        // reports CLOSED with this detail, and the backend's last message
+        // before connecting (RealVNC's core reports generating a key) is not
+        // why the session ended an hour later.
         detail = s == Backend.State.CONNECTED ? null : d;
         view.state(s, d);
-        // The service is watching the set rather than this session, and an
-        // ended session is no longer in what it counts — so a last session
-        // ending is what stops it. Deliberately not close(): the screen, if
-        // there is one, is still showing the last frame and the reason it
+        // The service watches the set of sessions and counts only alive ones,
+        // so the last session ending stops it. Deliberately not close(): the
+        // screen, if any, still shows the last frame and the reason it
         // stopped.
         Sessions.changed();
     }
@@ -623,6 +604,12 @@ public final class Session implements Backend.Listener, Prompt.Handler {
     }
 
     @Override
+    public void soundSwitch(int soundSwitch, boolean enabled, boolean playing) {
+        assertMain("soundSwitch");
+        view.soundSwitch(soundSwitch, enabled, playing);
+    }
+
+    @Override
     public void clipboardFromRemote(String text) {
         assertMain("clipboardFromRemote");
         view.clipboardFromRemote(text);
@@ -633,7 +620,7 @@ public final class Session implements Backend.Listener, Prompt.Handler {
         return view.clipboardForRemote();
     }
 
-    // ---- Prompt.Handler: queue, then ask -----------------------------------
+    // ---- Prompt.Handler: queue, then show ----------------------------------
 
     @Override
     public void credentials(Prompt.Credentials prompt) {
@@ -656,14 +643,14 @@ public final class Session implements Backend.Listener, Prompt.Handler {
     }
 
     /**
-     * Ask everything that has piled up, as soon as there is somebody to ask: a
-     * connection can reach its password prompt while the phone is in a pocket,
-     * and the protocol thread is blocked on the answer either way.
+     * Show every queued prompt once a screen is attached: a connection can
+     * reach its password prompt while the phone is in a pocket, and the
+     * protocol thread is blocked on the answer until then.
      */
     private void flushPrompts() {
         while (ui != null && !pending.isEmpty()) {
-            // No default: Prompt is sealed, so a fourth kind of question is a
-            // compile error here rather than one that is silently never asked.
+            // No default: Prompt is sealed, so a new subclass is a compile error
+            // here rather than a prompt that is silently never shown.
             switch (pending.poll()) {
                 case Prompt.Credentials c -> ui.credentials(c);
                 case Prompt.Trust t -> ui.trust(t);
@@ -672,7 +659,7 @@ public final class Session implements Backend.Listener, Prompt.Handler {
         }
     }
 
-    /** Whether a prompt is waiting for a screen to appear, for the notification. */
+    /** Whether a prompt is waiting for a screen, for the notification. */
     public boolean hasPendingPrompt() {
         return !pending.isEmpty();
     }

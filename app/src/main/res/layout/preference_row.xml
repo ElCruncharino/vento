@@ -4,15 +4,15 @@
     SPDX-License-Identifier: GPL-3.0-or-later
 
     One androidx preference, drawn as a row of a group: the same metrics as the
-    hand-built rows in the panel and the editor, since one description of an
-    option is drawn by both.
+    hand-built rows in the panel and the editor, since the same option
+    descriptions are drawn in both.
 
-    No icon frame and no background. Nothing here reserves room for an icon
-    because nothing in this app sets one, and the background belongs to the
-    adapter — which is the only thing that knows where in its group a row sits.
+    No icon frame and no background. No room is reserved for an icon because
+    the app never sets one, and the adapter sets the background, since only it
+    knows the row's position in its group.
 
-    The ids are androidx's own and are what binds it: title, summary and
-    widget_frame are looked up by name.
+    The ids are androidx's own: title, summary and widget_frame are looked up
+    by id.
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"

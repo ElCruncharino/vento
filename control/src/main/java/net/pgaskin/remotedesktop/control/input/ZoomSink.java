@@ -16,13 +16,13 @@ public interface ZoomSink {
 
     /**
      * How far the two-finger midpoint has travelled since the last call, in
-     * screen pixels, while the pinch is engaged — a pinch that also pans.
+     * screen pixels, while the pinch is engaged (a pinch that also pans).
      *
-     * <p>Whether it pans anything is the host's: a viewport that follows a
-     * cursor of its own is already where it should be, and only a far end that
-     * owns the cursor leaves a zoomed-in desktop with no other way to be looked
-     * around. {@link net.pgaskin.remotedesktop.control.Viewport#panBy} is what
-     * a host that does pan calls.
+     * <p>Whether it pans anything is up to the host: a viewport that follows a
+     * cursor of its own is already where it should be, and only when the far
+     * end owns the cursor does a zoomed-in desktop have no other way to pan.
+     * A host that pans calls
+     * {@link net.pgaskin.remotedesktop.control.Viewport#panBy}.
      */
     void zoomPanned(float screenDx, float screenDy);
 

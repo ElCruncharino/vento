@@ -17,18 +17,17 @@ import java.nio.charset.StandardCharsets;
 /**
  * The licence page, which the build generates into the assets: this app's own
  * modules, the Rust crates the backends in <em>this APK</em> are built on, and
- * what that means for handing the build on.
+ * what that means for redistributing the build.
  *
- * <p>An add-on is a different build under terms of its own, so it generates its
- * own page into its own APK and this screen shows that one when it is asked to
- * ({@link #PACKAGE}). The app is the only thing anybody looks at, which is why
- * the page an add-on cannot show is shown here; the contract is the asset's
- * path and nothing else, so an add-on made only of this project's code ships no
- * page and is offered no row.
+ * <p>An add-on is a separate build under its own terms, so it generates its own
+ * page into its own APK, and this screen shows that page when given
+ * {@link #PACKAGE}. The user only browses the app, not the add-on, so the
+ * add-on's page is shown here. The only contract is the asset's path, so an
+ * add-on made only of this project's code ships no page and gets no row.
  *
- * <p>A {@link WebView} because the page is generated HTML and because licence
- * texts are long: it brings scrolling, selection and the system's own dark mode
- * with it. Nothing in it is loaded from the network and no JavaScript runs.
+ * <p>A {@link WebView} because the page is generated HTML and licence texts are
+ * long: it provides scrolling, selection and the system's dark mode. Nothing in
+ * it is loaded from the network and no JavaScript runs.
  */
 public final class LicensesActivity extends AppCompatToolbarActivity {
 
@@ -51,16 +50,15 @@ public final class LicensesActivity extends AppCompatToolbarActivity {
             web.loadUrl(PAGE);
         } else {
             // Another package's assets cannot be named in a URL, so the page is
-            // read across and handed over as text. No base URL: it is one
-            // self-contained document and nothing in it may resolve anywhere.
+            // read and passed as text. No base URL: it is one self-contained
+            // document and nothing in it may resolve anywhere.
             web.loadDataWithBaseURL(null, page, "text/html", "UTF-8", null);
         }
         setContent(web);
     }
 
     /**
-     * An add-on's own page, or null where it has none — which is the ordinary
-     * answer and is what decides whether a row leads here.
+     * An add-on's own page, or null if it has none (the usual case).
      */
     static String read(Context context, String packageName) {
         try (InputStream in = open(context, packageName)) {
@@ -72,9 +70,9 @@ public final class LicensesActivity extends AppCompatToolbarActivity {
     }
 
     /**
-     * Whether that add-on has one, for the row that would open it — which is
-     * asked while a screen is being built, so it opens the asset rather than
-     * reading a megabyte of licence text to find out.
+     * Whether that add-on has a page, for the row that would open it. Called
+     * while a screen is being built, so it only opens the asset rather than
+     * reading a megabyte of licence text.
      */
     static boolean has(Context context, String packageName) {
         try (InputStream in = open(context, packageName)) {
@@ -89,7 +87,7 @@ public final class LicensesActivity extends AppCompatToolbarActivity {
             return context.getPackageManager()
                     .getResourcesForApplication(packageName).getAssets().open(ASSET);
         } catch (IOException | PackageManager.NameNotFoundException e) {
-            // Not an error: most add-ons have nothing of anybody else's in them.
+            // Not an error: most add-ons contain no third-party code.
             return null;
         }
     }

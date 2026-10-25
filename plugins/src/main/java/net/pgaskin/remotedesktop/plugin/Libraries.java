@@ -18,15 +18,16 @@ import java.util.Map;
 /**
  * The add-on's libraries, in the app's process, ready to be loaded.
  *
- * <p>This runs as the *app* — it is the add-on's dex on the app's classloader —
- * so the add-on's own data directory is another uid and unreadable here. A copy
- * comes across the provider once and lives in the app's {@code filesDir}
- * thereafter, which is also the only place it can be {@code dlopen}ed from.
+ * <p>This runs as the *app* (it is the add-on's dex on the app's classloader),
+ * so the add-on's data directory belongs to another uid and cannot be read
+ * here. A copy is transferred through the provider once and kept in the app's
+ * {@code filesDir}, which is also the only place it can be {@code dlopen}ed
+ * from.
  *
- * <p>The copy is hashed as it is written and hashed again on every later start.
- * That is not belt and braces: the file that gets loaded is this one rather than
- * the one the add-on checked, so this one is what has to be right, and hashing
- * ten megabytes is nothing beside what happens next.
+ * <p>The copy is hashed as it is written and again on every later start. This
+ * is not redundant: the file that is loaded is this copy rather than the one the
+ * add-on checked, so this copy must be verified, and hashing ten megabytes costs
+ * little next to loading it.
  */
 public final class Libraries {
 
@@ -43,8 +44,8 @@ public final class Libraries {
     }
 
     /**
-     * Whether {@link #load} would work without asking anybody: either this app
-     * already holds good copies, or the add-on does.
+     * Whether {@link #load} would succeed without user action: either this app
+     * already holds valid copies, or the add-on does.
      */
     public static boolean ready(Context app, String pluginPackage, Map<String, String> wanted) {
         if (present(app, pluginPackage, wanted)) {
@@ -80,9 +81,8 @@ public final class Libraries {
     }
 
     /**
-     * Every library in {@code wanted}, verified, in the order they were given —
-     * which for a set of libraries that depend on each other is the order they
-     * must be loaded in.
+     * Every library in {@code wanted}, verified, in the order given, which for
+     * libraries that depend on each other is the order they must be loaded in.
      */
     public static List<File> load(Context app, String pluginPackage, Map<String, String> wanted)
             throws IOException {
@@ -96,9 +96,9 @@ public final class Libraries {
     }
 
     /**
-     * Anything here the pin no longer names, gone. A library that was wanted by
-     * an older add-on is not wanted by this one, and leaving it is leaving an
-     * unowned copy of somebody else's binary in the app's files for ever.
+     * Deletes every file here that the pin no longer lists. A library an older
+     * add-on needed may not be needed by this one, and keeping it would leave
+     * an orphaned copy of a third-party binary in the app's files indefinitely.
      */
     private static void sweep(File dir, Map<String, String> wanted) {
         final File[] files = dir.listFiles();
@@ -116,10 +116,10 @@ public final class Libraries {
     private static File copy(Context app, String pluginPackage, File dir, String name,
                              String sha256) throws IOException {
         final File out = new File(dir, name);
-        // Every start, not only the first: what is on disk is what gets loaded,
-        // and a file left over from an older pin has the right name and the
-        // wrong contents. A mismatch is fetched again rather than complained
-        // about, since the add-on holds the copy that decides.
+        // On every start, not only the first: the file on disk is what gets
+        // loaded, and a file left over from an older pin has the right name and
+        // the wrong contents. A mismatch is copied again rather than reported,
+        // since the add-on holds the authoritative copy.
         if (out.isFile() && sha256.equals(Hashes.of(out))) {
             return out;
         }
@@ -143,10 +143,10 @@ public final class Libraries {
             tmp.delete();
             throw new IOException("The plugin's library is not the build this app was written for.");
         }
-        // Read-only before it has the name anything looks for, and never
-        // writable under that name: Android already refuses to load dex out of a
-        // writable file, dlopen is the obvious next one, and a file that is
-        // read-only from the moment it exists cannot be caught by that later.
+        // Made read-only before it gets its final name, and never writable
+        // under that name: Android already refuses to load dex from a writable
+        // file and may apply the same rule to dlopen, which a file read-only
+        // from the start is not affected by.
         //noinspection ResultOfMethodCallIgnored
         tmp.setReadOnly();
         //noinspection ResultOfMethodCallIgnored

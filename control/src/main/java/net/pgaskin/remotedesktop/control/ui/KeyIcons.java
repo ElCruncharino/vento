@@ -13,25 +13,26 @@ import java.util.Map;
 /**
  * The keycap glyphs, and the toolbar's, as vectors.
  *
- * <p>RealVNC ships these as PNGs — `key_up`, `key_shift`, `key_backspace`,
- * `key_return`, `key_option`, `key_super`, `key_windows` and the arrows — and
- * draws text only for the keys it has no icon for. We copy
- * the choice of which keys get an icon, and redraw the icons, for the same
- * reason {@code Art} generates the wallpaper: this is a clean reimplementation,
- * and lifting somebody else's artwork into the repo would not be.
+ * <p>RealVNC ships these as PNGs ({@code key_up}, {@code key_shift},
+ * {@code key_backspace}, {@code key_return}, {@code key_option},
+ * {@code key_super}, {@code key_windows} and the arrows) and draws text only for
+ * the keys it has no icon for. We copy the choice of which keys get an icon, and
+ * redraw the icons, for the same reason {@code Art} generates the wallpaper:
+ * this is a clean reimplementation, and copying RealVNC's artwork into the repo
+ * would not be.
  *
- * <p>Paths are built in a **unit box** — {@code (0,0)} to {@code (1,1)}, y down
- * — so a caller scales to whatever size the key face allows. Stroked icons carry
- * their line width as a fraction of that box, so the weight scales with them;
- * {@link Icon#stroke()} of zero means fill instead.
+ * <p>Paths are built in a <b>unit box</b> ({@code (0,0)} to {@code (1,1)}, y
+ * down) so a caller scales to whatever size the key face allows. Stroked icons
+ * carry their line width as a fraction of that box, so the weight scales with
+ * them; {@link Icon#stroke()} of zero means fill instead.
  *
  * <p>Unicode was the first attempt and was wrong: {@code ↑ ↓ ← →} render at the
  * surrounding text's weight and metrics, which next to the word-labelled keys
  * looks like a font substitution rather than a keycap.
  *
  * <p>The toolbar's five are here rather than in the app's icon set, which is
- * Material Symbols, and it is not a licence question — that set is already in
- * the tree and accounted for. It is that these are drawn <em>on the canvas</em>,
+ * Material Symbols, and it is not a licence question (that set is already in
+ * the tree and accounted for). It is that these are drawn <em>on the canvas</em>,
  * and the nearest other glyphs to them are the ⇧ and ⌫ three rows below: a
  * filled outline at Material's weight beside a 0.09-stroked ⇧ is two icon sets
  * on one screen, which is the mistake this file was written to avoid.
@@ -57,7 +58,7 @@ final class KeyIcons {
     static final String HOME = "home";
     static final String END = "end";
 
-    // The toolbar's, which are not keycaps — see the note at the top.
+    // The toolbar's, which are not keycaps; see the note at the top.
     static final String DISCONNECT = "disconnect";
     static final String INFO = "info";
     static final String KEYBOARD = "keyboard";
@@ -128,7 +129,7 @@ final class KeyIcons {
     }
 
     /**
-     * ⇤ / ⇥ — the arrow of {@link #arrow}, sideways, stopped by a bar at the end
+     * ⇤ / ⇥: the arrow of {@link #arrow}, sideways, stopped by a bar at the end
      * it points at: the two keys that mean "as far that way as this line goes".
      * Home and End are words on the one-line row, where there is room for them
      * and no arrow beside them; on the two-line row they sit directly above Left
@@ -151,7 +152,7 @@ final class KeyIcons {
         return p;
     }
 
-    /** ⇧ — the same outline as the arrow, hollow, with a flat foot. */
+    /** ⇧: the same outline as the arrow, hollow, with a flat foot. */
     private static Path shift() {
         final Path p = new Path();
         p.moveTo(0.50f, 0.07f);
@@ -165,7 +166,7 @@ final class KeyIcons {
         return p;
     }
 
-    /** ⌫ — a pentagon pointing left, with a cross in it. */
+    /** ⌫: a pentagon pointing left, with a cross in it. */
     private static Path backspace() {
         final Path p = new Path();
         p.moveTo(0.04f, 0.50f);
@@ -181,7 +182,7 @@ final class KeyIcons {
         return p;
     }
 
-    /** ↵ — a left arrow whose shaft turns up at the far end. */
+    /** ↵: a left arrow whose shaft turns up at the far end. */
     private static Path returnKey() {
         final Path p = new Path();
         p.moveTo(0.30f, 0.40f);
@@ -193,7 +194,7 @@ final class KeyIcons {
         return p;
     }
 
-    /** ⌥ — a shelf, a diagonal, a shelf, and a separate bar over the top right. */
+    /** ⌥: a shelf, a diagonal, a shelf, and a separate bar over the top right. */
     private static Path option() {
         final Path p = new Path();
         p.moveTo(0.04f, 0.26f);
@@ -205,7 +206,7 @@ final class KeyIcons {
         return p;
     }
 
-    /** ⌘ — a square with a loop through each corner. */
+    /** ⌘: a square with a loop through each corner. */
     private static Path command() {
         final Path p = new Path();
         final float lo = 0.31f, hi = 0.69f, r = 0.185f;
@@ -230,7 +231,7 @@ final class KeyIcons {
 
     /**
      * A clipboard: a board whose top edge stops either side of the clip, so the
-     * two outlines meet instead of crossing. Ours — the original has no such
+     * two outlines meet instead of crossing. Ours; the original has no such
      * key.
      */
     private static Path paste() {

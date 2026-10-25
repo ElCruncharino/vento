@@ -14,7 +14,7 @@ import java.util.Set;
 
 /**
  * The extension keyboard: the row of keys a physical keyboard has and a soft
- * one does not — modifiers, Esc, Tab, the arrows, the F-keys — plus the info bar
+ * one does not (modifiers, Esc, Tab, the arrows, the F-keys), plus the info bar
  * above it. Ported from RealVNC's {@code ui.ExtensionKeyboard},
  * {@code ui.KeyboardKey} and {@code ui.InfoBar}, with the mechanics of
  * cmus-android's {@code KeyRow}.
@@ -22,7 +22,7 @@ import java.util.Set;
  * <p>It is the companion to the system IME, not a replacement for it: letters
  * come from the soft keyboard, and this row supplies what the soft keyboard has
  * no concept of. That is why {@link #modifiers() modifier} keys are
- * <em>held at the far end</em> rather than folded into a character — the Ctrl
+ * <em>held at the far end</em> rather than folded into a character: the Ctrl
  * of Ctrl+C comes from here and the C comes from the IME, and the only thing
  * that can join them is the remote.
  *
@@ -39,14 +39,14 @@ import java.util.Set;
  */
 public final class ExtensionKeyboard implements TouchRouter.Claim {
 
-    /** Things worth feeling. What each one feels like is the view's business. */
+    /** Events with haptic feedback. What each one feels like is up to the view. */
     public enum Feedback {
         PRESS,  // a key tapped, or a modifier armed
         LOCK,   // a modifier locked, by a hold or by two taps
         REPEAT  // one repeat of a held key: up to thirteen a second, so the lightest tick there is
     }
 
-    /** Redraw hook, plus the haptics the view is the only one able to play. */
+    /** Redraw hook, plus the haptics, which only the view can play. */
     public interface Listener {
         void keyboardChanged();
 
@@ -81,7 +81,7 @@ public final class ExtensionKeyboard implements TouchRouter.Claim {
      * where a group of more than one line is laid out as a grid (§{@link
      * #layout()}). {@code wide} is roomier padding, for keys whose
      * label is short enough to come out a sliver. {@code icon} names a glyph the
-     * renderer may know — an arrow, ⇧, ⌘ — and stays a <em>name</em> because
+     * renderer may know (an arrow, ⇧, ⌘) and stays a <em>name</em> because
      * this package must not know what a bitmap is; a renderer that does not
      * recognise it falls back to the label, so an unknown icon costs nothing.
      *
@@ -93,7 +93,7 @@ public final class ExtensionKeyboard implements TouchRouter.Claim {
      * <p>{@code action} makes the key mean something this package has no idea
      * about: instead of a keysym it reports the name to the listener, and the
      * app decides. Same shape as {@link TapRegions}' caller-supplied names, and
-     * for the same reason — Paste has to read a clipboard and put a dialog on
+     * for the same reason: Paste has to read a clipboard and put a dialog on
      * screen, neither of which belongs in a plain-JVM model.
      */
     public record Key(String label, String icon, int keysym,
@@ -183,8 +183,8 @@ public final class ExtensionKeyboard implements TouchRouter.Claim {
     /**
      * Where each key sits in {@link #keyList}, which is its state slot and its
      * id at the far end. A map rather than {@code indexOf}: the row is drawn
-     * every frame and each key's state is asked for as it is drawn, and — since
-     * the list is the caller's — two keys that happen to be equal would
+     * every frame and each key's state is asked for as it is drawn, and, since
+     * the list is the caller's, two keys that happen to be equal would
      * otherwise share one slot and one id.
      */
     private final IdentityHashMap<Key, Integer> keyIndex = new IdentityHashMap<>();
@@ -270,8 +270,8 @@ public final class ExtensionKeyboard implements TouchRouter.Claim {
      *
      * <p><b>Every held modifier is let go of first, through the old list.</b> A
      * key id is a position in that list, so re-indexing before releasing would
-     * send a key-up for an id the far end never saw a key-down for — and leave a
-     * modifier held down on somebody's machine for the rest of the session. The
+     * send a key-up for an id the far end never saw a key-down for, and leave a
+     * modifier held down at the far end for the rest of the session. The
      * active touch, the timers and the fling go with it, since each of them
      * holds a {@link Key} that may not be in the new list.
      */
@@ -307,7 +307,7 @@ public final class ExtensionKeyboard implements TouchRouter.Claim {
     /**
      * RealVNC's key set, in its display grouping. Windows and CMD are both
      * {@code XK_Super_L}: the two labels are for two remote operating systems,
-     * and the original ships both and lets you pick by eye.
+     * and the original ships both and leaves the choice to the user.
      */
     public static List<Key> standardKeys() {
         final List<Key> k = new ArrayList<>();
@@ -334,7 +334,7 @@ public final class ExtensionKeyboard implements TouchRouter.Claim {
 
         // Ours: the host types the phone's clipboard out, which works against a
         // remote whose own clipboard we cannot reach. A group to itself, so it
-        // has a gap either side — it is the one key here the row cannot undo.
+        // has a gap either side: it is the one key here the row cannot undo.
         k.add(Key.action("Paste", "paste", ACTION_PASTE, 4));
 
         k.add(Key.normal("Home", Keysym.HOME, 5));
@@ -359,14 +359,13 @@ public final class ExtensionKeyboard implements TouchRouter.Claim {
      * <p>The arrows are why the columns of a group are shared between its lines
      * rather than each line being laid out on its own: sharing them puts
      * {@code home up end} over {@code left down right} as an inverted T, with
-     * Home above Left and End above Right — the two keys that mean "the far end
+     * Home above Left and End above Right, the two keys that mean "the far end
      * of this line, that way" on the axis they mean. The modifiers are the one
      * group whose columns do not correspond, five over six, and that costs
      * nothing.
      *
-     * <p>It is a line of somebody else's screen dearer than {@link
-     * #standardKeys()} and reaches the F-keys without scrolling for them, which
-     * is a trade only the person using it can make.
+     * <p>It takes one more line of screen than {@link #standardKeys()} and
+     * reaches the F-keys without scrolling for them, a trade left to the user.
      */
     public static List<Key> twoLineKeys() {
         final List<Key> k = new ArrayList<>();
@@ -428,9 +427,9 @@ public final class ExtensionKeyboard implements TouchRouter.Claim {
     }
 
     /**
-     * How much of the bottom of the view is already covered — the system IME's
-     * height. The row sits directly on top of it: the two are one keyboard as
-     * far as anyone using them is concerned.
+     * How much of the bottom of the view is already covered (the system IME's
+     * height). The row sits directly on top of it, so the two work as one
+     * keyboard.
      */
     public void setBottomOffset(float px) {
         if (px == bottomOffset) {
@@ -480,8 +479,8 @@ public final class ExtensionKeyboard implements TouchRouter.Claim {
     }
 
     /**
-     * Hiding clears every modifier, locked ones included: one you cannot see
-     * must never eat the next key, and one held at the far end by a widget that
+     * Hiding clears every modifier, locked ones included: a hidden one must
+     * never eat the next key, and one held at the far end by a widget that
      * is gone can never be let go. The original does the same.
      */
     public void setVisible(boolean v) {
@@ -563,8 +562,8 @@ public final class ExtensionKeyboard implements TouchRouter.Claim {
     }
 
     /**
-     * Barely wider than a glyph. These are an indicator strip, not buttons —
-     * nothing is tappable here — so they want to read as one dense cluster,
+     * Barely wider than a glyph. These are an indicator strip, not buttons
+     * (nothing is tappable here), so they should read as one dense cluster,
      * and generous cells only push the readout off centre.
      */
     public float lightCell() {
@@ -594,7 +593,7 @@ public final class ExtensionKeyboard implements TouchRouter.Claim {
 
     /**
      * What the keyboard covers, for the viewport's insets: the key row and
-     * whatever the IME under it covers — and the info bar only when that is
+     * whatever the IME under it covers, and the info bar only when that is
      * solid.
      *
      * <p>The row is opaque, it is where fingers land, and a cursor able to
@@ -602,7 +601,7 @@ public final class ExtensionKeyboard implements TouchRouter.Claim {
      * by default it is not inset for: the desktop runs on underneath and the bar
      * floats over the last 30 dp, thinning as the cursor approaches (see
      * {@code control.ui.Chrome}). Inset by it *and* faded would reveal only
-     * black, which is why the two go together — {@code keyboardInfoSolid}
+     * black, which is why the two go together: {@code keyboardInfoSolid}
      * chooses both at once.
      */
     public float insetBottomPx() {
@@ -633,13 +632,13 @@ public final class ExtensionKeyboard implements TouchRouter.Claim {
      * The keys, scrolled horizontally: centred when they fit, from the left when
      * they do not.
      *
-     * <p>A group is a <b>grid</b> whose columns are shared between its lines —
+     * <p>A group is a <b>grid</b> whose columns are shared between its lines:
      * the <i>n</i>th key of one line sits in the same column as the <i>n</i>th
      * key of the next, and the column is as wide as the widest of them. That is
      * what makes the arrows an inverted T ({@link #twoLineKeys()}), and it has
      * the useful side effect that every line is the same width, so the scroll,
      * the clamp and the fling stay one number. A one-line list is the same rule
-     * with one row in it, laid out exactly as it always was.
+     * with one row in it.
      */
     private void layout() {
         keys.clear();
@@ -829,9 +828,8 @@ public final class ExtensionKeyboard implements TouchRouter.Claim {
         }
         if (act && key != null && key.equals(keyAt(x, y))) {
             // Still on the key it started on, which is the rule the info bar's
-            // parts below already follow: lifting somewhere else is how a
-            // mis-aimed key is abandoned, and only sideways movement — the
-            // scroll slop — used to do that.
+            // parts below follow too: lifting somewhere else abandons a
+            // mis-aimed key, as does sideways movement past the scroll slop.
             tap(key, t);
         } else if (act && part != null && inInfoBar(y) && partAt(x) == part) {
             // Still on what it started on, like an ordinary click.
@@ -861,8 +859,8 @@ public final class ExtensionKeyboard implements TouchRouter.Claim {
         spare = 0;
         // The double-tap memory goes too. Hiding the row clears every
         // modifier's state, so a remembered tap that outlived it would meet a
-        // key that is off and read as the second of a pair — locking on what is
-        // somebody's first tap since the row came back.
+        // key that is off and read as the second of a pair, locking on what is
+        // the first tap since the row came back.
         lastTapKey = null;
         lastTapTime = 0;
     }
@@ -925,11 +923,11 @@ public final class ExtensionKeyboard implements TouchRouter.Claim {
      * {@link Key#repeating()} key <b>starts repeating</b>, anything else does
      * nothing and still sends its one press on release.
      *
-     * <p>Note what the ordinary key does <em>not</em> do: emit a press at the
-     * threshold. The single press of a key is its release, always, however long
-     * it was held. Firing at the threshold as well would make 490 ms and 510 ms
-     * holds send one key at visibly different moments, and would put a keystroke
-     * at exactly the instant a modifier would have locked.
+     * <p>An ordinary key does <em>not</em> emit a press at the threshold. The
+     * single press of a key is its release, always, however long it was held.
+     * Firing at the threshold as well would make 490 ms and 510 ms holds send
+     * one key at visibly different moments, and would put a keystroke at
+     * exactly the instant a modifier would have locked.
      */
     private void onLongPress() {
         if (activeKey == null) {
@@ -947,7 +945,7 @@ public final class ExtensionKeyboard implements TouchRouter.Claim {
 
     /**
      * A tap arms a modifier, a second tap within {@link Config#keyDoubleTapMs}
-     * locks it — the original's gesture, alongside the hold in
+     * locks it: the original's gesture, alongside the hold in
      * {@link #onLongPress()}.
      *
      * <p>The double tap is consulted <em>only for modifiers</em>. RealVNC routes
@@ -995,7 +993,7 @@ public final class ExtensionKeyboard implements TouchRouter.Claim {
     /**
      * This key's identity at the far end ({@link KeySink} §"the key id"): its
      * place in the row, stable because the list is immutable. Two keys sharing a
-     * keysym — Windows and CMD are both {@code Super_L} — therefore have
+     * keysym (Windows and CMD are both {@code Super_L}) therefore have
      * different ids, which is the point.
      */
     private int keyId(Key k) {
@@ -1004,8 +1002,8 @@ public final class ExtensionKeyboard implements TouchRouter.Claim {
     }
 
     /**
-     * A key was sent by somebody else — the system IME committing a character,
-     * in practice. Feeds the info bar and consumes the armed modifiers, as one
+     * A key was sent from somewhere other than this row: the system IME or a
+     * real keyboard. Feeds the info bar and consumes the armed modifiers, as one
      * of our own keys would.
      */
     public void externalKey(int keysym) {
@@ -1015,9 +1013,9 @@ public final class ExtensionKeyboard implements TouchRouter.Claim {
     }
 
     /**
-     * A click finished somewhere else — the touchpad, the mouse overlay, a real
+     * A click finished somewhere else: the touchpad, the mouse overlay, a real
      * mouse. Consumes the armed modifiers, because Ctrl+click is a chord in
-     * exactly the way Ctrl+C is and this row is the only half of either that can
+     * the same way Ctrl+C is and this row is the only half of either that can
      * be armed.
      *
      * <p>What the caller reports is the <em>release</em> of the last button, not
@@ -1068,7 +1066,7 @@ public final class ExtensionKeyboard implements TouchRouter.Claim {
         if (was == now) {
             return; // ONESHOT ⇄ LOCKED: still held, nothing to send.
         }
-        // Two keys can share a keysym — Windows and CMD are both Super_L — so the
+        // Two keys can share a keysym (Windows and CMD are both Super_L), so the
         // remote hears only the first press and the last release, and the release
         // has to name the id the *press* used: press Windows then CMD and CMD's
         // release ends a hold the far end recorded under Windows.
@@ -1095,8 +1093,8 @@ public final class ExtensionKeyboard implements TouchRouter.Claim {
 
     /**
      * The info bar's readout: the line being typed. Backspace erases, Return
-     * clears the whole buffer, anything with a character appends. The original's
-     * info bar exactly.
+     * clears the whole buffer, anything with a character appends, as in the
+     * original's info bar.
      */
     private void note(int keysym) {
         if (keysym == Keysym.BACKSPACE) {

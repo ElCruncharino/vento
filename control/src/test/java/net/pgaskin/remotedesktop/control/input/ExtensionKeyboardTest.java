@@ -67,10 +67,9 @@ public class ExtensionKeyboardTest {
     // ---- ordinary keys -----------------------------------------------------
 
     /**
-     * A key fires on release, not on press — which is what lets a drag across
-     * the row scroll it instead, and is what both reference implementations do
-     * (RealVNC through {@code onSingleTapUp}, cmus-android through
-     * {@code setOnClickListener}).
+     * A key fires on release, not on press, so a drag across the row can scroll
+     * it instead. Both reference implementations do the same (RealVNC through
+     * {@code onSingleTapUp}, cmus-android through {@code setOnClickListener}).
      */
     @Test
     public void aTapOnAKeyPressesAndReleasesIt() {
@@ -91,10 +90,10 @@ public class ExtensionKeyboardTest {
     // ---- sticky modifiers --------------------------------------------------
 
     /**
-     * The point of the whole widget: a modifier is <em>held down at the remote</em>
-     * from the moment it is armed until the key it applies to has been sent. That
-     * is the only thing that can join a Ctrl from this row to a C from the system
-     * IME, since neither end can see the other.
+     * The core behaviour: a modifier is <em>held down at the remote</em> from the
+     * moment it is armed until the key it applies to has been sent. Only this can
+     * join a Ctrl from this row to a C from the system IME, since neither can see
+     * the other.
      */
     @Test
     public void aModifierIsHeldAtTheRemoteUntilTheNextKey() {
@@ -120,8 +119,8 @@ public class ExtensionKeyboardTest {
     }
 
     /**
-     * Two rapid taps lock — the original's gesture. Locking is asked only of
-     * modifiers, which is the whole difference from the original: it routes
+     * Two rapid taps lock, as in the original. Locking is asked only of
+     * modifiers, which is the difference from the original: it routes
      * every key through one double-tap detector and then discards the second tap
      * for keys that are not modifiers (vncpatch 0003, and
      * {@link #twoRapidTapsOfAnOrdinaryKeySendBoth}).
@@ -182,9 +181,9 @@ public class ExtensionKeyboardTest {
     }
 
     /**
-     * Windows and Cmd are two keys with one keysym — the original ships both and
-     * lets you pick by eye, since the label that makes sense depends on the
-     * remote OS. The remote must still hear exactly one press and one release.
+     * Windows and Cmd are two keys with one keysym. The original ships both, and
+     * the user picks by label, since the label that makes sense depends on the
+     * remote OS. The remote must still get exactly one press and one release.
      */
     @Test
     public void twoKeysSharingAKeysymPressItOnce() {
@@ -205,8 +204,8 @@ public class ExtensionKeyboardTest {
 
     /**
      * Paste sends nothing: it reports its name and the host decides, because
-     * what it does — read a clipboard, ask about a long one, type it out — is
-     * not something a plain-JVM model can do or should know about.
+     * what it does (read a clipboard, ask about a long one, type it out) is not
+     * something a plain-JVM model can do or should know about.
      */
     @Test
     public void anActionKeyReportsItselfInsteadOfSendingAKey() {
@@ -263,9 +262,9 @@ public class ExtensionKeyboardTest {
     /**
      * Every key is its own thing at the far end. RFB's client-side keyboard is a
      * {@code map<keycode, keysym>} and a release lets go of the keysym the
-     * <em>key</em> went down with, so two keys held
-     * at once have to be two entries, not one — which the original cannot manage
-     * because it passes the keysym as the id.
+     * <em>key</em> went down with, so two keys held at once have to be two
+     * entries, not one. The original cannot do this because it passes the
+     * keysym as the id.
      */
     @Test
     public void keysHeldTogetherHaveDistinctIds() {
@@ -282,8 +281,8 @@ public class ExtensionKeyboardTest {
      * The release has to name the id the <em>press</em> used, which is not
      * always the id of the key that ends the hold: with Windows and CMD both
      * armed it is CMD's release that lets go, while what the far end recorded is
-     * Windows'. Getting this wrong leaves Super down for ever, and the harness's
-     * fake remote is what notices — it logs {@code key up ?} for an id nobody
+     * Windows'. Getting this wrong leaves Super down for ever. The harness's
+     * fake remote detects it: it logs {@code key up ?} for an id that was never
      * pressed.
      */
     @Test
@@ -314,8 +313,8 @@ public class ExtensionKeyboardTest {
     // ---- key repeat --------------------------------------------------------
 
     /**
-     * Hold an ordinary key and it repeats, which the original does not do at all
-     * — the reason its arrow keys are painful (vncpatch 0004).
+     * Hold an ordinary key and it repeats. The original does not repeat at all,
+     * which makes its arrow keys hard to use (vncpatch 0004).
      *
      * <p>Nothing is sent at the long-press threshold itself: the single press of
      * a key is always its release, and the threshold is only where the repeat
@@ -393,8 +392,8 @@ public class ExtensionKeyboardTest {
     /**
      * A flick keeps the row moving after the finger has gone, and decays to a
      * stop. Without it a keyboard whose F-keys are three screens to the right is
-     * a chore to reach — the original gets this from {@code HorizontalScrollView}
-     * and we have to build it, since nothing here is a scrolling view.
+     * a chore to reach. The original gets this from {@code HorizontalScrollView};
+     * here it has to be built, since nothing here is a scrolling view.
      */
     @Test
     public void aFlickKeepsTheRowMovingAndThenStops() {
@@ -428,7 +427,7 @@ public class ExtensionKeyboardTest {
         assertFalse(h.keyboard.flinging());
     }
 
-    /** Touching the row again catches it, as every scroller does. */
+    /** Touching the row again stops it, as in any scrolling view. */
     @Test
     public void aTouchStopsAFlingInsteadOfPressingAKey() {
         final Harness h = kbd();
@@ -465,9 +464,9 @@ public class ExtensionKeyboardTest {
     // ---- clicks ------------------------------------------------------------
 
     /**
-     * A click consumes the armed modifiers exactly as a key does — Ctrl+click is
+     * A click consumes the armed modifiers exactly as a key does (Ctrl+click is
      * the same chord Ctrl+C is, and this row is the only half of either that can
-     * be armed — and the release comes <em>after</em> the click has gone out, or
+     * be armed), and the release comes <em>after</em> the click has gone out, or
      * the far end would be told to let go of Ctrl in the middle of one.
      */
     @Test
@@ -533,7 +532,7 @@ public class ExtensionKeyboardTest {
         assertEquals(ExtensionKeyboard.Sticky.ONESHOT, sticky(h, "Ctrl"));
     }
 
-    /** Any producer of buttons, not just the touchpad: the union is the funnel. */
+    /** Any producer of buttons, not just the touchpad: they all meet in the cursor's union. */
     @Test
     public void aRealMousesClickConsumesThemToo() {
         final Harness h = Harness.improved().withKeyboard().withMouse().reset();
@@ -584,7 +583,7 @@ public class ExtensionKeyboardTest {
 
     // ---- hiding, cancelling ------------------------------------------------
 
-    /** A modifier you cannot see must never eat the next key. */
+    /** A hidden modifier must never consume the next key. */
     @Test
     public void hidingReleasesEveryModifierIncludingLockedOnes() {
         final Harness h = kbd();
@@ -619,7 +618,7 @@ public class ExtensionKeyboardTest {
     /**
      * The readout is the line being typed: Backspace erases, and Return clears
      * the buffer rather than adding to it, so it resets when the line is
-     * committed. The original's {@code InfoBar} exactly.
+     * committed. This matches the original's {@code InfoBar}.
      */
     @Test
     public void theInfoBarShowsTheLineBeingTyped() {
@@ -705,8 +704,8 @@ public class ExtensionKeyboardTest {
     }
 
     /**
-     * What the row is holding is readable, because the other keyboard has to ask
-     * before it can decide what a typed character means.
+     * What the row is holding is readable, because the system keyboard's text
+     * input has to check it before deciding what a typed character means.
      */
     @Test
     public void heldModifiersAreReadable() {
@@ -724,9 +723,9 @@ public class ExtensionKeyboardTest {
     // ---- two lines of keys -------------------------------------------------
 
     /**
-     * The columns of a group are shared between its lines, which is the whole
-     * of the layout rule: Home sits over Left and End over Right, so the arrows
-     * read as the inverted T a hand already knows.
+     * The columns of a group are shared between its lines. That is the layout
+     * rule: Home sits over Left and End over Right, so the arrows read as the
+     * usual inverted T.
      */
     @Test
     public void theColumnsOfAGroupAreSharedBetweenItsLines() {
@@ -747,8 +746,8 @@ public class ExtensionKeyboardTest {
 
     /**
      * Both lines come to the same width, because both are the sum of the same
-     * columns — which is what keeps the scroll, the clamp and the fling one
-     * number rather than one per line.
+     * columns. That keeps the scroll, the clamp and the fling one number rather
+     * than one per line.
      */
     @Test
     public void bothLinesAreTheSameWidth() {
@@ -775,8 +774,8 @@ public class ExtensionKeyboardTest {
     }
 
     /**
-     * Two lines of keys cover two lines' worth of desktop, and no more — where
-     * a line among others is the shorter one, since 46 dp twice over is most of
+     * Two lines of keys cover two lines' worth of desktop, and no more. Each of
+     * them is shorter than a single line, since 46 dp twice over is most of
      * what is left of a phone.
      */
     @Test
@@ -795,8 +794,9 @@ public class ExtensionKeyboardTest {
 
     /**
      * A list that never says which line it wants is laid out exactly as it was
-     * before there were lines — which is what the caller's own key list (§3.7)
-     * is owed, and is also the app's default.
+     * before there were lines. The caller's own key list
+     * ({@code ARCHITECTURE.md} §3.7) depends on that, and it is the app's
+     * default.
      */
     @Test
     public void aListWithoutRowsIsOneLine() {
@@ -815,8 +815,8 @@ public class ExtensionKeyboardTest {
      * The list can be swapped while a session runs, and a modifier held at the
      * far end is let go of <em>through the old list</em>: an id is a position in
      * it, so releasing after the swap would name an id the far end never saw
-     * pressed and leave a modifier down on somebody's machine. The harness's
-     * fake remote is what notices — {@code key up ?}.
+     * pressed and leave a modifier down on the remote machine. The harness's
+     * fake remote detects it as {@code key up ?}.
      */
     @Test
     public void swappingTheListReleasesWhatIsHeldFirst() {
@@ -833,10 +833,10 @@ public class ExtensionKeyboardTest {
     }
 
     /**
-     * The case a host that drops keys makes: a modifier locked down at the far
-     * end whose key is not in the new list at all. It is still let go of, since
-     * the release goes out before anything is re-indexed — and a locked one is
-     * the case that matters, being the state that survives the next key.
+     * A host that drops keys produces this case: a modifier locked down at the
+     * far end whose key is not in the new list at all. It is still let go of,
+     * since the release goes out before anything is re-indexed. A locked
+     * modifier matters most here, since it survives the next key.
      */
     @Test
     public void aHeldKeyTheNewListDoesNotHaveIsStillReleased() {
@@ -925,7 +925,7 @@ public class ExtensionKeyboardTest {
     /**
      * The double-tap memory does not outlive the row. Hiding it clears every
      * modifier, so a remembered tap would meet a key that is off and read as
-     * the second of a pair — locking on what is somebody's first tap.
+     * the second of a pair, locking on what is really a first tap.
      */
     @Test
     public void hidingTheRowForgetsTheLastTap() {

@@ -3,9 +3,9 @@
     SPDX-FileCopyrightText: 2026 Patrick Gaskin
     SPDX-License-Identifier: GPL-3.0-or-later
 
-    Behind the words a session ends with. Small corners: it is a label over a
-    picture rather than a container on a page, and the 16 dp a group of rows has
-    would read as one that had come loose.
+    Behind the message a session ends with. Small corners: it is a label over
+    the desktop rather than a container on a page, and the 16 dp radius of a
+    group of rows would make it look like a detached row.
 -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">

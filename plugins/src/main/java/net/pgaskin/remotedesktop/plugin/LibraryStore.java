@@ -12,13 +12,12 @@ import java.io.InputStream;
 import java.util.Map;
 
 /**
- * What an add-on has acquired, in its own data directory.
+ * The libraries an add-on has obtained, in its own data directory.
  *
- * <p>Nothing outside its uid can read this — that is what {@link LibraryProvider}
- * is for — and nothing lands in it unverified: a file arrives under a temporary
- * name, is hashed as it is written, and is renamed into place only if it is the
- * build that was asked for. So a file being here at all is the statement that it
- * is the right one.
+ * <p>Nothing outside its uid can read this ({@link LibraryProvider} serves the
+ * files), and nothing is stored unverified: a file is written under a temporary
+ * name, hashed as it is written, and renamed into place only if it is the
+ * requested build. So any file present here is the right one.
  */
 public final class LibraryStore {
 
@@ -36,7 +35,7 @@ public final class LibraryStore {
         return new File(dir(context), name);
     }
 
-    /** Have we got this one, and is it still what it was? */
+    /** Whether this library is present and still matches its hash. */
     public static boolean has(Context context, String name, String sha256) {
         final File file = file(context, name);
         try {
@@ -56,16 +55,16 @@ public final class LibraryStore {
     }
 
     /**
-     * What one library may be. The largest of the four RealVNC ships is 4.8 MB,
-     * so this is an order of magnitude over anything real: it is not a limit
-     * anybody is meant to reach, it is the difference between a bad archive
-     * costing a refusal and it costing the phone's whole storage.
+     * The maximum size of one library. The largest of the four RealVNC ships is
+     * 4.8 MB, so this is an order of magnitude above any real one: it is not
+     * meant to be reached, only to make a bad archive fail instead of filling
+     * the phone's storage.
      */
     private static final long MAX_BYTES = 64L * 1024 * 1024;
 
     /**
-     * Consumes the stream whatever happens; the file is there afterwards only if
-     * it hashed to {@code sha256}.
+     * Consumes the stream in every case; the file exists afterwards only if it
+     * hashed to {@code sha256}.
      */
     public static void store(Context context, String name, String sha256, InputStream in)
             throws IOException {
@@ -93,7 +92,7 @@ public final class LibraryStore {
         }
     }
 
-    /** Forget everything, which is what an add-on's own reset does. */
+    /** Deletes every stored library, for an add-on's reset. */
     public static void clear(Context context) {
         final File[] files = dir(context).listFiles();
         if (files != null) {

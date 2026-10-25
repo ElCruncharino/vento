@@ -8,8 +8,8 @@ MEMORY="${MEMORY:-256}"
 VNC_PASSWORD="${VNC_PASSWORD:-vncpass}"
 SPICE_PASSWORD="${SPICE_PASSWORD:-spicepass}"
 # Absolute is what a `usb-tablet` gives, and it is here only so that the two
-# modes can be compared against the same guest — the point of the container is
-# the default.
+# modes can be compared against the same guest; the container exists for the
+# default.
 POINTER="${POINTER:-relative}"
 
 accel="tcg"
@@ -55,18 +55,48 @@ fi
 echo "accel=$accel pointer=$POINTER memory=${MEMORY}M password=${VNC_PASSWORD:-none} spice=${SPICE_PASSWORD:-none}"
 openssl x509 -in /certs/server-cert.pem -noout -fingerprint -sha256
 
+# The audio guest (AUDIO=1, the protoqemu-audio image): Debian's kernel and
+# a busybox initramfs that keeps an HDA card playing silence and plays 440 Hz
+# for half a second whenever a 't' arrives on the serial port, which is a TCP
+# server on 4555. The card's output goes to QEMU's `none` audiodev, which
+# plays nothing anywhere but still runs the mixer that the VNC server's audio
+# capture taps, so the only place the guest is heard is a VNC client that
+# asks. 48 kHz stereo S16 at both ends, which is what TigerVNC asks for, so
+# QEMU resamples nothing. The codec's mixer is off so that the guest's volume
+# controls (never set) cannot change the level.
+#
+# AUDIO=spice sends the card's output to the SPICE server instead
+# (`-audiodev spice`), whose playback channel is the other way QEMU has of
+# sending a guest's sound: heard by a SPICE client that opens that channel,
+# as Opus where the client offers it and PCM where not. The VNC capture taps
+# the mixer as it does over `none`.
+guest=(-drive file=/kolibri.img,format=raw,if=floppy,readonly=on -boot a)
+serial=(-serial none)
+vncaudio=""
+if [ -n "${AUDIO:-}" ]; then
+    [ -e /audio/vmlinuz ] || { echo "AUDIO is set but this image has no audio guest (build Dockerfile.audio)" >&2; exit 1; }
+    audiodrv=none
+    [ "$AUDIO" = spice ] && audiodrv=spice
+    guest=(-kernel /audio/vmlinuz -initrd /audio/initrd.gz -append "console=tty0 quiet"
+        -audiodev "$audiodrv,id=snd0,out.frequency=48000,out.channels=2,out.format=s16"
+        -device intel-hda -device "hda-output,audiodev=snd0,mixer=off"
+        -chardev "socket,id=tone,host=0.0.0.0,port=4555,server=on,wait=off,nodelay=on")
+    serial=(-serial chardev:tone)
+    vncaudio=",audiodev=snd0"
+    echo "audio guest ($audiodrv): tone bursts on the serial port, tcp 4555"
+fi
+
 # Read only, so the container keeps no state and every run is the same desktop.
 exec qemu-system-x86_64 \
     -machine "type=pc,accel=$accel" \
     -m "$MEMORY" \
-    -drive file=/kolibri.img,format=raw,if=floppy,readonly=on \
-    -boot a \
+    "${guest[@]}" \
     -vga std \
     "${secret[@]}" \
-    -vnc "0.0.0.0:0${auth:+,$auth}" \
+    -vnc "0.0.0.0:0${auth:+,$auth}$vncaudio" \
     "${spicesecret[@]}" \
     -spice "port=5930,tls-port=5931,addr=0.0.0.0,x509-dir=/certs,$spiceauth$wan" \
     "${tablet[@]}" \
     -nographic \
-    -serial none \
+    "${serial[@]}" \
     -monitor none

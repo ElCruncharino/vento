@@ -22,8 +22,8 @@ case "$1" in
     # A command inside the guest, which is how this rig is checked: `xclip -o`
     # for what the clipboard holds, `xrandr` for what size the desktop is.
     guest)   shift; exec docker exec "$NAME" guest-cmd "$@" ;;
-    # What the guest's own X server thinks is on the screen, without going
-    # through SPICE at all — the reference for anything the app draws.
+    # What the guest's own X server has on the screen, without going through
+    # SPICE at all: the reference for anything the app draws.
     shot)    out="${2:-/tmp/$NAME.png}"
              docker exec "$NAME" guest-cmd 'xwd -root -silent > /tmp/shot.xwd' >/dev/null
              docker exec "$NAME" guest-cmd 'cat /tmp/shot.xwd' > "${out%.png}.xwd"

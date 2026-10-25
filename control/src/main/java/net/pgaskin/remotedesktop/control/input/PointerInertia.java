@@ -8,12 +8,12 @@ package net.pgaskin.remotedesktop.control.input;
  *
  * <p>Samples the raw (un-accelerated) per-event deltas. On touch-up, if the
  * finger was still moving, a glide is scheduled 50 ms later; any further move
- * cancels it, so momentum only ever starts if the finger really left the
+ * cancels it, so momentum only ever starts if the finger has left the
  * screen. The glide direction and magnitude come from the <em>two oldest</em>
- * of the last three samples over the time span of all three — more lag than
- * using the newest samples, which combined with the 50 ms delay means
+ * of the last three samples over the time span of all three. That lags more
+ * than using the newest samples, and combined with the 50 ms delay it means
  * deliberately slowing down at the end of a flick kills the momentum. That is
- * probably exactly why it feels good, so it is preserved.
+ * probably why it feels good, so it is preserved.
  *
  * <pre>
  *   speed = min(|d0 + d1| * 25 / (t2 - t0), 200)   px per 10 ms tick
@@ -66,13 +66,13 @@ public final class PointerInertia {
             // The original's recursive re-entry pushes a (0, 0, 0) sentinel
             // here, which matters only for a gesture of one or two move events:
             // with three the sentinel has already fallen out of the window. Not
-            // reproduced, because its *timestamp* is absolute — on a phone,
+            // reproduced, because its *timestamp* is absolute: on a phone,
             // where a clock reads in the millions, the span it makes is
             // enormous and the speed is nil, so the original does not glide
             // either; under a test clock that starts at zero the same sentinel
             // makes the span one frame and the glide full speed. Leaving it out
-            // is what makes the two agree, and it says the same thing: fewer
-            // than three samples do not glide.
+            // makes the two agree on the original's behaviour: fewer than three
+            // samples do not glide.
         }
         push(ax, ay, t);
     }

@@ -3,12 +3,12 @@
 package com.realvnc.vncviewer.jni;
 
 /**
- * What a live session can be asked about itself. Every one of these is a display
- * string the core formats, not a value — the size comes back as
- * {@code "1920 x 1200"} and the speed as a rate with its unit on it.
+ * Queries about a live session. Each returns a display string the core formats,
+ * not a value: the size comes back as {@code "1920 x 1200"} and the speed as a
+ * rate with its unit.
  *
- * <p>They are safe to call at any point in a session's life and answer an empty
- * string when there is nothing to say, which happens more often than it sounds:
+ * <p>They are safe to call at any point in a session's life and return an empty
+ * string when there is nothing to report, which happens more often than expected:
  * a server that goes away while auto-reconnect keeps the session nominally open
  * empties every one of them at once, the desktop name included.
  *

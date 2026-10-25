@@ -8,10 +8,9 @@ import android.content.Intent;
 import android.os.IBinder;
 
 /**
- * The marker the app discovers this package by. It is never started and never
- * bound: what matters is the intent filter in the manifest, which is what a
- * {@code <queries>} entry can match without either side naming the other's
- * package.
+ * The marker the app discovers this package by. It is never started or bound:
+ * only its intent filter in the manifest matters, which a {@code <queries>}
+ * entry can match without either side naming the other's package.
  */
 public final class PluginService extends Service {
 

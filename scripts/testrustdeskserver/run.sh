@@ -21,8 +21,8 @@ esac
 
 # Two modes of the same server rather than two containers. `relay` tells every
 # client to relay rather than punch, which is the only way to reach that path on
-# a network where a punch always lands; `open` stops the server insisting a
-# client names its key, which is what lets a client arrive with the wrong one
+# a network where a punch always lands; `open` stops the server requiring a
+# client to name its key, which is what lets a client arrive with the wrong one
 # and fail to verify the introduction it is given.
 RELAY_ONLY=N
 ENFORCE_KEY=Y
@@ -49,4 +49,4 @@ echo "$NAME up: $ip:21116  (relay $ip:21117$([ "$RELAY_ONLY" = Y ] && echo ", ev
 echo "key: $key"
 echo
 echo "a peer:   RENDEZVOUS=$ip KEY=$key scripts/testrustdesk/run.sh"
-echo "a client: cargo run --example rustdesk-probe -- id <peer-id> --server $ip --key $key"
+echo "a client: cargo run --features probe --example rustdesk-probe -- id <peer-id> --server $ip --key $key"

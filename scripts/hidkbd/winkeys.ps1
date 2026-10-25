@@ -1,4 +1,4 @@
-# A key-layout debugger for a Windows RDP far end - the analogue of `xev` for
+# A key-layout debugger for a Windows RDP far end, the analogue of `xev` for
 # the X test desktops. RDP carries a POSITION (a set-1 scancode), and the server
 # turns it into a virtual key using its own layout; this shows which one, so our
 # client's scancode table can be checked against what Windows actually resolves.
@@ -9,8 +9,8 @@
 #   powershell -ExecutionPolicy Bypass -File winkeys.ps1
 #   powershell -ExecutionPolicy Bypass -File winkeys.ps1 -Out C:\Users\Public\farkeys.txt
 #
-# Then drive the keyboard from the phone (scripts/hidkbd + scripts/hidkbd/farwalk
-# style) and read the file back. The window shows the last keys live so a person
+# Then drive the keyboard from the phone (scripts/hidkbd and
+# scripts/hidkbd/farwalk.sh) and read the file back. The window shows the last keys live so a person
 # watching the RDP session can see each one land.
 #
 # ASCII only, unlike everything else here, because Windows PowerShell reads a
@@ -24,8 +24,8 @@ param([string]$Out = "$env:USERPROFILE\farkeys.txt")
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-# A window message carries the generic virtual key for a modifier - VK_SHIFT for
-# both shifts - and the side only in the scan code, which WinForms does not hand
+# A window message carries the generic virtual key for a modifier (VK_SHIFT for
+# both shifts) and the side only in the scan code, which WinForms does not hand
 # over. The key state does distinguish them, and is current while the key is
 # still down, which is when this runs.
 Add-Type -Namespace Win -Name Kbd -MemberDefinition @'
@@ -48,7 +48,7 @@ $box = New-Object System.Windows.Forms.TextBox
 $box.Multiline = $true; $box.Dock = "Fill"; $box.ReadOnly = $true
 $box.ScrollBars = "Vertical"
 $box.Font = New-Object System.Drawing.Font("Consolas", 12)
-# An empty one, because the default context menu is what the Apps key opens -
+# An empty one, because the default context menu is what the Apps key opens:
 # a menu takes the keyboard, and every key after it in a walk is then a blank
 # that reads exactly like a key the server dropped.
 $box.ContextMenuStrip = New-Object System.Windows.Forms.ContextMenuStrip
@@ -60,8 +60,8 @@ $down = @{}
 function Show-Key($e, $suffix) {
     # Keys names the virtual keys a .NET application expects and not the ones a
     # layout can resolve a scancode to, and it is a [Flags] enum, so everything
-    # it has no member for prints as "None" whatever its value - which is three
-    # different keys under one name in a walk. The number is the answer there.
+    # it has no member for prints as "None" whatever its value, which in a walk
+    # puts three different keys under one name. The number is the answer there.
     $name = if ([enum]::IsDefined([System.Windows.Forms.Keys], [int]$e.KeyValue)) {
         $e.KeyCode.ToString()
     } else {

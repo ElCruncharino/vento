@@ -6,38 +6,38 @@ package net.pgaskin.remotedesktop.plugin;
 import android.net.Uri;
 
 /**
- * What both sides of an add-on agree on.
+ * The constants both sides of an add-on share.
  *
- * <p>Two processes and two uids: the add-on's own, where a library is acquired
- * and checked, and the app's, where the add-on's dex is loaded and the library
- * is used. Nothing crosses between them except a file descriptor and an intent,
- * and both are named here.
+ * <p>Two processes and two uids: the add-on's, where a library is obtained and
+ * checked, and the app's, where the add-on's dex is loaded and the library is
+ * used. Only a file descriptor and an intent pass between them, and both are
+ * defined here.
  */
 public final class Plugin {
 
     /**
-     * What the app starts to have an add-on set itself up. Answered by an
-     * activity in the add-on's own package, so that its permissions and the
-     * packages it can see are its own.
+     * The action the app starts to have an add-on set itself up. Handled by an
+     * activity in the add-on's package, so that it runs with the add-on's
+     * permissions and package visibility.
      */
     public static final String ACTION_SETUP = "net.pgaskin.remotedesktop.action.SETUP_PLUGIN";
 
     /**
      * The add-on's provider, as {@code <its package>.libraries}. Derived rather
-     * than declared so that a debug build's suffix carries through: an authority
-     * is unique across the device, and two builds of one add-on installed side
-     * by side must not collide.
+     * than hardcoded so that a debug build's suffix carries through: an
+     * authority is unique on the device, and two builds of one add-on installed
+     * side by side must not collide.
      */
     public static Uri libraries(String pluginPackage) {
         return new Uri.Builder().scheme("content").authority(pluginPackage + ".libraries").build();
     }
 
-    /** One file it serves, by the name the pin gives it. */
+    /** One file the provider serves, by its name in the pin. */
     public static Uri library(String pluginPackage, String name) {
         return libraries(pluginPackage).buildUpon().appendPath(name).build();
     }
 
-    /** {@link android.content.ContentProvider#call} on the above: has it got them all yet? */
+    /** {@link android.content.ContentProvider#call} method: whether it has every library yet. */
     public static final String CALL_READY = "ready";
 
     public static final String EXTRA_READY = "ready";
