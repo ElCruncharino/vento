@@ -78,6 +78,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <shared_mutex>
 #include <string>
 #include <thread>
@@ -268,6 +269,7 @@ enum CmdType {
     CMD_CLIPBOARD,
     CMD_PICTURE,
     CMD_RESIZE,
+    CMD_LAYOUT,
 };
 
 struct Cmd {
@@ -275,6 +277,7 @@ struct Cmd {
     int a = 0, b = 0, c = 0;
     int64_t id = 0;     // the key's identity, which is the seam's and not the keysym
     std::string text{}; // every post but the clipboard's leaves this out
+    std::vector<int32_t> screens{}; // a layout's, five ints a screen as the header has them
 };
 
 class Session;
@@ -478,16 +481,22 @@ public:
     /** Set from the protocol thread, read from whichever asks. */
     void setCanResize(bool can) { canResize_ = can; }
 
-    /** The far end's screen layout, flattened four ints per screen. */
+    /** The far end's screen layout, flattened five ints per screen: the
+        server's id, then x, y, width, height. */
     void setScreens(std::vector<int32_t> screens) {
         const std::lock_guard<std::mutex> guard(screensLock_);
         screens_ = std::move(screens);
     }
 
-    int screens(int32_t *out) const {
+    /** Four ints a screen, without the id, or all five with it. */
+    int screens(int32_t *out, bool ids) const {
         const std::lock_guard<std::mutex> guard(screensLock_);
-        const size_t n = std::min(screens_.size() / 4, (size_t) VENTO_MAX_MONITORS);
-        std::copy(screens_.begin(), screens_.begin() + (ptrdiff_t) (n * 4), out);
+        const size_t n = std::min(screens_.size() / 5, (size_t) VENTO_MAX_MONITORS);
+        const size_t skip = ids ? 0 : 1;
+        for (size_t i = 0; i < n; i++) {
+            out = std::copy(screens_.begin() + (ptrdiff_t) (i * 5 + skip),
+                            screens_.begin() + (ptrdiff_t) (i * 5 + 5), out);
+        }
         return (int) n;
     }
 
@@ -496,15 +505,11 @@ public:
         connected_ = true;
     }
 
-    /* More than one screen says no, and that is the shim's limitation rather
-       than the library's: what a resize sends is a single screen covering the
-       desktop, so granting one would merge somebody's monitors into one. */
+    /* For any number of screens, since this session sends layouts: a single
+       size over several, which would merge them, is what session::c declines
+       to offer, as the header has it. */
     bool canResize() const {
-        if (!canResize_ || viewOnly_) {
-            return false;
-        }
-        const std::lock_guard<std::mutex> guard(screensLock_);
-        return screens_.size() <= 4;
+        return canResize_ && !viewOnly_;
     }
 
     void answerCredentials(const char *user, const char *password) {
@@ -938,9 +943,11 @@ void Conn::setExtendedDesktopSize(unsigned reason, unsigned result, int w, int h
     s->setCanResize(true);
     // The rectangle's own layout rather than server.screenLayout(), which the
     // base class leaves at the old one when the server has said no.
+    // The ids too, which are what a layout asked for later hands back.
     std::vector<int32_t> screens;
-    screens.reserve(layout.num_screens() * 4);
+    screens.reserve(layout.num_screens() * 5);
     for (const rfb::Screen &screen : layout) {
+        screens.push_back((int32_t) screen.id);
         screens.push_back(screen.dimensions.tl.x);
         screens.push_back(screen.dimensions.tl.y);
         screens.push_back(screen.dimensions.width());
@@ -1167,6 +1174,50 @@ void Conn::handleAudioData(const uint8_t *data, size_t length) {
 
 // ---- the protocol thread -------------------------------------------------
 
+// A layout asked for — five ints a screen, id, x, y, width, height — as the
+// ScreenSet to send, against the server's own: a screen whose id the server
+// has is that screen, moved or resized, and keeps its flags, which is what
+// makes this a change to the desktop that is there rather than a new one; a
+// screen with an id the server has not, or one already used, is new, and gets
+// an id neither the server's layout nor this one has, as the FLTK viewer
+// gives its new screens. Lowest first rather than its rand(), so that the same
+// request makes the same layout.
+rfb::ScreenSet requestedLayout(const rfb::ScreenSet &have, const std::vector<int32_t> &flat) {
+    const size_t n = flat.size() / 5;
+    std::set<uint32_t> taken;
+    for (const rfb::Screen &screen : have) {
+        taken.insert(screen.id);
+    }
+    std::set<uint32_t> kept;
+    std::vector<const rfb::Screen *> old(n, nullptr);
+    for (size_t i = 0; i < n; i++) {
+        const uint32_t id = (uint32_t) flat[i * 5];
+        for (const rfb::Screen &screen : have) {
+            if (screen.id == id && kept.insert(id).second) {
+                old[i] = &screen;
+                break;
+            }
+        }
+    }
+    uint32_t next = 0;
+    rfb::ScreenSet layout;
+    for (size_t i = 0; i < n; i++) {
+        const int32_t *m = &flat[i * 5];
+        if (old[i] != nullptr) {
+            rfb::Screen screen = *old[i];
+            screen.dimensions.setXYWH(m[1], m[2], m[3], m[4]);
+            layout.add_screen(screen);
+        } else {
+            while (taken.count(next) != 0 || kept.count(next) != 0) {
+                next++;
+            }
+            taken.insert(next);
+            layout.add_screen(rfb::Screen(next, m[1], m[2], m[3], m[4], 0));
+        }
+    }
+    return layout;
+}
+
 void Session::runCmd(Conn *conn, Cmd &cmd) {
     switch (cmd.type) {
         case CMD_POINTER:
@@ -1236,6 +1287,23 @@ void Session::runCmd(Conn *conn, Cmd &cmd) {
             layout.begin()->dimensions.br.y = cmd.b;
             if (!layout.validate(cmd.a, cmd.b)) {
                 LOGW("not asking for %dx%d: the layout it would need is not valid", cmd.a, cmd.b);
+                break;
+            }
+            conn->writer()->writeSetDesktopSize(cmd.a, cmd.b, layout);
+            break;
+        }
+        case CMD_LAYOUT: {
+            if (viewOnly_ || !conn->server.supportsSetDesktopSize) {
+                break;
+            }
+            rfb::ScreenSet layout = requestedLayout(conn->server.screenLayout(), cmd.screens);
+            if (!layout.validate(cmd.a, cmd.b)) {
+                LOGW("not asking for %dx%d in %d screens: that is not a valid layout", cmd.a, cmd.b,
+                     layout.num_screens());
+                break;
+            }
+            if (layout == conn->server.screenLayout() && conn->server.width() == cmd.a
+                    && conn->server.height() == cmd.b) {
                 break;
             }
             conn->writer()->writeSetDesktopSize(cmd.a, cmd.b, layout);
@@ -1669,7 +1737,23 @@ bool op_can_resize(vento_session *base) {
 }
 
 int op_monitors(vento_session *base, int32_t *out) {
-    return sessionOf(base)->screens(out);
+    return sessionOf(base)->screens(out, false);
+}
+
+int op_screens(vento_session *base, int32_t *out) {
+    return sessionOf(base)->screens(out, true);
+}
+
+void op_request_layout(vento_session *base, int width, int height, const int32_t *screens, int n) {
+    // RFB's limits: a count in a byte, every number in sixteen bits; what is
+    // outside them could only be sent wrapped, as some other layout.
+    if (width <= 0 || height <= 0 || width > 65535 || height > 65535 || screens == nullptr
+            || n <= 0 || n > 255) {
+        return;
+    }
+    Cmd cmd{CMD_LAYOUT, width, height};
+    cmd.screens.assign(screens, screens + (ptrdiff_t) n * 5);
+    sessionOf(base)->post(std::move(cmd));
 }
 
 void op_request_desktop_size(vento_session *base, int width, int height) {
@@ -1743,6 +1827,8 @@ const vento_session_ops OPS = {
         op_answer_trust,
         op_disconnect,
         op_destroy,
+        op_screens,
+        op_request_layout,
 };
 
 } // namespace
