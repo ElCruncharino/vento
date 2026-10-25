@@ -29,7 +29,11 @@ function(vento_android_library target crate)
     set_target_properties(${target}_rust PROPERTIES
             IMPORTED_LOCATION "${VENTO_RUST_LIBRARY_DIR}/${ANDROID_ABI}/lib${crate}.a")
     target_sources(${target} PRIVATE "${_VENTO_BACKENDS}/platform/android/c/vento_log.c")
-    target_include_directories(${target} PRIVATE "${_VENTO_BACKENDS}/common/include")
+    # The neutral headers, and the module's own `include/`, where its
+    # `vento/<name>.h` is: called from the module's CMakeLists, this is that
+    # module's directory.
+    target_include_directories(${target} PRIVATE "${_VENTO_BACKENDS}/common/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/include")
     target_link_options(${target} PRIVATE "LINKER:--undefined=JNI_OnLoad"
             "LINKER:--version-script=${_VENTO_BACKENDS}/platform/android/c/exports.map")
     set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS

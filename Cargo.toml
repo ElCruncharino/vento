@@ -42,6 +42,9 @@ log = "0.4"
 # One version across the crates: a `Callbacks` built in one is used in another.
 jni = "0.22"
 android_logger = "0.15"
+# One version for every crate that reads the C headers: `remotedesktop-session`
+# the shared ones, each C backend's crate its own over those.
+bindgen = "0.73"
 
 [profile.release]
 panic = "abort" # cannot unwind across jni

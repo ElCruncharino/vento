@@ -1,14 +1,19 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! With the `c` feature: `vento/backend.h`, `vento/video.h`, `vento/audio.h`,
-//! `vento/text.h` (its constants: its functions are inline and the Rust side
-//! has its own) and the three backend headers, as Rust, for `src/c/ffi.rs`.
+//! With the `c` feature: `vento/backend.h`, `vento/video.h`,
+//! `vento/audio.h` and `vento/text.h` (its constants: its functions are
+//! inline and the Rust side has its own), as Rust, for `src/c/ffi.rs`.
 //!
 //! Generated rather than written: the vtable's member order is the ABI, and a
 //! `#[repr(C)]` copy by hand would be a second place it is kept, drifting the
 //! first time a header changed. The headers are ours, small and C, and every
 //! item wanted is named `vento_` or `VENTO_`.
+//!
+//! Only the shared headers: each C backend's own, `vento/<name>.h` in its
+//! module, is read by that backend's crate, over the declarations generated
+//! here, so that one `vento_session` is one Rust type whichever crate names
+//! it.
 
 fn main() {
     #[cfg(feature = "c")]
@@ -30,10 +35,7 @@ fn generate_bindings() {
             "#include <vento/backend.h>\n\
              #include <vento/video.h>\n\
              #include <vento/audio.h>\n\
-             #include <vento/text.h>\n\
-             #include <vento/libvnc.h>\n\
-             #include <vento/tigervnc.h>\n\
-             #include <vento/freerdp.h>\n",
+             #include <vento/text.h>\n",
         )
         .clang_arg(format!("-I{}", include.display()))
         .allowlist_item("vento_.*")

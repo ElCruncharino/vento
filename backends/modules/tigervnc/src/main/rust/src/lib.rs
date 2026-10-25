@@ -13,11 +13,19 @@
 //! extension — is played on the platform's output the same way, handed to the C
 //! as `vento/audio.h`'s table (`session::c::audio`): AAudio on the phone.
 
-use session::c::{Behaviour, CSession, ffi, start};
+use session::c::{Behaviour, CSession, start};
 use session::backend::{Backend, ConnectionFact, Field, Traffic};
 use session::kind::{CONNECT_TIMEOUT_MS, Connect, Kind};
 use session::options::Options;
 use std::ffi::CString;
+
+/// `vento/tigervnc.h`, as `build.rs` generated it, over the shared declarations
+/// it is written against.
+mod ffi {
+    #![allow(non_camel_case_types, dead_code)]
+    pub use session::c::ffi::*;
+    include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
+}
 
 pub static KIND: Kind = Kind {
     about: &session::catalog::TIGERVNC,

@@ -36,11 +36,11 @@ log.workspace = true
 remotedesktop-common.workspace = true
 
 [build-dependencies]
-# The declarations in `vento/backend.h` and the headers beside it (and the
+# The declarations in `vento/backend.h`, `video.h` and `audio.h` (and the
 # constants of `text.h`), read rather than retyped: the vtable's member order
 # is the ABI, and a hand-written copy would be a second place it is written
-# down.
-bindgen = { version = "0.73", optional = true }
+# down. Each C backend's own header is its crate's to read, over these.
+bindgen = { workspace = true, optional = true }
 
 [dev-dependencies]
 # For the shared test vectors in `backends/vectors/` (tests/vectors.rs), which

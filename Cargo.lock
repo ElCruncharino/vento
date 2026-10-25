@@ -2560,6 +2560,7 @@ dependencies = [
 name = "remotedesktop-freerdp"
 version = "0.0.1"
 dependencies = [
+ "bindgen",
  "log",
  "remotedesktop-platform-android",
  "remotedesktop-session",
@@ -2595,6 +2596,7 @@ dependencies = [
 name = "remotedesktop-libvnc"
 version = "0.0.1"
 dependencies = [
+ "bindgen",
  "log",
  "remotedesktop-platform-android",
  "remotedesktop-session",
@@ -2674,6 +2676,7 @@ dependencies = [
 name = "remotedesktop-tigervnc"
 version = "0.0.1"
 dependencies = [
+ "bindgen",
  "log",
  "remotedesktop-platform-android",
  "remotedesktop-session",
