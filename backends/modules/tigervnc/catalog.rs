@@ -168,7 +168,7 @@ mod tests {
         assert_eq!(options.check_requirements(OPTIONS), Err("Encoding=h264 needs H264=true".to_string()));
         assert_eq!(options.settle(OPTIONS), ["Encoding"]);
         assert_eq!(options.get("Encoding"), "tight");
-        assert!(!options.is_set("Encoding"), "a fallback is nobody's choice");
+        assert!(!options.is_set("Encoding"), "a fallback is not a set value");
         assert!(options.settle(OPTIONS).is_empty(), "and settled stays settled");
         // Any other choice stands without the switch.
         options.set("Encoding", "zrle");

@@ -489,7 +489,7 @@ impl Client {
                         log::info!("{} ended", end.kind.name());
                         return match end.error {
                             Some(e) => Err(e),
-                            None => Err(Error::Server(String::new())),
+                            None => Err(Error::Server),
                         };
                     }
                 }
@@ -850,7 +850,7 @@ impl Session<'_> {
                 }
                 self.flush_agent().await?;
             }
-            main_server::DISCONNECTING => return Err(Error::Server(String::new())),
+            main_server::DISCONNECTING => return Err(Error::Server),
             _ => {}
         }
         Ok(())

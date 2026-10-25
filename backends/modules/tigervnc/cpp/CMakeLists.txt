@@ -99,8 +99,8 @@ endif()
 set(BUILD_TIMESTAMP "0")
 
 if(ANDROID)
-    # Nettle, which TigerVNC's RSA-AES security types (supported by no other
-    # client here) are written against. Their own build finds it with
+    # Nettle, which TigerVNC's RSA-AES security types (which no other client
+    # built here implements) are written against. Their own build finds it with
     # find_package, which sets the four variables below, and then HAVE_NETTLE for
     # config.h; this build has it as a subdirectory, so it sets all five
     # directly and skips the search.

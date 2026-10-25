@@ -1,4 +1,4 @@
-# Written by gen.sh — every object gnutls' own build produced, grouped
+# Written by gen.sh: every object gnutls' own build produced, grouped
 # by the Makefile that compiled it.
 
 set(GNUTLS_SOURCES_gl

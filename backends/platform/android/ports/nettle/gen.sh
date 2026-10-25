@@ -70,7 +70,7 @@ list() {
     ar t "$tmp/arm64-v8a/$1.a" | sed 's/\.o$/.c/' | sort | sed 's/^/        /'
 }
 {
-    echo "# Written by gen.sh — the members of libnettle.a and libhogweed.a as"
+    echo "# Written by gen.sh: the members of libnettle.a and libhogweed.a as"
     echo "# nettle's own build produced them, and the headers it installed."
     echo
     echo "set(NETTLE_SOURCES"

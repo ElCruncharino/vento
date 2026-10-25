@@ -4,10 +4,12 @@
 //! The `log` crate, pointed at logcat.
 
 /// Route everything the protocol logs to logcat under `tag`, at `info` and
-/// above. Once per process: `android_logger` keeps the first logger it is
-/// given, so the second backend to load into the same app logs under the
-/// first one's tag. That is why each `create` calls this rather than a
-/// `JNI_OnLoad`, and why calling it again is harmless.
+/// above. Called from `create` rather than from `JNI_OnLoad` because the tag
+/// is an argument of `create`: Java passes each module's name, and the load
+/// hook has nothing but the VM. `android_logger` keeps the first logger it is
+/// given, so the later calls are no-ops; and each backend is a library of its
+/// own with its own copy of this crate, so one backend's tag never applies to
+/// another.
 pub fn init(tag: &str) {
     android_logger::init_once(
         android_logger::Config::default()

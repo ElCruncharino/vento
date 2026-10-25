@@ -130,7 +130,7 @@ sort "$tmp/mapped" > "$tmp/grouped"
 cut -d' ' -f1 "$tmp/grouped" | uniq > "$tmp/groups"
 
 {
-    echo "# Written by gen.sh — every object gnutls' own build produced, grouped"
+    echo "# Written by gen.sh: every object gnutls' own build produced, grouped"
     echo "# by the Makefile that compiled it."
     echo
     while read -r group; do

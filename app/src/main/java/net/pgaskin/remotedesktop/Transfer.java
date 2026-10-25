@@ -193,7 +193,7 @@ final class Transfer {
         }
         root.put("backends", backends);
 
-        return app.length() + input.length() + count(backends);
+        return app.length() + input.length() + count(nested(backends));
     }
 
     // ---- import -------------------------------------------------------------

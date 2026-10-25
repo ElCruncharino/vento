@@ -190,7 +190,7 @@ public final class FakeDesktop implements CursorController.PointerSink, KeySink 
         // a real remote looks. Placed away from the toggle block (top left) and
         // the wheel readout (top right).
         final float[][] at = {
-                {980, 120}, {1500, 260}, {200, 400}, {700, 620}, {1150, 500}, {1550, 800},
+                {980, 120}, {1500, 260}, {200, 500}, {700, 620}, {1150, 500}, {1550, 800},
         };
         for (int i = 0; i < at.length; i++) {
             squares.add(new Square("SQ" + (i + 1), colors[i], at[i][0], at[i][1], 180, 120, true, null));

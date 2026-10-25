@@ -79,12 +79,14 @@ endmacro()
 
 # This list comes from upstream's Android build
 # (client/Android/cmake/ExternalFreeRDP.cmake), minus what a phone doesn't use.
-# Three of them are required rather than preferences: a current OpenSSL keeps
-# RC4, MD4 and MD5 in the legacy provider, which neither this build nor a
-# distribution's library loads, and RDP needs all three on the wire. The last
-# is ours: JSON is used for Azure sign-in and for reading keyboard layouts and
-# timezones from files, none of which this build has, and setting it stops
-# their configure from looking for a JSON parser.
+# Two of them are required rather than preferences: a current OpenSSL keeps
+# RC4 and MD4 in the legacy provider, which neither this build's OpenSSL
+# (configured `no-legacy`) nor a distribution's library loads, and RDP needs
+# both on the wire. MD5 is in the default provider, so WITH_INTERNAL_MD5 is
+# kept only because upstream's Android build sets it. The last is ours: JSON
+# is used for Azure sign-in and for reading keyboard layouts and timezones
+# from files, none of which this build has, and setting it stops their
+# configure from looking for a JSON parser.
 foreach(off WITHOUT_FREERDP_3x_DEPRECATED WITHOUT_WINPR_3x_DEPRECATED WITH_INTERNAL_RC4
         WITH_INTERNAL_MD4 WITH_INTERNAL_MD5 WITH_SMARTCARD_EMULATE WITH_JSON_DISABLED)
     set(${off} ON CACHE BOOL "" FORCE)

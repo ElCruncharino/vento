@@ -51,8 +51,12 @@ public final class SessionService extends Service implements Sessions.Watcher {
     private static final String CHANNEL = "session";
     private static final String GROUP = "net.pgaskin.remotedesktop.SESSIONS";
 
-    /** Posted only to satisfy the {@code startForeground} requirement while stopping. */
-    private static final int NOTIFICATION_NONE = 1;
+    /**
+     * Posted only to satisfy the {@code startForeground} requirement while
+     * stopping. Negative so that it never collides with a session's id, which
+     * {@link Session#notificationId} counts up from 1.
+     */
+    private static final int NOTIFICATION_NONE = -1;
 
     /** The notification's button, and the only action this service handles. */
     private static final String ACTION_DISCONNECT = "net.pgaskin.remotedesktop.DISCONNECT";

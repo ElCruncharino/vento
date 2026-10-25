@@ -20,9 +20,8 @@ pub enum Error {
     /// The configured address is not valid; the text says why.
     Address(String),
     /// The server ended the session: `MAIN_DISCONNECTING`, or a required
-    /// channel closed without an error. A non-empty text replaces the default
-    /// message.
-    Server(String),
+    /// channel closed without an error.
+    Server,
     /// `Client::close` was called; the only ordinary ending.
     Closed,
 }
@@ -44,8 +43,7 @@ impl fmt::Display for Error {
             Error::Cancelled => write!(f, "Cancelled."),
             Error::Protocol(what) => write!(f, "The server is not making sense: {what}"),
             Error::Address(why) => write!(f, "{why}"),
-            Error::Server(why) if why.is_empty() => write!(f, "The server ended the session."),
-            Error::Server(why) => write!(f, "{why}"),
+            Error::Server => write!(f, "The server ended the session."),
             Error::Closed => write!(f, "Disconnected"),
         }
     }

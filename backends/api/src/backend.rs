@@ -501,7 +501,7 @@ mod tests {
     }
 
     #[test]
-    fn the_data_row_leaves_out_a_direction_nobody_counted() {
+    fn the_data_row_leaves_out_a_direction_that_was_not_counted() {
         let both = ConnectionFact::data(Traffic {
             received: 1500,
             sent: Some(20),

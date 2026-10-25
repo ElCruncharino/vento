@@ -1,4 +1,4 @@
-# Written by gen.sh — the members of libnettle.a and libhogweed.a as
+# Written by gen.sh: the members of libnettle.a and libhogweed.a as
 # nettle's own build produced them, and the headers it installed.
 
 set(NETTLE_SOURCES

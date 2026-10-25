@@ -82,10 +82,13 @@ android {
 
     packaging {
         jniLibs {
-            // Unpacked at install time rather than mapped out of the APK. This
-            // costs disk, but leaves a library's alignment to the loader rather
-            // than the packager, so a library built elsewhere does not have to
-            // be rebuilt to suit this packaging.
+            // Unpacked at install time rather than mapped out of the APK, so
+            // that the libraries can be stored compressed. Mapping needs them
+            // stored as they are, which would make a release APK about 68 MB
+            // rather than 36: its 24 MB of libraries are 56 MB uncompressed.
+            // That matters because this APK is downloaded as a file (F-Droid,
+            // a build server) rather than through a store that compresses the
+            // transfer. The cost is a second copy of the libraries on disk.
             useLegacyPackaging = true
         }
     }

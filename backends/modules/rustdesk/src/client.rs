@@ -2006,15 +2006,19 @@ fn sound_of(config: &Config) -> Option<Arc<dyn Outputs>> {
 mod tests {
     use super::*;
 
-    /// RustDesk's two-round password hash: 32 bytes, dependent on the
-    /// challenge, and empty for an empty password.
+    /// RustDesk's two-round password hash: the digest python's hashlib gives
+    /// for the same inputs, dependent on the challenge, and empty for an empty
+    /// password.
     #[test]
     fn the_password_is_two_rounds() {
         let mut hash = Hash::new();
         hash.salt = "0123456789abcdef0123456789abcdef".into();
         hash.challenge = "abcdef".into();
         let digest = login_hash("PASSword1", &hash);
-        assert_eq!(digest.len(), 32);
+        assert_eq!(
+            digest.iter().map(|b| format!("{b:02x}")).collect::<String>(),
+            "68901195eae24ddb9a814a5b22a67d36aab028d74a50e9155bc34aae5028952d"
+        );
         // The inner hash is what a client would store, and the outer one is
         // sent, so the same password with a second challenge gives a
         // different digest.

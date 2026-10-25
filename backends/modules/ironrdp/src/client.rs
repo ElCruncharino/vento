@@ -1805,7 +1805,7 @@ mod tests {
     /// locked modifier has to survive a shifted character being typed, which
     /// is what merging input from both keyboards requires.
     #[test]
-    fn a_shift_somebody_else_is_holding_is_left_alone() {
+    fn a_shift_the_user_holds_is_left_alone() {
         let client = Client::new();
         client.shared.running.store(true, Ordering::Release);
         client.key_down(0xffe1, 1); // Shift, from the extension keyboard

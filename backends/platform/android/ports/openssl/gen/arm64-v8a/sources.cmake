@@ -1,4 +1,4 @@
-# Written by gen.sh — every object openssl's own build produced for
+# Written by gen.sh: every object openssl's own build produced for
 # arm64-v8a, grouped by the archive it goes into.
 
 set(OPENSSL_DEFINES_libcrypto_lib

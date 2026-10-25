@@ -117,7 +117,7 @@ pub static OPTIONS: &[Spec] = &[
         choices(
             "ColorLevel",
             "Colour depth",
-            Some("Pixel color depth. Only used when quality is set to Low or Custom."),
+            Some("Pixel colour depth. Only used when quality is set to Low or Custom. Unless set, Low uses 8 colours (rgb111)."),
             "full",
             Scope::Layered,
             true,

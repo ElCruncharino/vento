@@ -322,7 +322,7 @@ pub(crate) const BELL: Spec = Spec {
     ..bool(
         "AcceptBell",
         "Bell",
-        "Vibrate when the remote servers rings the bell.",
+        "Vibrate when the remote server rings the bell.",
         true,
         Scope::Global,
         false,
@@ -578,7 +578,7 @@ mod tests {
         assert_eq!(options.check_requirements(FIXTURE), Err("Encoding=h264 needs H264=true".to_string()));
         assert_eq!(options.settle(FIXTURE), ["Encoding"]);
         assert_eq!(options.get("Encoding"), "tight");
-        assert!(!options.is_set("Encoding"), "a fallback is nobody's choice");
+        assert!(!options.is_set("Encoding"), "a fallback is not a set value");
         assert!(options.settle(FIXTURE).is_empty(), "and settled stays settled");
         options.set("Encoding", "rre");
         assert!(options.settle(FIXTURE).is_empty());

@@ -54,9 +54,9 @@ abis="arm64-v8a x86_64"
 # Flag notes, for the ones that are a decision rather than a subtraction. The
 # list is upstream's own scripts/android-build-openssl.sh minus what an RDP
 # client cannot reach.
-#   no-legacy    RC4, MD4 and MD5 are in the legacy provider, and RDP needs all
-#                three on the wire; FreeRDP's WITH_INTERNAL_* switches compile
-#                its own instead, which is why the provider can go.
+#   no-legacy    RC4 and MD4 are in the legacy provider, and RDP needs both on
+#                the wire; FreeRDP's WITH_INTERNAL_* switches compile its own
+#                instead, which is why the provider can go.
 #   no-dso       An app's sandbox cannot load a provider by path, and this
 #                takes engines and the module directory with it.
 #   no-apps      Everything here is the two libraries; nothing installs a binary.
@@ -142,7 +142,7 @@ for abi in $abis; do
             obj = ""
         }' Makefile | sort -u > "$tmp/grouped"
     {
-        echo "# Written by gen.sh — every object openssl's own build produced for"
+        echo "# Written by gen.sh: every object openssl's own build produced for"
         echo "# $abi, grouped by the archive it goes into."
         echo
         # libtemplate is a provider skeleton upstream compiles and archives into

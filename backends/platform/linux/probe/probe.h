@@ -5,8 +5,7 @@
 // the questions from the command line, poke the far end once, and after a
 // while write the framebuffer to a file and exit. One body, written against
 // the vtable in `vento/backend.h` alone, under a `main` per backend that parses
-// that backend's configuration and passes its `create`: the same split as the
-// Rust probes, where `runtime` is the body and a protocol crate is the `main`.
+// that backend's configuration and passes its `create`.
 //
 // A session that reaches `connected` through this has reached it through the
 // neutral C API alone, with no Android under it, and the PPM it writes is the
