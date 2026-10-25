@@ -170,6 +170,7 @@ pub fn reach(hangup: &Hangup, id: &str, server: &str, key: &str, timeout: Durati
                             &response.relay_server,
                             key,
                             timeout,
+                            !signed_id_pk.is_empty(),
                         )?;
                         Ok(Reached {
                             sock,
@@ -251,6 +252,9 @@ fn connect_reusable(
 ///
 /// A fresh socket rather than the one used for the punch, as RustDesk's server
 /// requires: it tells attempts apart by their source address.
+///
+/// `vouched` is whether the server introduced the peer with a signed key.
+#[allow(clippy::too_many_arguments)]
 fn ask_for_relay(
     hangup: &Hangup,
     id: &str,
@@ -258,6 +262,7 @@ fn ask_for_relay(
     relay: &str,
     key: &str,
     timeout: Duration,
+    vouched: bool,
 ) -> Result<TcpStream> {
     let uuid = uuid();
     let sock = hangup.dial(server, timeout)?;
@@ -269,10 +274,12 @@ fn ask_for_relay(
     request.uuid = uuid.clone();
     request.relay_server = relay.into();
     request.licence_key = key.into();
-    // Whether the relayed session will be encrypted. RustDesk's client sets
-    // this from whether the rendezvous server vouched for a key; this client
-    // always attempts verification on the id path, so it is always set.
-    request.secure = true;
+    // Whether the peer should open with its signed key. As in RustDesk's
+    // client, only when the server vouched for one: without that there is
+    // nothing to check the key against, and `Client::secure` goes in the
+    // clear either way, so asking would only have the peer send a `SignedId`
+    // that is skipped.
+    request.secure = vouched;
     let mut out = RendezvousMessage::new();
     out.set_request_relay(request);
     writer.send(&out)?;
