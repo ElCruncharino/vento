@@ -1,15 +1,26 @@
+# SPDX-FileCopyrightText: 2026 Patrick Gaskin
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Under Gradle this is a root, configured by the NDK toolchain, and makes
+# `libremotedesktop_freerdp.so`: the session and the JNI file over the Android
+# adapter, with the OpenSSL port linked in and FreeRDP's own MediaCodec and
+# OpenSL ES behind its H.264 and sound.
+
 cmake_minimum_required(VERSION 3.30)
 project(remotedesktop_freerdp C)
 
 get_filename_component(THIRD_PARTY "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../../third_party" ABSOLUTE)
+get_filename_component(VENTO_BACKENDS "${CMAKE_CURRENT_SOURCE_DIR}/../../../../.." ABSOLUTE)
 
 if(NOT EXISTS "${THIRD_PARTY}/freerdp/CMakeLists.txt")
     message(FATAL_ERROR "third_party/freerdp is empty — run `git submodule update --init`")
 endif()
 
-include("${CMAKE_CURRENT_SOURCE_DIR}/../../../../../cmake/reproducible.cmake")
-include("${CMAKE_CURRENT_SOURCE_DIR}/../../../../../cmake/warnings.cmake")
-include("${CMAKE_CURRENT_SOURCE_DIR}/../../../../../cmake/vento_jni.cmake")
+# What is baked into the phone's library is pinned so that a build elsewhere
+# matches.
+include("${VENTO_BACKENDS}/cmake/reproducible.cmake")
+include("${VENTO_BACKENDS}/cmake/warnings.cmake")
+include("${VENTO_BACKENDS}/cmake/vento_jni.cmake")
 
 # One shared library per protocol, as every other backend module does, so a
 # build that drops this protocol drops the whole of it. Everything below is
@@ -45,10 +56,11 @@ endmacro()
 # Upstream's own Android build (client/Android/cmake/ExternalFreeRDP.cmake) is
 # where this list comes from, less everything a phone has no use for. Three of
 # them are load-bearing rather than taste: a current OpenSSL keeps RC4, MD4 and
-# MD5 in the legacy provider, which this build does not compile, and RDP needs
-# all three on the wire. The last is ours: JSON is read for Azure sign-in and
-# for keyboard layouts and timezones from files, none of which this build has,
-# and saying so is what stops their configure looking for a parser at all.
+# MD5 in the legacy provider, which neither this build nor a distribution's
+# library loads, and RDP needs all three on the wire. The last is ours: JSON is
+# read for Azure sign-in and for keyboard layouts and timezones from files,
+# none of which this build has, and saying so is what stops their configure
+# looking for a parser at all.
 foreach(off WITHOUT_FREERDP_3x_DEPRECATED WITHOUT_WINPR_3x_DEPRECATED WITH_INTERNAL_RC4
         WITH_INTERNAL_MD4 WITH_INTERNAL_MD5 WITH_SMARTCARD_EMULATE WITH_JSON_DISABLED)
     set(${off} ON CACHE BOOL "" FORCE)
@@ -57,13 +69,18 @@ endforeach()
 # up empty, and that can find the host's copy; off by name is the only answer
 # that does not depend on what the build machine has installed.
 foreach(off WITH_CLIENT_SDL WITH_CLIENT WITH_SERVER WITH_SAMPLE WITH_SHADOW WITH_PROXY
-        WITH_MANPAGES WITH_OPENH264 WITH_FFMPEG WITH_AAD WITH_SWSCALE WITH_CUPS
-        WITH_PCSC WITH_ALSA WITH_PULSE WITH_OSS WITH_KRB5 WITH_WINPR_TOOLS WITH_X11
-        WITH_WAYLAND WITH_DSP_FFMPEG WITH_FUSE WITH_OPUS WITH_URIPARSER)
+        WITH_MANPAGES WITH_AAD WITH_CUPS WITH_PCSC WITH_OSS WITH_KRB5 WITH_WINPR_TOOLS WITH_X11
+        WITH_WAYLAND WITH_FUSE WITH_OPUS WITH_URIPARSER)
     set(${off} OFF CACHE BOOL "" FORCE)
 endforeach()
 set(WITH_CLIENT_COMMON ON CACHE BOOL "" FORCE)
 set(WITH_CLIENT_CHANNELS ON CACHE BOOL "" FORCE)
+
+# The phone's H.264 and sound are the NDK's, which FreeRDP has switches for,
+# so the host's codec and sound libraries are off by name.
+foreach(off WITH_OPENH264 WITH_FFMPEG WITH_SWSCALE WITH_ALSA WITH_PULSE WITH_DSP_FFMPEG)
+    set(${off} OFF CACHE BOOL "" FORCE)
+endforeach()
 
 # The device behind Sound = "This phone": rdpsnd tries OpenSL ES first on
 # Android, and without it the only device left is one that discards every
@@ -106,19 +123,21 @@ endforeach()
 add_subdirectory("${THIRD_PARTY}/freerdp" freerdp EXCLUDE_FROM_ALL)
 remotedesktop_vendored_warnings("${THIRD_PARTY}/freerdp")
 
-# Two halves: the session, which is the shim over FreeRDP's client and names
-# no platform, and the JNI file, which is `FreeRdpNative`'s entry points over
-# the shared Android adapter `vento_jni` brings with it.
-add_library(remotedesktop_freerdp SHARED freerdp_session.c freerdp_jni.c)
-remotedesktop_warnings(remotedesktop_freerdp)
 # Their targets carry no usable include directories under add_subdirectory —
 # their own build puts them on the path globally — so the four are named here:
-# the tree's and, beside each, the one their configure wrote. OpenSSL's are
-# borrowed from the port for the TLS version constants, and as SYSTEM like the
-# rest, because linking the port would put them on the path as ours.
-target_include_directories(remotedesktop_freerdp SYSTEM PRIVATE
+# the tree's and, beside each, the one their configure wrote.
+set(FREERDP_INCLUDES
         "${THIRD_PARTY}/freerdp/include" "${CMAKE_CURRENT_BINARY_DIR}/freerdp/include"
-        "${THIRD_PARTY}/freerdp/winpr/include" "${CMAKE_CURRENT_BINARY_DIR}/freerdp/winpr/include"
+        "${THIRD_PARTY}/freerdp/winpr/include" "${CMAKE_CURRENT_BINARY_DIR}/freerdp/winpr/include")
+
+# Two halves: the session, which is the shim over FreeRDP's client and names
+# no platform, and the JNI file, which is `FreeRdpNative`'s entry points over
+# the shared Android adapter `vento_jni` brings with it. OpenSSL's headers
+# are borrowed from the port for the TLS version constants, and as SYSTEM
+# like the rest, because linking the port would put them on the path as ours.
+add_library(remotedesktop_freerdp SHARED freerdp_session.c freerdp_jni.c)
+remotedesktop_warnings(remotedesktop_freerdp)
+target_include_directories(remotedesktop_freerdp SYSTEM PRIVATE ${FREERDP_INCLUDES}
         "$<TARGET_PROPERTY:openssl,INTERFACE_INCLUDE_DIRECTORIES>")
 target_link_libraries(remotedesktop_freerdp PRIVATE
         freerdp-client freerdp winpr vento_jni jnigraphics log)

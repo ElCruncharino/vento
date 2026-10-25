@@ -1,18 +1,31 @@
+# SPDX-FileCopyrightText: 2026 Patrick Gaskin
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Under Gradle this is a root, configured by the NDK toolchain, and makes
+# `libremotedesktop_tigervnc.so`: the session, the JNI file over the Android
+# adapter, and the phone's two media sinks, with the vendored libjpeg-turbo
+# and pixman and the nettle and GnuTLS ports linked in, since a phone has none
+# of them.
+
 cmake_minimum_required(VERSION 3.30)
 project(remotedesktop_tigervnc CXX C)
 
 get_filename_component(THIRD_PARTY "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../../third_party" ABSOLUTE)
+get_filename_component(VENTO_BACKENDS "${CMAKE_CURRENT_SOURCE_DIR}/../../../../.." ABSOLUTE)
 
-foreach(sub tigervnc pixman libjpeg-turbo)
+set(VENDORED tigervnc pixman libjpeg-turbo)
+foreach(sub ${VENDORED})
     if(NOT EXISTS "${THIRD_PARTY}/${sub}/README.rst" AND NOT EXISTS "${THIRD_PARTY}/${sub}/meson.build"
             AND NOT EXISTS "${THIRD_PARTY}/${sub}/CMakeLists.txt")
         message(FATAL_ERROR "third_party/${sub} is empty — run `git submodule update --init`")
     endif()
 endforeach()
 
-include("${CMAKE_CURRENT_SOURCE_DIR}/../../../../../cmake/reproducible.cmake")
-include("${CMAKE_CURRENT_SOURCE_DIR}/../../../../../cmake/warnings.cmake")
-include("${CMAKE_CURRENT_SOURCE_DIR}/../../../../../cmake/vento_jni.cmake")
+# What is baked into the phone's library is pinned so that a build elsewhere
+# matches.
+include("${VENTO_BACKENDS}/cmake/reproducible.cmake")
+include("${VENTO_BACKENDS}/cmake/warnings.cmake")
+include("${VENTO_BACKENDS}/cmake/vento_jni.cmake")
 
 # One shared library per protocol, as every other backend module does, so a
 # build that drops this protocol drops the whole of it. Everything below is
@@ -51,12 +64,12 @@ endif()
 add_subdirectory("${THIRD_PARTY}/libjpeg-turbo" libjpeg-turbo EXCLUDE_FROM_ALL)
 
 # TigerVNC's own root CMakeLists is not usable here — it requires X11 on
-# anything that is UNIX and not APPLE, which Android is, and finds everything
-# else it wants with find_package — so this build takes `common/` on its own,
-# answers the variables its sub-projects read, and writes the config.h their
-# sources include. That is the whole adaptation: their build files need no
-# patch, and the one source line of theirs that does is the branch that picks
-# an H.264 decoder context.
+# anything that is UNIX and not APPLE, which Android is, and it builds a
+# viewer and a server this build has no use for either — so this build takes
+# `common/` on its own, answers the variables its sub-projects read, and
+# writes the config.h their sources include. That is the whole adaptation:
+# their build files need no patch, and the one source line of theirs that does
+# is the branch that picks an H.264 decoder context.
 set(VERSION "unknown")
 file(READ "${THIRD_PARTY}/tigervnc/CMakeLists.txt" _tigervnc_cmake)
 if(_tigervnc_cmake MATCHES "set\\(VERSION ([0-9][0-9.]*)\\)")
@@ -72,7 +85,7 @@ set(BUILD_TIMESTAMP "0")
 # find_package, which sets the four variables below, and then HAVE_NETTLE for
 # config.h; this build has it as a subdirectory, so it answers all five
 # directly and skips the search.
-add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../../../../ports/nettle" nettle)
+add_subdirectory("${VENTO_BACKENDS}/ports/nettle" nettle)
 set(NETTLE_FOUND TRUE)
 set(NETTLE_LIBRARIES nettle)
 set(HOGWEED_LIBRARIES hogweed)
@@ -82,7 +95,7 @@ set(HAVE_NETTLE 1)
 # GnuTLS, which is the only thing their VeNCrypt is written against, answered
 # the same way. Their find module also sets GNUTLS_INCLUDE_DIR, which the
 # target carries for us.
-add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../../../../ports/gnutls" gnutls)
+add_subdirectory("${VENTO_BACKENDS}/ports/gnutls" gnutls)
 set(GNUTLS_FOUND TRUE)
 set(GNUTLS_LIBRARIES gnutls)
 set(GNUTLS_INCLUDE_DIR "")
@@ -98,10 +111,10 @@ set(PIXMAN_INCLUDE_DIRS "${THIRD_PARTY}/pixman/pixman" "${CMAKE_CURRENT_BINARY_D
 # Windows' Media Foundation — and this one has a third. Their
 # `common/rfb/CMakeLists.txt` compiles the decoder itself whenever ENABLE_H264
 # is on and adds either of theirs only where it found FFmpeg or is building for
-# Windows, neither of which is true here; the context class is in this
-# directory, H264_ANDROID is what selects it, and the six lines that do are the
-# one patch it takes. HAVE_LIBAV stays unset, since that is what would ask for
-# FFmpeg's.
+# Windows, neither of which is true here; the context class is under
+# `backends/platform/android/tigervnc`, H264_ANDROID is what selects it, and
+# the six lines that do are the one patch it takes. HAVE_LIBAV stays unset,
+# since that is what would ask for FFmpeg's.
 #
 # So the whole of H.264 here is the platform's own decoder through the NDK's C
 # API: nothing vendored, nothing added to the APK, and it runs on the hardware
@@ -115,7 +128,8 @@ set(H264_LIBRARIES mediandk)
 # is not in bionic, so every message stays in English and their no-NLS branch
 # makes `_()` the identity; and audio is their viewer's own PulseAudio or
 # waveOut sink, which is not compiled here — the protocol half of it is in
-# `common/` whatever this says, and the sink is AndroidAudioOutput.
+# `common/` whatever this says, and the sink is the platform's behind
+# `AudioOutput.h`.
 configure_file("${THIRD_PARTY}/tigervnc/config.h.in" "${CMAKE_CURRENT_BINARY_DIR}/config.h")
 add_definitions(-DHAVE_CONFIG_H)
 
@@ -126,23 +140,27 @@ add_definitions(-DHAVE_CONFIG_H)
 add_library(pthread INTERFACE)
 
 # Their sub-projects put their own tree on the include path as
-# `${CMAKE_SOURCE_DIR}/common`, which under this build is a directory that does
-# not exist — a stale -I and nothing worse, as long as the real one is here.
-# libtool control files are for the autotools half of their build, of which
-# there is none here.
+# `${CMAKE_SOURCE_DIR}/common`, which under the Gradle build is a directory
+# that does not exist — a stale -I and nothing worse, as long as the real one
+# is here. The platform's own sources go on the path too, for the H.264 branch
+# of theirs that includes the Android context by name. libtool control files
+# are for the autotools half of their build, of which there is none here.
 include_directories("${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}")
+include_directories("${VENTO_BACKENDS}/platform/android/tigervnc")
 include_directories(SYSTEM "${THIRD_PARTY}/tigervnc/common")
 macro(libtool_create_control_file)
 endmacro()
 add_subdirectory("${THIRD_PARTY}/tigervnc/common" tigervnc-common EXCLUDE_FROM_ALL)
+remotedesktop_vendored_warnings("${THIRD_PARTY}/tigervnc/common")
 
 # Two halves and the two media sinks: the session, which is the shim over
-# TigerVNC's client and names no platform but those sinks; the JNI file, which
-# is `TigerVncNative`'s entry points over the shared Android adapter
+# TigerVNC's client and names no platform; the JNI file, which is
+# `TigerVncNative`'s entry points over the shared Android adapter
 # `vento_jni` brings with it; and the H.264 context and audio output the
-# phone's own decoders stand behind.
+# phone's own decoders stand behind, from `backends/platform/android`.
 add_library(remotedesktop_tigervnc SHARED tigervnc_session.cxx tigervnc_jni.cxx
-        H264AndroidDecoderContext.cxx AndroidAudioOutput.cxx)
+        "${VENTO_BACKENDS}/platform/android/tigervnc/H264AndroidDecoderContext.cxx"
+        "${VENTO_BACKENDS}/platform/android/tigervnc/AndroidAudioOutput.cxx")
 remotedesktop_warnings(remotedesktop_tigervnc)
 # gnutls by name as well as through theirs: the certificate check is the
 # shim's now, and it calls the known-hosts functions itself.

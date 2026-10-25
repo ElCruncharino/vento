@@ -1,15 +1,26 @@
+# SPDX-FileCopyrightText: 2026 Patrick Gaskin
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Under Gradle this is a root, configured by the NDK toolchain, and makes
+# `libremotedesktop_libvnc.so`: the session and the JNI file over the Android
+# adapter, with the vendored libjpeg-turbo and the GnuTLS port linked in, since
+# a phone has neither.
+
 cmake_minimum_required(VERSION 3.30)
 project(remotedesktop_libvnc C)
 
 get_filename_component(THIRD_PARTY "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../../third_party" ABSOLUTE)
+get_filename_component(VENTO_BACKENDS "${CMAKE_CURRENT_SOURCE_DIR}/../../../../.." ABSOLUTE)
 
 if(NOT EXISTS "${THIRD_PARTY}/libvncserver/CMakeLists.txt")
     message(FATAL_ERROR "third_party/libvncserver is empty — run `git submodule update --init`")
 endif()
 
-include("${CMAKE_CURRENT_SOURCE_DIR}/../../../../../cmake/reproducible.cmake")
-include("${CMAKE_CURRENT_SOURCE_DIR}/../../../../../cmake/warnings.cmake")
-include("${CMAKE_CURRENT_SOURCE_DIR}/../../../../../cmake/vento_jni.cmake")
+# What is baked into the phone's library is pinned so that a build elsewhere
+# matches.
+include("${VENTO_BACKENDS}/cmake/reproducible.cmake")
+include("${VENTO_BACKENDS}/cmake/warnings.cmake")
+include("${VENTO_BACKENDS}/cmake/vento_jni.cmake")
 
 # One shared library per protocol, as every other backend module does, so a
 # build that drops this protocol drops the whole of it. Everything below is
@@ -32,8 +43,9 @@ endmacro()
 # that abort the app, and a measurement build is not where they should fire.
 string(APPEND CMAKE_C_FLAGS_DEBUG " -O2 -DNDEBUG")
 
-# Shims find_package(JPEG) onto the in-tree libjpeg-turbo below; prepended so it
-# wins over the copy CMake ships, which would probe the host.
+# Shims find_package(JPEG) and find_package(GnuTLS) onto the in-tree
+# libjpeg-turbo and the port below; prepended so they win over the copies
+# CMake ships, which would probe the host.
 list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 # libjpeg-turbo, for Tight — the encoding this backend exists to have. The SIMD
@@ -57,7 +69,7 @@ include_directories(
 # GnuTLS, which is one of the two libraries libvncclient reaches TLS through
 # and the one TigerVNC's client requires — so the port is built once and used
 # by both. `find_package(GnuTLS)` above finds the shim beside FindJPEG's.
-add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../../../../ports/gnutls" gnutls)
+add_subdirectory("${VENTO_BACKENDS}/ports/gnutls" gnutls)
 
 # LibVNCServer, of which we build the client half only.
 set(WITH_LIBVNCSERVER OFF CACHE BOOL "" FORCE)
@@ -65,6 +77,8 @@ set(WITH_LIBVNCCLIENT ON CACHE BOOL "" FORCE)
 set(WITH_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(WITH_TESTS OFF CACHE BOOL "" FORCE)
 set(LIBVNCSERVER_INSTALL OFF CACHE BOOL "" FORCE)
+set(WITH_ZLIB ON CACHE BOOL "" FORCE)
+set(WITH_JPEG ON CACHE BOOL "" FORCE)
 set(WITH_OPENSSL OFF CACHE BOOL "" FORCE)
 set(WITH_GNUTLS ON CACHE BOOL "" FORCE)
 set(WITH_GCRYPT OFF CACHE BOOL "" FORCE)
@@ -81,13 +95,18 @@ set(WITH_LIBSSHTUNNEL OFF CACHE BOOL "" FORCE)
 set(WITH_WEBSOCKETS OFF CACHE BOOL "" FORCE)
 set(WITH_TIGHTVNC_FILETRANSFER OFF CACHE BOOL "" FORCE)
 add_subdirectory("${THIRD_PARTY}/libvncserver" libvncserver EXCLUDE_FROM_ALL)
+remotedesktop_vendored_warnings("${THIRD_PARTY}/libvncserver")
+
+# Their target carries no include directories of its own — their build puts
+# the tree on the path globally — so the two are named here, as SYSTEM.
+set(LIBVNC_INCLUDES
+        "${THIRD_PARTY}/libvncserver/include"
+        "${CMAKE_CURRENT_BINARY_DIR}/libvncserver/include")
 
 # Two halves: the session, which is the shim over libvncclient and names no
 # platform, and the JNI file, which is `LibVncNative`'s entry points over the
 # shared Android adapter `vento_jni` brings with it.
 add_library(remotedesktop_libvnc SHARED libvnc_session.c libvnc_jni.c)
 remotedesktop_warnings(remotedesktop_libvnc)
-target_include_directories(remotedesktop_libvnc SYSTEM PRIVATE
-        "${THIRD_PARTY}/libvncserver/include"
-        "${CMAKE_CURRENT_BINARY_DIR}/libvncserver/include")
+target_include_directories(remotedesktop_libvnc SYSTEM PRIVATE ${LIBVNC_INCLUDES})
 target_link_libraries(remotedesktop_libvnc PRIVATE vncclient vento_jni jnigraphics log)
