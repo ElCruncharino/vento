@@ -22,13 +22,13 @@ mod ffi {
 
 pub static KIND: Kind = Kind {
     about: &api::catalog::LIBVNC,
-    version: || unsafe { api::c::string(ffi::vento_libvnc_version()) },
-    create,
+    version: || LIBRARY.version(|c| unsafe { api::c::string(api::call!(c, ffi::vento_libvnc_version())) }),
+    create: api::create_if_loaded!(LIBRARY, "LibVNC", create),
     forget: None,
 };
 
 // The phone's library: this backend, registered on the module's generated
-// natives class. Android only — the host links the C as a library of its own.
+// natives class. Android only — the host opens the C as a library of its own.
 #[cfg(target_os = "android")]
 platform_android::natives!(
     class = c"net/pgaskin/remotedesktop/backend/libvnc/LibVncNatives",
@@ -90,7 +90,7 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
     let backend = start(
         c,
         &BEHAVIOUR,
-        |callbacks| unsafe { ffi::vento_libvnc_create(&config, callbacks) },
+        |callbacks| unsafe { api::call!(LIBRARY.loaded(), ffi::vento_libvnc_create(&config, callbacks)) },
         None,
     )?;
     backend.set_view_only(o.bool("ViewOnly"));
@@ -105,12 +105,12 @@ fn set_option(session: &CSession, o: &Options, key: &str) {
     if matches!(key, "Encoding" | "Compression" | "Quality") {
         let encoding = CString::new(encodings(o.get("Encoding"))).unwrap_or_default();
         unsafe {
-            ffi::vento_libvnc_set_encodings(
+            api::call!(LIBRARY.loaded(), ffi::vento_libvnc_set_encodings(
                 session.session,
                 encoding.as_ptr(),
                 level(o.get("Compression")),
                 level(o.get("Quality")),
-            )
+            ))
         }
     }
 }
@@ -133,3 +133,17 @@ fn info(s: &[String], traffic: Option<Traffic>) -> Vec<ConnectionFact> {
     facts.push(ConnectionFact::diagnostic(Field::ViewerPixels, "Viewer pixels", &s[6]));
     facts
 }
+
+/// The library the C is in: on the Linux client `libvento_libvnc.so`, opened the
+/// first time anything asks, so that one that cannot be loaded makes this
+/// backend not available rather than stopping the client from starting; on
+/// the phone, linked into the same library as this crate.
+#[cfg(target_os = "linux")]
+static LIBRARY: api::c::library::Library<ffi::Library> = api::c::library::Library::new(
+    "libvento_libvnc.so",
+    "vento/libvnc.h",
+    api::c::library::Scope::Local,
+    ffi::Library::from_library,
+);
+#[cfg(not(target_os = "linux"))]
+static LIBRARY: api::c::library::Linked = api::c::library::Linked;

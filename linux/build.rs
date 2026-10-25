@@ -5,8 +5,7 @@
 //! `VENTO_SHARED` on. (The declarations of `vento/backend.h` are read into
 //! Rust by `remotedesktop-api`'s own build script, under its `c`
 //! feature, and each backend's own header by its crate's; the backends'
-//! crates link nothing, so the libraries are made here, and three of them
-//! linked into the binary.)
+//! crates link nothing, so the libraries are made here.)
 //!
 //! The host build already existed — it is what the C probes are built on,
 //! with `-DVENTO_PROBES=ON` — and this runs the same file through the `cmake`
@@ -14,8 +13,10 @@
 //! `vento_<name>` a shared library carrying its vendored static dependencies
 //! and the stderr `vento_log`. The probes are left at their default, off:
 //! nothing here runs them. The `.so` files land under `lib/` in the CMake
-//! tree and the binary links the three open backends' by name and nothing
-//! else of theirs.
+//! tree, and the binary links none of them: each backend's crate opens its
+//! own by name the first time it is asked for (`api::c::library`), so that a
+//! library that cannot be loaded makes that one backend not available
+//! rather than stopping the binary from starting.
 //!
 //! **Where they are found: `$ORIGIN/lib`.** The installed layout is the
 //! binary with a `lib/` directory beside it holding every `libvento_*.so`,
@@ -34,12 +35,11 @@
 //! RealVNC's hosting layer builds only under clang, so where `clang` is on the
 //! path both compilers are set to it for the whole tree — the three open
 //! backends build under either — and where it is not, the CMake root skips
-//! that module with a message rather than an error. Its library is not linked
-//! either way: `remotedesktop-realvnc` opens it by name when a session asks
-//! for it, through the same rpath (a `dlopen` from the binary searches the
-//! binary's), and says the backend is not available where
-//! it is not there — a library this script may or may not make could not be
-//! a feature of a crate built before it runs.
+//! that module with a message rather than an error. `remotedesktop-realvnc`
+//! opens it as the others are opened, through the same rpath (a `dlopen` from
+//! the binary searches the binary's), and says the backend is not available
+//! where it is not there — a library this script may or may not make could
+//! not be a feature of a crate built before it runs.
 //!
 //! That choice is made again whenever `PATH`, `CC` or `CXX` changes, and a
 //! tree configured for other compilers is thrown away and configured afresh:
@@ -97,15 +97,15 @@ fn main() {
     );
 
     let lib = build_c_backends(&backends, &out, &ffmpeg);
-    println!("cargo:rustc-link-search=native={}", lib.display());
     // The rpath (see the module's comment). Passed to the linker as written,
     // with no shell between, so `$ORIGIN` reaches the binary as the loader
     // wants it.
     println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/lib:$ORIGIN/../lib");
+    // The three open backends' libraries are made by every build: the binary
+    // runs without one, but a build that lost one is broken.
     for name in ["libvnc", "tigervnc", "freerdp"] {
         let path = lib.join(format!("libvento_{name}.so"));
         assert!(path.is_file(), "the C build did not produce {}", path.display());
-        println!("cargo:rustc-link-lib=dylib=vento_{name}");
     }
     beside_the_binary(&lib, &out);
     if lib.join("libvento_realvnc.so").is_file() {

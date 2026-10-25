@@ -51,12 +51,15 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
   `probe` feature), or the small adapter over the C library for the other
   four, whose `build.rs` reads the backend's header into Rust with bindgen.
   Every backend's adapter is in its module; no client holds one of its own.
-  RealVNC's crate is the Linux client's alone (the phone's RealVNC backend
-  is its Java) and empty on any other target, and it opens its library,
-  `libvento_realvnc.so`, at run time rather than linking it: the library is
-  built only under clang, which the client's build finds out after the
-  crate is compiled, so the backend is always listed and says it is not
-  available where the library was not built.
+  On Linux the four C backends' crates open their libraries,
+  `libvento_<name>.so`, at run time rather than linking them
+  (`api::c::library`, over the table of the header's functions bindgen
+  generates there), so a library that cannot be loaded is one backend that
+  is listed and says it is not available while the client starts with the
+  rest; on the phone the C is linked into the module's library. RealVNC's
+  crate is the Linux client's alone (the phone's RealVNC backend is its
+  Java) and empty on any other target; its library is built only under
+  clang.
 - `cpp/` (the four C backends) — the C/C++ session over the upstream
   library, its CMake for both builds, the host probe's `main`
   (`-DVENTO_PROBES=ON`), and `include/vento/<name>.h`, the backend's own C

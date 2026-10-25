@@ -137,7 +137,7 @@ else()
     # left to the platform — the probe's `vento_linux`, or the library's own
     # copy of it under VENTO_SHARED (vento_linux.cmake). The hosting layer's
     # headers are its own and not on the interface.
-    vento_backend_library(vento_realvnc realvnc_session.cxx
+    vento_backend_library(vento_realvnc GLOBAL realvnc_session.cxx
             host/DesktopCore.cxx host/Loader.cxx host/Looper.cxx host/Classes.cxx host/Files.cxx)
     target_compile_features(vento_realvnc PRIVATE cxx_std_17)
     target_include_directories(vento_realvnc PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}"

@@ -19,7 +19,7 @@ fn main() {
     println!("cargo:rerun-if-changed={}", own.display());
     println!("cargo:rerun-if-changed={}", shared.display());
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
-    bindgen::Builder::default()
+    let builder = bindgen::Builder::default()
         .header_contents("libvnc.h", "#include <vento/libvnc.h>\n")
         .clang_arg(format!("-I{}", own.display()))
         .clang_arg(format!("-I{}", shared.display()))
@@ -27,7 +27,23 @@ fn main() {
         .allowlist_item("VENTO_LIBVNC_.*")
         .allowlist_recursively(false)
         .derive_default(true)
-        .layout_tests(false)
+        .layout_tests(false);
+    // On the Linux client the library is opened at run time
+    // (`api::c::library`), so its functions are a table looked up in it
+    // rather than extern declarations a link has to satisfy, every one of them
+    // required; on the phone the C is linked into the same library as this
+    // crate.
+    let builder = if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
+        builder
+            .dynamic_library_name("Library")
+            .dynamic_link_require_all(true)
+            // The table's calls in `unsafe` blocks of their own, which
+            // edition 2024 asks of an `unsafe fn`'s body.
+            .wrap_unsafe_ops(true)
+    } else {
+        builder
+    };
+    builder
         .generate()
         .expect("bindgen over vento/libvnc.h")
         .write_to_file(out.join("bindings.rs"))

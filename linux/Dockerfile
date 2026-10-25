@@ -133,8 +133,10 @@ RUN for dir in patches/*/; do \
 # Build, then copy the tree out of target/release/ (linux/build.rs lays it
 # out there) and strip the libraries' debug information (the C backends are
 # built RelWithDebInfo). Check the copy: the relative rpath, no library
-# missing with LD_LIBRARY_PATH unset, the backends resolved in the tree's own
-# lib/. Print the newest glibc and libstdc++ symbol versions each file needs.
+# missing with LD_LIBRARY_PATH unset, and every backend available in
+# `vento --list`, which opens each backend's library from the tree's own lib/
+# (the binary does not link them). Print the newest glibc and libstdc++
+# symbol versions each file needs.
 # The tools are LLVM's, since 18.04's binutils cannot read clang 18's DWARF 5.
 RUN cd linux \
     && RUSTUP_TOOLCHAIN=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' /src/rust-toolchain.toml) \
@@ -147,7 +149,9 @@ RUN cd linux \
     && for file in /out/vento /out/lib/*.so; do \
            ! ldd "$file" | grep 'not found' || { echo "error: $file" >&2; exit 1; }; \
        done \
-    && ! ldd /out/vento | grep libvento_ | grep -v '=> /out/lib/' \
+    && /out/vento --list > /tmp/backends \
+    && grep -E '^[a-z]+  [A-Z]' /tmp/backends \
+    && ! grep 'not available' /tmp/backends \
     && for file in /out/vento /out/lib/*.so; do \
            echo "$file: $(llvm-objdump -T "$file" | grep -oE 'GLIBC_[0-9.]+' | sort -uV | tail -1)" \
                 "$(llvm-objdump -T "$file" | grep -oE 'GLIBCXX_[0-9.]+' | sort -uV | tail -1)"; \

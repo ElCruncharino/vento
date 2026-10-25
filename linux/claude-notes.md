@@ -391,9 +391,10 @@ cargo run -- rdp 127.0.0.1:3389 --user proto --password protopass \
 
 `build.rs` runs `backends/CMakeLists.txt` with `-DVENTO_SHARED=ON`, which makes
 each backend a `libvento_<name>.so` carrying its vendored static dependencies
-and the stderr logger; the binary links the three open backends' by name, and
-RealVNC's crate opens `libvento_realvnc.so` by name when a session first needs
-it. Both find them through the binary's rpath, **`$ORIGIN/lib`**: the `lib/`
+and the stderr logger. The binary links none of them: each backend's crate
+opens its library by name the first time it is needed (see *Backend
+libraries* under *Installing*). It finds them through the binary's rpath,
+**`$ORIGIN/lib`**: the `lib/`
 directory beside the binary, wherever that is. `build.rs` lays the target
 directory out that way, the libraries hard-linked into
 `target/<profile>/lib/` beside `target/<profile>/vento`, so `cargo run` works
@@ -428,8 +429,9 @@ limits what is sent), applies `patches/` to submodules still at their pinned
 commits, runs `cargo build --release --locked` (which downloads the GnuTLS
 and nettle tarballs and checks their SHA-256; the context leaves out any
 unpacked in the checkout), strips the libraries' debug information, and
-checks the tree with `readelf` and `ldd`: the relative rpath, no library
-missing, the backends resolved in the tree's own `lib/`.
+checks the tree: the relative rpath (`readelf`), no library missing (`ldd` on
+the binary and each library), and every backend available in `vento --list`,
+which opens each library from the tree's own `lib/`.
 It writes nothing to the checkout. A build from scratch takes about nine
 and a half minutes on eight cores (the toolchain about a minute and a half
 of it, cached after the first build; GnuTLS and nettle about a minute and a
@@ -451,11 +453,24 @@ glibc (2.27 or later for the Dockerfile's tree), zlib, and per backend:
 (its UTF-16 conversion is WinPR's own, not ICU's); **realvnc** libstdc++
 (and libatomic, where the build's compiler had no static one).
 libjpeg-turbo, pixman, GnuTLS, nettle and OpenSSL are inside the
-libraries. A backend's library that cannot be loaded stops the binary from
-starting (RealVNC's excepted, which is opened at run time and says it is not
-available). Loaded at run time where they are there, and not needed
+libraries. Loaded at run time where they are there, and not needed
 otherwise: libpipewire-0.3 and libasound (sound), libva and libva-drm
 (hardware decoding), and the display stack (Vulkan or GL, Wayland or X11).
+
+**Backend libraries.** The binary does not link the backends' libraries: each
+backend's crate opens its own (`api::c::library`) the first time it is
+needed, with every symbol bound then (`RTLD_NOW`). A library that cannot be
+loaded (the file missing, a library it needs missing or too old, a file of
+another build) makes that one backend not available, and the binary starts
+and runs the others. The backend is still listed: `--list` opens every
+library to show its version, or `not available: <reason>` with the loader's
+reason, and a session on it, from the command line or the connection dialog,
+fails to start with "<backend> is not available: <reason>". A window opens
+only the library of the backend it connects with, when it connects. A library
+stays open once opened. The three open backends' libraries are opened with
+their symbols kept to themselves (`RTLD_LOCAL`) and are linked with
+`-Bsymbolic`, so that each calls its own `vento_log`; RealVNC's is opened
+into the global scope, which its hosting layer needs.
 
 The probe answers the first credentials prompt with `--password` and a second
 with a cancel, since a second prompt is the far end refusing the first answer
@@ -1585,11 +1600,12 @@ RealVNC's viewer core is proprietary and nothing of it is in this repository.
 Its adapter is the `remotedesktop-realvnc` crate in `backends/modules/realvnc`,
 and its library, `libvento_realvnc.so` (the session and the hosting layer that
 runs the viewer's Android core in this process), is built only when `clang` is
-on `PATH`. The crate does not link it: it opens it by name, through the rpath
-(`lib/` beside the binary), the first time a session or `--list` asks, so the binary does not depend on
-it. Without clang the build says so in a note, the backend is still listed,
-`--list` shows it as `not available: …` with the reason, and a session on it
-fails to start with that sentence. The next `cargo build` after `PATH` changes
+on `PATH`. The crate opens it as the other backends' are opened (*Backend
+libraries* under *Installing*), through the rpath (`lib/` beside the
+binary), the first time a session or `--list` asks. Without clang the build
+says so in a note, the backend is still listed, `--list` shows it as `not
+available: …` with the reason, and a session on it fails to start with that
+sentence. The next `cargo build` after `PATH` changes
 (clang installed, say) looks again, and when the answer differs the C tree is
 configured afresh with the other compilers, so nothing has to be cleaned by
 hand. To use it, take

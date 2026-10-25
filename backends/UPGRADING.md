@@ -187,11 +187,14 @@ under the host locale (`export LC_ALL=C`).
   and on the phone it is linked into the module's library as a static
   library (`rustStaticLibrary` in `backends/build.gradle`,
   `backends/platform/android/cmake/vento_android.cmake`) with the one JNI layer in
-  `backends/platform/android`. RealVNC's crate is the Linux client's alone
-  (the phone's RealVNC backend is its Java over the viewer's JNI) and opens
-  `libvento_realvnc.so` at run time through the loader its `build.rs` has
-  bindgen generate, since the library is built only under clang; a function
-  added to `vento/realvnc.h` is one more the loader requires. An upstream
+  `backends/platform/android`. On Linux the crate opens
+  `libvento_<name>.so` at run time (`api::c::library`) through the table
+  its `build.rs` has bindgen generate there, and calls the header's
+  functions with `api::call!`, which is the extern declaration on the phone;
+  a function added to `vento/<name>.h` is one more the table requires, so a
+  library without it is "not available". RealVNC's crate is the Linux
+  client's alone (the phone's RealVNC backend is its Java over the viewer's
+  JNI), and its library is built only under clang. An upstream
   change reaches the session file;
   the crate changes only when the config does, and so does `<name>_probe.c`,
   the host probe's `main` beside them. The module's
@@ -303,7 +306,8 @@ line or one file somewhere that already has seven:
 - **The Linux client.** The crate in `linux/Cargo.toml` and its `KIND` in
   `linux/src/backends/mod.rs`'s `all()`; a C module also goes into
   `backends/CMakeLists.txt`, which `linux/build.rs` builds, and into the
-  lists of directories and libraries there that it watches and links.
+  lists of directories and libraries there that it watches and puts in
+  `lib/`.
 - **The phone's library.** One `platform_android::natives!` line in the
   crate's `lib.rs` under `cfg(target_os = "android")`, naming the module's
   natives class and the `Kind` (`decoders =` for a backend whose picture is

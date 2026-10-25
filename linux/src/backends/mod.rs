@@ -51,10 +51,11 @@ pub fn audio(title: &str, output: AudioOutput) -> Arc<Audio> {
     Arc::new(Audio::new(title, output))
 }
 
-/// Every backend this binary has, in the picker's order. RealVNC's is
-/// always among them; where `build.rs` had no clang to build its library
-/// with, its version says it is not available and a session on it fails to
-/// start with the same sentence.
+/// Every backend this binary has, in the picker's order. The C backends are
+/// always among them, since their libraries are opened only when first
+/// asked for: where one cannot be loaded (RealVNC's where `build.rs` had no
+/// clang to build it with, say), its version says it is not available and a
+/// session on it fails to start with the same sentence.
 pub fn all() -> Vec<&'static Kind> {
     vec![
         &remotedesktop_rfb::backend::KIND,

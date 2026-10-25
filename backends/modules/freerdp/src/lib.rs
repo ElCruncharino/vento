@@ -29,13 +29,13 @@ mod ffi {
 
 pub static KIND: Kind = Kind {
     about: &api::catalog::FREERDP,
-    version: || unsafe { api::c::string(ffi::vento_freerdp_version()) },
-    create,
+    version: || LIBRARY.version(|c| unsafe { api::c::string(api::call!(c, ffi::vento_freerdp_version())) }),
+    create: api::create_if_loaded!(LIBRARY, "FreeRDP", create),
     forget: None,
 };
 
 // The phone's library: this backend, registered on the module's generated
-// natives class. Android only — the host links the C as a library of its own.
+// natives class. Android only — the host opens the C as a library of its own.
 // The session is handed AAudio as its sound output, which the server's sound
 // plays on through the module's rdpsnd device.
 //
@@ -143,7 +143,7 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
             if let Some(audio) = &audio {
                 config.audio = audio;
             }
-            unsafe { ffi::vento_freerdp_create(&config, callbacks) }
+            unsafe { api::call!(LIBRARY.loaded(), ffi::vento_freerdp_create(&config, callbacks)) }
         },
         None,
     )?;
@@ -156,7 +156,7 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
 /// connection sequence, which has already happened.
 fn set_option(session: &CSession, o: &Options, key: &str) {
     if key == "Monitors" {
-        unsafe { ffi::vento_freerdp_set_monitor_count(session.session, monitor_count(o) as i32) }
+        unsafe { api::call!(LIBRARY.loaded(), ffi::vento_freerdp_set_monitor_count(session.session, monitor_count(o) as i32)) }
     }
 }
 
@@ -180,3 +180,17 @@ fn info(s: &[String], traffic: Option<Traffic>) -> Vec<ConnectionFact> {
     facts.push(ConnectionFact::diagnostic(Field::ViewerPixels, "Viewer pixels", &s[6]));
     facts
 }
+
+/// The library the C is in: on the Linux client `libvento_freerdp.so`, opened the
+/// first time anything asks, so that one that cannot be loaded makes this
+/// backend not available rather than stopping the client from starting; on
+/// the phone, linked into the same library as this crate.
+#[cfg(target_os = "linux")]
+static LIBRARY: api::c::library::Library<ffi::Library> = api::c::library::Library::new(
+    "libvento_freerdp.so",
+    "vento/freerdp.h",
+    api::c::library::Scope::Local,
+    ffi::Library::from_library,
+);
+#[cfg(not(target_os = "linux"))]
+static LIBRARY: api::c::library::Linked = api::c::library::Linked;

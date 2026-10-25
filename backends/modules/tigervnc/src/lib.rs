@@ -31,13 +31,13 @@ mod ffi {
 
 pub static KIND: Kind = Kind {
     about: &api::catalog::TIGERVNC,
-    version: || unsafe { api::c::string(ffi::vento_tigervnc_version()) },
-    create,
+    version: || LIBRARY.version(|c| unsafe { api::c::string(api::call!(c, ffi::vento_tigervnc_version())) }),
+    create: api::create_if_loaded!(LIBRARY, "TigerVNC", create),
     forget: None,
 };
 
 // The phone's library: this backend, registered on the module's generated
-// natives class. Android only — the host links the C as a library of its own.
+// natives class. Android only — the host opens the C as a library of its own.
 // MediaCodec is what decodes its H.264 there, through the same table as the
 // Linux client's FFmpeg (see `create`), and AAudio is what plays its sound,
 // through the same table as the Linux client's PipeWire or ALSA.
@@ -139,7 +139,7 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
             if let Some(audio) = &audio {
                 config.audio_output = audio;
             }
-            unsafe { ffi::vento_tigervnc_create(&config, callbacks) }
+            unsafe { api::call!(LIBRARY.loaded(), ffi::vento_tigervnc_create(&config, callbacks)) }
         },
         None,
     )?;
@@ -153,14 +153,14 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
 fn set_option(session: &CSession, o: &Options, key: &str) {
     if matches!(key, "Encoding" | "Compression" | "Quality" | "ColorLevel" | "H264") {
         unsafe {
-            ffi::vento_tigervnc_set_picture(
+            api::call!(LIBRARY.loaded(), ffi::vento_tigervnc_set_picture(
                 session.session,
                 encoding(o.get("Encoding")),
                 level(o.get("Compression")),
                 quality(o.get("Quality")),
                 colour(o.get("ColorLevel")),
                 o.bool("H264"),
-            )
+            ))
         }
     }
 }
@@ -184,3 +184,17 @@ fn info(s: &[String], traffic: Option<Traffic>) -> Vec<ConnectionFact> {
     facts.push(ConnectionFact::diagnostic(Field::ViewerPixels, "Viewer pixels", &s[7]));
     facts
 }
+
+/// The library the C is in: on the Linux client `libvento_tigervnc.so`, opened the
+/// first time anything asks, so that one that cannot be loaded makes this
+/// backend not available rather than stopping the client from starting; on
+/// the phone, linked into the same library as this crate.
+#[cfg(target_os = "linux")]
+static LIBRARY: api::c::library::Library<ffi::Library> = api::c::library::Library::new(
+    "libvento_tigervnc.so",
+    "vento/tigervnc.h",
+    api::c::library::Scope::Local,
+    ffi::Library::from_library,
+);
+#[cfg(not(target_os = "linux"))]
+static LIBRARY: api::c::library::Linked = api::c::library::Linked;

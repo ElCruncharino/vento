@@ -25,7 +25,7 @@
 # library per backend, `libvento_<name>.so` under `lib/` in the build tree,
 # carrying its vendored static dependencies and the stderr `vento_log`, so that
 # a process written in something other than C — the Rust client under `linux/`
-# — links the four by name and nothing else of theirs. Off, and each backend
+# — opens the four by name at run time and nothing else of theirs. Off, and each backend
 # is the static library the probes are built on, which is what it was.
 # `vento_backend_library` and `vento_backend_probe` are the two helpers that
 # know the difference, so that a module's host branch does not.
@@ -60,8 +60,12 @@ endif()
 # built on hidden (`--exclude-libs`), so that what it exports is the C API in
 # `vento/<name>.h` and `vento_log` — four of these in one process must not
 # interpose on each other's copies of a library — and all four put in one
-# `lib/` directory for a consumer to point an rpath at. The module still adds
-# its own includes and the libraries it stands on afterwards, through
+# `lib/` directory for a consumer to point an rpath at. Its references to what
+# it exports bind to its own definitions (`-Bsymbolic`): the client opens it
+# with its symbols kept local but RealVNC's into the global scope, which a
+# lookup searches first and which exports a `vento_log` and some of the same
+# C++ template code too. `GLOBAL` leaves that out, for RealVNC's. The module
+# still adds its own includes and the libraries it stands on afterwards, through
 # `${VENTO_BACKEND_LINK}`: PUBLIC for a static library, whose probe has to
 # link them too, and PRIVATE for a shared one, which already holds them.
 # `VENTO_FFMPEG_PREFIX`: the FFmpeg to link, as the static libraries the
@@ -110,13 +114,17 @@ else()
 endif()
 
 function(vento_backend_library name)
+    cmake_parse_arguments(PARSE_ARGV 1 _backend "GLOBAL" "" "")
     if(VENTO_SHARED)
-        add_library(${name} SHARED ${ARGN})
+        add_library(${name} SHARED ${_backend_UNPARSED_ARGUMENTS})
         target_link_libraries(${name} PRIVATE vento_linux)
         target_link_options(${name} PRIVATE "LINKER:--exclude-libs,ALL")
+        if(NOT _backend_GLOBAL)
+            target_link_options(${name} PRIVATE "LINKER:-Bsymbolic")
+        endif()
         set_target_properties(${name} PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
     else()
-        add_library(${name} STATIC ${ARGN})
+        add_library(${name} STATIC ${_backend_UNPARSED_ARGUMENTS})
     endif()
     remotedesktop_warnings(${name})
     target_include_directories(${name} PUBLIC "${_VENTO_BACKENDS}/api/include"

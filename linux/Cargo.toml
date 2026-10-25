@@ -47,8 +47,9 @@ remotedesktop-api = { path = "../backends/api" }
 remotedesktop-platform-linux = { path = "../backends/platform/linux" }
 # The backends, each with its adapter in its own crate: the four protocols,
 # and the four C libraries' crates, whose libraries `build.rs` has CMake
-# make — linked for the three open ones, and opened at run time by RealVNC's
-# crate, since its library is made only under clang.
+# make and each crate opens at run time (`api::c::library`), so that one that
+# cannot be loaded, or RealVNC's where no clang made it, is one backend not
+# available.
 remotedesktop-rfb = { path = "../backends/modules/rfb" }
 remotedesktop-ironrdp = { path = "../backends/modules/ironrdp" }
 remotedesktop-rustdesk = { path = "../backends/modules/rustdesk" }
