@@ -242,6 +242,7 @@ struct Session {
     char *experience;
     char *graphics;
     char *sound;
+    int microphone;
     char *clientName;
     UINT32 osMajorType;
     char *configPath;
@@ -1979,6 +1980,10 @@ static void applySettings(Session *s, rdpSettings *settings) {
     }
     freerdp_settings_set_bool(settings, FreeRDP_AudioPlayback, soundHere);
     freerdp_settings_set_bool(settings, FreeRDP_RemoteConsoleAudio, soundThere);
+    /* The microphone is the audin channel's capture side, which the library
+       loads when this is set and opens through OpenSL ES (the only capture
+       device built, on Android only). */
+    freerdp_settings_set_bool(settings, FreeRDP_AudioCapture, s->microphone);
 
     /* The scale the far end draws its interface at. The protocol allows
        100–500 for the desktop factor and exactly 100, 140 or 180 for the
@@ -2282,6 +2287,7 @@ vento_session *vento_freerdp_create(const vento_freerdp_config *cfg, const vento
     s->graphics = dupOrNull(cfg->graphics);
     s->experience = dupOrNull(cfg->experience);
     s->sound = dupOrNull(cfg->sound);
+    s->microphone = cfg->microphone;
     s->clientName = dupOrNull(cfg->client_name);
     s->osMajorType = OSMAJORTYPE_UNSPECIFIED;
     if (cfg->platform && strcmp(cfg->platform, "android") == 0) {
