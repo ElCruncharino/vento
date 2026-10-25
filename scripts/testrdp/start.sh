@@ -66,6 +66,19 @@ exec openbox
 EOF
 chmod +x /etc/xrdp/startwm.sh
 
+# The channel server (clipboard, sound) is started with the session and not
+# again: sesman reconnects a client to the session it left and runs only this
+# script. One that has exited stays gone, and every later connection had no
+# clipboard (on 2026-10-18 it exited two seconds into a reconnection, after
+# its usual FUSE mount failure, and the rig ran without one for a day). So a
+# reconnection starts it again where it is not running; xrdp connects to its
+# socket for that same connection.
+cat > /etc/xrdp/reconnectwm.sh <<'EOF'
+#!/bin/sh
+pgrep -u "$(id -u)" -x xrdp-chansrv >/dev/null || { /usr/sbin/xrdp-chansrv >/dev/null 2>&1 & }
+EOF
+chmod +x /etc/xrdp/reconnectwm.sh
+
 mkdir -p /var/run/xrdp /var/log/xrdp
 chown xrdp:xrdp /var/run/xrdp 2>/dev/null || true
 
