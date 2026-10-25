@@ -44,10 +44,10 @@ trap 'rm -rf "$tmp"' EXIT
 #   no trust store   Only configure's, which would otherwise be whichever path
 #                    the *host* that ran this script keeps its CAs in. It does
 #                    not turn the trust store off: gnutls compiles in Android's
-#                    own store on Android, which is the right one and is why a
-#                    server with a certificate somebody vouches for connects
-#                    silently. Everything else — which is every VNC server that
-#                    signed its own — falls through to the app's known hosts.
+#                    own store on Android, which is the right one. A certificate
+#                    somebody vouches for verifies against it and still goes to
+#                    the app's known hosts, as every VNC server that signed its
+#                    own does (both VNC libraries are patched to hand it over).
 #   prefix           Never installed; it is here because configure bakes it into
 #                    a locale path, and a scratch directory in it would make
 #                    this script's output depend on where it ran.

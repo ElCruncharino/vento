@@ -1,0 +1,134 @@
+From 9fb292a6f9dde825ad0b259662e5128efc829f78 Mon Sep 17 00:00:00 2001
+From: "Claude Opus 5.5" <noreply@anthropic.com>
+Date: Sun, 18 Oct 2026 15:29:41 -0400
+Subject: [PATCH 6/6] libvncclient: a certificate that verifies is the client's
+ question too
+
+verify_certificate_callback put a certificate to
+GetX509CertFingerprintMismatchDecision only when it failed to verify.
+One that an authority in the system trust (or the CA file given)
+vouches for, with the server's hostname in it, went through without the
+client hearing of it: nothing checked against what the client has seen
+before, nothing remembered, and nothing asked.
+
+That an authority vouches for a certificate says who the server claims
+to be, not that it is the server the client reached last time, and a
+client that pins certificates has to see every one to keep that
+promise. So when the hook is installed, a certificate that verified and
+is for the hostname goes through the same decision as one that did not:
+accepted at once if its fingerprint is x509ExpectedFingerprint, and
+otherwise put to the hook, whose answer decides. Without the hook it is
+accepted as before, so a client that never installed one sees no
+change. The decision is decide_certificate() now, shared by the two
+paths; a validated certificate for another name is still refused before
+it is reached.
+
+Only the GnuTLS build is touched, the one that calls the hook at all.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/include/rfb/rfbclient.h b/include/rfb/rfbclient.h
+index 90627af..1b22f3b 100644
+--- a/include/rfb/rfbclient.h
++++ b/include/rfb/rfbclient.h
+@@ -219,9 +219,14 @@ typedef void (*FinishedFrameBufferUpdateProc)(struct _rfbClient* client);
+ typedef char* (*GetPasswordProc)(struct _rfbClient* client);
+ typedef rfbCredential* (*GetCredentialProc)(struct _rfbClient* client, int credentialType);
+ /**
+-   Callback that is invoked with the remote's cert's details if the remote cert
+-   could not be validated against the system CA and, failing that, its fingerprint
+-   does not match the one indicated in rfbCredential.x509Credential.x509ExpectedFingerprint.
++   Callback that is invoked with the remote's cert's details unless its
++   fingerprint matches the one indicated in rfbCredential.x509Credential.x509ExpectedFingerprint,
++   and whose answer decides whether the cert is accepted. That is every cert
++   that could not be validated against the system CA (or the CA file given),
++   and, when this is set, every one that could and is for the server's
++   hostname as well: an authority vouching for a cert says who the server
++   claims to be, not that it is the one reached last time, so a client that
++   pins certificates has to see every one. Unset, a validated cert is accepted.
+  */
+ typedef rfbBool (*GetX509CertFingerprintMismatchDecisionProc)(struct _rfbClient* client,
+                                                               const char *remote_cert_subject,
+diff --git a/src/libvncclient/tls_gnutls.c b/src/libvncclient/tls_gnutls.c
+index 71b36a1..fbd96f1 100644
+--- a/src/libvncclient/tls_gnutls.c
++++ b/src/libvncclient/tls_gnutls.c
+@@ -78,6 +78,35 @@ static int cert_fingerprint_mismatch_callback(rfbClient *client, gnutls_x509_crt
+     return decision ? 1 : 0;
+ }
+ 
++/**
++ * Whether to accept a certificate the client decides about itself: one whose
++ * SHA-256 fingerprint is the expected one is accepted, and any other is put to
++ * GetX509CertFingerprintMismatchDecision.
++ */
++static int decide_certificate(rfbClient *client, rfbCredential *cred, gnutls_x509_crt_t cert)
++{
++    /* Check if we have an expected fingerprint */
++    if (cred && cred->x509Credential.x509ExpectedFingerprint) {
++        unsigned char remote_fingerprint[32];
++        size_t fingerprint_size = sizeof(remote_fingerprint);
++
++        if (gnutls_x509_crt_get_fingerprint(cert, GNUTLS_DIG_SHA256, remote_fingerprint, &fingerprint_size) == 0) {
++            if (memcmp(remote_fingerprint, cred->x509Credential.x509ExpectedFingerprint, 32) == 0) {
++                rfbClientLog("The certificate's fingerprint matched the expected one - accepting.\n");
++                return 1;
++            }
++        }
++    }
++
++    /* Fingerprint didn't match or no expected fingerprint - ask user */
++    if (cert_fingerprint_mismatch_callback(client, cert)) {
++        rfbClientLog("User decided to trust certificate - accepting.\n");
++        return 1;
++    }
++
++    return 0;
++}
++
+ static int
+ verify_certificate_callback (gnutls_session_t session)
+ {
+@@ -162,23 +191,7 @@ verify_certificate_callback (gnutls_session_t session)
+           return GNUTLS_E_CERTIFICATE_ERROR;
+         }
+ 
+-      /* Check if we have an expected fingerprint */
+-      if (cred && cred->x509Credential.x509ExpectedFingerprint) {
+-          unsigned char remote_fingerprint[32];
+-          size_t fingerprint_size = sizeof(remote_fingerprint);
+-
+-          if (gnutls_x509_crt_get_fingerprint(cert, GNUTLS_DIG_SHA256, remote_fingerprint, &fingerprint_size) == 0) {
+-              if (memcmp(remote_fingerprint, cred->x509Credential.x509ExpectedFingerprint, 32) == 0) {
+-                  rfbClientLog("The certificate's fingerprint matched the expected one - accepting.\n");
+-                  gnutls_x509_crt_deinit (cert);
+-                  return 0;
+-              }
+-          }
+-      }
+-
+-      /* Fingerprint didn't match or no expected fingerprint - ask user */
+-      if (cert_fingerprint_mismatch_callback(sptr, cert)) {
+-          rfbClientLog("User decided to trust certificate - accepting.\n");
++      if (decide_certificate(sptr, cred, cert)) {
+           gnutls_x509_crt_deinit (cert);
+           return 0;
+       }
+@@ -219,6 +232,17 @@ verify_certificate_callback (gnutls_session_t session)
+       return GNUTLS_E_CERTIFICATE_ERROR;
+     }
+ 
++  /* A client that decides about certificates itself hears of one that
++     verified too: that an authority vouches for it says who the server claims
++     to be, not that it is the one the client reached last time, and a client
++     that pins certificates has to see every one to keep that promise. */
++  if (sptr->GetX509CertFingerprintMismatchDecision)
++    {
++      int accepted = decide_certificate(sptr, cred, cert);
++      gnutls_x509_crt_deinit (cert);
++      return accepted ? 0 : GNUTLS_E_CERTIFICATE_ERROR;
++    }
++
+   gnutls_x509_crt_deinit (cert);
+ 
+   /* notify gnutls to continue handshake normally */
