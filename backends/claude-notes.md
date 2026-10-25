@@ -21,7 +21,7 @@ includes.
       common/  session/  tls/  codegen/  vectors/
       modules/<name>/   one per backend (eight)
       platform/
-        android/        crate, java/, javatest/, c/, cmake/, ports/
+        android/        crate, java/, javatest/, cpp/, cmake/, ports/
       build/            the :backends module's Gradle output, untracked
 
 ## The backends: `modules/<name>/`
@@ -77,7 +77,7 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
   platform: the one JNI layer, MediaCodec and AAudio (the crate), and, in
   `java/`, the `:backends` module's Java — the seam every backend's provider
   is written against, the files with no package directories over them — with
-  its tests in `javatest/`; `c/`, the logcat logger and the export map a C
+  its tests in `javatest/`; `cpp/`, the logcat logger and the export map a C
   backend's library is linked with; `cmake/vento_android.cmake`, a C
   backend's Android half (`vento_android_library`); and `ports/`, the
   generated Android builds of openssl, nettle and gnutls (`gen.sh` in each
