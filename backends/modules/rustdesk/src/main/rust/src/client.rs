@@ -48,7 +48,7 @@ use crate::protos::message::{
 };
 use crate::rendezvous;
 use crate::wire::{self, Traffic};
-use common::Handler;
+use common::{Handler, Hangup};
 use common::video::{self, Codec, Decoders};
 
 /// Their default direct-access port, which is `RENDEZVOUS_PORT + 2`.
@@ -270,6 +270,16 @@ const BUTTONS: [(i32, i32); 5] = [
 /// calls a line — and one notch is one line on both far ends the rig has.
 const WHEEL_NOTCH: i32 = 1;
 
+/// What [`Client::reach`] comes back with: the socket the session runs on, the
+/// introduction a peer reached by id still has to be put through (its signed
+/// key and the rendezvous key that vouches for it), and the panel's word for
+/// the connection.
+struct Dialled {
+    sock: TcpStream,
+    introduction: Option<(Vec<u8>, String)>,
+    connection: String,
+}
+
 pub struct Client {
     framebuffer: RwLock<Framebuffer>,
     /// Whoever decodes the picture, which is the platform's to say and is not
@@ -282,10 +292,11 @@ pub struct Client {
     /// on whichever thread produced it and written on a thread of its own, so a
     /// stalled socket never reaches the main one.
     out: Mutex<Option<Sender<Vec<u8>>>>,
-    /// The socket, for closing it from another thread: a read blocked on a
-    /// socket wakes when it is shut down and there is nothing else to interrupt
-    /// it with.
-    closer: Mutex<Option<TcpStream>>,
+    /// The sockets, for closing them from another thread: a read blocked on a
+    /// socket — or a dial — wakes when it is shut down and there is nothing
+    /// else to interrupt it with. Every socket of the rendezvous is held here
+    /// while it is the one being waited on, as well as the session's own.
+    hangup: Hangup,
     info: Mutex<Info>,
     /// What the login names itself as, which for a direct connection is the
     /// address the socket actually went to and for an id is that id.
@@ -314,7 +325,6 @@ pub struct Client {
     pointer: Mutex<(i32, i32, i32)>,
     view_only: AtomicBool,
     focused: AtomicBool,
-    closed: AtomicBool,
     width: AtomicI32,
     height: AtomicI32,
     display: AtomicI32,
@@ -346,7 +356,7 @@ impl Client {
             decoders,
             traffic: Arc::new(Traffic::default()),
             out: Mutex::new(None),
-            closer: Mutex::new(None),
+            hangup: Hangup::new(),
             info: Mutex::new(Info::default()),
             login_as: Mutex::new(String::new()),
             resolutions: Mutex::new(Vec::new()),
@@ -357,7 +367,6 @@ impl Client {
             pointer: Mutex::new((-1, -1, 0)),
             view_only: AtomicBool::new(false),
             focused: AtomicBool::new(true),
-            closed: AtomicBool::new(false),
             width: AtomicI32::new(0),
             height: AtomicI32::new(0),
             display: AtomicI32::new(0),
@@ -464,10 +473,7 @@ impl Client {
     }
 
     pub fn close(&self) {
-        self.closed.store(true, Ordering::SeqCst);
-        if let Some(sock) = self.closer.lock().unwrap().take() {
-            let _ = sock.shutdown(std::net::Shutdown::Both);
-        }
+        self.hangup.hang_up();
     }
 
     // ---- the session ------------------------------------------------------
@@ -481,44 +487,20 @@ impl Client {
 
         // How the socket is obtained is the whole of the difference between the
         // two modes: everything past this point is one session either way.
-        let (sock, introduction, connection) = match &config.reach {
-            Reach::Direct => {
-                let addr = resolve(&config.address)?;
-                log::info!("connecting to {addr}");
-                let sock = TcpStream::connect_timeout(&addr, config.connect_timeout)?;
-                sock.set_nodelay(true)?;
-                // What the login says it dialled is this rather than what was
-                // typed, which their peer checks against three regular
-                // expressions: a v4 literal with an optional port, a v6 one
-                // either bare or bracketed **with** a port, or a dotted name
-                // with one. A bracketed literal and no port matches none of
-                // them, and the refusal is `Offline`.
-                *self.login_as.lock().unwrap() = addr.to_string();
-                (sock, None, format!("Direct access to {addr}"))
-            }
-            Reach::Id { server, key } => {
-                let server = if server.trim().is_empty() {
-                    rendezvous::PUBLIC_SERVER
-                } else {
-                    server.trim()
-                };
-                let reached =
-                    rendezvous::reach(&config.address, server, key.trim(), config.connect_timeout)?;
-                let connection = reached.how.describe();
-                // The id, which is what the peer is expecting to be called here.
-                *self.login_as.lock().unwrap() = config.address.clone();
-                (
-                    reached.sock,
-                    Some((reached.signed_id_pk, key.clone())),
-                    connection,
-                )
-            }
+        let Dialled {
+            sock,
+            introduction,
+            connection,
+        } = match self.reach(config) {
+            Err(_) if self.hangup.is_hung_up() => return Err(Error::Closed),
+            other => other?,
         };
-        let (mut reader, mut writer, closer) = wire::split(sock, Arc::clone(&self.traffic))?;
-        if self.closed.load(Ordering::SeqCst) {
-            return Err(Error::Closed);
-        }
-        *self.closer.lock().unwrap() = Some(closer);
+        // Held for the rest of the session, the introduction with it.
+        let _holding = match self.hangup.hold(&sock) {
+            Err(_) if self.hangup.is_hung_up() => return Err(Error::Closed),
+            other => other?,
+        };
+        let (mut reader, mut writer, _) = wire::split(sock, Arc::clone(&self.traffic))?;
         self.info.lock().unwrap().connection = connection;
 
         let verified = match introduction {
@@ -581,7 +563,7 @@ impl Client {
         // socket itself: an error that arrived because somebody pressed
         // Disconnect is not one the screen should be told about, and one that
         // arrived on its own is.
-        let asked = self.closed.load(Ordering::SeqCst);
+        let asked = self.hangup.is_hung_up();
         // The sender is what keeps the writer thread alive, so it goes before
         // the join; the socket is shut down either way, since an ending that
         // came from the far end has not been through `close`.
@@ -592,6 +574,52 @@ impl Client {
             Err(_) if asked => Err(Error::Closed),
             other => other,
         }
+    }
+
+    fn reach(&self, config: &Config) -> Result<Dialled> {
+        let (sock, introduction, connection) = match &config.reach {
+            Reach::Direct => {
+                let addr = resolve(&config.address)?;
+                log::info!("connecting to {addr}");
+                let sock = self.hangup.dial(addr, config.connect_timeout)?;
+                sock.set_nodelay(true)?;
+                // What the login says it dialled is this rather than what was
+                // typed, which their peer checks against three regular
+                // expressions: a v4 literal with an optional port, a v6 one
+                // either bare or bracketed **with** a port, or a dotted name
+                // with one. A bracketed literal and no port matches none of
+                // them, and the refusal is `Offline`.
+                *self.login_as.lock().unwrap() = addr.to_string();
+                (sock, None, format!("Direct access to {addr}"))
+            }
+            Reach::Id { server, key } => {
+                let server = if server.trim().is_empty() {
+                    rendezvous::PUBLIC_SERVER
+                } else {
+                    server.trim()
+                };
+                let reached = rendezvous::reach(
+                    &self.hangup,
+                    &config.address,
+                    server,
+                    key.trim(),
+                    config.connect_timeout,
+                )?;
+                let connection = reached.how.describe();
+                // The id, which is what the peer is expecting to be called here.
+                *self.login_as.lock().unwrap() = config.address.clone();
+                (
+                    reached.sock,
+                    Some((reached.signed_id_pk, key.clone())),
+                    connection,
+                )
+            }
+        };
+        Ok(Dialled {
+            sock,
+            introduction,
+            connection,
+        })
     }
 
     /// The handshake the direct mode has none of, ending with both halves of
