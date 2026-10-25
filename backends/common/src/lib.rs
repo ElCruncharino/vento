@@ -14,6 +14,11 @@
 //! place this crate is opinionated, because it is the one seam a second
 //! platform has to fit.
 //!
+//! A protocol whose picture is video also gets a [`video::Decoders`] from
+//! whoever started it, and does not know whose: the phone's hardware. What is
+//! done with a decoder's planes afterwards — finding what moved, and
+//! converting only that — is [`video`]'s.
+//!
 //! What is not here: anything with `jni` in it, which is
 //! `remotedesktop-platform-android`; and the TLS half, which was here until a
 //! protocol arrived that reaches no TLS at all. What decided that split was
@@ -29,6 +34,7 @@ pub mod events;
 pub mod handler;
 pub mod session;
 pub mod slot;
+pub mod video;
 
 pub use client::Client;
 pub use events::Events;

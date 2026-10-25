@@ -4,7 +4,7 @@
 //! The desktop as pixels: the picture two threads share, and the buffer the
 //! next one is decoded into.
 
-use crate::video::Changes;
+use common::video::Changes;
 
 /// A framebuffer of `R, G, B, A` words, so a read is a row copy into an Android
 /// `ARGB_8888` bitmap.

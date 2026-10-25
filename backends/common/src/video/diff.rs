@@ -3,18 +3,19 @@
 
 //! What one frame differs from the last one in, found in the decoder's planes.
 //!
-//! This protocol has no damage rectangles, so what moved can only be found by
-//! comparing — and the planes are a third of the bytes the picture is, are what
-//! the decoder has just written, and are still in this thread's cache. The
-//! answer is used twice over: it is the damage the drawing thread is told
-//! about, and it is which rows are worth converting at all.
+//! A video stream has no damage rectangles — RustDesk's picture is one and
+//! nothing else — so what moved can only be found by comparing; and the planes
+//! are a third of the bytes the picture is, are what the decoder has just
+//! written, and are still in this thread's cache. The answer is used twice
+//! over: it is the damage the drawing thread is told about, and it is which
+//! rows are worth converting at all.
 //!
 //! Two identical planes cannot make different pixels, so a row this calls
 //! unchanged is unchanged. The converse is not owed: a chroma sample that moves
 //! under a luma that is already saturated converts a row for nothing, which
 //! costs a row and cannot cost a picture.
 
-use super::convert::Plane;
+use super::convert::{Frame, Plane};
 
 /// How wide a column of [`Changes`] is. Sixteen pixels is a cache line's worth
 /// of framebuffer words, and the caller's tiles are an order of magnitude wider
@@ -27,7 +28,7 @@ const COLUMN_GRAIN: usize = 16;
 /// [`COLUMN_GRAIN`], since they only ever become a damage rectangle and a finer
 /// answer would cost more to find than it could save.
 ///
-/// One of these covers a whole update rather than one frame: a message may
+/// One of these covers a whole update rather than one frame: an update may
 /// carry several, each decoded into the same buffer, and what the caller needs
 /// is the rows that moved since the picture on screen.
 pub struct Changes {
@@ -129,16 +130,13 @@ struct Shape {
 }
 
 impl Shape {
-    fn of(planes: &[Plane; 3], width: usize, height: usize) -> Shape {
+    fn of(frame: &Frame) -> Shape {
         Shape {
-            width,
-            height,
-            horiz: planes[1].horiz_subsampling.max(1),
-            vert: planes[1].vert_subsampling.max(1),
-            interleaved: planes[1].col_inc == 2
-                && planes[2].col_inc == 2
-                && planes[1].row_inc == planes[2].row_inc
-                && planes[2].offset.abs_diff(planes[1].offset) == 1,
+            width: frame.width,
+            height: frame.height,
+            horiz: frame.planes[1].horiz_subsampling.max(1),
+            vert: frame.planes[1].vert_subsampling.max(1),
+            interleaved: frame.interleaved(),
         }
     }
 
@@ -178,17 +176,12 @@ impl Previous {
     /// `changed` is added to rather than replaced: a caller that already knows
     /// a row has to be converted keeps that answer, and the union of the two is
     /// what the conversion then writes.
-    pub fn compare(
-        &mut self,
-        base: &[u8],
-        planes: &[Plane; 3],
-        width: usize,
-        height: usize,
-        changed: &mut Changes,
-    ) {
-        let shape = Shape::of(planes, width, height);
+    pub fn compare(&mut self, frame: &Frame, changed: &mut Changes) {
+        let (width, height) = (frame.width, frame.height);
+        let (bytes, planes) = (&frame.bytes, &frame.planes);
+        let shape = Shape::of(frame);
         let (cw, ch) = shape.chroma();
-        if !self.fits(base, planes, &shape) {
+        if !Self::fits(frame, &shape) {
             // Nothing here describes this buffer, so nothing here may be
             // trusted about it either: the whole frame is converted and the
             // next one starts again.
@@ -219,16 +212,17 @@ impl Previous {
         for crow in 0..ch {
             let cached = &mut self.chroma[crow * 2 * cw..][..2 * cw];
             let moved = if shape.interleaved {
+                // One slice, which is what interleaved means here.
                 let at = planes[1].offset.min(planes[2].offset) + crow * planes[1].row_inc;
-                differs(base, at, 1, chroma_grain, cached)
+                differs(bytes[1], at, 1, chroma_grain, cached)
             } else {
                 // U then V, and whichever of the two moved decides the row.
                 let (u, v) = cached.split_at_mut(cw);
                 let u_at = planes[1].offset + crow * planes[1].row_inc;
                 let v_at = planes[2].offset + crow * planes[2].row_inc;
                 span(
-                    differs(base, u_at, planes[1].col_inc, chroma_grain, u),
-                    differs(base, v_at, planes[2].col_inc, chroma_grain, v),
+                    differs(bytes[1], u_at, planes[1].col_inc, chroma_grain, u),
+                    differs(bytes[2], v_at, planes[2].col_inc, chroma_grain, v),
                 )
             };
             let Some((first, last)) = moved else { continue };
@@ -242,32 +236,36 @@ impl Previous {
         for row in 0..height {
             let at = planes[0].offset + row * planes[0].row_inc;
             let cached = &mut self.luma[row * width..][..width];
-            if let Some((first, last)) = differs(base, at, planes[0].col_inc, COLUMN_GRAIN, cached)
+            if let Some((first, last)) =
+                differs(bytes[0], at, planes[0].col_inc, COLUMN_GRAIN, cached)
             {
                 changed.mark(row, first, last + 1);
             }
         }
     }
 
-    /// Whether every byte the comparison would read is inside the buffer. The
-    /// caller checks the planes it converts from, and this checks the runs this
-    /// reads, which are the same bytes said a different way.
-    fn fits(&self, base: &[u8], planes: &[Plane; 3], shape: &Shape) -> bool {
+    /// Whether every byte the comparison would read is inside the slice it
+    /// reads it from. The caller checks the planes it converts from, and this
+    /// checks the runs this reads, which are the same bytes said a different
+    /// way.
+    fn fits(frame: &Frame, shape: &Shape) -> bool {
         if shape.width == 0 || shape.height == 0 {
             return false;
         }
+        let (bytes, planes) = (&frame.bytes, &frame.planes);
         let (cw, ch) = shape.chroma();
         let last = |plane: &Plane, rows: usize, run: usize| {
             plane.offset + (rows - 1) * plane.row_inc + (run - 1) * plane.col_inc.max(1)
         };
-        let mut end = last(&planes[0], shape.height, shape.width);
+        if last(&planes[0], shape.height, shape.width) >= bytes[0].len() {
+            return false;
+        }
         if shape.interleaved {
             let at = planes[1].offset.min(planes[2].offset);
-            end = end.max(at + (ch - 1) * planes[1].row_inc + 2 * cw - 1);
+            at + (ch - 1) * planes[1].row_inc + 2 * cw - 1 < bytes[1].len()
         } else {
-            end = end.max(last(&planes[1], ch, cw)).max(last(&planes[2], ch, cw));
+            last(&planes[1], ch, cw) < bytes[1].len() && last(&planes[2], ch, cw) < bytes[2].len()
         }
-        end < base.len()
     }
 }
 
@@ -361,7 +359,7 @@ mod tests {
     fn compare(p: &mut Previous, base: &[u8], planes: &[Plane; 3], w: usize, h: usize) -> Changes {
         let mut changed = Changes::new();
         changed.reset(h);
-        p.compare(base, planes, w, h, &mut changed);
+        p.compare(&Frame::one(base, *planes, w, h, true, false), &mut changed);
         changed
     }
 

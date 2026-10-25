@@ -49,4 +49,3 @@ echo "$NAME up: $ip:21116  (relay $ip:21117$([ "$RELAY_ONLY" = Y ] && echo ", ev
 echo "key: $key"
 echo
 echo "a peer:   RENDEZVOUS=$ip KEY=$key scripts/testrustdesk/run.sh"
-echo "a client: cargo run --example rustdesk-probe -- id <peer-id> --server $ip --key $key"

@@ -20,7 +20,7 @@
 //! |---|---|
 //! | Transport | a peer by id, punched or relayed and encrypted; or direct IP access, which is **plaintext in both directions** |
 //! | Login | their permanent password, `sha256(sha256(password ++ salt) ++ challenge)` |
-//! | Picture | VP9, whole frames, decoded by the phone |
+//! | Picture | VP9, VP8, AV1, H.264 or H.265 as the platform can decode them; whole frames |
 //! | Cursor | shape and hotspot, by id |
 //! | Input | absolute pointer, five buttons and a wheel; keys as their named set or as characters |
 //! | Clipboard | both ways, text |
@@ -30,6 +30,13 @@
 //! elevation, privacy mode and virtual displays, which are the product rather
 //! than the desktop. Nor KCP, their newer UDP transport, which nothing has to
 //! offer for a session to be reached.
+//!
+//! Nothing in here decodes video. The client is made with a
+//! `common::video::Decoders` — the phone's MediaCodec in the app, nothing at
+//! all in a test — and what it tells the far end it can take is whatever that
+//! says. Which codecs a session ends up in is the far end's choice out of that
+//! list, so the same protocol code is a VP9 session on one platform and an
+//! H.265 one on another.
 
 /// The JNI half: the entry points the Java in this module declares, in front
 /// of a `common::Session`. Android only — everything above is the protocol,
@@ -44,11 +51,10 @@ mod framebuffer;
 mod keymap;
 pub mod protos;
 pub mod rendezvous;
-mod video;
 pub mod wire;
 
 pub use client::{Client, Config, Info, Quality, Reach, VERSION};
+pub use common::video::Codec;
 pub use common::{Credentials, Handler};
 pub use error::{Error, Result};
 pub use framebuffer::Framebuffer;
-pub use video::Codec;

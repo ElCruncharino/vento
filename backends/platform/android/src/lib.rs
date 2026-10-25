@@ -1,10 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The parts of a backend's JNI half that are about Android rather than about
-//! a protocol: [`bitmap`], which writes pixels straight into a Java `Bitmap`,
-//! [`callbacks`], which is a session's Java side resolved once and speaking
-//! `common::Events`, and [`log`], which points the `log` crate at logcat.
+//! The parts of a backend's native half that are about Android rather than
+//! about a protocol: [`bitmap`], which writes pixels straight into a Java
+//! `Bitmap`, [`callbacks`], which is a session's Java side resolved once and
+//! speaking `common::Events`, [`log`], which points the `log` crate at logcat,
+//! and [`mediacodec`], which is the phone's video decoder speaking
+//! `common::video::Decoders`.
 //!
 //! It was one crate with the RFB bindings in it, then one crate with both,
 //! then a module of `remotedesktop-common`, and the splits changed only where
@@ -31,6 +33,7 @@
 pub mod bitmap;
 pub mod callbacks;
 pub mod log;
+pub mod mediacodec;
 
 use jni::objects::JString;
 

@@ -6,9 +6,12 @@
 # Three kinds of crate, and the layering is the point: `backends/common` is the
 # neutral layer every client speaks to, the protocol crates are written against
 # it and know nothing of a phone, and `backends/platform/*` is where one
-# platform's glue lives — today Android's JNI, one day a desktop's. A protocol
-# crate depends on a platform crate only under a target cfg, so the host build
-# never sees it.
+# platform's glue lives — Android's JNI and MediaCodec in `android`. What a
+# platform supplies, it supplies by implementing a trait of `common`'s
+# (`Events`, `video::Decoders`) and handing it to the session, so no protocol
+# crate says which platform it is on. A protocol crate depends on the platform
+# crate only under a target cfg, `android`, for the library the app loads, so
+# the host build never sees it.
 [workspace]
 resolver = "2"
 members = [
