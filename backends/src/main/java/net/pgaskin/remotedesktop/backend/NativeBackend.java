@@ -833,8 +833,14 @@ public final class NativeBackend implements Backend {
         }
     }
 
+    /**
+     * Posted even from the main thread, never run in place: the event can be
+     * delivered inline, on the thread of a call into the session that made
+     * it, and a listener that destroys the session on hearing it would free
+     * the handle under that call.
+     */
     private void closed(String detail) {
-        runOnMain(() -> {
+        main.post(() -> {
             if (state == State.CLOSED) {
                 return;
             }
