@@ -164,20 +164,7 @@ androidComponents {
             // module's adapter, but not the C libraries built by CMake or
             // anything in `dependencies` above, so those are listed here.
             otherComponents.set(provider {
-                // Read through a helper rather than getText directly: on a
-                // clean clone the submodules are empty and the two crypto trees
-                // are missing, and the first error should be an instruction
-                // rather than a FileNotFoundException from a provider halfway
-                // through configuration.
-                final Closure<String> licenceText = { String path ->
-                    final File f = rootProject.file(path)
-                    if (!f.isFile()) {
-                        throw new GradleException(
-                                "${path} is missing. Run `git submodule update --init` and, for "
-                                        + "the gnutls and nettle trees, `./gradlew :backends:fetchCryptoSources`.")
-                    }
-                    f.getText('UTF-8')
-                }
+                final Closure<String> licenceText = { String path -> GenerateLicensesTask.licenceText(project, path) }
                 [[
                         // The two crates the SPICE backend is built on, which
                         // come from a submodule of their repository rather than

@@ -18,7 +18,11 @@
 //     licensePage(
 //         cargoPackages: ['remotedesktop-something'],
 //         firstParty: [[name: …, spdx: …, text: …]],
-//         otherComponents: [[name: …, spdx: …, text: …]])
+//         otherComponents: provider { [[name: …, spdx: …, text: …]] })
+//
+// `otherComponents` can be a list or a provider of one. Texts read from
+// third_party/ go in a provider, through GenerateLicensesTask.licenceText, so
+// the project still configures in a clone without submodules.
 
 ext.licensePage = { Map spec ->
     androidComponents {
@@ -33,7 +37,7 @@ ext.licensePage = { Map spec ->
                 abiFilters.set(android.defaultConfig.ndk.abiFilters as Set)
                 ownHeading.set('This add-on')
                 firstParty.set(spec.firstParty as List)
-                otherComponents.set(spec.otherComponents as List)
+                otherComponents.set(spec.otherComponents)
             }
             variant.sources.assets?.addGeneratedSourceDirectory(generate) { it.assetsOutputDir }
         }

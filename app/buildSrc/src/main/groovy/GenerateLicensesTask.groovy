@@ -7,6 +7,7 @@ import javax.inject.Inject
 
 import org.gradle.api.DefaultTask
 import org.gradle.api.GradleException
+import org.gradle.api.Project
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.ListProperty
@@ -399,5 +400,25 @@ ${body}</body>
 
     static String htmlEscape(String s) {
         s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    }
+
+    /**
+     * The text of a licence file in a submodule or a fetched source tree, by
+     * its path from the repository root, for an entry's {@code text}.
+     *
+     * <p>Call it from a provider, so the file is read when the page is built
+     * rather than when the project is configured: a clone without submodules,
+     * such as CI's for the control module alone, configures every project, and
+     * none of these files is there. When the page is built without them, the
+     * error says how to get them rather than being a FileNotFoundException.
+     */
+    static String licenceText(Project project, String path) {
+        final File f = project.rootProject.file(path)
+        if (!f.isFile()) {
+            throw new GradleException(
+                    "${path} is missing. Run `git submodule update --init` and, for "
+                            + "the gnutls and nettle trees, `./gradlew :backends:fetchCryptoSources`.")
+        }
+        f.getText('UTF-8')
     }
 }

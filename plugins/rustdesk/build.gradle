@@ -111,7 +111,7 @@ licensePage(
                 spdx: 'GPL-3.0-or-later',
                 text: rootProject.file('LICENSE').getText('UTF-8'),
         ]],
-        otherComponents: [[
+        otherComponents: provider { [[
                 // RustDesk's peer-to-peer message definitions,
                 // libs/base/protos/message.proto in RustDesk's own repository,
                 // compiled into this build. AGPL-3.0 by its LICENCE file;
@@ -119,7 +119,7 @@ licensePage(
                 // (flatpak/com.rustdesk.RustDesk.metainfo.xml).
                 name: 'RustDesk (message definitions)',
                 spdx: 'AGPL-3.0-only',
-                text: rootProject.file('third_party/rustdesk/LICENCE').getText('UTF-8'),
+                text: GenerateLicensesTask.licenceText(project, 'third_party/rustdesk/LICENCE'),
         ], [
                 // RustDesk's rendezvous and relay message definitions,
                 // protos/rendezvous.proto in hbb_common, compiled into this
@@ -128,8 +128,8 @@ licensePage(
                 // RustDesk's LICENCE above. Upstream has been asked to add one.
                 name: 'RustDesk hbb_common (rendezvous definitions)',
                 spdx: 'AGPL-3.0-only, by inheritance from RustDesk: the repository states no licence of its own',
-                text: rootProject.file('third_party/rustdesk/LICENCE').getText('UTF-8'),
-        ]])
+                text: GenerateLicensesTask.licenceText(project, 'third_party/rustdesk/LICENCE'),
+        ]] })
 
 java {
     toolchain {
