@@ -1193,7 +1193,11 @@ server mode) — locks (Wayland) or hides and centres (X11) the local pointer
 while the window has focus, and sends raw motion as deltas; the far end draws
 its own cursor into the picture. **Hold Ctrl and Alt together to let go** of
 the pointer (the two keys still reach the far end); a click on the desktop
-takes it back. Losing focus or
+takes it back. The session's first capture puts up *Press Ctrl+Alt to release
+pointer.* in a small box at the top centre, below where the toolbar comes
+down to, for five seconds or until the capture ends, and the title of the
+window holding the capture ends in *(Press Ctrl+Alt to release pointer)*
+for as long as it lasts. Losing focus or
 disconnecting also lets go.
 
 

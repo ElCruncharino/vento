@@ -185,15 +185,21 @@ fn popout_size(w: i32, h: i32) -> (u32, u32) {
 }
 
 /// A window's title from the session's `name` (already [`printable`]): the
-/// bell on it while it rings, and the far end's `monitor` the window shows,
-/// where it shows one of several.
-fn window_title(name: &str, ringing: bool, monitor: Option<usize>) -> String {
+/// bell on it while it rings, the far end's `monitor` the window shows,
+/// where it shows one of several, and how to let go of the pointer while
+/// the window has it `captured`.
+fn window_title(name: &str, ringing: bool, monitor: Option<usize>, captured: bool) -> String {
     let bell = if ringing { "🔔 " } else { "" };
+    let hint = if captured { " (Press Ctrl+Alt to release pointer)" } else { "" };
     match monitor {
-        Some(i) => format!("{bell}{name} - monitor {} - Vento", i + 1),
-        None => format!("{bell}{name} - Vento"),
+        Some(i) => format!("{bell}{name} - monitor {} - Vento{hint}", i + 1),
+        None => format!("{bell}{name} - Vento{hint}"),
     }
 }
+
+/// How long the hint over the desktop that says how to let go of the
+/// pointer stays up after the session's first capture.
+const RELEASE_HINT: Duration = Duration::from_secs(5);
 
 pub struct Session {
     pub request: Request,
@@ -257,6 +263,12 @@ pub struct Session {
     motion_sent: (i64, i64),
     /// The escape chord was used; a click on the desktop ends it.
     escaped: bool,
+    /// Until when the hint that says how to let go of the pointer is shown:
+    /// set at the session's first capture, and cleared when that capture
+    /// ends.
+    pub release_hint: Option<Instant>,
+    /// Whether the pointer has been captured in this session yet.
+    captured_once: bool,
     /// The keys down at the far end, and here.
     keyboard: Keyboard,
     /// The last pointer event sent, so the same one is not sent twice.
@@ -381,6 +393,8 @@ impl Session {
             fence: None,
             motion_sent: (0, 0),
             escaped: false,
+            release_hint: None,
+            captured_once: false,
             keyboard: Keyboard::default(),
             last_pointer: (-1, -1, 0),
             pointer_owner: None,
@@ -496,16 +510,22 @@ impl Session {
     /// What the window is called: the desktop's name once known, with the
     /// bell on it while it rings.
     pub fn title(&self) -> String {
-        self.title_of(None)
+        self.title_of(None, false)
     }
 
     /// A window's title: the session's, with the far end's `monitor` the
-    /// window shows, where it shows one of several. The name in it is
+    /// window shows, where it shows one of several, and how to let go of
+    /// the pointer where the window has it `captured`. The name in it is
     /// [`printable`], as the snapshot and the session keep it.
-    pub fn title_of(&self, monitor: Option<usize>) -> String {
+    pub fn title_of(&self, monitor: Option<usize>, captured: bool) -> String {
         let name = self.snapshot.desktop_name().unwrap_or(&self.title);
         let ringing = self.bell_until.is_some_and(|t| Instant::now() < t);
-        window_title(name, ringing, monitor)
+        window_title(name, ringing, monitor, captured)
+    }
+
+    /// Whether the pointer is captured in `pane`'s window.
+    pub fn captured_in(&self, pane: PaneId) -> bool {
+        self.capture.is_some_and(|(holder, _)| holder == pane)
     }
 
     // ---- events from the backend -------------------------------------------
@@ -880,6 +900,7 @@ impl Session {
         } else if holder == Some(host.viewport) {
             self.let_go(host.window);
             self.release_captured_buttons();
+            self.release_hint = None;
             log::info!("pointer released");
         }
     }
@@ -890,6 +911,8 @@ impl Session {
     }
 
     /// The pointer captured in `window`, `pane`'s, where it is at `pointer`.
+    /// The first capture of the session puts up the hint that says how to
+    /// let go of it.
     fn take_capture(&mut self, window: &Window, pane: PaneId, display_server: DisplayServer, pointer: Option<PhysicalPosition<f64>>) {
         match display_server {
             DisplayServer::X11 => {
@@ -925,6 +948,10 @@ impl Session {
                 }
                 Err(e) => log::warn!("pointer lock refused: {e}"),
             },
+        }
+        if self.captured() && !self.captured_once {
+            self.captured_once = true;
+            self.release_hint = Some(Instant::now() + RELEASE_HINT);
         }
     }
 
@@ -964,6 +991,7 @@ impl Session {
             log::info!("pointer capture handed to another window");
         } else {
             self.release_captured_buttons();
+            self.release_hint = None;
             log::info!("pointer released");
         }
     }
@@ -1694,10 +1722,14 @@ mod tests {
         assert_eq!(snapshot.desktop_name(), Some("evilname desk"));
         assert_eq!(snapshot.info[0].value, "evilname desk", "the panel's row too");
         for monitor in [None, Some(1)] {
-            let title = window_title(snapshot.desktop_name().unwrap(), true, monitor);
+            let title = window_title(snapshot.desktop_name().unwrap(), true, monitor, false);
             assert!(std::ffi::CString::new(title.clone()).is_ok(), "{title:?}");
         }
-        assert_eq!(window_title("evilname desk", false, Some(1)), "evilname desk - monitor 2 - Vento");
+        assert_eq!(window_title("evilname desk", false, Some(1), false), "evilname desk - monitor 2 - Vento");
+        assert_eq!(
+            window_title("desk", false, None, true),
+            "desk - Vento (Press Ctrl+Alt to release pointer)"
+        );
         // Nothing but control characters is no name: the address stands in.
         assert_eq!(named("\0\0\x01").desktop_name(), None);
         // A name of a megabyte is cut to NAME_MAX characters, the last an

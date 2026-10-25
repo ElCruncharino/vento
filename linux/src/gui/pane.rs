@@ -263,9 +263,10 @@ impl Pane {
         s.sync_capture(host);
 
         // Each window names the monitor it shows, so that a window list or
-        // a task bar tells the pop-outs apart.
+        // a task bar tells the pop-outs apart, and the one with the pointer
+        // captured says how to let go of it.
         let count = s.snapshot.facts.monitors.len();
-        let title = s.title_of(self.monitor.map(|k| k.index).filter(|_| count > 1));
+        let title = s.title_of(self.monitor.map(|k| k.index).filter(|_| count > 1), s.captured_in(self.id));
         if title != self.title_set(ctx) {
             host.window.set_title(&title);
             ctx.data_mut(|d| d.insert_temp(self.title_id(), title));
@@ -327,6 +328,17 @@ impl Pane {
         }
 
         self.toolbar(s, ctx, host);
+        if let Some(until) = s.release_hint
+            && s.captured_in(self.id)
+        {
+            let now = Instant::now();
+            if now < until {
+                release_hint(ctx, self.toolbar_size.y);
+                ctx.request_repaint_after(until - now);
+            } else {
+                s.release_hint = None;
+            }
+        }
         // The keyboard is this end's while the pointer is on the toolbar
         // (see `holds_shortcuts`), so what the far end has down is let go
         // of there, as for anything else that takes input away; the
@@ -983,6 +995,24 @@ fn notice(ctx: &egui::Context, text: &str, align: Align2) {
         .interactable(false)
         .show(ctx, |ui| {
             Frame::popup(&ctx.global_style()).show(ui, |ui| ui.label(text));
+        });
+}
+
+/// The hint at the session's first capture of the pointer, top and centre
+/// below where the toolbar comes down to (`toolbar_height`): framed as the
+/// toolbar is, but with rounded corners and only a line of text high.
+fn release_hint(ctx: &egui::Context, toolbar_height: f32) {
+    let style = ctx.global_style();
+    let frame = Frame::popup(&style)
+        .shadow(egui::Shadow::NONE)
+        .stroke(style.visuals.window_stroke())
+        .inner_margin(Margin::symmetric(10, 4));
+    egui::Area::new(Id::new("release-hint"))
+        .order(Order::Foreground)
+        .anchor(Align2::CENTER_TOP, vec2(0.0, toolbar_height + 12.0))
+        .interactable(false)
+        .show(ctx, |ui| {
+            frame.show(ui, |ui| ui.label("Press Ctrl+Alt to release pointer."));
         });
 }
 
