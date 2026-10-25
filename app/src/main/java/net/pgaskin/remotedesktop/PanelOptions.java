@@ -27,6 +27,7 @@ import net.pgaskin.remotedesktop.backend.BackendOption;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Predicate;
 
 /**
  * {@link BackendOption}s as rows in a sheet — the one renderer both panels use.
@@ -155,6 +156,10 @@ final class PanelOptions {
         // The container is the group, so what a row looks like depends on the
         // ones either side of it and cannot be decided while it is being built.
         RowGroups.apply(into);
+        // A choice can arrive stranded as well as become it: the editor's
+        // switch for one is the backend's, in another screen, and a session
+        // can be opened with a saved choice whose switch has since gone off.
+        settle();
         refresh();
     }
 
@@ -228,7 +233,33 @@ final class PanelOptions {
 
     private void set(BackendOption o, String value) {
         values.set(o, value);
+        settle();
         refresh();
+    }
+
+    /**
+     * Put every choice whose switch is off back to what the option falls back
+     * to ({@link BackendOption#stranded}), through the caller's own
+     * {@link Values#set} — so the editor stores it and the live panel tells
+     * the backend — rather than leave it selected: a choice that is not on
+     * offer is not what the backend will do either.
+     *
+     * <p>A switch the caller cannot see is taken as on, the opposite of what
+     * {@link #choices} does with it: hiding a choice there costs nothing, but
+     * rewriting one here would be changing an answer nobody can see the reason
+     * for.
+     */
+    private void settle() {
+        final Predicate<String> on = key -> {
+            final String v = values.get(key);
+            return v == null || Boolean.parseBoolean(v);
+        };
+        for (Row r : rows) {
+            final BackendOption o = r.option;
+            if (o.type() == BackendOption.Type.CHOICE && o.stranded(value(o), on) != null) {
+                values.set(o, o.fallback(on));
+            }
+        }
     }
 
     /**
