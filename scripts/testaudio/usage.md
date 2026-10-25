@@ -12,6 +12,7 @@ silence is played until `pactl` has shown the stream on the null sink.
 
 ```sh
 ./rig.sh [OUT_DIR] [--second]  # the output's own rig, end to end (below)
+./pattern.sh OUT_DIR PATTERN SECONDS   # a protocol's rhythm of writes (below)
 ./sink.sh load              # load the null sink, print its module id
 ./sink.sh check PID [N]     # are PID's streams (N of them) on it? (exit 0 only if so)
 ./sink.sh unload ID         # unload what load printed
@@ -76,17 +77,58 @@ resume after the stall are heard; how much of the burst was heard, and the
 stream's own latency (queue plus device) over the run. `results.json` beside
 the recording has all of it.
 
-What to expect, from the policy in `runtime::media::audio`: the queue and the
-device's buffer together keep about 100 ms and never more than 250 ms, so
-the clicks are heard about 100 ms after they are written, the burst is heard
-for about the queue's share (the rest is dropped, `dropped` in the stats) and
-the clicks after it are no more than a period later than before; after the
-stall the tone comes back 100 ms after it is written; a mute is heard after
-the device's buffer only, not after what is queued. On ALSA (50 ms buffer;
-measured: clicks 102 ms before the burst and after the stall, 114.5 ms after
-the burst, 50 ms of the burst heard, the resume 100 ms, a mute 55-65 ms). On
-PipeWire the device holds a graph cycle (5-11 ms): clicks 80-87 ms before the
-burst, 101-117 ms after it, 86-88 ms after the stall, 90-100 ms of the burst
-heard, a mute in 5-10 ms. `--second` opens a second session's output beside
+What to expect, from the policy in `runtime::media::audio`: the queue keeps a
+device period, the rig's 10 ms writes and their lateness, and a margin
+(`Queue`'s target) — the stream's start's 30 ms, for all of the rig's 22 s,
+which comes down to 10 ms only after 40 s of sound — the device's buffer behind it, and never more than
+250 ms together, so the clicks are heard a few tens of milliseconds after
+they are written — less once the queue has played eight seconds and dropped
+what it found it did not need — the burst is heard for about the target (the
+rest is dropped, `dropped` in the stats) and the clicks after it a little
+later than before (the queue starts again at its target, and settles eight
+seconds later); after the one-second stall, which is no lateness but a
+pause, the tone comes back the target after it is written; a mute is heard
+after the device's buffer only, not after what is queued. On ALSA (50 ms
+buffer; measured: clicks 98 ms before the burst, 122 ms after it, 103 ms
+after the stall, 50 ms of the burst heard, the resume 115 ms, a mute 55 ms).
+On PipeWire the device holds a graph cycle (5-11 ms): clicks 37 ms before
+the burst, 62 ms after it, 41 ms after the stall, 50 ms of the burst
+heard, a mute in 10 ms. (With a 10 ms margin from the start, as until the
+queue-margin change: ALSA 81, 106 and 86 ms; PipeWire 17-20, 55-57 and
+32-46 ms. With the fixed 100 ms total the queue kept until October 2026:
+ALSA 102, 114.5 and 102 ms; PipeWire 80-87, 101-117 and 86-88 ms.) `--second` opens a second session's output beside
 the first (silent): two streams, `sink.sh check PID 2`, and on PipeWire two
 nodes of the one client.
+
+## A far end's rhythm: pattern.sh
+
+```sh
+./pattern.sh OUT_DIR PATTERN SECONDS [--stall-every S] [--stall-at S] [--stall MS] [--seed N]
+```
+
+`backends/platform/linux/probe/audio_pattern.rs` (built by
+`pattern.sh` with the same `probe` feature) writes into the desktop's output the way a protocol's sound arrives — `qemu` (10 ms every
+10 ms), `opus` (20 ms every 20 ms), `rdp` (Windows' 23 ms AAC waves, up to
+18 ms late), `rdp-pairs` (two at a time, 10 ms either side), `winpcm`
+(Windows' 186 ms PCM waves two at a time), `bursty` (20 ms frames let go in
+bunches 20-100 ms apart) — with a half-second 440 Hz burst every two seconds,
+and `--stall-every`/`--stall` hold the writer back now and then
+(`--stall-at` once, that long after it starts), as a loaded machine or a
+network does. It prints when it wrote each burst, and the
+overlay's sound line every second; `pattern.py` matches each burst to the
+recording: the client's share of a session's latency (written to captured,
+with nothing of a far end's), 5 ms gaps and discontinuities per burst, and
+the queue's target, margin and underruns over the run, into
+`OUT_DIR/pattern.json`. The order is the rig's (load the sink, check the
+stream, then `go`); `VENTO_AUDIO_OUTPUT=alsa` runs it on ALSA, and
+`AUDIO_PATTERN=path` runs another build of the example as it is (one kept
+from before a change, to compare). Measured on PipeWire (ALSA's 50 ms ring
+adds about 57 ms to each), medians of the last 10 s of a minute: `qemu`
+17 ms, `opus` 16, `rdp` 26, `rdp-pairs` 20, `winpcm` 200, `bursty` 82; the
+first 30 s, with the start's margin, 36, 37, 42, 61, 215 and 95 (with
+10 ms from the start: 18, 21, 26, 43, 199, 81; with the fixed 100 ms total
+before: 84, 75, 68, 65, 200, 68 with 8 underruns); `qemu` stalled for
+40 ms every 5 s ran dry at the first stall and not at the eleven after. With
+64 busy loops beside it, `qemu` and `rdp` did not run dry in a minute (with
+10 ms from the start each did once, 41 and 63 ms late, and played 58 and
+75 ms behind from then on rather than 20 and 22).
