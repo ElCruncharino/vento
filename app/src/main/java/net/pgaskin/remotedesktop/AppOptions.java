@@ -29,14 +29,24 @@ public final class AppOptions {
     /** Namespaced, because these share a map with every backend's own keys. */
     public static final String FOLLOW_WINDOW = "app.FollowWindow";
 
+    public static final String DIRECT_TOUCH = "app.DirectTouch";
+
     private AppOptions() {
     }
 
     public static List<BackendOption> options(Context ctx) {
         return List.of(BackendOption.bool(FOLLOW_WINDOW,
-                ctx.getString(R.string.option_follow_window),
-                ctx.getString(R.string.option_follow_window_summary),
-                false, BackendOption.Scope.CONNECTION, false));
+                        ctx.getString(R.string.option_follow_window),
+                        ctx.getString(R.string.option_follow_window_summary),
+                        false, BackendOption.Scope.CONNECTION, false),
+                BackendOption.bool(DIRECT_TOUCH,
+                        ctx.getString(R.string.option_direct_touch),
+                        ctx.getString(R.string.option_direct_touch_summary),
+                        false, BackendOption.Scope.CONNECTION, false));
+    }
+
+    public static boolean directTouch(Map<String, String> options) {
+        return Boolean.parseBoolean(options.getOrDefault(DIRECT_TOUCH, "false"));
     }
 
     public static boolean followWindow(Map<String, String> options) {
