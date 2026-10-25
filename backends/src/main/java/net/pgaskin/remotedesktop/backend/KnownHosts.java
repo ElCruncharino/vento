@@ -55,7 +55,7 @@ public final class KnownHosts {
      * Filling a port in needs the protocol's own default, which is below this
      * class, and a backend that wants a key of its own already picks one.
      */
-    private static String key(String address) {
+    public static String key(String address) {
         return address == null ? "" : address.trim().toLowerCase(Locale.ROOT);
     }
 
@@ -90,8 +90,36 @@ public final class KnownHosts {
      * pinning: a prompt that appears every time is a prompt nobody reads.
      */
     public static boolean matches(Context ctx, String address, String fingerprint) {
-        final String pin = pinned(ctx, address);
-        return pin != null && canonical(pin).equals(canonical(fingerprint));
+        return verdict(prefs(ctx).getAll(), address, fingerprint).matches();
+    }
+
+    /**
+     * What a fingerprint comes to against a store's pins, as filed: whether it
+     * matches, and if not, why it is being asked about — and with which other
+     * address, where it is pinned to one. The whole of the rule, with the store
+     * taken out of it, so that {@code backends/vectors/known_hosts.json} can
+     * test it.
+     *
+     * @param identity        {@code null} when it matches
+     * @param matchingAddress the key it is pinned under elsewhere, or null
+     */
+    public record Verdict(Prompt.Trust.Identity identity, String matchingAddress) {
+        public boolean matches() {
+            return identity == null;
+        }
+    }
+
+    public static Verdict verdict(Map<String, ?> pins, String address, String fingerprint) {
+        final Object pin = pins.get(key(address));
+        if (pin instanceof String p) {
+            return canonical(p).equals(canonical(fingerprint))
+                    ? new Verdict(null, null)
+                    : new Verdict(Prompt.Trust.Identity.CHANGED, null);
+        }
+        final String elsewhere = otherAddressFor(pins, fingerprint, address);
+        return elsewhere != null
+                ? new Verdict(Prompt.Trust.Identity.MATCHES_ANOTHER, elsewhere)
+                : new Verdict(Prompt.Trust.Identity.NEW, null);
     }
 
     /**
@@ -103,15 +131,17 @@ public final class KnownHosts {
      * second client asking about a server the first has pinned must not be told
      * its identity has changed. Separators go with the case for the same reason
      * — nothing about how a library spells a digest is part of the digest.
+     * ASCII digits only: {@code Character.digit} would take a full-width one
+     * too.
      */
-    private static String canonical(String fingerprint) {
+    public static String canonical(String fingerprint) {
         if (fingerprint == null) {
             return "";
         }
         final StringBuilder out = new StringBuilder(fingerprint.length());
         for (int i = 0; i < fingerprint.length(); i++) {
             final char c = fingerprint.charAt(i);
-            if (Character.digit(c, 16) >= 0) {
+            if (c < 0x80 && Character.digit(c, 16) >= 0) {
                 out.append(Character.toUpperCase(c));
             }
         }
@@ -130,18 +160,14 @@ public final class KnownHosts {
      */
     public static void ask(Context ctx, String address, String fingerprint,
                            Prompt.Handler handler, java.util.function.Consumer<Boolean> answer) {
-        final String pin = pinned(ctx, address);
-        final String elsewhere = pin == null ? otherAddressFor(ctx, fingerprint, address) : null;
-        final Prompt.Trust.Identity identity;
-        if (pin != null) {
-            identity = Prompt.Trust.Identity.CHANGED;
-        } else if (elsewhere != null) {
-            identity = Prompt.Trust.Identity.MATCHES_ANOTHER;
-        } else {
-            identity = Prompt.Trust.Identity.NEW;
-        }
+        final Verdict verdict = verdict(prefs(ctx).getAll(), address, fingerprint);
+        // Asked all the same where it matches, which no caller does: they ask
+        // after matches() said no, and the store can only have moved since.
+        final Prompt.Trust.Identity identity = verdict.matches()
+                ? Prompt.Trust.Identity.OK : verdict.identity();
         final Prompt.Trust prompt = new Prompt.Trust(address,
-                Prompt.Trust.Encryption.ENCRYPTED, identity, fingerprint, "", elsewhere) {
+                Prompt.Trust.Encryption.ENCRYPTED, identity, fingerprint, "",
+                verdict.matchingAddress()) {
             @Override
             protected void deliver(boolean accept, boolean remember) {
                 if (accept && remember) {
@@ -165,13 +191,13 @@ public final class KnownHosts {
      * ordinary explanation, and it is a different thing from a fingerprint that
      * has changed underneath an address that has not.
      */
-    public static String otherAddressFor(Context ctx, String fingerprint, String except) {
+    private static String otherAddressFor(Map<String, ?> pins, String fingerprint, String except) {
         if (fingerprint == null || fingerprint.isEmpty()) {
             return null;
         }
         final String skip = key(except);
         final String wanted = canonical(fingerprint);
-        for (Map.Entry<String, ?> e : prefs(ctx).getAll().entrySet()) {
+        for (Map.Entry<String, ?> e : pins.entrySet()) {
             if (!e.getKey().equals(skip) && e.getValue() instanceof String pin
                     && wanted.equals(canonical(pin))) {
                 return e.getKey();

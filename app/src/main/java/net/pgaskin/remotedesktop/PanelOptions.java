@@ -254,12 +254,8 @@ final class PanelOptions {
             final String v = values.get(key);
             return v == null || Boolean.parseBoolean(v);
         };
-        for (Row r : rows) {
-            final BackendOption o = r.option;
-            if (o.type() == BackendOption.Type.CHOICE && o.stranded(value(o), on) != null) {
-                values.set(o, o.fallback(on));
-            }
-        }
+        BackendOption.settle(rows.stream().map(r -> r.option).toList(), this::value, on,
+                values::set);
     }
 
     /**
