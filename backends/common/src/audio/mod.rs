@@ -39,8 +39,10 @@ mod resample;
 pub use queue::{Queue, Stats};
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
+
+use decode::Codec;
 
 /// How far what is heard is behind what arrived: the queue and the device's
 /// own buffer together, which the queue fills back up to before it plays
@@ -124,9 +126,47 @@ pub struct Controls {
 }
 
 struct Playing {
-    /// Streams that have been written to and not yet closed.
-    streams: usize,
+    /// Streams that have been written to and not yet closed, the latest
+    /// last: what [`Controls::playback`] reads. Weak, since a queue holds
+    /// these controls.
+    streams: Vec<Weak<Queue>>,
     listener: Option<Box<dyn Fn(bool) + Send + Sync>>,
+    /// What the far end's sound arrives as, where it is decoded here.
+    codec: Option<Codec>,
+}
+
+/// What a session is playing right now, as [`Controls::playback`] answers:
+/// the facts row's words and the overlay's numbers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Playback {
+    /// The stream's, which for compressed sound is what it decodes to.
+    pub format: Format,
+    /// What the far end sends it as; `None` for PCM, sent as it is played.
+    pub codec: Option<Codec>,
+    /// What is queued in front of the device.
+    pub queued: Duration,
+    /// The device's own buffer, as the platform said it when it opened
+    /// ([`Queue::set_device`]); zero until then.
+    pub device: Duration,
+    pub stats: Stats,
+}
+
+impl Playback {
+    /// The sound in a few words, "AAC 44.1 kHz stereo", "PCM 48 kHz stereo":
+    /// what arrives, rather than what the device was opened at, which the
+    /// platform's mixer resamples from anyway.
+    pub fn describe(&self) -> String {
+        let codec = self.codec.map_or("PCM", Codec::name);
+        // 44100 as 44.1, 48000 as 48: f64's shortest display drops the
+        // zeros a fixed number of decimals would leave.
+        let khz = self.format.rate as f64 / 1000.0;
+        let channels = match self.format.channels {
+            1 => "mono".to_string(),
+            2 => "stereo".to_string(),
+            n => format!("{n} channels"),
+        };
+        format!("{codec} {khz} kHz {channels}")
+    }
 }
 
 impl Controls {
@@ -135,8 +175,9 @@ impl Controls {
             gain: AtomicU32::new(1.0f32.to_bits()),
             muted: AtomicBool::new(false),
             playing: Mutex::new(Playing {
-                streams: 0,
+                streams: Vec::new(),
                 listener: None,
+                codec: None,
             }),
         }
     }
@@ -168,7 +209,33 @@ impl Controls {
     /// still open: what a toolbar shows its mute by, so that a session that
     /// never plays anything has no button for it.
     pub fn playing(&self) -> bool {
-        self.playing.lock().unwrap().streams > 0
+        !self.playing.lock().unwrap().streams.is_empty()
+    }
+
+    /// What is playing, from the stream that started last of those still
+    /// open, or `None` while nothing is ([`playing`](Controls::playing)).
+    /// Cheap enough for every frame of an overlay: a lock of these controls
+    /// and one of the stream's queue, one after the other.
+    pub fn playback(&self) -> Option<Playback> {
+        let (queue, codec) = {
+            let p = self.playing.lock().unwrap();
+            (p.streams.iter().rev().find_map(Weak::upgrade)?, p.codec)
+        };
+        Some(Playback {
+            format: queue.format(),
+            codec,
+            queued: queue.queued(),
+            device: queue.device_buffer(),
+            stats: queue.stats(),
+        })
+    }
+
+    /// What the far end's sound arrives as, said by whoever decodes it
+    /// (`session`'s table for a C backend, at a decoder's opening and
+    /// closing): for [`playback`](Controls::playback)'s words, since the
+    /// stream it plays on is handed samples and never sees the codec.
+    pub fn set_codec(&self, codec: Option<Codec>) {
+        self.playing.lock().unwrap().codec = codec;
     }
 
     /// `listener` is told whenever [`playing`](Controls::playing) changes,
@@ -180,17 +247,18 @@ impl Controls {
         self.playing.lock().unwrap().listener = Some(listener);
     }
 
-    /// A stream has had its first write (`true`) or has closed after one
-    /// (`false`).
-    fn stream_playing(&self, started: bool) {
+    /// `queue`'s stream has had its first write (`started`) or has closed
+    /// after one.
+    fn stream_playing(&self, queue: &Arc<Queue>, started: bool) {
         let mut p = self.playing.lock().unwrap();
-        let before = p.streams > 0;
+        let before = !p.streams.is_empty();
+        let weak = Arc::downgrade(queue);
         if started {
-            p.streams += 1;
+            p.streams.push(weak);
         } else {
-            p.streams = p.streams.saturating_sub(1);
+            p.streams.retain(|s| !s.ptr_eq(&weak));
         }
-        let now = p.streams > 0;
+        let now = !p.streams.is_empty();
         if before != now
             && let Some(listener) = &p.listener
         {
@@ -377,7 +445,7 @@ impl Stream {
     fn started(&mut self) {
         if !self.playing {
             self.playing = true;
-            self.queue.controls().stream_playing(true);
+            self.queue.controls().stream_playing(&self.queue, true);
         }
     }
 }
@@ -385,7 +453,7 @@ impl Stream {
 impl Drop for Stream {
     fn drop(&mut self) {
         if self.playing {
-            self.queue.controls().stream_playing(false);
+            self.queue.controls().stream_playing(&self.queue, false);
         }
     }
 }
@@ -498,6 +566,51 @@ mod tests {
         drop(outputs.open(format).unwrap());
         assert_eq!(*said.lock().unwrap(), [true, false]);
         assert_eq!(outputs.held.load(Ordering::Relaxed), 0, "every device let go");
+    }
+
+    #[test]
+    fn playback_is_the_latest_stream_still_open() {
+        let outputs = fake();
+        let controls = outputs.controls();
+        assert_eq!(controls.playback(), None);
+        let mut pcm = outputs.open(Format::new(48_000, 2).unwrap()).unwrap();
+        // Opened is not playing, here as for `playing`.
+        assert_eq!(controls.playback(), None);
+        pcm.write(&[1, 2, 3, 4]);
+        let now = controls.playback().unwrap();
+        assert_eq!(now.describe(), "PCM 48 kHz stereo");
+        assert_eq!(now.queued, Format::new(48_000, 2).unwrap().duration(2));
+        assert_eq!(now.device, Duration::ZERO);
+        outputs.queues.lock().unwrap()[0].set_device(Duration::from_millis(50), Duration::from_millis(10));
+        assert_eq!(controls.playback().unwrap().device, Duration::from_millis(50));
+
+        controls.set_codec(Some(Codec::Aac));
+        let mut aac = outputs.open(Format::new(44_100, 2).unwrap()).unwrap();
+        aac.write(&[0, 0]);
+        assert_eq!(controls.playback().unwrap().describe(), "AAC 44.1 kHz stereo");
+        drop(aac);
+        controls.set_codec(None);
+        // Back to the one still open.
+        assert_eq!(controls.playback().unwrap().describe(), "PCM 48 kHz stereo");
+        drop(pcm);
+        assert_eq!(controls.playback(), None);
+    }
+
+    #[test]
+    fn playback_says_rates_and_channels_as_people_do() {
+        let say = |rate, channels, codec| {
+            Playback {
+                format: Format::new(rate, channels).unwrap(),
+                codec,
+                queued: Duration::ZERO,
+                device: Duration::ZERO,
+                stats: Stats::default(),
+            }
+            .describe()
+        };
+        assert_eq!(say(22_050, 1, None), "PCM 22.05 kHz mono");
+        assert_eq!(say(8_000, 6, None), "PCM 8 kHz 6 channels");
+        assert_eq!(say(48_000, 2, Some(Codec::Opus)), "Opus 48 kHz stereo");
     }
 
     #[test]

@@ -21,7 +21,7 @@ use std::ffi::{c_int, c_void};
 use std::sync::Arc;
 
 use common::audio::decode::{Codec, Decoder};
-use common::audio::{Format, Outputs, Stream};
+use common::audio::{Controls, Format, Outputs, Stream};
 
 use super::ffi;
 
@@ -66,6 +66,15 @@ unsafe extern "C" fn decodable(user: *mut c_void, number: c_int) -> bool {
 struct Decoding {
     decoder: Box<dyn Decoder>,
     samples: Vec<i16>,
+    /// The session's, told the codec while this decodes, for the facts row
+    /// (the stream the samples go to never sees it).
+    controls: Arc<Controls>,
+}
+
+impl Drop for Decoding {
+    fn drop(&mut self) {
+        self.controls.set_codec(None);
+    }
 }
 
 unsafe extern "C" fn decoder_open(
@@ -98,9 +107,12 @@ unsafe extern "C" fn decoder_open(
     match decoders.decoder(codec, format, config) {
         Ok(decoder) => {
             log::info!("audio: decoding {} at {rate} Hz in {channels} channels with {}", codec.name(), decoder.name());
+            let controls = Arc::clone(outputs.controls());
+            controls.set_codec(Some(codec));
             Box::into_raw(Box::new(Decoding {
                 decoder,
                 samples: Vec::new(),
+                controls,
             })) as *mut ffi::vento_audio_decoder
         }
         Err(why) => {
@@ -345,12 +357,13 @@ mod tests {
 
     #[test]
     fn a_packet_goes_through_the_tables_decoder() {
+        let controls = Arc::new(Controls::new());
         let fake = Arc::new(Fake {
-            controls: Arc::new(Controls::new()),
+            controls: Arc::clone(&controls),
             queues: Mutex::new(Vec::new()),
             dropped: Arc::new(AtomicBool::new(false)),
         });
-        let t = table(fake as Arc<dyn Outputs>);
+        let t = table(Arc::clone(&fake) as Arc<dyn Outputs>);
         let aac = ffi::VENTO_AUDIO_CODEC_AAC as c_int;
         let opus = ffi::VENTO_AUDIO_CODEC_OPUS as c_int;
         unsafe {
@@ -377,7 +390,14 @@ mod tests {
             assert_eq!(t.decode.unwrap()(d, [7u8, 8].as_ptr(), 2, &mut samples, &mut rate, &mut channels), 2);
             assert_eq!(std::slice::from_raw_parts(samples, 4), [10, 14, 11, 16]);
 
+            // What the decoded samples play as is said to be AAC for as
+            // long as the decoder is open.
+            let mut stream = fake.open(Format::new(44_100, 2).unwrap()).unwrap();
+            stream.write(&[1, 2]);
+            assert_eq!(controls.playback().unwrap().describe(), "AAC 44.1 kHz stereo");
             t.decoder_close.unwrap()(d);
+            assert_eq!(controls.playback().unwrap().describe(), "PCM 44.1 kHz stereo");
+            drop(stream);
             t.release.unwrap()(t.user);
         }
     }
