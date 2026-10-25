@@ -1,0 +1,89 @@
+From 870108d04887dbb49fd2835e0147c37c492887a3 Mon Sep 17 00:00:00 2001
+From: "Claude Opus 5.5" <noreply@anthropic.com>
+Date: Fri, 16 Oct 2026 03:36:48 -0400
+Subject: [PATCH 7/7] x11: list the monitors again when xrandr --setmonitor
+ changes them
+
+The monitor list is cached and dropped on a RandR screen change event.
+Adding or removing a RandR 1.5 monitor (`xrandr --setmonitor`,
+`--delmonitor`) sends none: the server tells clients with a
+ConfigureNotify on the root window only, which the window manager
+follows and winit did not, so a screen split while the application
+ran was still one monitor to it until something else changed.
+
+The event loop now also selects StructureNotify on the root window,
+added to whatever this client already selected there, and a
+ConfigureNotify for the root is handled as a RandR change: the list
+is dropped and compared with the new one for scale factor changes.
+The root's ConfigureNotify comes otherwise only with a change of the
+screen's size, which already brings a RandR event, and the second
+look at the list then finds nothing changed.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/src/changelog/unreleased.md b/src/changelog/unreleased.md
+index 4e19539..dec232a 100644
+--- a/src/changelog/unreleased.md
++++ b/src/changelog/unreleased.md
+@@ -51,3 +51,4 @@ changelog entry.
+ - On Wayland, fix `Window::set_cursor` copying a custom cursor into a new buffer when it is already the window's cursor, and panicking when the buffer could not be allocated.
+ - On X11, `Window::is_minimized` and `Window::is_maximized` no longer make a round trip to the X server on every call; `_NET_WM_STATE` is kept until a `PropertyNotify` says it changed.
+ - On X11, list the RandR 1.5 monitors (those of `xrandr --listmonitors`, which the window manager goes by) where the server has them, rather than one per CRTC, so that `Fullscreen::Borderless` reaches each monitor of a screen split with `xrandr --setmonitor`.
++- On X11, list the monitors again when `xrandr --setmonitor` or `--delmonitor` changes them, which the server says with a `ConfigureNotify` on the root window and no RandR event.
+diff --git a/src/platform_impl/linux/x11/event_processor.rs b/src/platform_impl/linux/x11/event_processor.rs
+index bec52dc..3206d07 100644
+--- a/src/platform_impl/linux/x11/event_processor.rs
++++ b/src/platform_impl/linux/x11/event_processor.rs
+@@ -617,6 +617,12 @@ impl EventProcessor {
+         let xwindow = xev.window as xproto::Window;
+         let window_id = mkwid(xwindow);
+ 
++        // The root window's: the screen, or the RandR 1.5 monitors on it, changed.
++        if xwindow == wt.root {
++            self.process_dpi_change(&mut callback);
++            return;
++        }
++
+         let window = match self.with_window(xwindow, Arc::clone) {
+             Some(window) => window,
+             None => return,
+diff --git a/src/platform_impl/linux/x11/mod.rs b/src/platform_impl/linux/x11/mod.rs
+index f29b314..3d02218 100644
+--- a/src/platform_impl/linux/x11/mod.rs
++++ b/src/platform_impl/linux/x11/mod.rs
+@@ -219,6 +219,9 @@ impl<T: 'static> EventLoop<T> {
+ 
+         let randr_event_offset =
+             xconn.select_xrandr_input(root).expect("Failed to query XRandR extension");
++        if let Err(err) = xconn.select_root_configure(root) {
++            warn!("Failed to select the root window's ConfigureNotify: {err:?}");
++        }
+ 
+         let xi2ext = xconn
+             .xcb_connection()
+diff --git a/src/platform_impl/linux/x11/monitor.rs b/src/platform_impl/linux/x11/monitor.rs
+index 87924d5..4b0e28c 100644
+--- a/src/platform_impl/linux/x11/monitor.rs
++++ b/src/platform_impl/linux/x11/monitor.rs
+@@ -406,6 +406,21 @@ impl XConnection {
+             .unwrap_or_else(MonitorHandle::dummy))
+     }
+ 
++    /// `xrandr --setmonitor` and `--delmonitor` change the RandR 1.5 monitors with no RandR
++    /// event, only a ConfigureNotify on the root window, so that too has the monitors listed
++    /// again. The root's event mask is this client's own, kept as it was and added to.
++    pub fn select_root_configure(&self, root: xproto::Window) -> Result<(), X11Error> {
++        let conn = self.xcb_connection();
++        let mask = conn.get_window_attributes(root)?.reply()?.your_event_mask;
++        conn.change_window_attributes(
++            root,
++            &xproto::ChangeWindowAttributesAux::new()
++                .event_mask(mask | xproto::EventMask::STRUCTURE_NOTIFY),
++        )?
++        .check()?;
++        Ok(())
++    }
++
+     pub fn select_xrandr_input(&self, root: xproto::Window) -> Result<u8, X11Error> {
+         use randr::NotifyMask;
+ 

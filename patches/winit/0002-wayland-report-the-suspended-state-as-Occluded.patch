@@ -1,0 +1,113 @@
+From 3f04797391ad3baefc8122b6d4f384030ec63409 Mon Sep 17 00:00:00 2001
+From: "Claude Opus 5.5" <noreply@anthropic.com>
+Date: Thu, 15 Oct 2026 13:39:09 -0400
+Subject: [PATCH 2/7] wayland: report the suspended state as Occluded
+
+xdg-shell v6 gave xdg_toplevel a suspended state, which a compositor
+sends while the window cannot be seen at all: minimized, on a
+workspace that is not shown, or behind a fullscreen window. sctk binds
+xdg_wm_base at v6 and decodes it, but winit only skipped it when
+deciding whether a configure needs a resize, and passed it on to no
+one, so on Wayland an application had no way to know that it is not
+seen beyond its frame callbacks stopping, which say nothing to the
+parts of it that do not draw (a stream, a game's simulation).
+
+That is what WindowEvent::Occluded means, and Wayland has no other
+source for it, so a change of the suspended state between configures
+is now delivered as Occluded(true) or Occluded(false). A compositor
+that does not send the state never occludes the window, as before.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/src/changelog/unreleased.md b/src/changelog/unreleased.md
+index 9f1e1b5..33caa05 100644
+--- a/src/changelog/unreleased.md
++++ b/src/changelog/unreleased.md
+@@ -40,6 +40,10 @@ changelog entry.
+ 
+ ## Unreleased
+ 
++### Added
++
++- On Wayland, add `WindowEvent::Occluded` support, from the `xdg_toplevel` suspended state.
++
+ ### Fixed
+ 
+ - On X11, fix a wheel that arrives as button presses (XTEST, Xvnc, xrdp) scrolling twice per notch.
+diff --git a/src/event.rs b/src/event.rs
+index 4e01420..a416674 100644
+--- a/src/event.rs
++++ b/src/event.rs
+@@ -418,7 +418,11 @@ pub enum WindowEvent {
+     /// ### Others
+     ///
+     /// - **Web:** Doesn't take into account CSS [`border`], [`padding`], or [`transform`].
+-    /// - **Android / Wayland / Windows / Orbital:** Unsupported.
++    /// - **Wayland:** Reported from the `xdg_toplevel` `suspended` state (xdg-shell v6), which a
++    ///   compositor may send while the window cannot be seen at all, for example when it is
++    ///   minimized or on a workspace that is not shown. A compositor that does not send it never
++    ///   reports the window occluded.
++    /// - **Android / Windows / Orbital:** Unsupported.
+     ///
+     /// [`border`]: https://developer.mozilla.org/en-US/docs/Web/CSS/border
+     /// [`padding`]: https://developer.mozilla.org/en-US/docs/Web/CSS/padding
+diff --git a/src/platform_impl/linux/wayland/state.rs b/src/platform_impl/linux/wayland/state.rs
+index 13ef99c..639b6bf 100644
+--- a/src/platform_impl/linux/wayland/state.rs
++++ b/src/platform_impl/linux/wayland/state.rs
+@@ -23,6 +23,7 @@ use sctk::shm::slot::SlotPool;
+ use sctk::shm::{Shm, ShmHandler};
+ use sctk::subcompositor::SubcompositorState;
+ 
++use crate::event::WindowEvent;
+ use crate::platform_impl::wayland::event_loop::sink::EventSink;
+ use crate::platform_impl::wayland::output::MonitorHandle;
+ use crate::platform_impl::wayland::seat::{
+@@ -283,14 +284,24 @@ impl WindowHandler for WinitState {
+         };
+ 
+         // Populate the configure to the window.
+-        self.window_compositor_updates[pos].resized |= self
++        let mut window = self
+             .windows
+             .get_mut()
+             .get_mut(&window_id)
+             .expect("got configure for dead window.")
+             .lock()
+-            .unwrap()
+-            .configure(configure, &self.shm, &self.subcompositor_state);
++            .unwrap();
++        let was_suspended = window.is_suspended();
++        self.window_compositor_updates[pos].resized |=
++            window.configure(configure, &self.shm, &self.subcompositor_state);
++        let suspended = window.is_suspended();
++        drop(window);
++
++        // The suspended state is the compositor saying the window cannot be seen at all, which
++        // is what `Occluded` means; a compositor that never sends it never occludes the window.
++        if suspended != was_suspended {
++            self.events_sink.push_window_event(WindowEvent::Occluded(suspended), window_id);
++        }
+ 
+         // NOTE: configure demands wl_surface::commit, however winit doesn't commit on behalf of the
+         // users, since it can break a lot of things, thus it'll ask users to redraw instead.
+diff --git a/src/platform_impl/linux/wayland/window/state.rs b/src/platform_impl/linux/wayland/window/state.rs
+index 1ef7a06..ff3cfec 100644
+--- a/src/platform_impl/linux/wayland/window/state.rs
++++ b/src/platform_impl/linux/wayland/window/state.rs
+@@ -584,6 +584,15 @@ impl WindowState {
+         self.last_configure.is_some()
+     }
+ 
++    /// Whether the last configure had the window suspended (xdg-shell v6): the compositor has
++    /// said it is not visible at all, such as when it is minimized or on a workspace not shown.
++    #[inline]
++    pub fn is_suspended(&self) -> bool {
++        self.last_configure
++            .as_ref()
++            .is_some_and(|configure| configure.state.contains(XdgWindowState::SUSPENDED))
++    }
++
+     #[inline]
+     pub fn is_decorated(&mut self) -> bool {
+         let csd = self

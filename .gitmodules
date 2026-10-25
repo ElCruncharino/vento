@@ -74,6 +74,11 @@
 	url = https://github.com/ChristopherHX/libjnivm.git
 	shallow = true
 	ignore = all
+[submodule "third_party/winit"]
+	path = third_party/winit
+	url = https://github.com/rust-windowing/winit.git
+	shallow = true
+	ignore = all
 # The FFmpeg every desktop consumer of a video or sound codec links (the Rust
 # decoder, TigerVNC's H.264, FreeRDP's H.264, sound and scaling), built
 # statically by backends/platform/linux/build.rs with --disable-everything and

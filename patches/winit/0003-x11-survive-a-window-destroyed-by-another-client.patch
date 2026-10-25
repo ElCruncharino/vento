@@ -1,0 +1,168 @@
+From 994e0718fe5443487c72d16d4e20e642f6da29ee Mon Sep 17 00:00:00 2001
+From: "Claude Opus 5.5" <noreply@anthropic.com>
+Date: Thu, 15 Oct 2026 13:46:45 -0400
+Subject: [PATCH 3/7] x11: survive a window destroyed by another client
+
+Any client may destroy any window with XDestroyWindow, and some do it
+to close one: `xdotool windowclose`, xkill-like tools, a window
+manager's forced close. winit hears of it with the DestroyNotify and
+says Destroyed then, but the events queued ahead of it are delivered
+first, and the window's focus-out is one of them. An application that
+asks the window anything in between, such as its inner_size from a
+Focused(false) handler, made winit panic: inner_size unwrapped the
+GetGeometry reply, which is a BadDrawable error once the window is
+gone.
+
+The size and position getters now answer with what the window last
+reported (its last ConfigureNotify) when the request fails, the frame
+extents heuristic takes a gone window to have no frame, and the two
+calls that already return a Result, set_cursor_grab and
+request_activation_token, return the error instead of panicking. The
+Destroyed that follows is unchanged.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/src/changelog/unreleased.md b/src/changelog/unreleased.md
+index 33caa05..9a60855 100644
+--- a/src/changelog/unreleased.md
++++ b/src/changelog/unreleased.md
+@@ -47,3 +47,4 @@ changelog entry.
+ ### Fixed
+ 
+ - On X11, fix a wheel that arrives as button presses (XTEST, Xvnc, xrdp) scrolling twice per notch.
++- On X11, fix a panic in `Window::inner_size` and other getters when another client destroyed the window.
+diff --git a/src/platform_impl/linux/x11/util/geometry.rs b/src/platform_impl/linux/x11/util/geometry.rs
+index 63ec564..77016e0 100644
+--- a/src/platform_impl/linux/x11/util/geometry.rs
++++ b/src/platform_impl/linux/x11/util/geometry.rs
+@@ -178,21 +178,27 @@ impl XConnection {
+     ) -> FrameExtentsHeuristic {
+         use self::FrameExtentsHeuristicPath::*;
+ 
++        // These requests fail only when the window is gone, destroyed by another client before
++        // its DestroyNotify has been processed; it has no frame to speak of then.
++        let gone = FrameExtentsHeuristic {
++            frame_extents: FrameExtents::from_border(0),
++            heuristic_path: UnsupportedBordered,
++        };
++
+         // Position relative to root window.
+         // With rare exceptions, this is the position of a nested window. Cases where the window
+         // isn't nested are outlined in the comments throughout this function, but in addition to
+         // that, fullscreen windows often aren't nested.
+-        let (inner_y_rel_root, child) = {
+-            let coords = self
+-                .translate_coords(window, root)
+-                .expect("Failed to translate window coordinates");
+-            (coords.dst_y, coords.child)
++        let (inner_y_rel_root, child) = match self.translate_coords(window, root) {
++            Ok(coords) => (coords.dst_y, coords.child),
++            Err(_) => return gone,
+         };
+ 
+-        let (width, height, border) = {
+-            let inner_geometry =
+-                self.get_geometry(window).expect("Failed to get inner window geometry");
+-            (inner_geometry.width, inner_geometry.height, inner_geometry.border_width)
++        let (width, height, border) = match self.get_geometry(window) {
++            Ok(inner_geometry) => {
++                (inner_geometry.width, inner_geometry.height, inner_geometry.border_width)
++            },
++            Err(_) => return gone,
+         };
+ 
+         // The first condition is only false for un-nested windows, but isn't always false for
+@@ -234,12 +240,14 @@ impl XConnection {
+             // If the position value we have is for a nested window used as the client area, we'll
+             // just climb up the hierarchy and get the geometry of the outermost window we're
+             // nested in.
+-            let outer_window =
+-                self.climb_hierarchy(window, root).expect("Failed to climb window hierarchy");
+-            let (outer_y, outer_width, outer_height) = {
+-                let outer_geometry =
+-                    self.get_geometry(outer_window).expect("Failed to get outer window geometry");
+-                (outer_geometry.y, outer_geometry.width, outer_geometry.height)
++            let Ok(outer_window) = self.climb_hierarchy(window, root) else {
++                return gone;
++            };
++            let (outer_y, outer_width, outer_height) = match self.get_geometry(outer_window) {
++                Ok(outer_geometry) => {
++                    (outer_geometry.y, outer_geometry.width, outer_geometry.height)
++                },
++                Err(_) => return gone,
+             };
+ 
+             // Since we have the geometry of the outermost window and the geometry of the client
+diff --git a/src/platform_impl/linux/x11/window.rs b/src/platform_impl/linux/x11/window.rs
+index 7e15d5f..9f82faa 100644
+--- a/src/platform_impl/linux/x11/window.rs
++++ b/src/platform_impl/linux/x11/window.rs
+@@ -1192,12 +1192,14 @@ impl UnownedWindow {
+     }
+ 
+     pub(crate) fn inner_position_physical(&self) -> (i32, i32) {
+-        // This should be okay to unwrap since the only error XTranslateCoordinates can return
+-        // is BadWindow, and if the window handle is bad we have bigger problems.
+-        self.xconn
+-            .translate_coords(self.xwindow, self.root)
+-            .map(|coords| (coords.dst_x.into(), coords.dst_y.into()))
+-            .unwrap()
++        // The only error XTranslateCoordinates can return is BadWindow, which it does once
++        // another client has destroyed the window (`xdotool windowclose`, a window manager's
++        // kill) and before its DestroyNotify has been processed, which is when the application
++        // hears `Destroyed`. Until then the position it last had is the best answer there is.
++        match self.xconn.translate_coords(self.xwindow, self.root) {
++            Ok(coords) => (coords.dst_x.into(), coords.dst_y.into()),
++            Err(_) => self.shared_state_lock().inner_position.unwrap_or_default(),
++        }
+     }
+ 
+     #[inline]
+@@ -1240,12 +1242,12 @@ impl UnownedWindow {
+     }
+ 
+     pub(crate) fn inner_size_physical(&self) -> (u32, u32) {
+-        // This should be okay to unwrap since the only error XGetGeometry can return
+-        // is BadWindow, and if the window handle is bad we have bigger problems.
+-        self.xconn
+-            .get_geometry(self.xwindow)
+-            .map(|geo| (geo.width.into(), geo.height.into()))
+-            .unwrap()
++        // The only error XGetGeometry can return is BadDrawable, which it does once the window
++        // has been destroyed by another client; see `inner_position_physical`.
++        match self.xconn.get_geometry(self.xwindow) {
++            Ok(geo) => (geo.width.into(), geo.height.into()),
++            Err(_) => self.shared_state_lock().size.unwrap_or_default(),
++        }
+     }
+ 
+     #[inline]
+@@ -1538,9 +1540,13 @@ impl UnownedWindow {
+                         0u32,
+                         x11rb::CURRENT_TIME,
+                     )
+-                    .expect("Failed to call `grab_pointer`")
++                    .map_err(|err| {
++                        ExternalError::Os(os_error!(OsError::XError(X11Error::from(err).into())))
++                    })?
+                     .reply()
+-                    .expect("Failed to receive reply from `grab_pointer`");
++                    .map_err(|err| {
++                        ExternalError::Os(os_error!(OsError::XError(X11Error::from(err).into())))
++                    })?;
+ 
+                 match result.status {
+                     xproto::GrabStatus::SUCCESS => Ok(()),
+@@ -1812,10 +1818,8 @@ impl UnownedWindow {
+         // Get the title from the WM_NAME property.
+         let atoms = self.xconn.atoms();
+         let title = {
+-            let title_bytes = self
+-                .xconn
+-                .get_property(self.xwindow, atoms[_NET_WM_NAME], atoms[UTF8_STRING])
+-                .expect("Failed to get title");
++            let title_bytes =
++                self.xconn.get_property(self.xwindow, atoms[_NET_WM_NAME], atoms[UTF8_STRING])?;
+ 
+             String::from_utf8(title_bytes).expect("Bad title")
+         };
