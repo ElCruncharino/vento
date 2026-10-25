@@ -55,20 +55,20 @@ endif()
 # includes that header — as its interface. Static by default; under VENTO_SHARED a shared library with the
 # logger's object inside it, every symbol out of the static archives it is
 # built on hidden (`--exclude-libs`), so that what it exports is the C API in
-# `vento/<name>.h` and `vento_log` — three of these in one process must not
-# interpose on each other's copies of a library — and all three put in one
+# `vento/<name>.h` and `vento_log` — four of these in one process must not
+# interpose on each other's copies of a library — and all four put in one
 # `lib/` directory for a consumer to point an rpath at. The module still adds
 # its own includes and the libraries it stands on afterwards, through
-# `${VENTO_BACKEND_LINK}`: PUBLIC for a static library, whose probe has to link
-# them too, and PRIVATE for a shared one, which already holds them.
-# `VENTO_FFMPEG_PREFIX`: the FFmpeg to link, as the static libraries the Linux
-# platform crate builds from `third_party/ffmpeg` and `third_party/dav1d`
-# (backends/platform/linux/build.rs). Given, it is the one FFmpeg of every
-# backend here — which is FreeRDP's scaler alone now, since every backend's
-# H.264 and sound is decoded by the Rust side through vento's decoders — and the
-# Rust decoders link the same build, so nothing here has a system FFmpeg in it;
-# left empty, a module finds the host's as before, which is what a plain `cmake
-# -S backends` for the probes does.
+# `${VENTO_BACKEND_LINK}`: PUBLIC for a static library, whose probe has to
+# link them too, and PRIVATE for a shared one, which already holds them.
+# `VENTO_FFMPEG_PREFIX`: the FFmpeg to link, as the static libraries the
+# Linux platform crate builds from `third_party/ffmpeg` and
+# `third_party/dav1d` (backends/platform/linux/build.rs). Given, it is the one
+# FFmpeg of every backend here — which is FreeRDP's scaler alone now, since
+# every backend's H.264 and sound is decoded by the Rust side through vento's
+# decoders — and the Rust decoders link the same build, so nothing here has a
+# system FFmpeg in it; left empty, a module finds the host's as before, which is
+# what a plain `cmake -S backends` for the probes does.
 #
 # One imported target per library, each carrying what a static link of it
 # needs after it — dav1d and libswresample after libavcodec (its AV1 and its

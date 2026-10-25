@@ -49,7 +49,8 @@ public final class RealVncCore {
      * CConn}'s "sending client cut text", any warning or error) still reaches
      * logcat, and every other category is as it was. The parameters given to
      * {@code initApp} are set after the log mode's, at the same priority, so
-     * this one is what the core logs by.
+     * this one is what the core logs by. The Linux session's {@code CORE_LOG}
+     * is the same string.
      */
     private static final String CORE_LOG =
             "*:android:110,CKeyboard:android:100,CConn:android:100,LineSpeedEstimator:android:100";

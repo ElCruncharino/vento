@@ -4,9 +4,9 @@
 //! The RealVNC backend's entry in the catalog: what it is called, where it
 //! goes in a picker, how its identities are pinned, and every option it
 //! takes. Compiled by `remotedesktop-api`, which names this file by path
-//! (`backends/api/src/catalog.rs`), and not by a backend crate (this
-//! module has none): the phone's generated Java (`vento-codegen`) reads it
-//! without building the backend.
+//! (`backends/api/src/catalog.rs`), and not by this module's crate: the
+//! phone's generated Java (`vento-codegen`) reads it without building the
+//! backend.
 
 use crate::catalog::About;
 use crate::options::{Scope, Spec, VIEW_ONLY, BELL, SHARED, choice, choices, bool, integer, when};

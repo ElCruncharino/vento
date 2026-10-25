@@ -1,8 +1,8 @@
 # Every crate is under `backends/`, inside the Gradle module that packages it,
 # but the workspace root is here because that is where cargo and rust-analyzer
 # look for one. The members are named one by one: a backend's crate is its
-# module's directory, `backends/modules/<name>/`, except RealVNC's, which has
-# none, so adding a protocol is a line in each list below.
+# module's directory, `backends/modules/<name>/`, so adding a protocol is a
+# line in each list below.
 #
 # The layering is the point. `backends/runtime` is the neutral layer a
 # protocol is written against and a platform is written to — the handler, the
@@ -12,16 +12,16 @@
 # `Backend` trait, the events, the options and the rules every client keeps
 # alike — and each backend's adapter to it lives in that backend's own
 # crate under `backends/modules/`: the protocol crate for the four in Rust, a
-# small crate beside the C library for the others. None of them knows a
-# phone. `backends/platform/*` is where one platform's glue lives — Android's
-# JNI and MediaCodec in `android` (and, in `android/codegen`, the host tool
-# that writes its Java), libavcodec in `linux`. What a platform supplies, it
-# supplies by implementing a trait of `runtime`'s (`Callbacks`,
-# `media::video::Decoders`, `media::audio::Outputs`) and handing it to the
-# session, so no protocol crate says which platform it is on. A protocol crate
-# depends on a platform crate only under a target cfg — `android` for the
-# library the app loads, `desktop` for its probe — so neither build sees the
-# other's.
+# small crate beside the C library for the others (RealVNC's empty on the
+# phone). None of them knows a phone. `backends/platform/*` is where one
+# platform's glue lives — Android's JNI and MediaCodec in `android` (and, in
+# `android/codegen`, the host tool that writes its Java), libavcodec in `linux`.
+# What a platform supplies, it supplies by implementing a trait of `runtime`'s
+# (`Callbacks`, `media::video::Decoders`, `media::audio::Outputs`) and handing
+# it to the session, so no protocol crate says which platform it is on. A
+# protocol crate depends on a platform crate only under a target cfg — `android`
+# for the library the app loads, `desktop` for its probe — so neither build sees
+# the other's.
 [workspace]
 resolver = "2"
 members = [
@@ -37,6 +37,7 @@ members = [
     "backends/modules/libvnc",
     "backends/modules/tigervnc",
     "backends/modules/freerdp",
+    "backends/modules/realvnc",
 ]
 # Every member but the Linux platform crate, which is the one whose build
 # script builds dav1d and FFmpeg (minutes, once per target directory): a bare
@@ -55,6 +56,7 @@ default-members = [
     "backends/modules/libvnc",
     "backends/modules/tigervnc",
     "backends/modules/freerdp",
+    "backends/modules/realvnc",
 ]
 exclude = ["third_party"]
 

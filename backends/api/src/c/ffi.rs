@@ -9,8 +9,8 @@
 //! and a retyped copy would be a second place it is kept, drifting the first
 //! time a header changed. The one thing added is `extern "C" free`, which is
 //! what `vento_strings` and the strings a backend's own header hands over
-//! are freed with — the headers free them that way too, so the allocator
-//! matches.
+//! (RealVNC's `vento_realvnc_identity_saved`) are freed with — the headers
+//! free them that way too, so the allocator matches.
 //!
 //! The generated items are `pub` and `unsafe` to touch. [`super`] is the one
 //! safe wrapper over the vtable. A backend's own header — its config struct,

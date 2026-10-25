@@ -1,0 +1,38 @@
+# The RealVNC backend on Linux: its `Kind`, over the one adapter for the C
+# backends (`remotedesktop-api`'s `c` feature), with this backend's own
+# config, live options, info rows and security prompt. The library is
+# `vento_realvnc` — the session in `cpp/` over the hosting layer in
+# `cpp/host/`, which runs RealVNC's Android viewer core in a glibc process —
+# built by CMake with the other C backends, and only under clang.
+#
+# Which is why it is loaded rather than linked (`src/lib.rs`): whether the
+# library exists is known only once CMake has run, too late to be a feature
+# of this crate, so this always builds, and finds `libvento_realvnc.so` when
+# a session asks for it — or says why not.
+#
+# Linux only. The phone's RealVNC backend is the module's Java over the
+# viewer's own JNI, in the add-on, with no Rust in it; on any target but
+# Linux this crate is empty, and no Gradle build names it.
+[package]
+name = "remotedesktop-realvnc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+name = "remotedesktop_realvnc"
+doctest = false
+
+[target.'cfg(target_os = "linux")'.dependencies]
+log.workspace = true
+remotedesktop-api = { workspace = true, features = ["c"] }
+# What bindgen's loader for the header's functions is written over (build.rs):
+# dlopen and dlsym, and an error that says which. Already in the graph
+# through bindgen's libclang.
+libloading = "0.8"
+
+[build-dependencies]
+# `vento/realvnc.h`, read rather than retyped (build.rs), as the `api` crate
+# reads the shared headers and each C backend's crate its own.
+bindgen.workspace = true

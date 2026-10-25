@@ -181,8 +181,10 @@ typedef struct vento_callbacks {
        `catchphrase` is its human-readable form, and `matching_address` is
        the address the identity is already known under, for
        `VENTO_IDENTITY_MATCHES_ANOTHER`; any of the three may be empty.
-       Answered through `answer_trust` like the other three, and a platform
-       without a dialog answers no. */
+       Answered through `answer_trust` like the other three — a yes that
+       should also be remembered goes through that backend's own
+       `vento_realvnc_answer_security`, since no other backend has a
+       remember to carry — and a platform without a dialog answers no. */
     void (*security_needed)(void *user, int identity, int encryption, const char *signature,
                             const char *catchphrase, const char *matching_address);
     /* The third, and RealVNC's as well: a message its core wants shown, with

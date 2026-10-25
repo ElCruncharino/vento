@@ -31,10 +31,13 @@
 // copied through a pipe: the bytes that come back out are the bytes the kernel
 // validated going in, which leaves no window between the check and the read.
 //
-// A header of `static` functions rather than a library, included into
-// `realvnc_traffic.c`, which is the JNI entry `RealVncTraffic` reads it through
-// on the phone; the phone's library is required to come out byte for byte what
-// it was when the walk and the entry were one file.
+// A header of `static` functions rather than a library, and deliberately: two
+// translation units want the walk — `realvnc_traffic.c`, which is the JNI
+// entry `RealVncTraffic` reads it through on the phone, and
+// `realvnc_session.cxx`, which reads it for `traffic` on the host — and the
+// phone's library is required to come out byte for byte what it was when the
+// walk and the entry were one file. Included into each, with its state its
+// own, it is.
 
 #ifndef VENTO_REALVNC_TRAFFIC_H
 #define VENTO_REALVNC_TRAFFIC_H

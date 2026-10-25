@@ -167,12 +167,17 @@ under the host locale (`export LC_ALL=C`).
   phone it is linked into the module's library as a static library
   (`rustStaticLibrary` in `backends/build.gradle`,
   `backends/platform/android/cmake/vento_android.cmake`) with the one JNI layer
-  in `backends/platform/android`. An upstream change reaches the session file;
-  the crate changes only when the config does, and so does `<name>_probe.c`, the
-  host probe's `main` beside them. The module's CMakeLists is one file for both
-  builds, `if(ANDROID)` and `else()` around a shared middle: a vendored tree's
-  new option goes in the middle, a new port or NDK library in the Android half,
-  a new system library in the host half (see `backends/CMakeLists.txt`).
+  in `backends/platform/android`. RealVNC's crate is the host's alone (the
+  phone's RealVNC backend is its Java over the viewer's JNI) and opens
+  `libvento_realvnc.so` at run time through the loader its `build.rs` has
+  bindgen generate, since the library is built only under clang; a function
+  added to `vento/realvnc.h` is one more the loader requires. An upstream change
+  reaches the session file; the crate changes only when the config does, and so
+  does `<name>_probe.c`, the host probe's `main` beside them. The module's
+  CMakeLists is one file for both builds, `if(ANDROID)` and `else()` around a
+  shared middle: a vendored tree's new option goes in the middle, a new port or
+  NDK library in the Android half, a new system library in the host half (see
+  `backends/CMakeLists.txt`).
 - A Rust backend's shim is its protocol crate, and its adapter is that
   crate's `src/backend.rs`: the `Kind`, the config read from the options, and
   the rows. An upstream change (IronRDP, hbb_common, ryll) reaches the
@@ -309,9 +314,13 @@ Native modules:
 
 The C backends again on the host, which is the one build that then runs — a
 probe per backend, against the test desktops under `scripts/` (README,
-Development). They build against the system libraries:
+Development). The three open ones build against the system libraries; the
+RealVNC one builds under clang only and runs their pinned library out of
+the viewer APK, so a change to `realvnc/.../Library.java`'s pins, to
+`realvnc_traffic.h`'s walk or to the four host-only submodules is proven
+here and nowhere else:
 
-    cmake -S backends -B build/scratch/host -G Ninja \
+    CC=clang CXX=clang++ cmake -S backends -B build/scratch/host -G Ninja \
         -DSTRICT_WARNINGS=ON -DVENTO_PROBES=ON
     cmake --build build/scratch/host
 
@@ -447,3 +456,9 @@ One commit per upstream, after review, by the lead:
 - **ryll** develop 3ba0f24; four patches, none merged upstream. No tag since
   v0.1.7. Only the protocol and compression crates are consumed; `client` is
   deliberately not (bundled root store).
+- **logger**, **libc-shim**, **mcpelauncher-linker** (branch `ng`, with its
+  nested `bionic` and `core`) and **libjnivm** (October 2026): the host-only
+  stack under `backends/modules/realvnc/cpp/host`, pinned at the commits
+  that stack was proven with and in no APK. No patches. Moving any of them
+  is proven by the RealVNC probe alone; the libc-shim gaps the hosting
+  layer closes from glibc (`Loader.cxx`) are the things to re-check.

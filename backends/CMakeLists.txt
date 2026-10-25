@@ -5,21 +5,30 @@
 # `modules/*/cpp`, against the libraries a Linux desktop has instead
 # of the ports and vendored trees the phone needs, and, with `-DVENTO_PROBES=ON`,
 # a probe in front of each that connects, prints every callback and writes the
-# framebuffer out. Gradle never reads this file — each module's CMakeLists is
-# its own root there, under the NDK toolchain — so it is the C backends' build
-# for development: a session file that builds and connects here has been proven
+# framebuffer out.
+# Three of them are open clients; the fourth, RealVNC, is their proprietary
+# Android core run in this process by the hosting layer in its module
+# (`modules/realvnc/cpp/host`), from two libraries the user takes out
+# of the viewer's APK (README.md says how) — the build needs nothing of
+# theirs, the probe needs the two files.
+# Gradle never reads this file — each module's CMakeLists is its own root
+# there, under the NDK toolchain — so it is the C backends' build for
+# development: a session file that builds and connects here has been proven
 # through the neutral C API alone.
 #
 #   cmake -S backends -B build/scratch/host -G Ninja -DVENTO_PROBES=ON
 #   cmake --build build/scratch/host
 #   build/scratch/host/libvnc/vento_libvnc_probe HOST:1 --password ... --out shot.ppm
 #
-# Options: -DVENTO_PROBES=ON builds the three probes (and FreeRDP's tests,
+# Options: -DVENTO_PROBES=ON builds the four probes (and FreeRDP's tests,
 # which `ctest` runs), which are off by default; -DSTRICT_WARNINGS=ON makes a
 # warning in our own sources an error, as `scripts/check-warnings.sh` does for
 # the phone's build; CMAKE_BUILD_TYPE defaults to RelWithDebInfo, since the
 # decoders at -O0 are not what anybody wants to watch and a probe with no line
-# numbers is not either; -DVENTO_SHARED=ON makes each `vento_<name>` a shared
+# numbers is not either; -DVENTO_REALVNC=OFF leaves the RealVNC module out,
+# which it is anyway under a compiler other than clang — libc-shim, which the
+# hosting layer stands on, does not build under GCC — with a message saying so
+# rather than an error; -DVENTO_SHARED=ON makes each `vento_<name>` a shared
 # library under `lib/` carrying its dependencies and the logger;
 # -DVENTO_FFMPEG_PREFIX=DIR links FreeRDP's scaler against the static FFmpeg
 # under DIR instead of the host's, such as the one
@@ -31,7 +40,9 @@
 # (unless VENTO_FFMPEG_PREFIX is given; FreeRDP links the host's libavcodec
 # too where there is one, for its camera channel's MJPEG, which nothing
 # loads), plus
-# pkg-config, and a C and C++ compiler CMake can find.
+# pkg-config, and a C and C++ compiler
+# CMake can find — clang for RealVNC (`CC=clang CXX=clang++ cmake ...`), whose
+# four host-only submodules are initialised with `--recursive`.
 
 cmake_minimum_required(VERSION 3.30)
 project(vento_backends C CXX)
@@ -60,19 +71,20 @@ set(CMAKE_C_STANDARD_REQUIRED ON CACHE BOOL "")
 # defaulted to it: clang from 16 and GCC from 11 do, the NDK's clang does,
 # and Gradle never reads this file. An older one (clang 14, Ubuntu 22.04's)
 # defaults to C++14 and fails the build. Asked for here, and only here, so
-# the phone's libraries are what they were.
+# the phone's libraries are what they were; a tree that sets its own (libjnivm
+# per target, mcpelauncher-linker in its directory) keeps its own.
 set(CMAKE_CXX_STANDARD 17 CACHE STRING "")
 set(CMAKE_CXX_STANDARD_REQUIRED ON CACHE BOOL "")
 
 include(cmake/warnings.cmake)
 include(platform/linux/cmake/vento_linux.cmake)
 
-# A root each under Gradle, a subdirectory each here; each branches on
-# `ANDROID` and takes its host half. The vendored trees under them share this
-# one cache, which is why every option a tree reads is forced in its module
-# rather than left to a default. With the probes, `ctest` in the build tree
-# runs the tests a module has beside its probe (so far FreeRDP's,
-# freerdp_test.c).
+# Four roots under Gradle, four subdirectories here; each branches on
+# `ANDROID` and takes its host half. The vendored trees under them share
+# this one cache, which is why every option a tree reads is forced in its
+# module rather than left to a default.
+# With the probes, `ctest` in the build tree runs the tests a module has
+# beside its probe (so far FreeRDP's, freerdp_test.c).
 if(VENTO_PROBES)
     enable_testing()
 endif()
@@ -80,3 +92,13 @@ endif()
 add_subdirectory(modules/libvnc/cpp libvnc)
 add_subdirectory(modules/tigervnc/cpp tigervnc)
 add_subdirectory(modules/freerdp/cpp freerdp)
+
+option(VENTO_REALVNC "Build the RealVNC backend's host half (needs clang)" ON)
+if(NOT VENTO_REALVNC)
+    message(STATUS "RealVNC: skipped (VENTO_REALVNC is off)")
+elseif(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR NOT CMAKE_C_COMPILER_ID MATCHES "Clang")
+    message(STATUS "RealVNC: skipped, since its hosting layer needs clang and this is "
+            "${CMAKE_CXX_COMPILER_ID} (CC=clang CXX=clang++ cmake ... to build it)")
+else()
+    add_subdirectory(modules/realvnc/cpp realvnc)
+endif()
