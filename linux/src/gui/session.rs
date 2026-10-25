@@ -40,8 +40,7 @@
 //! either way is remembered, and is never sent back where it came from.
 //!
 //! The debug overlay (`hud.rs`) is the phone's `SessionHud`: the state of
-//! each part of the session, in a corner, from the connection panel or
-//! Ctrl+Alt+D.
+//! each part of the session, in a corner, from the connection panel.
 //!
 //! What is here is the same in every window the session is shown in: the
 //! backend and its mailbox, the desktop, the follower, the prompts and the
@@ -67,7 +66,7 @@ use super::desktop::Desktop;
 use super::follow::{Ask, Follower, Shown, Takes};
 use super::hud::Hud;
 
-use super::keys::{Chord, Keyboard, Stroke};
+use super::keys::{Keyboard, Stroke};
 use super::panel::{Action, Controls, Panel, Snapshot, printable};
 use super::display_server::{self, DisplayServer};
 use super::prompts::{self, Answer, Form, Prompt};
@@ -1020,10 +1019,8 @@ impl Session {
         if taken.sent {
             self.hud.keys.record(since.elapsed());
         }
-        match taken.chord {
-            Some(Chord::Overlay) => self.toggle_hud(),
-            Some(Chord::Escape) => self.escaped = true,
-            None => {}
+        if taken.escape {
+            self.escaped = true;
         }
     }
 

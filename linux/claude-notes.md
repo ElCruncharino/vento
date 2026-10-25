@@ -1065,7 +1065,7 @@ screens at a time (RustDesk), asking `request_display`. Then the toolbar's
 audio**, on while muted. And **Follow window
 size**, below, the five **settings**, below, which a running session
 takes a change to at once, and **Debug overlay**, the overlay below, which is
-the session's and not a setting (Ctrl+Alt+D toggles it too).
+the session's and not a setting.
 
 Under them, the desktop's name, the facts the backend reports in its own words
 in the backend's order, the diagnostic ones among the rest, the bytes transferred, the desktop size and
@@ -1136,15 +1136,14 @@ what it does — and a key with no name at any level as its keysym, such as
 the pad's 5 without Num Lock (`KP_Begin`). Each
 physical key gets a stable id so a release finds its press whatever the
 modifiers did meanwhile; every key still down is released when the window
-loses focus. There is one local chord, **Ctrl+Alt+D** for the debug overlay
-(and Ctrl+Alt on its own in relative mode, below): the D stays here, and the
-chord's keys are let go of at the far end, as the escape does. A key held
+loses focus. The client keeps no shortcuts of its own: the one chord it
+reads, Ctrl+Alt in relative mode (below), still goes to the far end, and its
+keys stay down there until they are released here, so a far end with a use
+for Ctrl+Alt, or for a key pressed with them, still gets it. A key held
 down repeats at the far end as its own autorepeat would, but a repeat is
-never a chord — a held Ctrl+Alt+D is one toggle — and a key the far end no
-longer has down (a chord's, or one let go of when input went elsewhere) is
-sent again only once it is pressed again, so the Alt of the escape held on
-is no lone Alt press there. Every other
-key is the far end's while a session has focus and takes input (not in view
+never the escape, and a key the far end no longer has down (one let go of
+when input went elsewhere) is sent again only once it is pressed again.
+Every key is the far end's while a session has focus and takes input (not in view
 only, nor under a prompt) — including the compositor's or window manager's own
 chords (unless **Grab keyboard** is off), see below — except while the pointer
 is on the toolbar: the toolbar is this end's, so while it is under the pointer
@@ -1193,7 +1192,8 @@ changes nothing, as there the far end draws its own.
 server mode) — locks (Wayland) or hides and centres (X11) the local pointer
 while the window has focus, and sends raw motion as deltas; the far end draws
 its own cursor into the picture. **Hold Ctrl and Alt together to let go** of
-the pointer; a click on the desktop takes it back. Losing focus or
+the pointer (the two keys still reach the far end); a click on the desktop
+takes it back. Losing focus or
 disconnecting also lets go.
 
 
@@ -1228,8 +1228,7 @@ read like the focus-in one, and the text is pasted when it is in, a few
 milliseconds later — or not at all, from an owner that does not answer within
 the deadline, with the window responsive meanwhile.
 
-**The debug overlay** (the connection panel's **Debug overlay**, or
-**Ctrl+Alt+D**) is the
+**The debug overlay** (the connection panel's **Debug overlay**) is the
 phone's `SessionHud`: a small monospace box in the bottom left of the
 desktop, with its lines in its order where they apply here, and sampled
 rates over a one-second window. First what is the session's, the same in

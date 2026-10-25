@@ -31,9 +31,9 @@
 //! a small integer per `PhysicalKey` as they are first seen, which is stable
 //! for the life of the process and is all the backends ask of it.
 //!
-//! `Keyboard` keeps what the far end has down apart from what is down here,
-//! which the two chords this end keeps (Ctrl+Alt+D, and Ctrl+Alt with the
-//! pointer captured) are read from, and what a key repeating is sent as.
+//! `Keyboard` keeps what the far end has down, which the one chord this end
+//! reads (Ctrl+Alt with the pointer captured) is read from, and what a key
+//! repeating is sent as.
 
 use crate::backend::Backend;
 use std::collections::HashMap;
@@ -281,8 +281,6 @@ pub struct Stroke {
     /// The press is the key repeating, not a press of its own.
     pub repeat: bool,
     pub keysym: Option<u32>,
-    /// The key is the layout's D, which is Ctrl+Alt+D's.
-    pub d: bool,
 }
 
 impl Stroke {
@@ -292,18 +290,8 @@ impl Stroke {
             pressed: event.state == ElementState::Pressed,
             repeat: event.repeat,
             keysym: keysym(event),
-            d: matches!(&event.logical_key, Key::Character(c) if c.eq_ignore_ascii_case("d")),
         }
     }
-}
-
-/// One of the two chords this end keeps for itself.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Chord {
-    /// Ctrl+Alt+D: the debug overlay.
-    Overlay,
-    /// Ctrl+Alt with the pointer captured: let it go.
-    Escape,
 }
 
 /// What a key handed to the far end came to.
@@ -311,33 +299,28 @@ pub enum Chord {
 pub struct Taken {
     /// It went to the far end, as a press (the overlay's latency counts it).
     pub sent: bool,
-    pub chord: Option<Chord>,
+    /// It made Ctrl+Alt with the pointer captured: let the pointer go.
+    pub escape: bool,
 }
 
-/// The keys as the far end has them and as they are here, which are not
-/// the same: a chord's keys are let go of at the far end as soon as the
-/// chord is seen, and so is everything held when input goes elsewhere (a
-/// prompt, view only, the toolbar), while they stay down here.
+/// The keys as the far end has them, which is not always as they are
+/// here: everything held when input goes elsewhere (a prompt, view only,
+/// the toolbar) is let go of at the far end, while it stays down here.
 ///
 /// A key repeating is held: its repeats go on to the far end as the
 /// presses its own autorepeat would make, but only while the far end has
-/// it down, and they are never a chord. Read as presses of their own, they
-/// were both: a held Ctrl+Alt+D turned the overlay on and off at the
-/// autorepeat rate, and the Alt of the capture's escape, let go of at the
-/// far end with the chord, came back there as a lone Alt, pressed and
-/// released, which is the key a Windows desktop opens its menus with. A key
-/// the far end does not have down is sent again only once it is pressed
-/// again, after its release.
+/// it down, and they are never the escape. A key the far end does not have
+/// down is sent again only once it is pressed again, after its release.
+///
+/// The escape's keys go to the far end like any others, and stay down there
+/// until they are released here, so that whatever the far end does with
+/// Ctrl+Alt (or with a key pressed while they are held) it still does.
 #[derive(Default)]
 pub struct Keyboard {
     ids: KeyIds,
     /// The physical keys down at the far end, and the keysym each went
     /// down as.
     held: HashMap<PhysicalKey, u32>,
-    /// Every physical key seen down and not yet up, whether or not it was
-    /// sent: what the overlay's chord is read from, since a chord's keys
-    /// are let go of at the far end as soon as the chord is seen.
-    down: HashMap<PhysicalKey, u32>,
 }
 
 impl Keyboard {
@@ -347,12 +330,8 @@ impl Keyboard {
         let physical = stroke.physical;
         let mut taken = Taken::default();
         if !stroke.pressed {
-            self.down.remove(&physical);
             self.up(physical, backend);
             return taken;
-        }
-        if let Some(keysym) = stroke.keysym {
-            self.down.insert(physical, keysym);
         }
         if stroke.repeat {
             if let Some(keysym) = stroke.keysym.filter(|_| self.held.contains_key(&physical)) {
@@ -361,43 +340,21 @@ impl Keyboard {
             }
             return taken;
         }
-        // The one chord with a key in it: Ctrl+Alt+D is the overlay, and
-        // the D stays here. The chord's keys are let go of at the far end,
-        // as the escape does, so they do not stay down there under a key it
-        // never saw.
-        if chord(&self.down) && stroke.d {
-            self.release_all(backend);
-            taken.chord = Some(Chord::Overlay);
-            return taken;
-        }
         if let Some(keysym) = stroke.keysym {
             self.press(physical, keysym, backend);
             taken.sent = true;
         }
-        if captured && chord(&self.held) {
-            // Let go of the lock, and of the chord's keys at the far end,
-            // which otherwise stay down there.
-            self.release_all(backend);
-            taken.chord = Some(Chord::Escape);
-        }
+        taken.escape = captured && chord(&self.held);
         taken
     }
 
     /// A key that is egui's rather than the far end's: view only, a prompt,
-    /// a text field. It goes no further, but `down` is kept true to it.
-    /// Were only the far end's keys counted, a modifier let go of while
-    /// input was blocked would stay down for the chord: Ctrl held, View only
-    /// on, Ctrl let go, View only off, and the next Alt+D was the overlay.
-    /// And a key that went down at the far end before its release came here
-    /// (a text field taking the keyboard mid-press) is released there, which
-    /// nothing else would do until the focus left.
+    /// a text field. It goes no further, except that a key that went down
+    /// at the far end before its release came here (a text field taking the
+    /// keyboard mid-press) is released there, which nothing else would do
+    /// until the focus left.
     pub fn elsewhere(&mut self, stroke: Stroke, backend: &dyn Backend) {
-        if stroke.pressed {
-            if let Some(keysym) = stroke.keysym {
-                self.down.insert(stroke.physical, keysym);
-            }
-        } else {
-            self.down.remove(&stroke.physical);
+        if !stroke.pressed {
             self.up(stroke.physical, backend);
         }
     }
@@ -416,11 +373,10 @@ impl Keyboard {
         }
     }
 
-    /// The focus left: every key let go of, at the far end and here, since
-    /// their releases will go elsewhere.
+    /// The focus left: every key let go of at the far end, since their
+    /// releases will go elsewhere.
     pub fn focus_lost(&mut self, backend: &dyn Backend) {
         self.release_all(backend);
-        self.down.clear();
     }
 
     fn press(&mut self, physical: PhysicalKey, keysym: u32, backend: &dyn Backend) {
@@ -621,7 +577,6 @@ mod tests {
         match code {
             CTRL => Keysym::Control_L.raw(),
             ALT => Keysym::Alt_L.raw(),
-            KeyCode::KeyD => 'd' as u32,
             KeyCode::KeyA => 'a' as u32,
             _ => unreachable!(),
         }
@@ -633,7 +588,6 @@ mod tests {
             pressed,
             repeat,
             keysym: Some(sym(code)),
-            d: code == KeyCode::KeyD,
         }
     }
 
@@ -649,65 +603,45 @@ mod tests {
         stroke(code, false, false)
     }
 
-    const SENT: Taken = Taken { sent: true, chord: None };
-    const NOTHING: Taken = Taken { sent: false, chord: None };
+    const SENT: Taken = Taken { sent: true, escape: false };
+    const NOTHING: Taken = Taken { sent: false, escape: false };
+    const ESCAPE: Taken = Taken { sent: true, escape: true };
 
     #[test]
-    fn a_held_overlay_chord_is_one_toggle() {
+    fn ctrl_alt_is_the_escape_only_while_captured() {
         let far = Far::default();
         let mut keyboard = Keyboard::default();
         assert_eq!(keyboard.key(press(CTRL), false, &far), SENT);
         assert_eq!(keyboard.key(press(ALT), false, &far), SENT, "no escape without a capture");
-        let (ctrl, alt) = (keyboard.ids.id(PhysicalKey::Code(CTRL)), keyboard.ids.id(PhysicalKey::Code(ALT)));
-        assert_eq!(far.told(), [Told::Down(sym(CTRL), ctrl), Told::Down(sym(ALT), alt)]);
-        // The D stays here, and the chord's keys are let go of there.
-        let overlay = Taken { sent: false, chord: Some(Chord::Overlay) };
-        assert_eq!(keyboard.key(press(KeyCode::KeyD), false, &far), overlay);
-        assert_eq!(far.told(), [Told::ReleaseAll]);
-        assert_eq!(keyboard.held(), 0);
-        // Held on, the D repeats: no toggle, nothing sent.
-        for _ in 0..24 {
-            assert_eq!(keyboard.key(repeat(KeyCode::KeyD), false, &far), NOTHING);
-        }
-        // Nor are the releases, of keys the far end no longer has down; and
-        // the D held on past Ctrl and Alt is no D typed there either.
-        for code in [ALT, CTRL] {
-            assert_eq!(keyboard.key(release(code), false, &far), NOTHING);
-        }
-        for _ in 0..5 {
-            assert_eq!(keyboard.key(repeat(KeyCode::KeyD), false, &far), NOTHING);
-        }
-        assert_eq!(keyboard.key(release(KeyCode::KeyD), false, &far), NOTHING);
-        assert_eq!(far.told(), []);
-        // Pressed again, it is the overlay again.
-        keyboard.key(press(CTRL), false, &far);
-        keyboard.key(press(ALT), false, &far);
-        assert_eq!(keyboard.key(press(KeyCode::KeyD), false, &far), overlay);
+        keyboard.key(release(ALT), false, &far);
+        assert_eq!(keyboard.key(press(ALT), true, &far), ESCAPE);
     }
 
     #[test]
-    fn the_escapes_alt_repeating_is_no_lone_alt_at_the_far_end() {
+    fn the_escape_reaches_the_far_end_and_stays_down_there_until_released() {
         let far = Far::default();
         let mut keyboard = Keyboard::default();
         assert_eq!(keyboard.key(press(CTRL), true, &far), SENT);
-        let escape = Taken { sent: true, chord: Some(Chord::Escape) };
-        assert_eq!(keyboard.key(press(ALT), true, &far), escape);
-        let alt = keyboard.ids.id(PhysicalKey::Code(ALT));
-        assert_eq!(far.told()[1..], [Told::Down(sym(ALT), alt), Told::ReleaseAll]);
-        // The pointer let go; the Alt held on repeats, and is not pressed
-        // at the far end again, nor released there.
-        for _ in 0..10 {
-            assert_eq!(keyboard.key(repeat(ALT), false, &far), NOTHING);
-            assert_eq!(keyboard.key(repeat(ALT), true, &far), NOTHING, "nor an escape again");
+        assert_eq!(keyboard.key(press(ALT), true, &far), ESCAPE);
+        let (ctrl, alt) = (keyboard.ids.id(PhysicalKey::Code(CTRL)), keyboard.ids.id(PhysicalKey::Code(ALT)));
+        assert_eq!(far.told(), [Told::Down(sym(CTRL), ctrl), Told::Down(sym(ALT), alt)]);
+        assert_eq!(keyboard.held(), 2);
+        // The pointer let go, the Alt held on repeats there as it would on
+        // its own keyboard, and is never the escape again.
+        for _ in 0..3 {
+            assert_eq!(keyboard.key(repeat(ALT), false, &far), SENT);
+            assert_eq!(keyboard.key(repeat(ALT), true, &far), SENT, "a repeat is not the escape");
         }
-        assert_eq!(keyboard.key(release(ALT), false, &far), NOTHING);
-        assert_eq!(far.told(), []);
-        // Pressed again for real, it is the far end's again (Ctrl still
-        // down here, but not there: no chord of the far end's keys).
-        assert_eq!(keyboard.key(press(ALT), true, &far), SENT);
-        assert_eq!(keyboard.key(repeat(ALT), true, &far), SENT);
-        keyboard.key(release(ALT), true, &far);
-        assert_eq!(far.told(), [Told::Down(sym(ALT), alt), Told::Down(sym(ALT), alt), Told::Up(alt)]);
+        // A key pressed with them held is a chord at the far end.
+        assert_eq!(keyboard.key(press(KeyCode::KeyA), false, &far), SENT);
+        let a = keyboard.ids.id(PhysicalKey::Code(KeyCode::KeyA));
+        for code in [KeyCode::KeyA, ALT, CTRL] {
+            assert_eq!(keyboard.key(release(code), false, &far), NOTHING);
+        }
+        let mut told = far.told();
+        told.retain(|t| *t != Told::Down(sym(ALT), alt));
+        assert_eq!(told, [Told::Down(sym(KeyCode::KeyA), a), Told::Up(a), Told::Up(alt), Told::Up(ctrl)]);
+        assert_eq!(keyboard.held(), 0);
     }
 
     #[test]
@@ -742,30 +676,24 @@ mod tests {
     }
 
     #[test]
-    fn keys_going_elsewhere_keep_the_chord_and_the_far_ends_keys_true() {
+    fn a_key_released_elsewhere_is_released_at_the_far_end() {
         let far = Far::default();
         let mut keyboard = Keyboard::default();
-        // Ctrl went down while a prompt was up: never sent, but down for the
-        // chord, so Alt+D after it is the overlay.
-        keyboard.elsewhere(press(CTRL), &far);
-        assert_eq!(keyboard.key(press(ALT), false, &far), SENT);
-        let overlay = Taken { sent: false, chord: Some(Chord::Overlay) };
-        assert_eq!(keyboard.key(press(KeyCode::KeyD), false, &far), overlay);
-        // Ctrl let go of elsewhere is up for the chord too: Alt+D is a D.
-        keyboard.elsewhere(release(CTRL), &far);
-        keyboard.key(release(KeyCode::KeyD), false, &far);
-        assert_eq!(keyboard.key(press(KeyCode::KeyD), false, &far), SENT);
-        far.told();
         // A key down at the far end whose release went elsewhere (a text
         // field took the keyboard mid-press) is released there.
         keyboard.key(press(KeyCode::KeyA), false, &far);
         keyboard.elsewhere(release(KeyCode::KeyA), &far);
         let a = keyboard.ids.id(PhysicalKey::Code(KeyCode::KeyA));
         assert_eq!(far.told()[1..], [Told::Up(a)]);
-        // The focus gone, everything is up, there and here.
+        // A press elsewhere is not sent, and neither is its release.
+        keyboard.elsewhere(press(CTRL), &far);
+        keyboard.elsewhere(release(CTRL), &far);
+        assert_eq!(far.told(), []);
+        // The focus gone, everything is up at the far end.
+        keyboard.key(press(CTRL), false, &far);
+        far.told();
         keyboard.focus_lost(&far);
         assert_eq!(far.told(), [Told::ReleaseAll]);
-        assert_eq!(keyboard.key(press(CTRL), false, &far), SENT);
-        assert_eq!(keyboard.key(press(KeyCode::KeyD), false, &far), SENT, "Alt is up after the focus left");
+        assert_eq!(keyboard.held(), 0);
     }
 }

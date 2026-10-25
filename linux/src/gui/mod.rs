@@ -1412,7 +1412,7 @@ impl ApplicationHandler<Wake> for App {
                         return;
                     }
                     // egui's, but the session still hears of it: a key
-                    // going up here is no longer down for its chord.
+                    // going up here is let go of at the far end too.
                     session.key_elsewhere(key);
                 }
                 // A paste into a text field is of the clipboard as it is now,

@@ -75,9 +75,9 @@ python3 -I cursor.py :42
 - While a connected session has the keyboard, Alt+F4 is the far end's too.
   `xdotool windowquit $W` closes the client the way the window manager's
   close button does.
-- Ctrl+Alt is the client's escape from a captured pointer, so Ctrl+Alt+D (the
-  debug overlay) also lets the pointer go; turn the overlay on first and
-  click the desktop to capture again.
+- Ctrl+Alt is the client's escape from a captured pointer (the two keys
+  still reach the far end); click the desktop to capture again. The debug
+  overlay is in the connection panel.
 - Relative mode needs a backend that speaks it: `rfb` against testqemu's VNC
   port, or `spice` against its SPICE port. The C VNC backends (`tigervnc`,
   `libvnc`) have no relative pointer and stay absolute there.

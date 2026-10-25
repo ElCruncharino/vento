@@ -308,7 +308,6 @@ impl Panel {
 
             // The session's, not a setting: it is for looking into a
             // problem with this connection, and is off again in the next.
-            // Ctrl+Alt+D toggles it as well.
             ui.label(RichText::new("Debug overlay").weak());
             let mut debug = controls.debug;
             if ui.checkbox(&mut debug, "").changed() {
