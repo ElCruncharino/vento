@@ -411,8 +411,16 @@ fn unmangle(bytes: &[u8]) -> Result<SocketAddr> {
     padded[..bytes.len()].copy_from_slice(bytes);
     let n = u128::from_le_bytes(padded);
     let tm = (n >> 17) & (u32::MAX as u128);
-    let ip = (((n >> 49) - tm) as u32).to_le_bytes();
-    let port = ((n & 0xFF_FFFF) - (tm & 0xFFFF)) as u16;
+    // An encoded address always holds at least the timestamp it was offset
+    // by, so a subtraction that would go below zero, or an address that is
+    // more than 32 bits once it is undone, is not one of theirs; theirs
+    // wraps (or panics in a debug build) instead.
+    let not_theirs = || Error::Protocol("the server sent an address that does not decode".into());
+    let ip = (n >> 49).checked_sub(tm).and_then(|ip| u32::try_from(ip).ok()).ok_or_else(not_theirs)?;
+    let ip = ip.to_le_bytes();
+    // The mask takes in the timestamp's low bits above the port's seventeen;
+    // the cast drops them, as theirs does.
+    let port = (n & 0xFF_FFFF).checked_sub(tm & 0xFFFF).ok_or_else(not_theirs)? as u16;
     Ok(SocketAddr::new(
         std::net::Ipv4Addr::new(ip[0], ip[1], ip[2], ip[3]).into(),
         port,
@@ -481,6 +489,26 @@ mod tests {
             let bytes = mangle(addr, micros);
             assert_eq!(unmangle(&bytes).unwrap(), SocketAddr::V4(addr), "{micros}");
         }
+    }
+
+    /// A folded number whose address or port is smaller than the timestamp it
+    /// says it was offset by is no encoding of theirs, and is refused rather
+    /// than wrapped round (or, in a debug build, panicked on).
+    #[test]
+    fn a_number_below_its_timestamp_is_refused() {
+        let trimmed = |v: u128| {
+            let bytes = v.to_le_bytes();
+            let keep = bytes.iter().rposition(|b| *b != 0).map_or(0, |i| i + 1);
+            bytes[..keep].to_vec()
+        };
+        // The address part (zero) below the timestamp (one).
+        assert!(matches!(unmangle(&trimmed(1 << 17)), Err(Error::Protocol(_))));
+        // The address part fine, the port part (zero) below the timestamp.
+        let tm = 0x80u128;
+        assert!(matches!(unmangle(&trimmed((tm << 49) | (tm << 17))), Err(Error::Protocol(_))));
+        // An address part more than 32 bits once the timestamp is taken off.
+        assert!(matches!(unmangle(&trimmed(1 << 100)), Err(Error::Protocol(_))));
+        assert!(unmangle(&[]).is_ok());
     }
 
     /// An IPv6 address is the plain sixteen bytes and a port, which is the one
