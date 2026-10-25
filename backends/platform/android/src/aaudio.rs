@@ -27,7 +27,8 @@
 //! keeps failing is given up on rather than retried for ever.
 
 use std::ffi::{CStr, c_char, c_void};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use std::time::Duration;
 use std::sync::{Arc, Mutex};
 
 use common::audio::decode::Decoders;
@@ -76,6 +77,7 @@ unsafe extern "C" {
     fn AAudioStream_getChannelCount(stream: *mut AAudioStream) -> i32;
     fn AAudioStream_getBufferSizeInFrames(stream: *mut AAudioStream) -> i32;
     fn AAudioStream_getFramesPerBurst(stream: *mut AAudioStream) -> i32;
+    fn AAudioStream_getFramesRead(stream: *mut AAudioStream) -> i64;
 }
 
 /// How many times a stream is opened again after its output went away.
@@ -175,11 +177,19 @@ impl Open {
     }
 }
 
-/// What the callbacks are handed: the queue to fill from, and the format the
-/// stream opened at, which the queue converts to.
+/// What the callbacks are handed: the queue to fill from, the format the
+/// stream opened at, which the queue converts to, and what the device holds
+/// and takes at once, which the data callback keeps the queue told of.
 struct Context {
     shared: Arc<Shared>,
     format: Format,
+    buffered: Duration,
+    burst: u64,
+    /// AAudio's count of the frames its mixer has read, as the data
+    /// callback last saw it, and the period the queue was last told, in
+    /// frames.
+    read: AtomicI64,
+    period: AtomicU64,
 }
 
 /// The stream's hold on its AAudio stream. Dropping it closes the stream on
@@ -246,6 +256,10 @@ fn try_open(shared: &Arc<Shared>, rate: i32, channels: i32) -> Result<Open, i32>
     let context = Box::into_raw(Box::new(Context {
         shared: Arc::clone(shared),
         format: shared.queue.format(),
+        buffered: Duration::ZERO,
+        burst: 0,
+        read: AtomicI64::new(0),
+        period: AtomicU64::new(0),
     }));
     let mut stream = std::ptr::null_mut();
     let result = unsafe {
@@ -284,13 +298,20 @@ fn try_open(shared: &Arc<Shared>, rate: i32, channels: i32) -> Result<Open, i32>
         open.close();
         return Err(-1);
     };
-    unsafe { (*context).format = device };
     let buffered = device.duration(buffer.max(0) as usize);
+    let burst = burst.max(0) as u64;
+    unsafe {
+        (*context).format = device;
+        (*context).buffered = buffered;
+        (*context).burst = burst;
+        (*context).period = AtomicU64::new(burst);
+    }
     shared.latency_us.store(buffered.as_micros() as u64, Ordering::Relaxed);
-    // AAudio keeps its buffer topped up from the callback, so it is that much
-    // of the target the queue need not keep itself; and each callback asks
-    // for a burst, which the queue has to have left over.
-    shared.queue.set_device(buffered, device.duration(burst.max(0) as usize));
+    // AAudio keeps its buffer topped up from the callback, delay behind the
+    // queue; and each callback asks for a burst, which the queue has to have
+    // left over — until the data callback has seen what the mixer reads,
+    // which is the most the queue is asked for at once (see `data`).
+    shared.queue.set_device(buffered, device.duration(burst as usize));
     let result = unsafe { AAudioStream_requestStart(stream) };
     if result != AAUDIO_OK {
         open.close();
@@ -308,8 +329,28 @@ fn try_open(shared: &Arc<Shared>, rate: i32, channels: i32) -> Result<Open, i32>
 }
 
 /// AAudio asking for `frames` frames, on its own thread.
-unsafe extern "C" fn data(_stream: *mut AAudioStream, user: *mut c_void, audio: *mut c_void, frames: i32) -> i32 {
+///
+/// The queue's period is what the mixer reads at a time rather than a
+/// burst: on the Pixel 8 (Android 17) this was measured on, a Legacy stream
+/// (what a stream that does not ask for low latency is) is read by the
+/// mixer two bursts at a time — 1920 frames every 40 ms, refilled in two or
+/// three callbacks within 1.5 ms — from the first read after the buffer is
+/// filled on. A queue told a burst started with a millisecond or less to
+/// spare after that first read, and ran dry 0.3 s in on a write 3 ms late;
+/// it would again wherever it starts over, after running dry or a pause.
+/// The first read comes before the callback that starts the queue (it is
+/// what frees the room that callback fills), so the queue has the period
+/// from the start.
+unsafe extern "C" fn data(stream: *mut AAudioStream, user: *mut c_void, audio: *mut c_void, frames: i32) -> i32 {
     let context = unsafe { &*(user as *const Context) };
+    let read = unsafe { AAudioStream_getFramesRead(stream) };
+    let step = read - context.read.swap(read, Ordering::Relaxed);
+    if step > 0 {
+        let period = (step as u64).max(context.burst);
+        if context.period.swap(period, Ordering::Relaxed) != period {
+            context.shared.queue.set_device(context.buffered, context.format.duration(period as usize));
+        }
+    }
     let samples = frames.max(0) as usize * context.format.channels;
     let out = unsafe { std::slice::from_raw_parts_mut(audio as *mut i16, samples) };
     context.shared.queue.pull(out, context.format);

@@ -8,10 +8,9 @@
 //! is worth having: between 44.1 and 48 kHz its images sit some 40 dB down
 //! at the top of the band, which nobody hears over a remote desktop's
 //! notification sounds and speech, and it has no delay and no filter state
-//! to warm up. It is a fallback rather than the path: the phone's sound
-//! server (AudioFlinger behind AAudio) takes any rate and resamples properly
-//! itself, so this runs only on a device that refused the stream's rate
-//! outright.
+//! to warm up. It is a fallback rather than the path: the phone's sound server
+//! (AudioFlinger behind AAudio) takes any rate and resamples properly itself,
+//! so this runs only on a device that refused the stream's rate outright.
 
 use std::collections::VecDeque;
 

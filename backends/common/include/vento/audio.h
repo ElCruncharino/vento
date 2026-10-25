@@ -7,9 +7,12 @@
 // rather than symbols, for the reason `vento/video.h` gives: a backend library
 // links nothing of the process it is loaded into.
 //
-// What is behind a stream is the same for every backend: about a tenth of a
-// second between a write and its being heard, the queue and the device's own
-// buffer together, and never more than a quarter (past that the oldest is
+// What is behind a stream is the same for every backend: a queue that keeps as
+// little in front of the device as the far end's own rhythm of writes needs
+// not to run dry, and a margin that starts higher and comes down over a
+// stream's first clean seconds and grows when the far end's sound turns out
+// later than that (`common::audio::Queue`), with the device's own buffer
+// behind it; never more than a quarter of a second (past that the oldest is
 // dropped, so a burst or a stall costs a skip rather than a lag that grows),
 // silence while it fills back up after running dry, the session's gain and
 // mute, and a device opened off the caller's thread.

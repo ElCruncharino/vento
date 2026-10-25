@@ -385,12 +385,41 @@ mod tests {
             let queue = Arc::clone(&fake.queues.lock().unwrap()[0]);
             let format = queue.format();
             t.set_gain.unwrap()(s, 0.5);
+            // How much of the 100 ms the queue's target is depends on the
+            // far end's rhythm, which is timed by the clock: the writes
+            // above are one group when they come quickly and several when
+            // the machine is busy, and a target below what was written
+            // would start the sound at once and cut its oldest frames. A
+            // device that takes 150 ms at a time puts the target past the
+            // 100 ms whatever the rhythm says, so the queue starts the way
+            // a stream's short tail does, once it has played a target's
+            // worth of silence: counted in frames pulled, not in time.
+            queue.set_device(Duration::ZERO, Duration::from_millis(150));
+            let target = format.frames(queue.target_now());
+            assert!(target > format.frames(Duration::from_millis(100)));
             let mut out = vec![0i16; 8];
-            queue.pull(&mut out, format);
+            let mut silent = 0;
+            loop {
+                queue.pull(&mut out, format);
+                if out != [0; 8] {
+                    break;
+                }
+                silent += 1;
+                assert!(silent <= target / 4 + 1, "never played");
+            }
+            assert!(silent * 4 >= target, "played before it waited a target's worth");
+            // Then from the first frame written, at half: sample i is i / 2,
+            // so frame k is k twice.
             assert_eq!(out, [0, 0, 1, 1, 2, 2, 3, 3]);
             queue.pull(&mut out, format);
-            // Samples 8 to 15 at half: 4, 4, 5, 5, ...
             assert_eq!(out, [4, 4, 5, 5, 6, 6, 7, 7]);
+            // And the rest of it, every frame in order and none dropped,
+            // then nothing.
+            let mut rest = vec![0i16; (4800 - 8) * 2];
+            queue.pull(&mut rest, format);
+            assert!(rest.chunks(2).zip(8..).all(|(f, k)| f == [k, k]), "all of it, in order");
+            queue.pull(&mut out, format);
+            assert_eq!(out, [0; 8]);
 
             t.close.unwrap()(s);
             assert!(!fake.controls.playing());

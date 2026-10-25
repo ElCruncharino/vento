@@ -376,7 +376,7 @@ mod tests {
         let start = Instant::now();
         assert!(!player.close_if_quiet_at(start + after * 2, after), "nothing open");
         player.pcm(format, &[0; 4 * 4800]);
-        // 100 ms queued, with this fake's device holding nothing.
+        // 100 ms queued, with nothing pulling it.
         assert!(player.latency() >= Duration::from_millis(100));
         let heard_by = player.heard_by.unwrap();
         assert!(!player.close_if_quiet_at(heard_by + after - Duration::from_millis(1), after));
