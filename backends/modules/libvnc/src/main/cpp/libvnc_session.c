@@ -70,6 +70,7 @@ enum {
     CMD_RELEASE_KEYS,
     CMD_CLIPBOARD,
     CMD_RESIZE,
+    CMD_LAYOUT,
 };
 
 typedef struct {
@@ -77,7 +78,15 @@ typedef struct {
     int a, b, c;
     int64_t id;  /* the key's identity, which is the seam's and not the keysym */
     char *text;  /* owned by the queue */
+    int32_t *screens; /* a layout's, five ints a screen and `c` of them; owned too */
 } Cmd;
+
+static void cmdFree(Cmd *c) {
+    free(c->text);
+    free(c->screens);
+    c->text = NULL;
+    c->screens = NULL;
+}
 
 static char *dupOrNull(const char *s) {
     return s ? strdup(s) : NULL;
@@ -118,9 +127,10 @@ typedef struct {
     int closedReported;
     _Atomic int canResize; /* an ExtDesktopSize rectangle has arrived; written from the protocol thread */
 
-    /* The far end's screen layout, four ints per screen, copied out of the
-       library's own array under `lock` because that array is the protocol
-       thread's and this is read from whichever thread asks. */
+    /* The far end's screen layout, five ints per screen — the server's id,
+       then x, y, width, height — copied out of the library's own array under
+       `lock` because that array is the protocol thread's and this is read
+       from whichever thread asks. */
     int32_t *screens;
     int nscreens;
 
@@ -223,7 +233,7 @@ static void ring_push(Session *s, const Cmd *c) {
         /* Full. Dropping the oldest keeps the newest pointer position, which
            is the one that matters; a dropped button change would not be, so
            this is only ever reached if the protocol thread is wedged. */
-        free(s->ring[s->tail].text);
+        cmdFree(&s->ring[s->tail]);
         s->tail = (s->tail + 1) % CMD_RING;
     }
     s->ring[s->head] = *c;
@@ -235,6 +245,7 @@ static void post(Session *s, const Cmd *c) {
     if (s->quit) {
         pthread_mutex_unlock(&s->lock);
         free(c->text);
+        free(c->screens);
         return;
     }
     /* Motion coalesces onto the tail of the queue: the protocol thread can be
@@ -387,22 +398,24 @@ static void onGotUpdate(rfbClient *cl, int x, int y, int w, int h) {
 /* Take a copy of the library's screen list, which is the patch's whole point:
    upstream keeps one screen and the layout is the list. The fields are in
    network byte order there, as `client->screen`'s are, so they are swapped here and
-   nowhere else. Called once per update message, and copies only when the
-   layout has actually moved. */
+   in sendLayout and nowhere else. The ids are kept, since a layout asked for
+   later hands them back. Called once per update message, and copies only
+   when the layout has actually moved. */
 static void layoutChanged(Session *s, rfbClient *client) {
     const int n = client->numScreens;
-    int32_t stack[4 * VENTO_MAX_MONITORS];
+    int32_t stack[5 * VENTO_MAX_MONITORS];
     int32_t *flat = stack;
     if (n > VENTO_MAX_MONITORS) {
         return; /* sixteen heads is already absurd; the alternative is a malloc per update */
     }
     for (int i = 0; i < n; i++) {
-        flat[4 * i + 0] = (int32_t) rfbClientSwap16IfLE(client->screens[i].x);
-        flat[4 * i + 1] = (int32_t) rfbClientSwap16IfLE(client->screens[i].y);
-        flat[4 * i + 2] = (int32_t) rfbClientSwap16IfLE(client->screens[i].width);
-        flat[4 * i + 3] = (int32_t) rfbClientSwap16IfLE(client->screens[i].height);
+        flat[5 * i + 0] = (int32_t) rfbClientSwap32IfLE(client->screens[i].id);
+        flat[5 * i + 1] = (int32_t) rfbClientSwap16IfLE(client->screens[i].x);
+        flat[5 * i + 2] = (int32_t) rfbClientSwap16IfLE(client->screens[i].y);
+        flat[5 * i + 3] = (int32_t) rfbClientSwap16IfLE(client->screens[i].width);
+        flat[5 * i + 4] = (int32_t) rfbClientSwap16IfLE(client->screens[i].height);
     }
-    const size_t bytes = (size_t) n * 4 * sizeof(int32_t);
+    const size_t bytes = (size_t) n * 5 * sizeof(int32_t);
     pthread_mutex_lock(&s->lock);
     if (s->nscreens != n || (n > 0 && memcmp(s->screens, flat, bytes) != 0)) {
         int32_t *copy = n > 0 ? malloc(bytes) : NULL;
@@ -819,6 +832,110 @@ static void applyEncodings(Session *s) {
     SetFormatAndEncodings(cl);
 }
 
+/* The server's screen with this id, in the library's list, or NULL. */
+static const rfbExtDesktopScreen *serverScreen(rfbClient *client, uint32_t id) {
+    for (int i = 0; i < client->numScreens; i++) {
+        if (rfbClientSwap32IfLE(client->screens[i].id) == id) {
+            return &client->screens[i];
+        }
+    }
+    return NULL;
+}
+
+/* A layout asked for — `n` screens of five ints, id, x, y, width, height — as
+   the screens to send, in network order, against the server's own: a screen
+   whose id the server has is that screen, moved or resized, and keeps its
+   flags, which is what makes this a change to the desktop that is there
+   rather than a new one; a screen with an id the server has not, or one
+   already used, is new, and gets the lowest id neither the server's layout
+   nor this one has, as TigerVNC's viewer gives its new screens a fresh one.
+   False where the result is not a layout of a `width × height` desktop, which
+   is what TigerVNC's ScreenSet::validate checks before it sends one: no
+   screen empty or outside the desktop, at most 255 of them. */
+static bool buildLayout(rfbClient *client, int width, int height, const int32_t *flat, int n,
+                        rfbExtDesktopScreen *out) {
+    if (n <= 0 || n > 255) {
+        return false;
+    }
+    bool kept[255] = {false};
+    for (int i = 0; i < n; i++) {
+        const uint32_t id = (uint32_t) flat[5 * i];
+        bool repeat = false;
+        for (int j = 0; j < i; j++) {
+            repeat |= kept[j] && (uint32_t) flat[5 * j] == id;
+        }
+        kept[i] = !repeat && serverScreen(client, id) != NULL;
+    }
+    uint32_t next = 0;
+    for (int i = 0; i < n; i++) {
+        const int32_t *m = &flat[5 * i];
+        if (m[1] < 0 || m[2] < 0 || m[3] <= 0 || m[4] <= 0 || m[1] > width - m[3]
+                || m[2] > height - m[4]) {
+            return false;
+        }
+        uint32_t id;
+        uint32_t flags = 0;
+        if (kept[i]) {
+            id = (uint32_t) m[0];
+            flags = rfbClientSwap32IfLE(serverScreen(client, id)->flags);
+        } else {
+            for (;; next++) {
+                bool used = serverScreen(client, next) != NULL;
+                for (int j = 0; j < n && !used; j++) {
+                    used = kept[j] && (uint32_t) flat[5 * j] == next;
+                }
+                if (!used) {
+                    break;
+                }
+            }
+            id = next++;
+        }
+        out[i].id = rfbClientSwap32IfLE(id);
+        out[i].x = (uint16_t) rfbClientSwap16IfLE((uint16_t) m[1]);
+        out[i].y = (uint16_t) rfbClientSwap16IfLE((uint16_t) m[2]);
+        out[i].width = (uint16_t) rfbClientSwap16IfLE((uint16_t) m[3]);
+        out[i].height = (uint16_t) rfbClientSwap16IfLE((uint16_t) m[4]);
+        out[i].flags = rfbClientSwap32IfLE(flags);
+    }
+    return true;
+}
+
+/* A SetDesktopSize of `n` screens, already in network order, built here
+   rather than with the library's SendExtDesktopSize: that one sends a single
+   screen, and the screen it sends is `client->screen`, which its reader
+   leaves at the *last* screen of the server's list — over two screens it
+   would ask for the second one's id and position at the whole desktop's size.
+   What it does around the message is kept: a full update request at the new
+   size, then no more until the server's answer clears `requestedResize`,
+   which keeps a screenful of the old size from being decoded into a
+   framebuffer about to be reallocated. Nothing is sent where the layout is
+   the one the server already has. */
+static rfbBool sendLayout(rfbClient *client, int width, int height,
+                          const rfbExtDesktopScreen *screens, int n) {
+    if (width == client->width && height == client->height && n == client->numScreens
+            && memcmp(screens, client->screens, (size_t) n * sizeof(rfbExtDesktopScreen)) == 0) {
+        return TRUE;
+    }
+    rfbSetDesktopSizeMsg sdm;
+    memset(&sdm, 0, sizeof(sdm));
+    sdm.type = rfbSetDesktopSize;
+    sdm.width = (uint16_t) rfbClientSwap16IfLE((uint16_t) width);
+    sdm.height = (uint16_t) rfbClientSwap16IfLE((uint16_t) height);
+    sdm.numberOfScreens = (uint8_t) n;
+    if (!WriteToRFBServer(client, (char *) &sdm, sz_rfbSetDesktopSizeMsg)) {
+        return FALSE;
+    }
+    for (int i = 0; i < n; i++) {
+        if (!WriteToRFBServer(client, (char *) &screens[i], sz_rfbExtDesktopScreen)) {
+            return FALSE;
+        }
+    }
+    client->requestedResize = FALSE;
+    SendFramebufferUpdateRequest(client, 0, 0, width, height, FALSE);
+    client->requestedResize = TRUE;
+    return TRUE;
+}
+
 /* Caller must not hold the lock: these call into libvncclient. */
 static void runCmd(Session *s, Cmd *c) {
     rfbClient *cl = s->cl;
@@ -886,22 +1003,39 @@ static void runCmd(Session *s, Cmd *c) {
             }
             break;
         case CMD_RESIZE:
-            /* SendExtDesktopSize stops asking for updates until the server's
-               answer arrives, which is what keeps a screenful of the old size
-               from being decoded into a framebuffer that is about to be
-               reallocated. It sends nothing at all if the size already matches,
-               and the answer to a refusal is an unchanged size — so a refusal
-               is silence here, and the panel goes on reporting the size that
-               is. */
+            /* One screen covering the desktop, which is TigerVNC's windowed
+               case and the only one a phone has: the server's first screen,
+               so that its id and flags go back as they came, or a new one
+               where it has said of none. The answer to a refusal is an
+               unchanged size, so a refusal is silence here, and the panel goes
+               on reporting the size that is. */
             if (cl && !s->viewOnly && s->canResize) {
-                SendExtDesktopSize(cl, (uint16_t) c->a, (uint16_t) c->b);
+                rfbClient *client = cl; /* what the byte-order macros are written against */
+                const int32_t one[5] = {
+                        client->numScreens > 0 ? (int32_t) rfbClientSwap32IfLE(client->screens[0].id)
+                                               : 0,
+                        0, 0, c->a, c->b};
+                rfbExtDesktopScreen screen;
+                if (buildLayout(cl, c->a, c->b, one, 1, &screen)) {
+                    sendLayout(cl, c->a, c->b, &screen, 1);
+                }
+            }
+            break;
+        case CMD_LAYOUT:
+            if (cl && !s->viewOnly && s->canResize && c->screens) {
+                rfbExtDesktopScreen screens[255];
+                if (buildLayout(cl, c->a, c->b, c->screens, c->c, screens)) {
+                    sendLayout(cl, c->a, c->b, screens, c->c);
+                } else {
+                    LOGI("not asking for %dx%d in %d screens: that is not a valid layout", c->a, c->b,
+                         c->c);
+                }
             }
             break;
         default:
             break;
     }
-    free(c->text);
-    c->text = NULL;
+    cmdFree(c);
 }
 
 static int drain(Session *s) {
@@ -919,6 +1053,7 @@ static int drain(Session *s) {
         }
         c = s->ring[s->tail];
         s->ring[s->tail].text = NULL;
+        s->ring[s->tail].screens = NULL;
         s->tail = (s->tail + 1) % CMD_RING;
         pthread_mutex_unlock(&s->lock);
         runCmd(s, &c);
@@ -1341,7 +1476,7 @@ static void freeSession(Session *s) {
         }
     }
     for (int i = s->tail; i != s->head; i = (i + 1) % CMD_RING) {
-        free(s->ring[i].text);
+        cmdFree(&s->ring[i]);
     }
     free(s->dirty);
     free(s->fb);
@@ -1476,22 +1611,22 @@ static void op_destroy(vento_session *base) {
 }
 
 static void op_pointer(vento_session *base, int x, int y, int buttonMask) {
-    Cmd c = {CMD_POINTER, x, y, buttonMask, 0, NULL};
+    Cmd c = {CMD_POINTER, x, y, buttonMask, 0, NULL, NULL};
     post(sessionOfBase(base), &c);
 }
 
 static void op_key_down(vento_session *base, uint32_t keysym, int64_t keyId) {
-    Cmd c = {CMD_KEY_DOWN, (int) keysym, 0, 0, keyId, NULL};
+    Cmd c = {CMD_KEY_DOWN, (int) keysym, 0, 0, keyId, NULL, NULL};
     post(sessionOfBase(base), &c);
 }
 
 static void op_key_up(vento_session *base, int64_t keyId) {
-    Cmd c = {CMD_KEY_UP, 0, 0, 0, keyId, NULL};
+    Cmd c = {CMD_KEY_UP, 0, 0, 0, keyId, NULL, NULL};
     post(sessionOfBase(base), &c);
 }
 
 static void op_release_all_keys(vento_session *base) {
-    Cmd c = {CMD_RELEASE_KEYS, 0, 0, 0, 0, NULL};
+    Cmd c = {CMD_RELEASE_KEYS, 0, 0, 0, 0, NULL, NULL};
     post(sessionOfBase(base), &c);
 }
 
@@ -1508,40 +1643,62 @@ static void op_view_only(vento_session *base, bool viewOnly) {
     sessionOfBase(base)->viewOnly = viewOnly ? 1 : 0;
 }
 
+/* For any number of screens, since this session sends layouts: a single size
+   over several, which would merge them, is what session::c declines to offer,
+   as the header has it. */
 static bool op_can_resize(vento_session *base) {
     Session *s = sessionOfBase(base);
-    if (!s->canResize || s->viewOnly) {
-        return false;
-    }
-    /* More than one screen says no, and that is the shim's limitation rather
-       than the library's: SendExtDesktopSize sends a single screen covering
-       the desktop, so granting one would merge somebody's monitors into one. */
-    pthread_mutex_lock(&s->lock);
-    const int screens = s->nscreens;
-    pthread_mutex_unlock(&s->lock);
-    return screens <= 1;
+    return s->canResize && !s->viewOnly;
 }
 
-static int op_monitors(vento_session *base, int32_t *out) {
-    Session *s = sessionOfBase(base);
+/* Four ints a screen without the id, or all five with it. */
+static int copyScreens(Session *s, int32_t *out, bool ids) {
     pthread_mutex_lock(&s->lock);
     const int n = s->nscreens;
-    if (n > 0) {
-        memcpy(out, s->screens, (size_t) n * 4 * sizeof(int32_t));
+    for (int i = 0; i < n; i++) {
+        const int32_t *m = &s->screens[5 * i];
+        if (ids) {
+            memcpy(&out[5 * i], m, 5 * sizeof(int32_t));
+        } else {
+            memcpy(&out[4 * i], m + 1, 4 * sizeof(int32_t));
+        }
     }
     pthread_mutex_unlock(&s->lock);
     return n;
 }
 
+static int op_monitors(vento_session *base, int32_t *out) {
+    return copyScreens(sessionOfBase(base), out, false);
+}
+
+static int op_screens(vento_session *base, int32_t *out) {
+    return copyScreens(sessionOfBase(base), out, true);
+}
+
 static void op_request_desktop_size(vento_session *base, int width, int height) {
     if (width > 0 && height > 0 && width <= 65535 && height <= 65535) {
-        Cmd c = {CMD_RESIZE, width, height, 0, 0, NULL};
+        Cmd c = {CMD_RESIZE, width, height, 0, 0, NULL, NULL};
+        post(sessionOfBase(base), &c);
+    }
+}
+
+static void op_request_layout(vento_session *base, int width, int height, const int32_t *screens,
+                              int n) {
+    /* RFB's limits: a count in a byte, every number in sixteen bits; what is
+       outside them could only be sent wrapped, as some other layout. */
+    if (width <= 0 || height <= 0 || width > 65535 || height > 65535 || !screens || n <= 0
+            || n > 255) {
+        return;
+    }
+    Cmd c = {CMD_LAYOUT, width, height, n, 0, NULL, malloc((size_t) n * 5 * sizeof(int32_t))};
+    if (c.screens) {
+        memcpy(c.screens, screens, (size_t) n * 5 * sizeof(int32_t));
         post(sessionOfBase(base), &c);
     }
 }
 
 static void op_clipboard(vento_session *base, const char *utf8) {
-    Cmd c = {CMD_CLIPBOARD, 0, 0, 0, 0, dupOrNull(utf8)};
+    Cmd c = {CMD_CLIPBOARD, 0, 0, 0, 0, dupOrNull(utf8), NULL};
     post(sessionOfBase(base), &c);
 }
 
@@ -1747,4 +1904,6 @@ static const vento_session_ops OPS = {
         .answer_trust = op_answer_trust,
         .disconnect = op_disconnect,
         .destroy = op_destroy,
+        .screens = op_screens,
+        .request_layout = op_request_layout,
 };
