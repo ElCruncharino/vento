@@ -406,7 +406,7 @@ there, including in the agent scratchpad. A scratch build goes under
 
 One commit per upstream, after review, by the lead:
 
-- Subject `Update <name> to <version>` for a release, or `Update <name> to
+- Subject `<name>: update to <version>` for a release, or `<name>: update to
   owner/repo@<full sha>` for a commit; a body that says what upstream changed
   that reached us, what the shim did about it, and what happened to each
   patch.
