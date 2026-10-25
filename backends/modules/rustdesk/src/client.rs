@@ -267,11 +267,26 @@ impl PreferredCodec {
 /// The handshake's outcome, which the app still has to accept.
 enum Verified {
     /// The peer proved it holds the key the rendezvous server vouched for, and
-    /// both directions of the socket are encrypted with a key agreed with it.
-    Encrypted([u8; 32]),
+    /// both directions of the socket are encrypted with keys agreed with it,
+    /// made by this key exchange version.
+    Encrypted { peer_key: [u8; 32], kx_version: u32 },
     /// A check failed, for this reason, and the session is unencrypted, which
     /// the app still has to agree to.
     Clear(String),
+}
+
+/// The Security row of an encrypted session: the cipher, the key exchange
+/// version, and who vouched for the peer's key, the rendezvous server whose
+/// key the user entered (`own_server`) or the public network.
+fn encrypted_security(kx_version: u32, own_server: bool) -> String {
+    format!(
+        "xsalsa20-poly1305, key exchange version {kx_version}, vouched for by {}",
+        if own_server {
+            "your rendezvous server"
+        } else {
+            "the public network"
+        }
+    )
 }
 
 /// The facts shown in the connection panel.
@@ -617,14 +632,9 @@ impl Client {
                 // own pin, and the public network's key is chosen by RustDesk.
                 // A session the user accepted unverified reports both parts.
                 info.security = match verified {
-                    Verified::Encrypted(_) => format!(
-                        "xsalsa20-poly1305, vouched for by {}",
-                        if key.trim().is_empty() {
-                            "the public network"
-                        } else {
-                            "your rendezvous server"
-                        }
-                    ),
+                    Verified::Encrypted { kx_version, .. } => {
+                        encrypted_security(kx_version, !key.trim().is_empty())
+                    }
                     Verified::Clear(_) => {
                         "None (unencrypted), and the machine was not verified".into()
                     }
@@ -818,7 +828,10 @@ impl Client {
             "the session is encrypted, key exchange version {picked} (the peer offered {})",
             peer_box.kx_version
         );
-        Ok(Verified::Encrypted(peer_key))
+        Ok(Verified::Encrypted {
+            peer_key,
+            kx_version: picked,
+        })
     }
 
     /// Tells the peer there will be no key, and returns the reason for the
@@ -863,7 +876,7 @@ impl Client {
         // before the login, which carries the password. Asking blocks this
         // thread, so a keep-alive stops the socket going quiet meanwhile.
         let agreed = match &verified {
-            Some(Verified::Encrypted(peer_key)) => {
+            Some(Verified::Encrypted { peer_key, .. }) => {
                 let alive = self.keep_alive();
                 let answer = handler.trust(&crypto::fingerprint(peer_key));
                 alive.stop();
@@ -2041,6 +2054,20 @@ mod tests {
         second.challenge = "fedcba".into();
         assert_ne!(digest, login_hash("PASSword1", &second));
         assert!(login_hash("", &hash).is_empty());
+    }
+
+    /// The Security row names the key exchange version picked, which is 0
+    /// for a peer before 1.5.0, and the vouching server.
+    #[test]
+    fn the_security_row_names_the_key_exchange_version() {
+        assert_eq!(
+            encrypted_security(1, false),
+            "xsalsa20-poly1305, key exchange version 1, vouched for by the public network"
+        );
+        assert_eq!(
+            encrypted_security(0, true),
+            "xsalsa20-poly1305, key exchange version 0, vouched for by your rendezvous server"
+        );
     }
 
     /// A handler that ignores everything.
