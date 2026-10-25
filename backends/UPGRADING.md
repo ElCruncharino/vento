@@ -40,7 +40,7 @@ Nothing runs in parallel: every step needs a clean tree to commit from.
    nothing to regenerate)
 4. nettle, then gnutls (libvnc, tigervnc), via the tarball pins and
    `backends/platform/android/ports/{nettle,gnutls}/gen.sh`
-5. libvncserver, tigervnc, freerdp, ironrdp, hbb_common, ryll
+5. libvncserver, tigervnc, freerdp, ironrdp, rustdesk with hbb_common, ryll
 
 `third_party/winit` is not a backend's and not in this round: it is the
 Linux client's winit, pinned at the tag of the release `linux/Cargo.lock`
@@ -209,7 +209,7 @@ under the host locale (`export LC_ALL=C`).
   half (see `backends/CMakeLists.txt`).
 - A Rust backend's shim is its protocol crate, and its adapter is that
   crate's `src/backend.rs`: the `Kind`, the config read from the options, and
-  the rows. An upstream change (IronRDP, hbb_common, ryll) reaches the
+  the rows. An upstream change (IronRDP, RustDesk, ryll) reaches the
   protocol code; `backend.rs` changes only when an option or a row does.
 - Next to nothing about a protocol is in Java or JNI any more. The phone
   reaches every backend but RealVNC through one JNI layer,
@@ -556,13 +556,30 @@ One commit per upstream, after review, by the lead:
   logon name's account name may contain `@`
   (Devolutions/sspi-rs@4878c50503b204bba95def66ca7d45e6d396f898), so
   `MicrosoftAccount\user@example.com` reaches NTLM as that user and domain.
-- **hbb_common** 3d6fb2c, and terminal there: the next upstream commit moved
-  `message.proto` into rustdesk's own repository
-  (`libs/base/protos/message.proto`). Moving further means a second source
-  for that file (a rustdesk submodule, or vendoring the one file with its
-  commit recorded) and `crypto.rs` importing `IdPk` from the rendezvous
-  module. The kx-v2 key exchange that followed is not needed: this client
-  never answers the exchange, like theirs without a token.
+- **rustdesk** 1.5.0 (fada664), and **hbb_common** 229b904 with it. No
+  patches. Only two `.proto` files are consumed
+  (`modules/rustdesk/build.rs`), none of either repository's Rust:
+  `message.proto` from rustdesk's `libs/base/protos/` (it moved there from
+  hbb_common in rustdesk b50fde6) and `rendezvous.proto`, with `IdPk` in it,
+  from hbb_common. hbb_common is pinned at the commit the rustdesk pin names
+  as its own `libs/hbb_common` (`git -C third_party/rustdesk ls-tree HEAD
+  libs/hbb_common`), so the two files are the pair that release was built
+  with; both are `package hbb`, and a message defined in both fails the
+  build as a duplicate. rustdesk moves to a release tag; its own submodule
+  is not initialised. Key exchange version 1, a key per direction, is
+  1.5.0's: the peer advertises `IdPk.kx_version` in its signed id, the
+  controller picks `min(advertised, 1)` in `PublicKey.kx_version`, and
+  `crypto::session_keys` derives the keys as hbb_common's
+  `Encrypt::new_split` does, checked against that commit's
+  `test_wire_vectors`. A peer that advertises nothing (every release before
+  1.5.0) runs version 0, one key for both directions, as upstream's
+  controller does with it. A new version in `tcp.rs`'s `KX_VERSION_LATEST`
+  or a change to `new_split` or its vectors is the thing to re-check on a
+  move; the probe's log names the version each session ran. The rendezvous
+  server's half of the exchange (`KeyExchange.version`, `signed_params`)
+  is not answered, like upstream's client without a token or a WebRTC
+  offer. The licence entries in `plugins/rustdesk/build.gradle` read
+  rustdesk's `LICENCE`; hbb_common has none of its own.
 - **ryll** v0.3.0 (f12d9b2); two patches, `0001` (the rustls provider and
   the public root store are the embedder's) and `0002` (openh264 behind a
   feature). The two LZ4 patches were dropped as upstream's df2f06b, which

@@ -17,8 +17,11 @@ FROM debian:trixie
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-ARG RUSTDESK_VERSION=1.4.9
-ARG RUSTDESK_SHA256=7244ba47c40e804172044bfbe659467c54ce46554c98e78c8c0406f1d612fda3
+# 1.5.0 is the first release with key exchange version 1. A peer older than
+# that, which runs version 0, is this with 1.4.9 and
+# 7244ba47c40e804172044bfbe659467c54ce46554c98e78c8c0406f1d612fda3 (usage.md).
+ARG RUSTDESK_VERSION=1.5.0
+ARG RUSTDESK_SHA256=4e2b9701d25a7ef373f3d09bda584a37d6902f97a6ab15f2e86d4a5783e2a0ec
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         xvfb \

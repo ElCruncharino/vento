@@ -5,14 +5,16 @@
 //!
 //! Upstream's client cannot be used as a library: it is `src/client.rs` at 4443
 //! lines plus an io loop of 2521, tied to RustDesk's config store, UI interface
-//! and rendezvous mediator. Only `hbb_common` (the message definitions and the
-//! framing) can be reused, and this is a client written on top of it.
+//! and rendezvous mediator. Only the message definitions and hbb_common's
+//! framing can be reused, and this is a client written on top of the
+//! definitions (the two `.proto` files `build.rs` compiles).
 //!
 //! It is the first protocol here defined by a product rather than a published
 //! specification: one implementation, nothing to compare it with, and a wire
 //! format that changes whenever upstream changes it. Everything here was
 //! written against **rustdesk 1.4.9** and tested against a peer of that
-//! version.
+//! version, except key exchange version 1 (`crypto.rs`), which is 1.5.0's and
+//! was tested against a peer of each.
 //!
 //! What it supports:
 //!

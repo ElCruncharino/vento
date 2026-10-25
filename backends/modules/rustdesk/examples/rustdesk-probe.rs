@@ -186,9 +186,9 @@ impl Stream {
 
     /// Everything after the frame carrying the key is encrypted, in both
     /// directions, and the two directions count their frames separately.
-    fn set_key(&mut self, key: [u8; 32]) {
-        self.reader.set_cipher(Box::new(crypto::Secretbox::new(key)));
-        self.writer.set_cipher(Box::new(crypto::Secretbox::new(key)));
+    fn set_keys(&mut self, keys: crypto::SessionKeys) {
+        self.reader.set_cipher(Box::new(crypto::Secretbox::new(keys.receive)));
+        self.writer.set_cipher(Box::new(crypto::Secretbox::new(keys.send)));
         self.secure = true;
     }
 
@@ -291,7 +291,8 @@ fn secure(s: &mut Stream, peer_id: &str, signed_id_pk: &[u8], key_b64: &str) -> 
     }
     let server_pk = crypto::server_key(key_b64).map_err(|e| e.to_string())?;
     let their_sign_pk = crypto::open_id_pk(signed_id_pk, &server_pk, peer_id)
-        .map_err(|e| format!("the server's introduction: {e}"))?;
+        .map_err(|e| format!("the server's introduction: {e}"))?
+        .key;
     println!(
         "== the rendezvous server vouches for {peer_id}: {}",
         crypto::fingerprint(&their_sign_pk)
@@ -301,18 +302,35 @@ fn secure(s: &mut Stream, peer_id: &str, signed_id_pk: &[u8], key_b64: &str) -> 
     let Some(message::Union::SignedId(si)) = msg.union else {
         return Err("the peer sent no SignedId, so this socket is not a secure one".into());
     };
-    let their_pk = crypto::open_id_pk(&si.id, &their_sign_pk, peer_id)
+    let their_box = crypto::open_id_pk(&si.id, &their_sign_pk, peer_id)
         .map_err(|e| format!("the peer's own signature: {e}"))?;
     println!("== the peer signed its session key with the key it was vouched for");
 
-    let (our_pk, sealed, key) = crypto::seal_session_key(&their_pk).map_err(|e| e.to_string())?;
+    let (our_pk, sealed, key) =
+        crypto::seal_session_key(&their_box.key).map_err(|e| e.to_string())?;
+    let picked = crypto::kx_version_for(their_box.kx_version);
+    let keys = crypto::session_keys(
+        &key,
+        &crypto::Transcript {
+            initiator_pk: &our_pk,
+            responder_pk: &their_box.key,
+            advertised: their_box.kx_version,
+            picked,
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    println!(
+        "== key exchange version {picked} (the peer offered {})",
+        their_box.kx_version
+    );
     let mut pk = PublicKey::new();
-    pk.asymmetric_value = our_pk.into();
-    pk.symmetric_value = sealed.into();
+    pk.asymmetric_value = our_pk.to_vec();
+    pk.symmetric_value = sealed;
+    pk.kx_version = picked;
     let mut out = Message::new();
     out.set_public_key(pk);
     s.send(&out).map_err(|e| e.to_string())?;
-    s.set_key(key);
+    s.set_keys(keys);
     Ok(())
 }
 

@@ -43,6 +43,16 @@
 	url = https://github.com/rustdesk/hbb_common.git
 	shallow = true
 	ignore = all
+# RustDesk's client, for its message definitions alone
+# (libs/base/protos/message.proto, which moved out of hbb_common), at the
+# release tag. hbb_common above, which still holds rendezvous.proto, is pinned
+# at the commit this release's libs/hbb_common names. Its own submodule is not
+# needed and not initialised.
+[submodule "third_party/rustdesk"]
+	path = third_party/rustdesk
+	url = https://github.com/rustdesk/rustdesk.git
+	shallow = true
+	ignore = all
 [submodule "third_party/ryll"]
 	path = third_party/ryll
 	url = https://github.com/shakenfist/ryll.git

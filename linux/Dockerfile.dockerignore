@@ -28,6 +28,9 @@
 !third_party/mcpelauncher-linker/
 !third_party/openssl/
 !third_party/pixman/
+# Only the one directory of RustDesk's client that the build reads, its
+# message definitions.
+!third_party/rustdesk/libs/base/protos/
 !third_party/ryll/
 !third_party/tigervnc/
 !third_party/winit/

@@ -1,6 +1,6 @@
 # scripts/testrustdesk
 
-A RustDesk far end in a container: their released 1.4.9 `.deb`, pinned by
+A RustDesk far end in a container: their released 1.5.0 `.deb`, pinned by
 SHA-256, over Xvfb and Openbox, answering **direct IP access on 21118** and
 registered with the public rendezvous network so the id path works too.
 
@@ -30,10 +30,29 @@ it at a self-hosted `hbbs` instead of the public network — which is
 to paste; `RENDEZVOUS=none` registers with nothing at all, leaving direct IP as
 the only way in.
 
-**The peer inside this container is never reachable by the address a rendezvous
-server hands out for it**, since that address is on Docker's bridge. That is not
-a fault to work around: it is the only far end here that forces the relay, and
-it is how both relay paths were driven.
+**A peer older than 1.5.0** is the same image built from an older release,
+under a name of its own so that the shared one is untouched. 1.5.0 is the
+first with key exchange version 1, a key per direction; a session with a
+1.4.9 peer runs version 0, one key for both, and the client's log says which
+(`key exchange version 1 (the peer offered 1)`):
+
+```sh
+docker build -t protorustdesk-1.4.9 --build-arg RUSTDESK_VERSION=1.4.9 \
+    --build-arg RUSTDESK_SHA256=7244ba47c40e804172044bfbe659467c54ce46554c98e78c8c0406f1d612fda3 \
+    scripts/testrustdesk
+IMAGE=protorustdesk-1.4.9 NAME=rd149 PORT=21128 scripts/testrustdesk/run.sh
+```
+
+Only a session by id has a key exchange: direct IP access is unencrypted.
+
+**The peer inside this container is never reachable from another machine by
+the address a rendezvous server hands out for it**, since that address is on
+Docker's bridge. That is not a fault to work around: it is the only far end
+here that forces the relay, and it is how both relay paths were driven. From
+the Docker host itself it is reachable: the public network sees both ends
+behind one address and hands out the bridge address (`on this network` in the
+client's log), so a session from that machine is punched, while one through
+[`../testrustdeskserver`](../testrustdeskserver) is relayed.
 
 Two things the container has to do that a person does not, both in `start.sh`:
 

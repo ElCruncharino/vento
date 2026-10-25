@@ -103,6 +103,11 @@ third_party/openssl/apps/
 third_party/openssl/doc/
 third_party/openssl/test/
 third_party/pixman/demos/
+third_party/rustdesk/fastlane/
+third_party/rustdesk/flutter/
+third_party/rustdesk/libs/clipboard/
+third_party/rustdesk/libs/portable/
+third_party/rustdesk/res/
 third_party/ryll/shakenfist-spice-compression/tests/
 third_party/tigervnc/java/
 third_party/tigervnc/media/

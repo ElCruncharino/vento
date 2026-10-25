@@ -760,7 +760,7 @@ impl Client {
                 .map_err(|e| format!("The rendezvous server's introduction did not check out: {e}."))
         };
         let peer_key = match vouched {
-            Ok(key) => key,
+            Ok(signed) => signed.key,
             // Nothing has been read from the peer yet, so it is waiting for a
             // client without a key to send the empty message.
             Err(why) => return self.in_the_clear(writer, why, false),
@@ -778,8 +778,8 @@ impl Client {
                 );
             }
         };
-        let box_key = match crypto::open_id_pk(&signed.id, &peer_key, peer_id) {
-            Ok(key) => key,
+        let peer_box = match crypto::open_id_pk(&signed.id, &peer_key, peer_id) {
+            Ok(signed) => signed,
             // The peer is waiting for a `PublicKey` here, so an empty one says
             // there will be no key, as RustDesk's client does.
             Err(e) => {
@@ -790,19 +790,34 @@ impl Client {
                 );
             }
         };
-        // Step three: our session key, sealed to the peer's box key.
+        // Step three: our session key, sealed to the peer's box key, and the
+        // key exchange version picked from the one the peer signed.
         // Everything after this frame is encrypted in both directions, each
-        // with its own counter.
-        let (our_box_pk, sealed, key) = crypto::seal_session_key(&box_key)?;
+        // with its own counter and, from version 1, its own key.
+        let (our_box_pk, sealed, key) = crypto::seal_session_key(&peer_box.key)?;
+        let picked = crypto::kx_version_for(peer_box.kx_version);
+        let keys = crypto::session_keys(
+            &key,
+            &crypto::Transcript {
+                initiator_pk: &our_box_pk,
+                responder_pk: &peer_box.key,
+                advertised: peer_box.kx_version,
+                picked,
+            },
+        )?;
         let mut public_key = PublicKey::new();
-        public_key.asymmetric_value = our_box_pk.into();
-        public_key.symmetric_value = sealed.into();
+        public_key.asymmetric_value = our_box_pk.to_vec();
+        public_key.symmetric_value = sealed;
+        public_key.kx_version = picked;
         let mut out = Message::new();
         out.set_public_key(public_key);
         writer.send(&out)?;
-        writer.set_cipher(Box::new(crypto::Secretbox::new(key)));
-        reader.set_cipher(Box::new(crypto::Secretbox::new(key)));
-        log::info!("the session is encrypted");
+        writer.set_cipher(Box::new(crypto::Secretbox::new(keys.send)));
+        reader.set_cipher(Box::new(crypto::Secretbox::new(keys.receive)));
+        log::info!(
+            "the session is encrypted, key exchange version {picked} (the peer offered {})",
+            peer_box.kx_version
+        );
         Ok(Verified::Encrypted(peer_key))
     }
 
