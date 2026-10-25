@@ -229,7 +229,7 @@ impl Backend for IronRdp {
         Some(Picture::from_words(w, h, &words))
     }
 
-    /// A typed `DOMAIN\user` is split again, as the Java prompt splits it;
+    /// A typed `DOMAIN\user` is split here, for every client's prompt;
     /// an empty name is the one the session was created with, and a bare one
     /// keeps the session's domain (see [`rdp_identity`]).
     fn answer_credentials(&self, credentials: Option<Credentials>) {

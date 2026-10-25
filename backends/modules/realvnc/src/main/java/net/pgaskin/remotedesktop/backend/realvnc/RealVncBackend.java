@@ -163,9 +163,10 @@ public final class RealVncBackend implements Backend,
         }
         // What this server was last accepted as. The core's own security
         // prompt is silent for an identity it recognises, which is the same
-        // "accepted once, loud if it changes" rule the other four get from
-        // KnownHosts — the difference being that this one is an opaque blob the
-        // core makes rather than a fingerprint anybody else could compare.
+        // "accepted once, loud if it changes" rule the others get from
+        // session::trust over KnownHosts — the difference being that this one
+        // is an opaque blob the core makes rather than a fingerprint anybody
+        // else could compare.
         final String identity = identities(context).getString(address == null ? "" : address, null);
         if (identity != null && !options.containsKey("Identity")) {
             options.put("Identity", identity);

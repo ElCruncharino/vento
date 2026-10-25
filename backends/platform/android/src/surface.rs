@@ -72,6 +72,11 @@ pub const NATIVES: &[Native] = &[
         params: &["handle", "accept"],
     },
     Native {
+        name: "answerPin",
+        descriptor: "(JLjava/lang/String;ZZ)V",
+        params: &["handle", "fingerprint", "accept", "remember"],
+    },
+    Native {
         name: "disconnect",
         descriptor: "(J)V",
         params: &["handle"],
