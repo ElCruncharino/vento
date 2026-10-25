@@ -117,11 +117,13 @@ public interface BackendProvider {
     /**
      * Forget every server identity this backend has accepted.
      *
-     * <p>Empty for all but the two that need it. {@link KnownHosts} is the
+     * <p>Empty for all but the few that need it. {@link KnownHosts} is the
      * store, and {@link Backends#forgetHosts} clears it for everybody; this is
-     * for a backend whose library pins the far end <em>itself</em> — a
-     * known-hosts file of its own, or a blob only it can compare — which nothing
-     * above this interface can find, since it is not a fact about the app.
+     * for a backend whose library pins the far end <em>itself</em> — RealVNC's
+     * core, with a blob only it can compare — or whose library once kept a
+     * known-hosts file of its own that earlier builds left behind (FreeRDP's,
+     * TigerVNC's), which nothing above this interface can find, since it is not
+     * a fact about the app.
      */
     default void forgetHosts(Context context) {
     }

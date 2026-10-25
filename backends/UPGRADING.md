@@ -244,12 +244,13 @@ One commit per upstream, after review, by the lead:
   `trust_needed` and the known hosts see every certificate. Should upstream
   ever take them or change `verify_certificate_callback`, check that a
   CA-signed certificate, for the name or not, still reaches the hook.
-- **tigervnc** master dd416cbf, reporting 1.16.80; five patches (the PAM one
-  dropped). The certificate check and known-hosts store are the shim's now,
-  ported from `vncviewer/CConn.cxx`; audio is behind the `Audio` row, an
-  AAudio sink over the shim's own `AudioOutput.h`. Builds `common/` only,
-  with `config.h` written by our CMake and, on Android, an empty `pthread`
-  target for the link.
+- **tigervnc** master dd416cbf, reporting 1.16.80; six patches (the PAM one
+  dropped). The certificate check is the shim's now: what cannot be excused is
+  refused and the rest goes to `trust_needed`, their viewer's known-hosts store
+  not used at all; the RSA-AES key question is ported from
+  `vncviewer/CConn.cxx`; audio is behind the `Audio` row, an AAudio sink over
+  the shim's own `AudioOutput.h`. Builds `common/` only, with `config.h`
+  written by our CMake and, on Android, an empty `pthread` target for the link.
 - **freerdp** 3.32.0. No patches. `LegacyTls` row for TLS 1.0 at level 0;
   `remotedesktop_vendored_warnings` silences their tree.
 - **ironrdp** master 9b151c4c. No patches. A submodule rather than crates.io

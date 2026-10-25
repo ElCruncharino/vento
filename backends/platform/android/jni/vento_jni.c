@@ -34,8 +34,8 @@
 //     has to agree bit for bit with `common::cursor::hash` and the Java copy.
 //   * **A method the module's `Callbacks` does not declare is skipped.** The
 //     three interfaces are one shape less a method or two — libvnc has no
-//     `onPointerMode`, FreeRDP no `onUnverified`, TigerVNC `onQuestion` in
-//     place of `onTrustNeeded` — and resolving each optionally is what lets
+//     `onPointerMode`, FreeRDP no `onUnverified`, only TigerVNC an
+//     `onQuestion` (for an RSA-AES server key) — and resolving each optionally is what lets
 //     one adapter serve all three. For the questions that is more than
 //     tidiness: a question nobody can hear is answered no below, so the
 //     protocol thread is not left parked behind it — which is also all this

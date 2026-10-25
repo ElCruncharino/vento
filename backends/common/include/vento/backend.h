@@ -157,12 +157,13 @@ typedef struct vento_callbacks {
        be outstanding. */
     void (*unverified)(void *user, const char *why);
     /* The first of three extensions over `common::Events`, and only TigerVNC
-       calls it: its certificate check and known-hosts file are its own
-       viewer's, ported whole, so what crosses here is the question that
-       viewer decided to ask — a title and a text, in its words — rather than
-       a fingerprint for the platform to decide about. Answered through
-       `answer_trust` like the other two, because it is the same question at
-       the protocol thread's end. A platform without a dialog answers no. */
+       calls it: for an RSA-AES server key, which their viewer shows and asks
+       about every time and keeps nothing of, so what crosses here is that
+       question — a title and a text, in its words — rather than a fingerprint
+       for the platform to decide about. (Its certificates go to
+       `trust_needed` like anybody's.) Answered through `answer_trust` like the
+       other two, because it is the same question at the protocol thread's
+       end. A platform without a dialog answers no. */
     void (*question)(void *user, const char *title, const char *text);
     /* The second extension, and only RealVNC calls it: its core's security
        prompt, which is `trust_needed` and `unverified` asked as one question

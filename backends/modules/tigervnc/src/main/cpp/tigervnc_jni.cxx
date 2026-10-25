@@ -7,10 +7,11 @@
 // adapter in `backends/platform/android/jni`, which is where the JNI-side
 // decisions — thread attachment, string encodings, the cursor's packing and
 // hash, the `Bitmap` lock — are made and documented. What is left here is
-// the one call that takes this backend's own parameter list and its two
-// extras; `nativeAnswerQuestion` is `vento_session_answer_trust` under the
-// name this class gives it, since the certificate decision is the session's
-// and all Java is asked is yes or no.
+// the one call that takes this backend's own parameter list and its one
+// extra. `nativeAnswerTrust` answers all three of the session's questions —
+// a certificate (`onTrustNeeded`, which Java takes to KnownHosts as every
+// other backend's), no certificate at all, and an RSA-AES server key — since
+// all three are `vento_session_answer_trust` at the protocol thread's end.
 
 #include <jni.h>
 
@@ -27,12 +28,6 @@
 
 NATIVE(jstring, nativeVersion)(JNIEnv *env, jclass) {
     return env->NewStringUTF(vento_tigervnc_version());
-}
-
-NATIVE(void, nativeSetStateDir)(JNIEnv *env, jclass, jstring path) {
-    char *dir = vento_jni_string(env, path);
-    vento_tigervnc_set_state_dir(dir);
-    free(dir);
 }
 
 NATIVE(jlong, nativeCreate)(JNIEnv *env, jclass, jobject listener, jstring address,
@@ -77,4 +72,4 @@ NATIVE(void, nativeSetPicture)(JNIEnv *, jclass, jlong handle, jint encoding,
     }
 }
 
-VENTO_JNI_NATIVES(CLASS, nativeAnswerQuestion, PLAIN)
+VENTO_JNI_NATIVES(CLASS, nativeAnswerTrust, PLAIN)

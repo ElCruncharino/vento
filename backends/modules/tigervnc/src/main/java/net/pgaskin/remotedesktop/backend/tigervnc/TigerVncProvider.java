@@ -160,7 +160,7 @@ public final class TigerVncProvider implements BackendProvider {
         return new TigerVncBackend(context, address, userName, password, options);
     }
 
-    /** This client pins the far end itself; see {@link TigerVncBackend}. */
+    /** The known-hosts file earlier builds left behind; see {@link TigerVncBackend}. */
     @Override
     public void forgetHosts(Context context) {
         TigerVncBackend.forgetHosts(context);
