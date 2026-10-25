@@ -14,12 +14,13 @@ jobs:
       - uses: actions/checkout@v7
         with:
           submodules: true
+      - run: sudo apt-get update && sudo apt-get install -y clang libclang-dev # needed by bindgen
       - run: ./patch.sh -n
       - run: rustup toolchain install # install the toolchain pinned by rust-toolchain.toml
-      - run: cargo check --locked --workspace --verbose
-      - run: cargo build --locked --workspace --verbose
-      - run: cargo test --locked --workspace --verbose
-      - run: cargo clippy --locked --workspace --verbose
+      - run: cargo check --locked --verbose # default members (everything but remotedesktop-platform-linux)
+      - run: cargo build --locked --verbose
+      - run: cargo test --locked --verbose
+      - run: cargo clippy --locked --verbose
 
   control:
     name: Control
@@ -33,16 +34,20 @@ jobs:
           java-version: '21'
           cache: gradle
       - run: ./gradlew :control:test
+      - run: tar -C control/build/reports -czf control-test-report.tar.gz tests
+        if: failure()
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
-          name: control-test-report
-          path: control/build/reports/tests/
+          path: control-test-report.tar.gz
+          archive: false
+          if-no-files-found: error
       - run: ./gradlew :control:assembleRelease
       - uses: actions/upload-artifact@v7
         with:
-          name: control-release-aar
           path: control/build/outputs/aar/control-release.aar
+          archive: false
+          if-no-files-found: error
 
   app:
     name: App
@@ -64,12 +69,53 @@ jobs:
       - run: ./gradlew :app:assembleDebug
       - uses: actions/upload-artifact@v7
         with:
-          name: app-debug
           path: app/build/outputs/apk/debug/app-debug.apk
+          archive: false
+          if-no-files-found: error
       - run: ./gradlew -p plugins assembleDebug
       - uses: actions/upload-artifact@v7
         with:
-          name: plugins-debug
-          path: plugins/*/build/outputs/apk/debug/*-debug.apk
+          path: plugins/realvnc/build/outputs/apk/debug/realvnc-debug.apk
+          archive: false
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          path: plugins/rustdesk/build/outputs/apk/debug/rustdesk-debug.apk
+          archive: false
           if-no-files-found: error
       #- run: ./scripts/check-jni-symbols.sh
+
+  linux:
+    name: Linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - run: git -C third_party/mcpelauncher-linker submodule update --init --depth 1 # need recursive submodules for mcpelauncher-linker
+      - run: sudo apt-get update && sudo apt-get install -y clang libclang-dev meson nasm ninja-build m4 zlib1g-dev # note: we use the runner cmake
+      - run: ./patch.sh -n
+      - run: rustup toolchain install # install the toolchain pinned by rust-toolchain.toml
+      - run: cargo check --locked --manifest-path linux/Cargo.toml --verbose
+      - run: cargo build --locked --manifest-path linux/Cargo.toml --verbose
+      - run: cargo test --locked --manifest-path linux/Cargo.toml --verbose
+      - run: cargo clippy --locked --manifest-path linux/Cargo.toml --verbose
+      - run: cargo test --locked -p remotedesktop-platform-linux --verbose
+      - run: cargo clippy --locked -p remotedesktop-platform-linux --verbose
+      - run: set -euo pipefail && linux/target/debug/vento --list | tee backends.txt && test "$(grep -c '^[a-z]* .*/linux/target/debug/lib/libvento_[a-z]*\.so$' backends.txt)" = 4 && ! grep -F '(error:' backends.txt
+
+  linux-standalone:
+    name: Linux (standalone)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - run: git -C third_party/mcpelauncher-linker submodule update --init --depth 1 # for realvnc's host half
+      - run: docker build -f linux/Dockerfile --output type=local,dest=dist/vento .
+      - run: tar -C dist --sort=name --owner=0 --group=0 --numeric-owner --mode=u+rwX,go+rX,go-w -czf vento-x86_64-linux-gnu.tar.gz vento
+      - uses: actions/upload-artifact@v7
+        with:
+          path: vento-x86_64-linux-gnu.tar.gz
+          archive: false
+          if-no-files-found: error
