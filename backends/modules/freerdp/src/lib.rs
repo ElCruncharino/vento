@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! FreeRDP's `vento_freerdp` as a [`Backend`](session::backend::Backend):
+//! FreeRDP's `vento_freerdp` as a [`Backend`](api::backend::Backend):
 //! its config from the options, its live options and its rows — what the
 //! phone's one JNI layer stands in front of, linked into the library CMake
 //! makes of the C. The library's config path is a directory of ours, which also
@@ -12,24 +12,24 @@
 //! to the C as `vento/video.h`'s and `vento/audio.h`'s tables as TigerVNC's
 //! are.
 
-use session::c::{Behaviour, CSession, start};
-use session::backend::{Backend, ConnectionFact, Field, Traffic};
-use session::rdp::{desktop_size, monitor_count};
-use session::kind::{CONNECT_TIMEOUT_MS, Connect, Kind, Platform};
-use session::options::Options;
+use api::c::{Behaviour, CSession, start};
+use api::backend::{Backend, ConnectionFact, Field, Traffic};
+use api::rdp::{desktop_size, monitor_count};
+use api::kind::{CONNECT_TIMEOUT_MS, Connect, Kind, Platform};
+use api::options::Options;
 use std::ffi::CString;
 
 /// `vento/freerdp.h`, as `build.rs` generated it, over the shared declarations
 /// it is written against.
 mod ffi {
     #![allow(non_camel_case_types, dead_code)]
-    pub use session::c::ffi::*;
+    pub use api::c::ffi::*;
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 }
 
 pub static KIND: Kind = Kind {
-    about: &session::catalog::FREERDP,
-    version: || unsafe { session::c::string(ffi::vento_freerdp_version()) },
+    about: &api::catalog::FREERDP,
+    version: || unsafe { api::c::string(ffi::vento_freerdp_version()) },
     create,
 };
 
@@ -115,7 +115,7 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
         width: width as i32,
         height: height as i32,
         monitors: monitor_count(o) as i32,
-        keyboard_layout: session::rdp::KEYBOARD_LAYOUT as i32,
+        keyboard_layout: api::rdp::KEYBOARD_LAYOUT as i32,
         client_name: name.as_ptr(),
         platform: platform.as_ptr(),
         config_path: config_path.as_ptr(),
@@ -131,14 +131,14 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
             // The library's H.264 is decoded by the platform's decoders, as
             // TigerVNC's is: the session owns them from the call on, and
             // without them offers no H.264.
-            let video = c.decoders.clone().map(session::c::video::table);
+            let video = c.decoders.clone().map(api::c::video::table);
             if let Some(video) = &video {
                 config.video = video;
             }
             // And its sound plays on the platform's output, as TigerVNC's
             // does: the session owns the table from the call on, and without
             // one does not ask the server for sound.
-            let audio = c.audio.clone().map(session::c::audio::table);
+            let audio = c.audio.clone().map(api::c::audio::table);
             if let Some(audio) = &audio {
                 config.audio = audio;
             }

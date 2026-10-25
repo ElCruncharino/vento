@@ -18,7 +18,7 @@ import java.util.Map;
 
 /**
  * The shared test vectors in {@code backends/vectors/}, which
- * {@code backends/session/tests/vectors.rs} reads too: one set of cases for a
+ * {@code backends/api/tests/vectors.rs} reads too: one set of cases for a
  * rule both sides keep, so that the two copies cannot drift apart without one
  * of these failing.
  *

@@ -17,11 +17,11 @@ import java.util.Map;
 /**
  * This module's entry in a build's list of backends. What the IronRDP backend
  * is called and what it can be told are the catalog's: {@link IronRdpCatalog},
- * generated from {@code backends/session} at build time, holds the words and
- * the option keys.
+ * generated from {@code backends/api} at build time, holds the words and the
+ * option keys.
  *
  * <p>A session is a {@link NativeBackend} on {@link IronRdpNatives}, generated
- * too: IronRDP in the module's crate as a {@code session::Backend}, which
+ * too: IronRDP in the module's crate as an {@code api::Backend}, which
  * reads the desktop size option and splits a domain out of the user name
  * itself. What is left on this side is {@link RdpHooks}: the size this machine
  * was left at, and the prompt's words.

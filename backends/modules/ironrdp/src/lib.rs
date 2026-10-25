@@ -31,7 +31,7 @@
 /// native path is wired up.
 pub const PROTOCOL_VERSION: &str = "RDP 5.x (IronRDP)";
 
-// The protocol as the phone holds it: a `session::Backend`, with this backend's
+// The protocol as the phone holds it: an `api::Backend`, with this backend's
 // options read into its config and its rows, through the one JNI layer below.
 pub mod backend;
 

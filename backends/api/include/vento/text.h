@@ -82,7 +82,7 @@ static inline char *vento_utf8_from_bytes(const char *bytes) {
 
 /* The most of a clipboard a session takes from the far end or offers it, in
    bytes of its text as UTF-8 with LF line ends: `runtime::MAX_CLIPBOARD`,
-   which the Rust side holds this equal to (`session::c`). Past it a clipboard
+   which the Rust side holds this equal to (`api::c`). Past it a clipboard
    is skipped whole rather than cut short. */
 #define VENTO_MAX_CLIPBOARD (1 << 20)
 

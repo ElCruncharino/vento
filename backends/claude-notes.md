@@ -4,16 +4,16 @@ The eight remote desktop backends, what they share, and how they are built
 for the phone.
 
 **The rule:** a thing that only one backend needs lives under that backend's
-module, `modules/<name>/`; `runtime/` and `session/` hold only what two or
-more backends share — `runtime/` what a protocol client is written against
-and a platform is written to, its picture and sound (`runtime::media`)
-included, and `session/` what a client holds a session by; and what one
-platform needs of all of them lives under that platform, `platform/<os>/` —
-its crate, its C, its CMake half and, for the phone, its Java and its ports.
-Inside a module, each language has one place: the Rust crate at its root, the
-C in `cpp/`, the Java in `java/`, the options in `catalog.rs`. What is left
-at the top is what builds them all: the Gradle parent, its tasks and the
-CMake every C backend includes.
+module, `modules/<name>/`; `runtime/` and `api/` hold only what two or more
+backends share — `runtime/` what a protocol client is written against and a
+platform is written to, its picture and sound (`runtime::media`) included,
+and `api/` what a client holds a session by; and what one platform needs of
+all of them lives under that platform, `platform/<os>/` — its crate, its C,
+its CMake half and, for the phone, its Java and its ports. Inside a module,
+each language has one place: the Rust crate at its root, the C in `cpp/`, the
+Java in `java/`, the options in `catalog.rs`. What is left at the top is what
+builds them all: the Gradle parent, its tasks and the CMake every C backend
+includes.
 
     backends/
       claude-notes.md, UPGRADING.md
@@ -22,7 +22,7 @@ CMake every C backend includes.
       cmake/            warnings.cmake, reproducible.cmake
       runtime/          what a protocol and a platform are written to,
                         src/media/ too
-      session/          what a client holds a session by
+      api/              what a client holds a session by
       codegen/  vectors/
       modules/<name>/   one per backend (eight)
       platform/
@@ -38,8 +38,8 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
 - `catalog.rs` — the backend's entry in the catalog: its `About` (name,
   description, place in a picker, how its identities are pinned, whether its
   user name carries a domain) and its options table, with their tests.
-  Compiled by `session` by path (`session/src/catalog.rs`), so that
-  `vento-codegen` builds from `session` alone; Gradle's `codegenSources`
+  Compiled by `api` by path (`api/src/catalog.rs`), so that
+  `vento-codegen` builds from `api` alone; Gradle's `codegenSources`
   lists every one.
 - `build.gradle` — the Android module, its source sets and its CMake
   pointed at the directories below rather than at AGP's `src/main/`.
@@ -71,18 +71,18 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
   their decoders, and the queue a device drains). `media` uses nothing of the
   rest of the crate, nor the rest of it `media`; a platform crate depends on
   `runtime/` for the traits it implements.
-- `session/` (`remotedesktop-session`) — what a client holds a session by:
+- `api/` (`remotedesktop-api`) — what a client holds a session by:
   the `Backend` trait, events, the catalog registry and the shape of an
   option, `Kind`/`Connect`, and the rules every client keeps alike
-  (credentials, trust), held to their cases (`tests/vectors.rs`). With the `c`
-  feature, the one adapter over the C vtable and the shared headers'
-  declarations (`session::c::ffi`), which each C backend's own declarations
-  are written over. The neutral C API it adapts is in `session/include/vento/`
+  (credentials, trust), held to their cases (`tests/vectors.rs`). With the
+  `c` feature, the one adapter over the C vtable and the shared headers'
+  declarations (`api::c::ffi`), which each C backend's own declarations are
+  written over. The neutral C API it adapts is in `api/include/vento/`
   (`backend.h`, `video.h`, `audio.h`, `log.h`, `text.h`; each C backend's own
   header is in its module): with the crate that reads them into Rust, as each
   backend's header is with its own.
 - `codegen/` (`vento-codegen`) — the phone's Java catalogs and natives
-  classes, generated from `session` at build time on the host.
+  classes, generated from `api` at build time on the host.
 - `vectors/` — `options.json`, the cases of the one rule with a Java copy
   (`settle`), which both the Rust and the Java tests read. Cases only the
   Rust tests read are written in them.

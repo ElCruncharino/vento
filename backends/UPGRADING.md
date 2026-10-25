@@ -132,7 +132,7 @@ under the host locale (`export LC_ALL=C`).
 
 - A C backend's shim is one file in its module's `cpp/`, `<name>_session.c`
   (`.cxx` for TigerVNC), which drives the library against the neutral C API
-  in `backends/session/include/vento/` and names no platform; what it offers
+  in `backends/api/include/vento/` and names no platform; what it offers
   is declared in the backend's own header beside it,
   `include/vento/<name>.h`. Above it is the crate at the module's root, which
   reads that header into Rust (its `build.rs`, with bindgen), fills the
@@ -148,8 +148,8 @@ under the host locale (`export LC_ALL=C`).
   protocol code; `backend.rs` changes only when an option or a row does.
 - Next to nothing about a protocol is in Java or JNI any more. The phone
   reaches every backend but RealVNC through one JNI layer,
-  `backends/platform/android`, over its `session::Backend`; what a module's
-  Java keeps is its provider and, for RDP and the two borrowed VNC clients, a
+  `backends/platform/android`, over its `api::Backend`; what a module's Java
+  keeps is its provider and, for RDP and the two borrowed VNC clients, a
   `NativeBackend.Hooks`. An upgrade that keeps the adapter's `Kind` building
   has nothing to change on that side.
 - TigerVNC's H.264 decoder context is the shim's own
@@ -189,7 +189,7 @@ under the host locale (`export LC_ALL=C`).
 ## Options
 
 A backend's settings are its table, `OPTIONS` in
-`backends/modules/<name>/catalog.rs` (compiled by the session crate, which
+`backends/modules/<name>/catalog.rs` (compiled by the `api` crate, which
 names the file by path), one `Spec` per row, and the one copy: on the phone
 `vento-codegen` writes it into the module's generated `<Name>Catalog` at build
 time, which the provider answers from. When an upstream change adds something a
@@ -224,20 +224,20 @@ line or one file somewhere that already has seven:
   `vento/backend.h` with its config in its own header,
   `cpp/include/vento/<name>.h` (on the include path of the module's targets
   through `vento_android_library`), and a small crate at the module's root
-  (`remotedesktop-session` with the `c` feature; `session::c::start` and a
+  (`remotedesktop-api` with the `c` feature; `api::c::start` and a
   `Behaviour` do the rest) whose `build.rs` reads the header with bindgen,
-  its own items only, over `session::c::ffi` — libvnc's, copied.
+  its own items only, over `api::c::ffi` — libvnc's, copied.
 - **The catalog.** `modules/<name>/catalog.rs`: the backend's `About` (its
   pinning and whether its user name carries a domain are data there, which
   the shared rules read) and its `OPTIONS` table, with their tests; one
   `#[path]` module, a `pub use` and a place in `ALL` in
-  `backends/session/src/catalog.rs`. The file is in `codegenSources`
+  `backends/api/src/catalog.rs`. The file is in `codegenSources`
   (`backends/build.gradle`) by being there.
-- **The adapter.** In the backend's own crate a `Kind` (`session::kind`):
+- **The adapter.** In the backend's own crate a `Kind` (`api::kind`):
   the `About`, the version, and `create`, which turns a `Connect` into an
   `Arc<dyn Backend>`. Credentials prompts, the trust decision
-  (`session::trust::decide` over each client's `Store`), the bell and the
-  events are the session crate's and are not written again.
+  (`api::trust::decide` over each client's `Store`), the bell and the
+  events are the `api` crate's and are not written again.
 - **The workspace.** The crate's directory in the root `Cargo.toml`'s
   `members`, which names each one.
 - **The phone's library.** One `platform_android::natives!` line in the
@@ -280,7 +280,7 @@ Rust modules:
     ./gradlew :backends:<module>:assembleRelease
 
 Always `./patch.sh check`. After an options change, `cargo test --locked -p
-remotedesktop-session` and `./gradlew :backends:testDebugUnitTest`: the
+remotedesktop-api` and `./gradlew :backends:testDebugUnitTest`: the
 first checks every table's defaults against its own rows and the keys
 records hold, and both hold `settle`, and its Java copy, to
 `backends/vectors/options.json`. After

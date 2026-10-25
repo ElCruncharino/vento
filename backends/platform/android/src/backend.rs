@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Any `session::Backend` as the natives `NativeBackend.java` calls: the one
+//! Any `api::Backend` as the natives `NativeBackend.java` calls: the one
 //! JNI layer every backend but RealVNC's is reached through on the phone.
 //!
-//! A backend's library is its protocol, its `session::Backend` adapter and one
+//! A backend's library is its protocol, its `api::Backend` adapter and one
 //! line naming the adapter to this module — [`natives!`](crate::natives) —
 //! which writes the `JNI_OnLoad` that registers [`METHODS`] on the module's
 //! own natives class. Registered rather than exported, because the natives are
@@ -19,18 +19,17 @@
 //! For the four backends written in Rust the protocol is the crate and the
 //! library is a `cdylib` of it. For the three in C the protocol is a C
 //! library behind the vtable in `vento/backend.h`, the adapter is
-//! `session::c` and a small crate beside the C, and that crate is a static
+//! `api::c` and a small crate beside the C, and that crate is a static
 //! library CMake links into the C's own `.so` — whose one export is the
 //! `JNI_OnLoad` written here. The questions only the C API asks (a question in
 //! the library's words, a message, RealVNC's security prompt) come through
 //! here like any other event.
 //!
 //! What is decided about a session rather than shown is decided here: a far
-//! end's identity against the pins (`session::trust`, over the phone's
+//! end's identity against the pins (`api::trust`, over the phone's
 //! `known_hosts` preferences, which `NativeBackend` reads and writes for it),
-//! and the name an RDP credentials prompt starts with
-//! (`session::credentials`). What crosses to Java is the question, when there
-//! is one.
+//! and the name an RDP credentials prompt starts with (`api::credentials`).
+//! What crosses to Java is the question, when there is one.
 //!
 //! The handle Java holds is a `Box<Handle>`: the backend, and the mailbox its
 //! events go through. Java retires the handle under its own lock before
@@ -56,11 +55,11 @@ use jni::signature::{Primitive, ReturnType};
 use jni::strings::JNIStr;
 use jni::sys::{jboolean, jint, jlong, jvalue};
 use jni::{Env, JavaVM, NativeMethod, jni_sig, jni_str, native_method};
-use session::backend::{Backend, Credentials, Field};
-use session::events::{Event, Identity, Mailbox};
-use session::kind::{Connect, Dirs, Kind, Platform};
-use session::options::Options;
-use session::trust::{self, Decision, Pinned};
+use api::backend::{Backend, Credentials, Field};
+use api::events::{Event, Identity, Mailbox};
+use api::kind::{Connect, Dirs, Kind, Platform};
+use api::options::Options;
+use api::trust::{self, Decision, Pinned};
 use std::cell::RefCell;
 use std::ffi::CStr;
 use std::path::PathBuf;
@@ -337,7 +336,7 @@ fn create<'local>(
 
     let asks = Asks {
         pinned: trust::pinned_as(kind, &address, &o),
-        prompt_user: session::credentials::prompt_user(kind, &user),
+        prompt_user: api::credentials::prompt_user(kind, &user),
     };
     let outlet = Arc::new(Outlet::new(env, &events, asks)?);
     let wake = Arc::clone(&outlet);
@@ -600,7 +599,7 @@ fn request_display<'local>(_env: &mut Env<'local>, _this: JObject<'local>, handl
     Ok(())
 }
 
-/// `session::backend::Facts` as ints, in one crossing: width, height, the
+/// `api::backend::Facts` as ints, in one crossing: width, height, the
 /// current display, flags (1 can resize, 2 view only, 4 pointer relative),
 /// how many monitors, then four ints per monitor and four per display —
 /// x, y, width, height, `Monitor.fromFlat`'s shape.
@@ -641,7 +640,7 @@ fn info<'local>(
     if let Some(audio) = &h.audio
         && !rows.is_empty()
     {
-        session::backend::with_sound(&mut rows, audio.controls());
+        api::backend::with_sound(&mut rows, audio.controls());
     }
     let array = JObjectArray::<JString>::new(env, rows.len() * 4, JString::null())?;
     for (i, row) in rows.iter().enumerate() {

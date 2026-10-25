@@ -17,14 +17,14 @@
 # (where to keep things, what decodes video, what the far end is told this
 # machine is) through `Connect`.
 [package]
-name = "remotedesktop-session"
+name = "remotedesktop-api"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
 
 [lib]
-name = "session"
+name = "api"
 
 [features]
 # The adapter over `vento/backend.h`, for the C backends' crates, and the

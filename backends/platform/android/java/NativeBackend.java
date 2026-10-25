@@ -18,11 +18,11 @@ import java.util.function.Consumer;
 
 /**
  * A {@link Backend} on any backend but RealVNC's: the backend's
- * {@code session::Backend} adapter, reached through the one JNI layer in
- * {@code backends/platform/android}. For the four written in Rust that adapter
- * is the protocol crate's own; for the three C ones it is the small crate
- * beside the C library, over the one vtable in {@code vento/backend.h}, linked
- * into the same library.
+ * {@code api::Backend} adapter, reached through the one JNI layer in {@code
+ * backends/platform/android}. For the four written in Rust that adapter is the
+ * protocol crate's own; for the three C ones it is the small crate beside the
+ * C library, over the one vtable in {@code vento/backend.h}, linked into the
+ * same library.
  *
  * <p>There used to be one of these per protocol, and they were twins: the
  * same handle, the same retirement, the same posting to the main thread,
@@ -55,10 +55,10 @@ import java.util.function.Consumer;
  * <p>What is decided rather than shown is not here either: whether a far
  * end's identity matches its pin, whether a first sight of one is pinned
  * without asking, and what an RDP prompt's name starts with are
- * {@code session::trust} and {@code session::credentials}, applied in the JNI
- * layer. A question arrives here already worked out, to be shown; the pins
- * themselves stay in {@link KnownHosts}, which that layer reads and writes
- * through {@link #knownHostsPins} and {@link #knownHostsPin}.
+ * {@code api::trust} and {@code api::credentials}, applied in the JNI layer. A
+ * question arrives here already worked out, to be shown; the pins themselves
+ * stay in {@link KnownHosts}, which that layer reads and writes through {@link
+ * #knownHostsPins} and {@link #knownHostsPin}.
  *
  * <p>Events arrive on the protocol thread, through the {@code on…} methods
  * below, in the order the session said them. Damage arrives once per frame, as

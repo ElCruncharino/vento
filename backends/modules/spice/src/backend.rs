@@ -1,23 +1,23 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The SPICE client as a [`Backend`](session::backend::Backend), with this
+//! The SPICE client as a [`Backend`](api::backend::Backend), with this
 //! backend's option handling and its rows: what the phone reaches through
 //! `platform_android`'s JNI layer.
 
 use crate::{Client, Config, compression_of};
 use runtime::{Bridge, Session};
-use session::backend::{
+use api::backend::{
     Backend, ConnectionFact, Credentials, Facts, Field, Monitor, Picture, Traffic,
 };
-use session::events::{Feed, Mailbox};
-use session::kind::{CONNECT_TIMEOUT_MS, Connect, Kind};
-use session::options::Options;
+use api::events::{Feed, Mailbox};
+use api::kind::{CONNECT_TIMEOUT_MS, Connect, Kind};
+use api::options::Options;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 pub static KIND: Kind = Kind {
-    about: &session::catalog::SPICE,
+    about: &api::catalog::SPICE,
     version: || crate::VERSION.to_string(),
     create,
 };

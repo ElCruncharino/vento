@@ -3,8 +3,8 @@
 
 //! The RFB backend's entry in the catalog: what it is called, where it goes
 //! in a picker, how its identities are pinned, and every option it takes.
-//! Compiled by `remotedesktop-session`, which names this file by path
-//! (`backends/session/src/catalog.rs`), and not by this module's crate: the
+//! Compiled by `remotedesktop-api`, which names this file by path
+//! (`backends/api/src/catalog.rs`), and not by this module's crate: the
 //! phone's generated Java (`vento-codegen`) reads it without building the
 //! backend.
 

@@ -8,8 +8,9 @@
 # protocol is written against and a platform is written to — the handler, the
 # events, the thread a session runs on, its TLS, and the picture and the sound
 # (`runtime::media`), which a protocol hands on without knowing whose decoders
-# or output take them; `backends/session` is the one a client holds a session by — the `Backend` trait, the events, the options and the rules every client
-# keeps alike — and each backend's adapter to it lives in that backend's own
+# or output take them; `backends/api` is the one a client holds a session by — the
+# `Backend` trait, the events, the options and the rules every client keeps
+# alike — and each backend's adapter to it lives in that backend's own
 # crate under `backends/modules/`: the protocol crate for the four in Rust, a
 # small crate beside the C library for the others. None of them knows a
 # phone. `backends/platform/*` is where one platform's glue lives — Android's
@@ -23,7 +24,7 @@
 resolver = "2"
 members = [
     "backends/runtime",
-    "backends/session",
+    "backends/api",
     "backends/codegen",
     "backends/platform/*",
     "backends/modules/rfb",
@@ -44,13 +45,13 @@ publish = false
 
 [workspace.dependencies]
 remotedesktop-runtime = { path = "backends/runtime", version = "0.0.1" }
-remotedesktop-session = { path = "backends/session", version = "0.0.1" }
+remotedesktop-api = { path = "backends/api", version = "0.0.1" }
 remotedesktop-platform-android = { path = "backends/platform/android", version = "0.0.1" }
 log = "0.4"
 # One version across the crates: a `Callbacks` built in one is used in another.
 jni = "0.22"
 android_logger = "0.15"
-# One version for every crate that reads the C headers: `remotedesktop-session`
+# One version for every crate that reads the C headers: `remotedesktop-api`
 # the shared ones, each C backend's crate its own over those.
 bindgen = "0.73"
 # The upstreams that are submodules rather than registry crates, named from

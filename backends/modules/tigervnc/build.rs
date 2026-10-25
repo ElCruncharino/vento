@@ -5,7 +5,7 @@
 //! Rust, for the `ffi` module in `src/lib.rs`.
 //!
 //! Only its own items, the `vento_tigervnc_` ones. What they are written
-//! against — `vento_session`, `vento_callbacks` — is the session crate's,
+//! against — `vento_session`, `vento_callbacks` — is the `api` crate's,
 //! which generates the shared headers, and the module brings those into
 //! scope, so that the session this creates is the type the adapter drives.
 
@@ -15,7 +15,7 @@ use std::path::PathBuf;
 fn main() {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let own = manifest.join("cpp/include");
-    let shared = manifest.join("../../session/include");
+    let shared = manifest.join("../../api/include");
     println!("cargo:rerun-if-changed={}", own.display());
     println!("cargo:rerun-if-changed={}", shared.display());
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());

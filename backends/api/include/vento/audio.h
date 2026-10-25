@@ -3,9 +3,9 @@
 
 // The platform's sound output, as a C backend is handed it: a table of calls
 // over `runtime::media::audio::Outputs` (AAudio on the phone), filled in by
-// `session::c::audio` and passed in a backend's config. Function pointers
-// rather than symbols, for the reason `vento/video.h` gives: a backend library
-// links nothing of the process it is loaded into.
+// `api::c::audio` and passed in a backend's config. Function pointers rather
+// than symbols, for the reason `vento/video.h` gives: a backend library links
+// nothing of the process it is loaded into.
 //
 // What is behind a stream is the same for every backend: a queue that keeps as
 // little in front of the device as the far end's own rhythm of writes needs not

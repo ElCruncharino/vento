@@ -20,7 +20,7 @@ import android.content.Context;
  *       {@code user@domain} are what every RDP client takes and every user
  *       types, so the prompt has no third field: it says so under the box.
  *       The box starts with the record's name in the first form, and what is
- *       typed back is split, both by {@code session::credentials} on the far
+ *       typed back is split, both by {@code api::credentials} on the far
  *       side of the JNI layer.
  * </ul>
  */

@@ -149,7 +149,7 @@ add_library(pthread INTERFACE)
 # through. libtool control files are for the autotools half of their build, of
 # which there is none here.
 include_directories("${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}"
-        "${VENTO_BACKENDS}/session/include")
+        "${VENTO_BACKENDS}/api/include")
 include_directories(SYSTEM "${THIRD_PARTY}/tigervnc/common")
 macro(libtool_create_control_file)
 endmacro()

@@ -71,5 +71,5 @@ pub const MAX_CURSOR_SIDE: usize = 1024;
 /// large copy at the far end is somebody's ordinary afternoon and not a reason
 /// to end the session. The two RDP backends hold what they offer the far end
 /// to it too, and FreeRDP's C has it as `VENTO_MAX_CLIPBOARD` (`vento/text.h`),
-/// which `session` holds equal to this.
+/// which `api` holds equal to this.
 pub const MAX_CLIPBOARD: usize = 1 << 20;

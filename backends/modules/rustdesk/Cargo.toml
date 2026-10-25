@@ -1,5 +1,5 @@
 # The RustDesk backend's native half. The protocol is plain Rust, and on
-# Android the library is that client as a `session::Backend` (`src/backend.rs`)
+# Android the library is that client as an `api::Backend` (`src/backend.rs`)
 # registered through the platform crate's one JNI layer, so `cargo test`
 # exercises it on the host. The picture is decoded by whatever
 # `runtime::media::video::Decoders` the client is handed: the phone's
@@ -38,9 +38,9 @@ sha2 = "0.11"
 # in here: it builds under the NDK without being asked anything.
 zstd = "0.13"
 
-# `src/backend.rs`, the protocol as a `session::Backend`: what the phone's JNI
+# `src/backend.rs`, the protocol as an `api::Backend`: what the phone's JNI
 # layer stands in front of.
-remotedesktop-session.workspace = true
+remotedesktop-api.workspace = true
 
 # The only part of this crate that knows a phone exists: the one line in
 # `src/lib.rs` that hands the backend to the platform crate's JNI layer, with

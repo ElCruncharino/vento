@@ -57,9 +57,9 @@ rustls = { version = "0.23", default-features = false, features = [
 # offset: this is the one field whose position nobody should guess.
 x509-cert = { version = "0.2", default-features = false, features = ["pem"] }
 
-# `src/backend.rs`, the protocol as a `session::Backend`: what the phone's JNI
+# `src/backend.rs`, the protocol as an `api::Backend`: what the phone's JNI
 # layer stands in front of.
-remotedesktop-session.workspace = true
+remotedesktop-api.workspace = true
 
 # The probe is a development tool, built only when asked for: `cargo run
 # --features probe --example ironrdp-probe`. Without the feature `cargo test` and

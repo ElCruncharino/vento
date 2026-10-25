@@ -39,7 +39,7 @@
 //! choice out of that list, so the same protocol code is a VP9 session on one
 //! platform and an H.265 one on another.
 
-// The protocol as the phone holds it: a `session::Backend`, with this backend's
+// The protocol as the phone holds it: an `api::Backend`, with this backend's
 // options read into its config and its rows, through the one JNI layer below.
 pub mod backend;
 
