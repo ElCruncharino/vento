@@ -1,25 +1,24 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! One remote desktop session, whatever protocol is underneath: the
-//! interface the window and the probe are written against.
+//! One remote desktop session, whatever the protocol: the interface the
+//! clients are written against.
 //!
-//! It is `Backend.java` with the Android taken out, member for member, because
-//! that interface is the one seam eight backends have had to fit and there was
-//! no reason to invent a second. What is gone is what a phone put there: the
-//! `Bitmap` becomes a slice of `R, G, B, A` bytes, the main-thread listener
-//! becomes the [`Mailbox`](crate::events::Mailbox) a session is created with,
-//! and the asynchronous `connectionInfo` becomes a call — every backend here
-//! answers it from state it keeps beside the connection, including RealVNC's,
-//! whose session file asks the core on its own thread and waits.
+//! It is modelled on `Backend.java` without the Android-specific parts, since
+//! that interface already fits all eight backends: the `Bitmap` becomes a
+//! slice of `R, G, B, A` bytes, the main-thread listener becomes the
+//! [`Mailbox`](crate::events::Mailbox) a session is created with, and the
+//! asynchronous `connectionInfo` becomes a plain call. Every backend answers
+//! it from state kept alongside the connection, including RealVNC, whose
+//! session file asks the core on its own thread and waits.
 //!
 //! Threads: every method may be called from any thread, and [`read_region`]
-//! and [`thumbnail`] are meant to be called from whichever is drawing,
-//! concurrently with everything else — they take the read side of a lock the
-//! protocol thread holds for a blit at a time, so a pixel fetch never queues
-//! behind a socket read. Events arrive through the mailbox, from the protocol
-//! thread nearly always (a call into the session can put one there too), and
-//! are read from wherever is convenient.
+//! and [`thumbnail`] are meant to be called from the drawing thread,
+//! concurrently with everything else. They take the read side of a lock the
+//! protocol thread holds for one blit at a time, so a pixel fetch never
+//! queues behind a socket read. Events arrive through the mailbox, nearly
+//! always from the protocol thread (a call into the session can queue one
+//! too), and can be read from any thread.
 //!
 //! [`read_region`]: Backend::read_region
 //! [`thumbnail`]: Backend::thumbnail
@@ -29,14 +28,14 @@ use runtime::media::audio::Controls;
 
 /// One of the far end's screens, as a rectangle in its coordinates.
 ///
-/// Two questions use this shape and they are not the same question — see
-/// [`Facts::monitors`] and [`Facts::displays`].
+/// Used for two different things: see [`Facts::monitors`] and
+/// [`Facts::displays`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Monitor {
-    /// What the far end calls this screen, opaque, and only for handing back
-    /// in [`Backend::request_layout`]: RFB's screen id, which a server
-    /// matches a requested layout against the screens it has. Where the
-    /// protocol has no id of its own it is the screen's index in the list.
+    /// The far end's opaque id for this screen, only for passing back in
+    /// [`Backend::request_layout`]: RFB's screen id, which a server uses to
+    /// match a requested layout against its screens. When the protocol has
+    /// no ids, it is the screen's index in the list.
     pub id: u32,
     pub x: i32,
     pub y: i32,
@@ -45,12 +44,12 @@ pub struct Monitor {
 }
 
 impl Monitor {
-    /// The shape every backend hands its layout over in: four ints per
-    /// screen, x, y, width, height. One reader for all of them, so that an
-    /// empty answer is the same answer whichever library read it off the wire;
-    /// a screen with no area is not a screen. Each id is the screen's index
-    /// in `flat`, which is also what the phone's JNI layer flattens a layout
-    /// back into, so that four ints a screen stays the one shape Java reads.
+    /// The format every backend passes its layout in: four ints per screen,
+    /// x, y, width, height. One reader for all of them, so that every library
+    /// gives the same result for an empty layout; a screen with no area is
+    /// dropped. Each id is the screen's index in `flat`. The phone's JNI
+    /// layer flattens a layout back into this format, the only one Java
+    /// reads.
     pub fn from_flat(flat: &[i32]) -> Vec<Monitor> {
         flat.chunks_exact(4)
             .enumerate()
@@ -66,9 +65,9 @@ impl Monitor {
     }
 
     /// The same with the far end's own ids: five ints per screen, id, x, y,
-    /// width, height, the id's bits as they came. What a backend whose
-    /// protocol numbers its screens hands over, and the shape a layout is
-    /// asked for in across the C seam.
+    /// width, height, with the id's bits unchanged. Used by a backend whose
+    /// protocol numbers its screens, and for layout requests across the C
+    /// interface.
     pub fn from_flat5(flat: &[i32]) -> Vec<Monitor> {
         flat.chunks_exact(5)
             .filter(|m| m[3] > 0 && m[4] > 0)
@@ -82,7 +81,7 @@ impl Monitor {
             .collect()
     }
 
-    /// `screens` as [`from_flat5`](Monitor::from_flat5) reads them.
+    /// `screens` in the format [`from_flat5`](Monitor::from_flat5) reads.
     pub fn flat5(screens: &[Monitor]) -> Vec<i32> {
         screens
             .iter()
@@ -91,8 +90,8 @@ impl Monitor {
     }
 }
 
-/// Everything about a live session that has to be asked for rather than
-/// waited for, in one answer: `Backend.Facts` in Java, field for field.
+/// The state of a live session that is polled rather than pushed as events,
+/// in one answer: `Backend.Facts` in Java, plus `can_layout`.
 ///
 /// A caller must expect every one of these to change while a session runs.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -100,33 +99,33 @@ pub struct Facts {
     /// Zero until the connection is up.
     pub width: usize,
     pub height: usize,
-    /// How the far end's *one* desktop is divided, or empty where it has not
-    /// said — which is not the same as one monitor, and is the answer for a
-    /// library that never exposes the layout.
+    /// How the far end's *one* desktop is divided, or empty when it has not
+    /// sent a layout (which differs from one monitor, and is always the case
+    /// for a library that never exposes the layout).
     pub monitors: Vec<Monitor>,
-    /// The pictures the far end is *not* sending and will send if asked;
-    /// empty for every protocol but RustDesk. A menu rather than a map: only
-    /// [`display`](Facts::display) of them is the picture.
+    /// The far end's displays, of which it sends only one at a time and
+    /// sends another on request; empty for every protocol but RustDesk. A
+    /// menu rather than a map: only [`display`](Facts::display) is the
+    /// picture.
     pub displays: Vec<Monitor>,
-    /// Which of `displays` is on screen, or -1 where there is no choice.
+    /// Which of `displays` is on screen, or -1 when there is no choice.
     pub display: i32,
-    /// Whether the far end will take a new desktop size right now, as one
-    /// screen: false over a desktop of several, which one size would merge.
+    /// Whether the far end accepts a new single-screen desktop size right
+    /// now: false for a multi-screen desktop, which a resize would merge.
     pub can_resize: bool,
-    /// Whether the far end will take a layout of screens right now, any
-    /// number of them, through [`Backend::request_layout`]. Only a protocol
-    /// that can say where each screen goes says yes.
+    /// Whether the far end accepts a layout of any number of screens right
+    /// now, through [`Backend::request_layout`]. Only true for a protocol
+    /// that can place each screen.
     pub can_layout: bool,
     pub view_only: bool,
-    /// Whether the far end owns the cursor. Pushed as
-    /// [`Event::PointerMode`](crate::events::Event::PointerMode) too, and
-    /// here for a screen that attaches to a session that has been running
-    /// for an hour.
+    /// Whether the far end owns the cursor. Also pushed as
+    /// [`Event::PointerMode`](crate::events::Event::PointerMode); this is for
+    /// a screen that attaches to a session that is already running.
     pub pointer_relative: bool,
 }
 
 impl Facts {
-    /// Nothing connected: what a session that is over has to say.
+    /// Nothing connected: the answer for a session that is over.
     pub const NONE: Facts = Facts {
         width: 0,
         height: 0,
@@ -146,46 +145,44 @@ impl Default for Facts {
     }
 }
 
-/// What a row of the connection panel *is*, independently of what a backend
-/// calls it: `ConnectionFact.Field` in Java.
+/// The meaning of a connection panel row, independent of the backend's
+/// label for it: `ConnectionFact.Field` in Java.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Field {
-    /// The desktop's own name for itself. The panel's heading.
+    /// The desktop's name. The panel's heading.
     DesktopName,
-    /// How the bytes get there: direct TCP, relayed, UDP.
+    /// The transport: direct TCP, relayed, UDP.
     Connection,
-    /// What is protecting them, if anything.
+    /// The encryption, if any.
     Security,
-    /// Which version of which protocol is being spoken.
+    /// The protocol and its version.
     Protocol,
     /// The encoding in use for pixels.
     Encoding,
     /// The measured throughput, however the backend measures it.
     LineSpeed,
-    /// What the session has moved, both ways, since it was opened.
+    /// The data transferred both ways since the session opened.
     Data,
-    /// What the server is sending.
+    /// The pixel format the server is sending.
     ServerPixels,
-    /// What we asked it for.
+    /// The pixel format the client asked for.
     ViewerPixels,
-    /// Anything a particular protocol has that this list does not.
+    /// Anything protocol-specific not covered above.
     Other,
 }
 
-/// One line of what a backend can say about the connection it is running.
+/// One row of information a backend reports about its connection.
 ///
-/// The identity is ours and the wording is theirs: `label` is the backend's
-/// own word for the row, which is what goes on screen, and it is the same
-/// word the Java backend of the same protocol uses. A backend omits a field
-/// it has no concept of and includes one with an empty value when it has the
-/// concept but no answer yet.
+/// `field` is the shared meaning and `label` is the backend's own word for
+/// the row, which is what goes on screen. A backend omits a field it has no
+/// concept of, and includes one with an empty value when it has the concept
+/// but no value yet.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConnectionFact {
     pub field: Field,
     pub label: &'static str,
     pub value: String,
-    /// Something only worth reading when hunting a problem — the pixel
-    /// formats are the case this exists for.
+    /// Only useful when debugging (the pixel formats, for example).
     pub diagnostic: bool,
 }
 
@@ -206,12 +203,11 @@ impl ConnectionFact {
         }
     }
 
-    /// [`Field::Data`], from the raw counts. The one row whose wording is
-    /// ours rather than the backend's: six clients count in six places, and
-    /// the row is only comparable if every backend says it the same way and
-    /// rounds it the same way, so they hand over bytes and this decides the
-    /// rest. A direction the protocol has no count for is left out rather
-    /// than shown as a zero.
+    /// [`Field::Data`], from the raw counts. The only row worded here rather
+    /// than by the backend: the backends count in different places, and the
+    /// row is only comparable if every backend words and rounds it the same
+    /// way, so they pass bytes and this formats them. A direction the
+    /// protocol has no count for is left out rather than shown as zero.
     pub fn data(traffic: Traffic) -> ConnectionFact {
         let value = match traffic.sent {
             Some(sent) => format!("{} in · {} out", size(traffic.received), size(sent)),
@@ -220,14 +216,14 @@ impl ConnectionFact {
         ConnectionFact::of(Field::Data, "Transferred", &value)
     }
 
-    /// The session's sound, "AAC 44.1 kHz stereo", with the output it plays
-    /// on where the platform has more than one ("(PipeWire)", as a video row
-    /// says "(hardware)") and ", muted" while it is: a row of the client's
-    /// rather than the backend's, since the client holds the sound's
-    /// controls (the backend has only the streams it writes), and worded
-    /// here so that both clients word it alike. `None` while nothing plays:
-    /// the session's sound switch, which is there from when the far end may
-    /// send sound, says the rest.
+    /// The session's sound, "AAC 44.1 kHz stereo", with the output where
+    /// the platform has more than one ("(PipeWire)", as a video row says
+    /// "(hardware)") and ", muted" while muted. The client produces this row
+    /// rather than the backend, since the client holds the sound's controls
+    /// (the backend has only the streams it writes), and it is worded here
+    /// so that both clients word it the same. `None` while nothing plays;
+    /// the session's sound switch, shown from when the far end may send
+    /// sound, covers the rest.
     pub fn sound(controls: &Controls) -> Option<ConnectionFact> {
         let playback = controls.playback()?;
         let output = playback.output.map(|o| format!(" ({o})")).unwrap_or_default();
@@ -240,9 +236,9 @@ impl ConnectionFact {
     }
 }
 
-/// `info`, a backend's rows, with the session's [sound
-/// row](ConnectionFact::sound) where it has one: after the backend's own
-/// rows and before its diagnostics, which the panels show in this order.
+/// Adds the session's [sound row](ConnectionFact::sound), if any, to a
+/// backend's rows in `info`: after the backend's own rows and before its
+/// diagnostics, the order the panels show them in.
 pub fn with_sound(info: &mut Vec<ConnectionFact>, controls: &Controls) {
     if let Some(row) = ConnectionFact::sound(controls) {
         let at = info.iter().position(|f| f.diagnostic).unwrap_or(info.len());
@@ -250,10 +246,10 @@ pub fn with_sound(info: &mut Vec<ConnectionFact>, controls: &Controls) {
     }
 }
 
-/// Bytes as a person reads them: powers of a thousand, and a decimal only
-/// where the mantissa is small enough for one to mean anything. SI rather
-/// than binary because this is a quantity that crossed a network, which is
-/// measured in thousands everywhere else it is quoted.
+/// Bytes in human-readable form: powers of a thousand, with decimals only
+/// where the mantissa is small enough for them to matter. SI rather than
+/// binary, because network quantities are conventionally quoted in
+/// thousands.
 fn size(bytes: u64) -> String {
     if bytes < 1000 {
         return format!("{bytes} B");
@@ -274,10 +270,10 @@ fn size(bytes: u64) -> String {
     }
 }
 
-/// What the session has moved, in bytes, counted where the protocol meets
-/// its transport. `sent` is `None` for a backend that has no count of that
-/// direction — RealVNC's core counts one way — rather than a zero that
-/// would be a claim.
+/// The data the session has transferred, in bytes, counted between the
+/// protocol and its transport. `sent` is `None` for a backend with no count
+/// for that direction (RealVNC's core counts only one way), rather than a
+/// misleading zero.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Traffic {
     pub received: u64,
@@ -293,8 +289,8 @@ pub struct Picture {
 }
 
 impl Picture {
-    /// From the framebuffer's own words, which are `R, G, B, A` in memory —
-    /// the little-endian `0xAABBGGRR` every client here works in.
+    /// From the framebuffer's own words, which are `R, G, B, A` in memory
+    /// (the little-endian `0xAABBGGRR` every client here uses).
     pub fn from_words(width: usize, height: usize, words: &[u32]) -> Picture {
         Picture {
             width,
@@ -304,9 +300,8 @@ impl Picture {
     }
 }
 
-/// The step a thumbnail no bigger than `max_width × max_height` takes: any
-/// integer, since every backend here takes the step itself and never sees a
-/// float.
+/// The step for a thumbnail no bigger than `max_width × max_height`. Always
+/// an integer, since every backend here takes an integer step.
 pub fn thumbnail_step(width: usize, height: usize, max_width: usize, max_height: usize) -> usize {
     let max_width = max_width.max(1);
     let max_height = max_height.max(1);
@@ -318,71 +313,70 @@ pub fn thumbnail_step(width: usize, height: usize, max_width: usize, max_height:
 
 /// One remote desktop connection, whatever protocol is underneath.
 ///
-/// Created connecting — there is no `connect()`, since nothing here needs a
-/// backend to exist before it has somewhere to go — and over when the
-/// mailbox says `Closed`. `destroy` ends it and waits for its thread; it is
-/// `&self` so that a shared handle can be retired from anywhere, and
-/// idempotent so that it can be retired twice.
+/// Starts connecting when created (there is no `connect()`, since nothing
+/// here needs a backend to exist before it has an address) and is over when
+/// the mailbox reports `Closed`. `destroy` ends it and waits for its thread;
+/// it takes `&self` so that a shared handle can be destroyed from anywhere,
+/// and is idempotent so that it can be called twice.
 pub trait Backend: Send + Sync {
     /// Absolute desktop coordinates and an RFB button mask.
     fn pointer(&self, x: i32, y: i32, button_mask: i32);
 
-    /// The same event where the far end owns the cursor: how far it moved
-    /// rather than where it now is. Only meaningful while
-    /// [`Facts::pointer_relative`]; every other backend ignores it.
+    /// The same event where the far end owns the cursor: the movement
+    /// rather than the position. Only meaningful while
+    /// [`Facts::pointer_relative`]; other backends ignore it.
     fn pointer_relative(&self, dx: i32, dy: i32, button_mask: i32) {
         let _ = (dx, dy, button_mask);
     }
 
     /// `keysym` is an X11 keysym; `key_id` is a stable identity for the
-    /// physical key, which is what ties an up to its down.
+    /// physical key, which pairs a key up with its key down.
     fn key_down(&self, keysym: u32, key_id: i64);
 
     fn key_up(&self, key_id: i64);
 
-    /// Let go of every key this session still has down at the far end.
+    /// Release every key this session still holds down at the far end.
     fn release_all_keys(&self);
 
-    /// Whether the session can be seen: false while its window is minimised
+    /// Whether the session is visible: false while its window is minimised
     /// or hidden (wholly covered on X11, suspended by the compositor on
     /// Wayland), true again when it is shown. Backends may pause updates
-    /// while it is not. Not the keyboard focus: a window on screen without
-    /// it stays live. (The name is the Android app's, where the session's
-    /// screen going to the background is the same thing.)
+    /// while it is not. Not the keyboard focus: a visible window without
+    /// focus stays live. (The name comes from the Android app, where the
+    /// session's screen going to the background is the equivalent.)
     fn focus(&self, focused: bool);
 
     fn set_view_only(&self, view_only: bool);
 
-    /// What this end has copied, offered to the far end.
+    /// Offers this end's copied text to the far end.
     fn clipboard(&self, text: &str);
 
-    /// Whether a clipboard offered now has somewhere to go at the far end,
-    /// where the session can know: `Some(false)` is the backend saying it
-    /// would go nowhere, as SPICE does with no guest agent that takes one.
-    /// `None`, the default, is a protocol that carries the clipboard as a
-    /// message and is not told what became of it. Not in `Backend.java`,
-    /// whose app has no use for it; the probe's status does.
+    /// Whether a clipboard offered now would reach anything at the far end,
+    /// if the session can know: `Some(false)` means it would go nowhere, as
+    /// with SPICE when no guest agent accepts one. `None`, the default, is
+    /// for a protocol that sends the clipboard as a message with no
+    /// feedback. Not in `Backend.java`, since the app does not use it; the
+    /// probe's status does.
     fn carries_clipboard(&self) -> Option<bool> {
         None
     }
 
-    /// Ask the far end to make the desktop this size. A request: what
-    /// actually happened arrives as a desktop size, or as nothing at all.
+    /// Ask the far end to make the desktop this size. The result arrives as
+    /// a desktop size event, or not at all.
     fn request_desktop_size(&self, width: u32, height: u32) {
         let _ = (width, height);
     }
 
     /// Ask the far end to make the desktop `width × height`, divided into
-    /// `screens` — a request, like [`request_desktop_size`], whose answer is
-    /// a desktop size and a new [`Facts::monitors`], or nothing at all.
+    /// `screens`. Like [`request_desktop_size`], the result arrives as a
+    /// desktop size and a new [`Facts::monitors`], or not at all.
     ///
-    /// A screen's id is one [`Facts::monitors`] gave out, handed back so
-    /// that the far end changes the screen it has rather than replacing it;
-    /// an id it does not have, or one already used earlier in the list, is a
-    /// new screen, and the backend gives it an id of its own. The default,
-    /// for a protocol with no layout to send ([`Facts::can_layout`] false),
-    /// asks for the one size where there is one screen and nothing
-    /// otherwise.
+    /// A screen's id is one from [`Facts::monitors`], passed back so that
+    /// the far end changes that screen rather than replacing it; an unknown
+    /// id, or one already used earlier in the list, is a new screen, and the
+    /// backend assigns its id. The default, for a protocol that cannot send
+    /// a layout ([`Facts::can_layout`] false), requests the size when there
+    /// is one screen and does nothing otherwise.
     ///
     /// [`request_desktop_size`]: Backend::request_desktop_size
     fn request_layout(&self, width: u32, height: u32, screens: &[Monitor]) {
@@ -396,50 +390,49 @@ pub trait Backend: Send + Sync {
         let _ = index;
     }
 
-    /// Change one of the settings this backend describes on the running
-    /// session. Only meaningful for an option that is live; anything else is
-    /// remembered for the next connection at best.
+    /// Change one of this backend's options on the running session. Only
+    /// meaningful for a live option; anything else is at best remembered for
+    /// the next connection.
     fn set_option(&self, key: &str, value: &str);
 
     fn facts(&self) -> Facts;
 
-    /// Whatever the backend can say about the live connection, in display
-    /// order, with the labels its Java twin uses — or empty when nothing is
-    /// connected.
+    /// The backend's information rows about the live connection, in display
+    /// order, or empty when nothing is connected.
     fn info(&self) -> Vec<ConnectionFact>;
 
     /// `None` while there is nothing to count.
     fn traffic(&self) -> Option<Traffic>;
 
-    /// How the picture is being decoded, for a debug overlay, where the
+    /// How the picture is being decoded, for a debug overlay, when the
     /// session decodes video through the platform's
     /// [`Decoders`](runtime::media::video::Decoders): the decoder's own
-    /// [`status`](runtime::media::video::Decoder::status) line, as of the last
-    /// picture or so. `None` for a protocol whose picture is not video, and
-    /// before the first frame.
+    /// [`status`](runtime::media::video::Decoder::status) line, as of roughly
+    /// the last picture. `None` for a protocol whose picture is not video,
+    /// and before the first frame.
     fn decoder_status(&self) -> Option<String> {
         None
     }
 
-    /// The picture as the GPU holds it, where the backend's last picture was
-    /// left there for whoever draws on that GPU: a session whose decoders
-    /// were told the window takes such pictures
+    /// The picture in GPU memory, when the backend's last picture was left
+    /// there for the renderer on that GPU: for a session whose decoders were
+    /// told the window accepts such pictures
     /// ([`Decoders::gpu_pictures`](runtime::media::video::Decoders::gpu_pictures)),
-    /// and only while the newest picture is one. The frame events say when
-    /// it changed, as for any other picture. `read_region` and `thumbnail`
-    /// still answer, by reading the picture back first, which is the cost
-    /// this was to save; `None` for every other backend and picture.
+    /// and only while the newest picture is one. The frame events report
+    /// changes as for any other picture. `read_region` and `thumbnail` still
+    /// work by reading the picture back first, which is the cost this
+    /// avoids. `None` for every other backend and picture.
     fn gpu_picture(&self) -> Option<std::sync::Arc<dyn runtime::media::video::GpuPicture>> {
         None
     }
 
     /// Copy the desktop rectangle `(x, y, width, height)` into `dst` at
     /// `(dst_x, dst_y)`, 1:1, where `dst` is rows of `R, G, B, A` bytes
-    /// `dst_stride` bytes apart. The rest of `dst` is left as it was, which
-    /// is what lets a caller hold a picture bigger than any one read and
-    /// refresh the parts of it that changed. False if there is nothing to
-    /// read yet, or if the rectangle does not fit either buffer, in which
-    /// case `dst` is untouched.
+    /// `dst_stride` bytes apart. The rest of `dst` is left unchanged, so a
+    /// caller can hold a picture bigger than any one read and refresh only
+    /// the changed parts. False if there is nothing to read yet, or if the
+    /// rectangle does not fit either buffer, in which case `dst` is
+    /// untouched.
     #[allow(clippy::too_many_arguments)]
     fn read_region(
         &self,
@@ -459,27 +452,26 @@ pub trait Backend: Send + Sync {
 
     /// The answer to a credentials event. `None` cancels, which ends the
     /// session. An empty user name means the one the session was created
-    /// with, as the Java prompts fill it in.
+    /// with.
     fn answer_credentials(&self, credentials: Option<Credentials>);
 
     /// The answer to a trust, unverified, question, security or message
-    /// event. A no ends the session, except to a message that was not a
-    /// question, where it is the only answer there is.
+    /// event. A no ends the session, except for a message that was not a
+    /// question, where it only dismisses the message.
     fn answer_trust(&self, accept: bool);
 
-    /// [`answer_trust`](Backend::answer_trust) for a security event, with the
-    /// one thing that question has over the others: whether to remember the
-    /// identity. Only RealVNC has a remember to carry; everyone else answers
-    /// the plain way.
+    /// [`answer_trust`](Backend::answer_trust) for a security event, plus
+    /// whether to remember the identity. Only RealVNC supports remembering;
+    /// the other backends ignore `remember`.
     fn answer_security(&self, accept: bool, remember: bool) {
         let _ = remember;
         self.answer_trust(accept);
     }
 
     /// An identity the library asked to have remembered, for the caller to
-    /// keep and hand back to the next session: RealVNC's opaque blob, which
-    /// its core sends after a security prompt answered with *remember*. The
-    /// caller decides whether to keep it — the window does, the probe never
+    /// store and pass to the next session: RealVNC's opaque blob, which its
+    /// core sends after a security prompt answered with *remember*. The
+    /// caller decides whether to store it: the window does, the probe never
     /// asks.
     fn saved_identity(&self) -> Option<String> {
         None
@@ -530,7 +522,7 @@ mod tests {
 
         struct Quiet;
         impl Device for Quiet {}
-        /// The session's controls, and the output its devices say they are.
+        /// The session's controls, and the output name its devices report.
         struct Out(Arc<Controls>, Option<&'static str>);
         impl Outputs for Out {
             fn controls(&self) -> &Arc<Controls> {
@@ -565,8 +557,8 @@ mod tests {
         assert_eq!(info[2].label, "Pixels");
         out.controls().set_muted(true);
         assert_eq!(ConnectionFact::sound(out.controls()).unwrap().value, "PCM 48 kHz stereo, muted");
-        // A platform that says which of its outputs plays it (the desktop's
-        // PipeWire or ALSA) has it said, as a decoder's "(hardware)" is.
+        // A platform that reports which output plays it (the desktop's
+        // PipeWire or ALSA) has it shown, like a decoder's "(hardware)".
         let piped = Out(Arc::clone(&out.0), Some("PipeWire"));
         let mut later = piped.open(Format::new(44_100, 2).unwrap()).unwrap();
         later.write(&[0, 0]);
@@ -583,7 +575,7 @@ mod tests {
         assert_eq!(monitors.len(), 2);
         assert_eq!(monitors[1].x, 1920);
         assert_eq!(monitors[1].width, 1280);
-        // An id is the place in the list the library gave, gaps and all.
+        // An id is the index in the library's list, including gaps.
         assert_eq!(monitors[0].id, 0);
         assert_eq!(monitors[1].id, 2);
     }

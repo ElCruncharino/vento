@@ -1,12 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! A RustDesk client small enough to read: connect, log in, and write out what
-//! the far end sends. It answered whether a backend could be written at all —
-//! the framing, the password, the login exchange and the codec negotiation —
-//! before there was a module, a JNI half or a phone in the way, and it is kept
-//! because it is the only thing here that speaks **both** of this protocol's
-//! transports.
+//! A minimal RustDesk client: connect, log in, and write out what the far end
+//! sends. It established that a backend could be written at all (the framing,
+//! the password, the login exchange and the codec negotiation) before the
+//! module, the JNI layer or the phone existed, and it is kept because it is the
+//! only code here that uses **both** of this protocol's transports.
 //!
 //! ```sh
 //! scripts/testrustdesk/run.sh
@@ -17,24 +16,23 @@
 //! ffmpeg -i /tmp/rig.ivf -frames:v 1 f.png   # that it is the far end's screen
 //! ```
 //!
-//! `direct` is the plaintext mode, on port 21118, and says so. `id` goes
-//! through a rendezvous server — the public one and its compiled-in key unless
-//! `--server` and `--key` say otherwise — verifies the two signatures and
-//! encrypts the session. Both are the crate's own code: what this file is, is
-//! the parts a backend has no use for — a session on one thread, every message
-//! counted by arm, and the frames written out as a file to feed a decoder.
+//! `direct` is the plaintext mode, on port 21118, and reports that it is. `id`
+//! goes through a rendezvous server (the public one and its built-in key unless
+//! `--server` and `--key` are given), verifies the two signatures and encrypts
+//! the session. Both use the crate's own code; this file adds what a backend
+//! does not need: a session on one thread, a count of messages by arm, and the
+//! frames written to a file to feed a decoder.
 //!
-//! `--ppm` is the other half of that: the frames through the decoder a session
-//! on this machine would use — libavcodec, as `platform_linux` wraps it, into
-//! the same diff and conversion the phone's MediaCodec feeds — and the first
-//! picture that comes out written as a PPM. Where the IVF says what the far end
-//! sent, this says what this code makes of it.
+//! `--ppm` complements that: it passes the frames through the decoder a
+//! session on this machine would use (libavcodec, as `platform_linux` wraps
+//! it, into the same diff and conversion the phone's MediaCodec feeds) and
+//! writes the first picture as a PPM. The IVF shows what the far end sent; the
+//! PPM shows how this code decodes it.
 //!
 //! `--after-login` selects which of the three messages a client sends once
 //! `PeerInfo` arrives: `sid` answers a Windows peer's session choice, `capture`
 //! names the display to capture, `refresh` asks for a key frame. All three by
-//! default; the flag exists because which of them the picture depends on is a
-//! measurement rather than a reading.
+//! default; the flag exists to test which of them the picture depends on.
 
 use remotedesktop_rustdesk::{crypto, protos, rendezvous, wire};
 
@@ -52,17 +50,18 @@ use protos::message::{
 };
 
 
-/// Their direct-access port, which is `RENDEZVOUS_PORT + 2`.
+/// RustDesk's direct-access port, `RENDEZVOUS_PORT + 2`.
 const DIRECT_PORT: u16 = 21118;
 
-/// What we claim to be. Their server compares this against its own for feature
-/// gating, so an honest one avoids a compatibility path nothing here implements.
+/// The version this client reports. RustDesk's server compares it with its own
+/// for feature gating, so reporting the version this was written against
+/// avoids compatibility paths not implemented here.
 const VERSION: &str = "1.4.9";
 
 fn main() {
-    // The crate says what it is doing through `log`, and on a phone that goes
-    // to logcat. Here there is nothing to install one, and the rendezvous path
-    // is exactly the part whose running commentary is the point of a probe.
+    // The crate reports progress through `log`, which goes to logcat on a
+    // phone. Nothing installs a logger here, and the rendezvous path's log is
+    // the most useful output of a probe, so this installs one for stderr.
     log::set_logger(&Stderr).ok();
     log::set_max_level(log::LevelFilter::Info);
     if let Err(e) = run() {
@@ -154,8 +153,8 @@ fn run() -> Result<(), String> {
 
 // ---- the socket, as a probe wants one -------------------------------------
 
-/// Both directions of one socket on one thread, which is what a probe wants and
-/// the backend does not: there, the two halves are on two threads so that a
+/// Both directions of one socket on one thread, which suits a probe but not
+/// the backend: there, the two directions are on two threads so that a
 /// stalled write cannot hold up a read.
 struct Stream {
     reader: wire::Reader,
@@ -185,8 +184,8 @@ impl Stream {
         self.reader.message::<Message>()
     }
 
-    /// Everything after the frame carrying it is sealed, in both directions,
-    /// and the two directions count their frames separately.
+    /// Everything after the frame carrying the key is encrypted, in both
+    /// directions, and the two directions count their frames separately.
     fn set_key(&mut self, key: [u8; 32]) {
         self.reader.set_cipher(Box::new(crypto::Secretbox::new(key)));
         self.writer.set_cipher(Box::new(crypto::Secretbox::new(key)));
@@ -232,10 +231,10 @@ fn tcp(addr: SocketAddr, seconds: u64) -> Result<TcpStream, String> {
     Ok(sock)
 }
 
-/// The plaintext mode. Their `direct_server` hands the socket to
-/// `create_tcp_connection` with `secure = false`, so no key is offered and none
-/// is asked for; the client sends an empty `Message` because it has nothing to
-/// verify with, which is the whole of the handshake this mode has.
+/// The plaintext mode. RustDesk's `direct_server` passes the socket to
+/// `create_tcp_connection` with `secure = false`, so no key is offered or
+/// requested; the client sends an empty `Message` because it has nothing to
+/// verify with, which is this mode's entire handshake.
 fn connect_direct(args: &Args) -> Result<Stream, String> {
     let addr = resolve(&args.peer, DIRECT_PORT)?;
     println!("== direct to {addr}");
@@ -244,15 +243,14 @@ fn connect_direct(args: &Args) -> Result<Stream, String> {
     Ok(s)
 }
 
-/// A peer reached by id, through the crate's own rendezvous path: the server
-/// introduces the two ends and hands over the peer's long-term key signed with
-/// its own, and the punch, the relay and the two signatures are all in there.
+/// A peer reached by id, through the crate's rendezvous code: the server
+/// introduces the two ends and passes on the peer's long-term key signed with
+/// its own, and the crate handles the punch and the relay.
 ///
-/// What the probe adds is that it says each step out loud, which is why it is
-/// still the thing to reach for when a far end will not answer.
+/// The probe prints each step, which makes it the tool to use when a far end
+/// does not answer.
 fn connect_by_id(args: &Args) -> Result<Stream, String> {
-    // Nothing hangs a probe up but the process ending, so its hangup is never
-    // rung.
+    // A probe ends only when the process exits, so its hangup is never used.
     let hangup = runtime::Hangup::new();
     let reached = rendezvous::reach(&hangup, &args.peer, &args.server, key_of(args), Duration::from_secs(10))
         .map_err(|e| e.to_string())?;
@@ -270,9 +268,9 @@ fn connect_by_id(args: &Args) -> Result<Stream, String> {
     Ok(s)
 }
 
-/// What a self-hosted server wants named in the request and the public network
-/// wants left out: the same key the peer's own signature is checked against,
-/// which their server calls a licence.
+/// The key a self-hosted server requires in the request and the public network
+/// requires to be empty: the same key the peer's introduction is checked
+/// against, which RustDesk's server calls a licence.
 fn key_of(args: &Args) -> &str {
     if args.key == rendezvous::PUBLIC_KEY {
         ""
@@ -281,10 +279,10 @@ fn key_of(args: &Args) -> &str {
     }
 }
 
-/// The handshake the direct mode has none of, which is **two signatures rather
+/// The key exchange (which direct mode lacks), with **two signatures rather
 /// than one**: the server vouching for the peer's long-term key, and the peer
 /// signing a per-connection box key with it. The crate does each step; this
-/// prints between them, since a probe exists to say which half failed.
+/// prints between them, so the output shows which half failed.
 fn secure(s: &mut Stream, peer_id: &str, signed_id_pk: &[u8], key_b64: &str) -> Result<(), String> {
     use protos::message::PublicKey;
 
@@ -324,7 +322,7 @@ fn session(s: &mut Stream, args: &Args) -> Result<(), String> {
     let started = Instant::now();
     let deadline = Duration::from_secs(args.seconds);
 
-    // The server opens with Hash before anything is asked of it.
+    // The peer sends Hash first, unprompted.
     let hash = loop {
         let msg = s.next_message().map_err(|e| format!("waiting for Hash: {e}"))?;
         match msg.union {
@@ -339,8 +337,8 @@ fn session(s: &mut Stream, args: &Args) -> Result<(), String> {
         hash.challenge.len()
     );
 
-    // sha256(sha256(password ++ salt) ++ challenge). The inner hash is what a
-    // client stores, so a saved password is already salted per peer.
+    // sha256(sha256(password ++ salt) ++ challenge). RustDesk's client stores
+    // the inner hash, so its saved passwords are salted per peer.
     let mut password = Vec::new();
     if !args.password.is_empty() {
         let stored = Sha256::new()
@@ -362,8 +360,8 @@ fn session(s: &mut Stream, args: &Args) -> Result<(), String> {
     lr.my_platform = "Linux".into();
     lr.version = VERSION.into();
     lr.session_id = 1;
-    // The one thing the client must ask for: a peer told VP9 is preferred sends
-    // VP9 unconditionally, and VP9 is compiled into every build of theirs.
+    // The one thing the client must request: a peer told VP9 is preferred sends
+    // VP9 unconditionally, and VP9 is compiled into every RustDesk build.
     let mut decoding = SupportedDecoding::new();
     decoding.ability_vp9 = 1;
     decoding.prefer = protos::message::supported_decoding::PreferCodec::VP9.into();
@@ -422,10 +420,10 @@ fn session(s: &mut Stream, args: &Args) -> Result<(), String> {
                             video.height = d.height as u16;
                         }
                         // A Windows peer with RDP sharing on and more than one
-                        // session logged in **stops here**: it subscribes no
+                        // logged-in session **stops here**: it subscribes no
                         // video service until the client names a session id.
-                        // Nothing announces this as a wait — login succeeds, the
-                        // desktop simply never arrives.
+                        // Nothing signals the wait: login succeeds, and the
+                        // desktop never arrives.
                         if let Some(w) = p.windows_sessions.as_ref() {
                             println!(
                                 "   windows sessions: {} offered, current {}",
@@ -443,11 +441,12 @@ fn session(s: &mut Stream, args: &Args) -> Result<(), String> {
                                 s.send(&out).map_err(|e| e.to_string())?;
                             }
                         }
-                        // What a client of this version is expected to send at
-                        // once: which displays it wants captured, and a refresh
-                        // so the first frame is a key frame rather than a wait
-                        // for whatever the encoder does next. Separable so the
-                        // stage can say which of the two the picture depends on.
+                        // What a client of this version is expected to send
+                        // immediately: which displays to capture, and a refresh
+                        // so that the first frame is a key frame instead of
+                        // waiting for the encoder's next one. Separately
+                        // selectable to test which of the two the picture
+                        // depends on.
                         if args.after_login.contains("capture") {
                             let mut caps = protos::message::CaptureDisplays::new();
                             caps.set = vec![p.current_display];
@@ -472,9 +471,9 @@ fn session(s: &mut Stream, args: &Args) -> Result<(), String> {
                         );
                         println!("   resolutions offered: {}", p.resolutions.resolutions.len());
                     }
-                    // Their oneofs are non-exhaustive to anything outside the
-                    // crate that generated them, so an arm they add is one this
-                    // ignores rather than one this fails to compile against.
+                    // The generated oneofs are non-exhaustive outside their
+                    // crate, so an arm added upstream is ignored here rather
+                    // than breaking the build.
                     _ => {}
                 }
             }
@@ -501,12 +500,12 @@ fn session(s: &mut Stream, args: &Args) -> Result<(), String> {
                 }
             }
             message::Union::TestDelay(t) => {
-                // Echoed back **unchanged**, which is the client's half of the
-                // only timing this protocol has: the flag says who started it,
-                // and a client that sets it has the far end echo the echo. Their
-                // server does that unconditionally, so one flipped bit is a
-                // busy loop between the two — measured at 9701 messages in
-                // fifteen seconds before this was read the right way round.
+                // Echoed back **unchanged**, the client's half of this
+                // protocol's only timing exchange: the flag says who started
+                // it, and if a client sets it the far end echoes the echo.
+                // RustDesk's server always does, so one flipped bit causes a
+                // busy loop between the two (9701 messages in fifteen seconds
+                // before the flag was handled correctly).
                 if !t.from_client {
                     let mut out = Message::new();
                     out.set_test_delay(t);
@@ -581,10 +580,9 @@ impl Video {
         self.frames.push((f.data.to_vec(), f.pts));
     }
 
-    /// IVF, because the point of the file is to be fed to the phone's own
-    /// decoder: it is the one container a MediaCodec harness can walk without a
-    /// demuxer, and it keeps each frame's boundary, which is what the decoder
-    /// wants a buffer of.
+    /// IVF, because the file is meant to be fed to the phone's decoder: it is the
+    /// one container a MediaCodec harness can parse without a demuxer, and it keeps
+    /// frame boundaries, which the decoder needs one buffer per frame for.
     fn write_ivf(&self, path: &str) -> Result<(), String> {
         let fourcc: &[u8; 4] = match self.codec.as_str() {
             "VP9" => b"VP90",
@@ -608,8 +606,8 @@ impl Video {
         for (i, (data, pts)) in self.frames.iter().enumerate() {
             f.write_all(&(data.len() as u32).to_le_bytes())
                 .map_err(|e| e.to_string())?;
-            // Their pts is milliseconds since the session started, and the first
-            // frame's is not zero; a decoder does not care and a player does.
+            // RustDesk's pts is milliseconds since the session started, and the first
+            // frame's is not zero; this matters to a player but not to a decoder.
             let pts = if *pts > 0 { *pts } else { i as i64 };
             f.write_all(&(pts as u64).to_le_bytes())
                 .map_err(|e| e.to_string())?;
@@ -620,9 +618,9 @@ impl Video {
 }
 
 impl Video {
-    /// The first frame that decodes to a picture, as a binary PPM, and which
-    /// frame that was: a stream joined mid-way has nothing to show before its
-    /// next key frame.
+    /// Writes the first frame that decodes to a picture as a binary PPM, and
+    /// returns its index: a stream joined mid-way has nothing to show before
+    /// its next key frame.
     #[cfg(not(target_os = "android"))]
     fn write_ppm(&self, path: &str) -> Result<usize, String> {
         use runtime::media::video::{Changes, Decoders};
@@ -640,8 +638,8 @@ impl Video {
         let mut changed = Changes::new();
         for (index, (data, _)) in self.frames.iter().enumerate() {
             changed.reset(h);
-            // A first picture is a whole one: there is nothing it could be
-            // compared with, so every row is written.
+            // A first picture is written whole: there is nothing to compare
+            // it with.
             if !decoder.decode(data, &mut out, w, h, &mut changed) {
                 continue;
             }

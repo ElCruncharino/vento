@@ -1,6 +1,6 @@
 #!/bin/bash
 # Build (if needed) and run the relative-pointer test server, then print the
-# address to put in the prototype. testvnc/run.sh's pattern, with the one
+# address to put in the app. testvnc/run.sh's pattern, with the one
 # difference this container is for: the pointer at the far end is relative.
 set -e
 cd "$(dirname "$0")"
@@ -41,8 +41,8 @@ esac
 docker image inspect "$IMAGE:latest" >/dev/null 2>&1 || build
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 
-# KVM if this machine has it and will lend it out; Tiny Core boots under plain
-# TCG too, just slower.
+# KVM if this machine has it and this user can open it; KolibriOS boots under
+# plain TCG too, just slower.
 kvm=()
 if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
     kvm=(--device /dev/kvm)

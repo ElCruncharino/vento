@@ -9,9 +9,8 @@ import static org.junit.Assert.assertNotEquals;
 import org.junit.Test;
 
 /**
- * The keysym mappings. Small, but the whole keyboard rests on them, and they are
- * exactly the kind of table that is wrong in one branch and right everywhere
- * else.
+ * The keysym mappings. Small, but the whole keyboard depends on them, and a
+ * table like this can be wrong in one branch and right everywhere else.
  */
 public class KeysymTest {
 
@@ -72,9 +71,9 @@ public class KeysymTest {
     }
 
     /**
-     * The one that was a bug on a real server. An IME may commit a newline as
+     * This was a bug against a real server. An IME may commit a newline as
      * <em>text</em>, and {@code fromUnicode} answers that with a well-formed
-     * keysym for "Unicode code point 10" — which every server reports as
+     * keysym for "Unicode code point 10". Every server reports that as
      * {@code NoSymbol}, so Enter silently did nothing whenever it took that
      * path rather than arriving as a key event.
      */
@@ -99,7 +98,7 @@ public class KeysymTest {
      * The value a layout with dead keys answers with, which is not a code point:
      * {@code KeyCharacterMap.COMBINING_ACCENT} is bit 31, so it is negative, and
      * both paths that consume {@code getUnicodeChar} used to get it wrong in
-     * opposite directions — one built a keysym out of the flag, the other read
+     * opposite directions: one built a keysym out of the flag, the other read
      * the sign as a control character and dropped the key.
      */
     @Test
@@ -131,7 +130,7 @@ public class KeysymTest {
         // Nothing held changes nothing, in either direction.
         assertEquals('c', Keysym.forCharacter('c', false, false));
         assertEquals('C', Keysym.forCharacter('C', false, false));
-        // A character with no case is a character with no case.
+        // A character without case is unchanged.
         assertEquals('1', Keysym.forCharacter('1', true, false));
         assertEquals('/', Keysym.forCharacter('/', false, true));
         // And the named keys stay named ones whatever is held.
@@ -144,10 +143,10 @@ public class KeysymTest {
     /**
      * The two tables below are the keyboard written out a second time, from the
      * Android keycode list and X11's {@code keysymdef.h} rather than from the
-     * code under test — which is the only thing that makes a lookup table
-     * testable at all. Hex literals for the same reason: a keysym is a published
-     * number, and asserting {@code Keysym.HOME} against {@code Keysym.HOME}
-     * asserts nothing.
+     * code under test, since a lookup table can only be tested against an
+     * independent copy. Hex literals for the same reason: a keysym is a
+     * published number, and asserting {@code Keysym.HOME} against
+     * {@code Keysym.HOME} asserts nothing.
      *
      * <p>{@code KEYCODE_} names are given so a row can be read against
      * {@code KeyEvent}; the highest one that exists at API 36 is 337, and the
@@ -215,7 +214,7 @@ public class KeysymTest {
             {159, 0xffac, 0xffac},   // NUMPAD_COMMA → KP_Separator
             {160, 0xff8d, 0xff8d},   // NUMPAD_ENTER
             {161, 0xffbd, 0xffbd},   // NUMPAD_EQUALS
-            {162, 0x28, 0x28},       // NUMPAD_LEFT_PAREN — a character, not a KP_ keysym
+            {162, 0x28, 0x28},       // NUMPAD_LEFT_PAREN: a character, not a KP_ keysym
             {163, 0x29, 0x29},       // NUMPAD_RIGHT_PAREN
     };
 
@@ -234,8 +233,8 @@ public class KeysymTest {
         assertEquals(0, Keysym.fromAndroidKeyCode(115));   // CAPS_LOCK
         assertEquals(0, Keysym.fromAndroidKeyCode(116));   // SCROLL_LOCK
         assertEquals(0, Keysym.fromAndroidKeyCode(143));   // NUM_LOCK
-        // And so are the two conversion keys a phone hands to a Korean board's
-        // Hangul and Hanja keys, which no keysym here can be right about.
+        // And so are the two conversion keys a phone assigns to a Korean
+        // keyboard's Hangul and Hanja keys, for which no keysym here is correct.
         assertEquals(0, Keysym.fromAndroidKeyCode(212));   // EISU
         assertEquals(0, Keysym.fromAndroidKeyCode(218));   // KANA
     }
@@ -258,7 +257,7 @@ public class KeysymTest {
 
     /**
      * The order in {@code PhysicalKeyboard}'s lookup is position, then keypad,
-     * then the layout — so a key answering both tables would have one of its two
+     * then the layout, so a key in both tables would have one of its two
      * answers silently unreachable.
      */
     @Test

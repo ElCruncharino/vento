@@ -4,9 +4,9 @@
 //! 4:2:0 planes to `R, G, B, A` words, which is what a decoded frame costs
 //! after the decoder has finished with it.
 //!
-//! The arithmetic is the same expression twice — once a row at a time and once
-//! sixteen pixels at a time, in NEON on aarch64 and SSE2 on x86_64 (a phone,
-//! an emulator, a desktop) — and the vectorised one is used only where it has
+//! The arithmetic is the same expression twice (once a row at a time and once
+//! sixteen pixels at a time, in NEON on aarch64 and SSE2 on x86_64: a phone,
+//! an emulator, a desktop), and the vectorised one is used only where it has
 //! been shown to agree with the other on this decoder's own output. What is in
 //! doubt is never the arithmetic; it is whether the planes are where the
 //! decoder's descriptor says they are, and a row of real pixels answers that
@@ -19,15 +19,10 @@
 //! allocates **each plane on its own**, and three slices that are not one
 //! allocation cannot be made into one without a copy. Everything below reads a
 //! plane through its own slice, so neither is a special case.
-//!
-//! It is a second implementation of what TigerVNC's shim does in C++ for H.264,
-//! and deliberately not a shared one: the two are in different languages inside
-//! different modules, and what would be shared is thirty lines of arithmetic
-//! rather than a decision.
 
-/// Where one plane is in the bytes it was handed over in, and what a row and a
-/// column of it cost — MediaCodec's `image-data` descriptor, or libavcodec's
-/// data pointer and line size said the same way.
+/// Where one plane is in the bytes it was handed over in, and the byte steps
+/// for a row and a column of it: MediaCodec's `image-data` descriptor, or
+/// libavcodec's data pointer and line size expressed the same way.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Plane {
     pub offset: usize,
@@ -93,7 +88,7 @@ impl<'a> Frame<'a> {
         })
     }
 
-    /// U and V in one run of bytes, a byte apart — NV12 or NV21, which is
+    /// U and V in one run of bytes, a byte apart: NV12 or NV21, which is
     /// what a phone's decoder usually hands back. Only ever true of planes in
     /// the same slice, since that is the only case where reading one as a run
     /// of both is reading memory that is there.
@@ -183,9 +178,9 @@ fn clamp(v: i32) -> u32 {
 ///
 /// The chroma terms are computed once per chroma sample rather than once per
 /// pixel, and the subsampling is a countdown rather than a division: a division
-/// inside this loop, which is the obvious way to write it, cost 29 ms of a
-/// decoder thread for one 1920×1200 frame in the C++ this is a second copy of —
-/// more than the hardware decoder spends on the whole picture.
+/// inside this loop cost 29 ms of a decoder thread for one 1920×1200 frame in
+/// an earlier C++ version of it, more than the hardware decoder spends on the
+/// whole picture.
 pub fn row_scalar(row: &Row, l: &Layout, out: &mut [u32], col: usize, w: usize, c: &Coefficients) {
     let mut yi = col * l.y_col_inc;
     let mut ui = (col / l.horiz_subsampling) * l.uv_col_inc;
@@ -221,7 +216,7 @@ mod neon {
     use std::arch::aarch64::*;
 
     /// The same row, sixteen pixels at a time. Returns how many it did, which
-    /// is a multiple of sixteen and may be none — the tail, and every layout
+    /// is a multiple of sixteen and may be none; the tail, and every layout
     /// not covered here, goes back through the scalar loop.
     ///
     /// Sixteen rather than eight because that is what makes both chroma loads
@@ -361,16 +356,16 @@ mod sse2 {
     use super::{Coefficients, Layout, Row};
     use std::arch::x86_64::*;
 
-    /// The same row, sixteen pixels at a time, with SSE2 — which every x86_64
+    /// The same row, sixteen pixels at a time, with SSE2, which every x86_64
     /// processor has, so there is nothing to detect. The shape is NEON's: the
     /// same layouts, the same sixteen, the same bounds, and nothing done where
     /// those do not hold.
     ///
     /// The products are 32-bit, as the scalar loop's are: a chroma term is up
-    /// to 541 × 128, which no 16-bit lane holds. `pmaddwd` is what makes that
-    /// cheap here — U and V interleaved into pairs and multiplied by a pair of
+    /// to 541 × 128, which no 16-bit lane holds. `pmaddwd` makes that cheap
+    /// here (U and V interleaved into pairs and multiplied by a pair of
     /// coefficients is each chroma term in one instruction, and luma paired
-    /// with zero is `Y × y` the same way — and the two saturating packs at the
+    /// with zero is `Y × y` the same way), and the two saturating packs at the
     /// end are the scalar clamp.
     pub fn row(row: &Row, l: &Layout, out: &mut [u32], w: usize, c: &Coefficients) -> usize {
         if l.y_col_inc != 1 || l.horiz_subsampling != 2 {
@@ -596,7 +591,7 @@ mod tests {
     }
 
     /// Every matrix and range, U before V and V before U, and samples at both
-    /// ends of the byte — which is where a clamp or a sign goes wrong.
+    /// ends of the byte, which is where a clamp or a sign goes wrong.
     #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
     #[test]
     fn the_two_paths_agree_everywhere() {
@@ -677,7 +672,7 @@ mod tests {
 
     /// One buffer and three are the same picture: the planes copied out into
     /// allocations of their own, the way libavcodec hands them back, convert
-    /// to the words they did in place — and are never taken for interleaved,
+    /// to the words they did in place, and are never taken for interleaved,
     /// whatever their offsets say.
     #[test]
     fn three_slices_are_one_frame() {

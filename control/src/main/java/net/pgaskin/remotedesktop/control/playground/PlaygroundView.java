@@ -142,14 +142,14 @@ public final class PlaygroundView extends View
 
     /**
      * @param cfg the settings to start from. The app hands its stored ones in,
-     *            so what is being exercised here is what a session would run —
+     *            so what is being exercised here is what a session would run;
      *            the PRESET square still swaps presets on top of them, which is
      *            what makes this a playground rather than a preview.
      * @param recorders whether the fixture recorder and the key trace are
      *            offered as squares. They write raw streams to files meant to be
      *            pulled off the phone, which is a thing a library's own demo and
      *            a host that has asked for it both want and an app's test
-     *            surface does not — hence the parameter, and hence the
+     *            surface does not. Hence the parameter, and hence the
      *            constructors above it leaving them on. {@link #setRecording}
      *            and {@link #setKeyTrace} still work either way: a host that
      *            hides the squares can still arm one from a script.
@@ -174,13 +174,13 @@ public final class PlaygroundView extends View
         overlay.setListener(this);
         router.addClaim(overlay);
         // The keyboard's keysyms go to the same fake remote the mouse events do,
-        // so "what did the far end actually receive" is one readout.
+        // so "what did the far end receive" is one readout.
         keyboard = new ExtensionKeyboard(cfg, desktop, scheduler,
                 ExtensionKeyboard.standardKeys());
         keyboard.setListener(this);
         router.addClaim(keyboard);
-        // Ahead of the keyboard in the claim order for no reason of substance —
-        // they never overlap, the column stopping where the row begins.
+        // After the keyboard in the claim order, which does not matter: they
+        // never overlap, the column stopping where the row begins.
         toolbar = new Toolbar(cfg);
         toolbar.setItems(Toolbar.standard());
         router.addClaim(toolbar);
@@ -385,9 +385,9 @@ public final class PlaygroundView extends View
         // Whether one is up, asked separately from how much of this window it
         // covers. In multi-window the two part company: the window is resized
         // around the keyboard rather than overlapped by it, so the inset stays
-        // 0 the whole time one is showing — and a height that never rises is a
-        // height that never falls, which left the row up after a back gesture
-        // had taken the keyboard under it.
+        // 0 the whole time one is showing, and a height that never rises never
+        // falls either, which would leave the row up after a back gesture had
+        // taken the keyboard under it.
         final boolean up = insets.isVisible(WindowInsets.Type.ime());
         if (ime != imeHeight || up != imeUp) {
             // While this window has focus only: an IME also closes when the
@@ -408,7 +408,7 @@ public final class PlaygroundView extends View
 
     /**
      * Showing one overlay hides the other, and a mouse overlay displaced by the
-     * keyboard comes back when the keyboard goes away — the one nicety worth
+     * keyboard comes back when the keyboard goes away: the one nicety worth
      * keeping from the original's four-state machine.
      */
     private void setKeyboardVisible(boolean show) {
@@ -419,8 +419,8 @@ public final class PlaygroundView extends View
             overlayHiddenByKeyboard = overlay.visible();
             overlay.setVisible(false);
         }
-        // Everything else follows from the model changing, in keyboardChanged()
-        // — because the model can also hide itself, from its own ✕, and the IME
+        // Everything else follows from the model changing, in keyboardChanged(),
+        // because the model can also hide itself, from its own ✕, and the IME
         // has to come down with it either way.
         keyboard.setVisible(show);
     }
@@ -464,8 +464,9 @@ public final class PlaygroundView extends View
      * A pinch pans as well, and only where the far end owns the cursor: there
      * is no centre-follow there, so a desktop bigger than the window is
      * otherwise navigated blind. With the cursor ours the desktop is already
-     * wherever the cursor is, and a pan there would drag the pointer across
-     * somebody's desktop for a gesture that is about looking ({@code ARCHITECTURE.md} §3.18).
+     * wherever the cursor is, and a pan there would drag the pointer across the
+     * desktop for a gesture that is about looking ({@code ARCHITECTURE.md}
+     * §3.18).
      */
     @Override
     public void zoomPanned(float screenDx, float screenDy) {
@@ -496,11 +497,11 @@ public final class PlaygroundView extends View
     /**
      * The far end's half of hover assist, with the far end being this class:
      * hit-test what the cursor is over and report a change when the answer
-     * changes, after {@code lagMs} of pretended round trip.
+     * changes, after {@code lagMs} of simulated round trip.
      *
      * <p>The delay is the point of it. A shape change is a reply to a position
      * sent a round trip ago, and every argument about how long a detent should
-     * be and where it lands is an argument about that interval — 30 ms is a
+     * be and where it lands is an argument about that interval: 30 ms is a
      * server on the same network, 250 ms is one that polls its own screen at
      * the far end of a relay.
      */
@@ -530,7 +531,7 @@ public final class PlaygroundView extends View
         }
     }
 
-    /** A click consumes the armed modifiers, exactly as a key does. */
+    /** A click consumes the armed modifiers, as a key does. */
     @Override
     public void onButtonsReleased() {
         keyboard.externalClick();
@@ -637,9 +638,8 @@ public final class PlaygroundView extends View
     }
 
     /**
-     * The same four names the tap regions carry, answered in the same place, so
-     * the two affordances cannot drift apart in what they do — only in how they
-     * are reached.
+     * The same four names the tap regions carry, answered by
+     * {@link #controlAction}.
      */
     @Override
     public void toolbarAction(String name) {
@@ -656,12 +656,12 @@ public final class PlaygroundView extends View
     // ---- RegionSink -------------------------------------------------------
 
     /**
-     * The {@code mouse} region toggles the overlay — which is why that region is
+     * The {@code mouse} region toggles the overlay (which is why that region is
      * the bottom-right corner, where the overlay's own dismiss button sits, so
-     * the two read as one control — and the {@code keyboard} region, the rest of
-     * the bottom band, toggles the extension keyboard and the IME with it. The
-     * remaining two are stubbed to a HUD readout here: disconnect and
-     * connection info are questions only a host with a session can answer.
+     * the two read as one control), and the {@code keyboard} region, the rest of
+     * the bottom band, toggles the extension keyboard and the IME with it.
+     * {@code disconnect} closes the activity, and {@code information} only
+     * shows in the HUD readout.
      */
     @Override
     public boolean regionTapped(TapRegions.Region region, float x, float y) {
@@ -673,7 +673,7 @@ public final class PlaygroundView extends View
 
     /**
      * What either affordance does, in one place, so the two cannot drift apart
-     * in what they do — only in how they are reached. {@code information} is the
+     * in what they do, only in how they are reached. {@code information} is the
      * one with nothing to say here: what a connection is doing is a question
      * only a host with a session can answer.
      */
@@ -750,7 +750,7 @@ public final class PlaygroundView extends View
 
     /**
      * The row's Paste key, against the fake desktop's text field: the same thing
-     * the session screen does — the clipboard's characters typed one at a time —
+     * the session screen does (the clipboard's characters typed one at a time)
      * minus the confirmation, since here the far end is a rectangle we drew and
      * a long paste costs nothing but time.
      */
@@ -779,11 +779,11 @@ public final class PlaygroundView extends View
     }
 
     /**
-     * A repeat wants the lightest thing the device can do — the tick a text
-     * cursor makes stepping through a word — and only if it really can do light
+     * A repeat wants the lightest thing the device can do (the tick a text
+     * cursor makes stepping through a word), and only if it can do light
      * things. A motor that can only manage a blunt buzz would turn a held arrow
-     * key into a drill, so gate on the actuator actually supporting a tick
-     * primitive rather than on the API level.
+     * key into a drill, so gate on the actuator supporting a tick primitive
+     * rather than on the API level.
      */
     @Override
     public void keyFeedback(ExtensionKeyboard.Feedback what) {
@@ -848,14 +848,14 @@ public final class PlaygroundView extends View
         bottom = Math.max(bottom, imeHeight);
         // The flat margin, and only that: the other half of the setting is what
         // the shape of the window costs its edges, and the shape of this one is
-        // a rectangle inside another app's screen — the fake insets above are
+        // a rectangle inside another app's screen. The fake insets above are
         // what stands in for a system bar here, and the desktop is already clear
         // of those.
         final int margin = (int) cfg.panMarginPx;
         viewport.setPanMargins(margin, margin, margin, margin);
         cursor.setInsets(left, top, right, bottom);
-        // Not one of the viewport's insets — the toolbar floats over the picture
-        // — but the band it may be dragged in is bounded by what the keyboard
+        // Not one of the viewport's insets (the toolbar floats over the picture),
+        // but the band it may be dragged in is bounded by what the keyboard
         // *occupies*, which is a bigger number than what it insets by.
         toolbar.setInsets(0, top, Math.max(top, keyboard.heightPx()));
         baseScale = viewport.getScale();
@@ -944,13 +944,8 @@ public final class PlaygroundView extends View
     }
 
     /**
-     * CursorView.b — cap the bitmap at 32 logical px and apply the hotspot.
-     *
-     * <p>The original translates by {@code pos + hot*scale}, where its {@code hot}
-     * is the <em>negated</em> hotspot: the native parser rewrites the cursor's
-     * rect to {@code Rect(-hot, size - hot)} and passes its origin up.
-     * {@link Art.Cursor} keeps the positive hotspot, so subtract instead — same
-     * result.
+     * {@link Chrome#drawCursor}, which takes the positive hotspot
+     * {@link Art.Cursor} keeps.
      */
     private void drawCursor(Canvas c) {
         if (cursor.isRelative()) {

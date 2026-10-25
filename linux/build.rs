@@ -7,9 +7,9 @@
 //! feature, and each backend's own header by its crate's; the backends'
 //! crates link nothing, so the libraries are made here.)
 //!
-//! The host build already existed — it is what the C probes are built on,
-//! with `-DVENTO_PROBES=ON` — and this runs the same file through the `cmake`
-//! crate rather than describing it again, with the one switch that makes each
+//! This runs the host build the C probes are built on (with
+//! `-DVENTO_PROBES=ON`) through the `cmake` crate rather than describing it
+//! again, with the one switch that makes each
 //! `vento_<name>` a shared library carrying its vendored static dependencies
 //! and the stderr `vento_log`. The probes are left at their default, off:
 //! nothing here runs them. The `.so` files land under `lib/` in the CMake
@@ -26,20 +26,20 @@
 //! (or copied) into `target/<profile>/lib/` beside the binary, so that `cargo
 //! run` is already an installed tree, and `target/release/` is what
 //! `linux/Dockerfile` copies one out of. A second entry, `$ORIGIN/../lib`, is
-//! for the test harness, which cargo puts one directory down in `deps/`; in an installed
-//! tree it is a directory that holds no `libvento_*.so`, and the search goes
-//! on to the system's as it would anyway. No absolute path is baked in, so
-//! nothing of the build machine's is in the binary and nothing is looked
-//! for there.
+//! for the test harness, which cargo puts one directory down in `deps/`; in an
+//! installed tree it is a directory that holds no `libvento_*.so`, and the
+//! search goes on to the system's as it would anyway. No absolute path is
+//! baked in, so no build machine path is in the binary or searched at run
+//! time.
 //!
 //! RealVNC's hosting layer builds only under clang, so where `clang` is on the
-//! path both compilers are set to it for the whole tree — the three open
-//! backends build under either — and where it is not, the CMake root skips
+//! path both compilers are set to it for the whole tree (the three open
+//! backends build under either), and where it is not, the CMake root skips
 //! that module with a message rather than an error. `remotedesktop-realvnc`
 //! opens it as the others are opened, through the same rpath (a `dlopen` from
 //! the binary searches the binary's), and says the backend is not available
-//! where it is not there — a library this script may or may not make could
-//! not be a feature of a crate built before it runs.
+//! where it is missing: whether this script makes the library is not known
+//! until it runs, so it cannot be a feature of a crate built before then.
 //!
 //! That choice is made again whenever `PATH`, `CC` or `CXX` changes, and a
 //! tree configured for other compilers is thrown away and configured afresh:
@@ -60,13 +60,12 @@ fn main() {
         .expect("backends/ beside linux/");
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
 
-    // What the C build is made of, as far as cargo is asked to watch: the
-    // build files, the GnuTLS and nettle pins (a bump reruns CMake, which
-    // fetches the new release), the neutral headers, each module's host
-    // half and the Linux platform's C and CMake half (not its `probe/`,
-    // which this build leaves off). The vendored trees are not watched —
-    // they are submodules, and a change there is a rebuild somebody asks
-    // for.
+    // The C build's inputs, as far as cargo watches them: the build files,
+    // the GnuTLS and nettle pins (a bump reruns CMake, which fetches the new
+    // release), the neutral headers, each module's host half and the Linux
+    // platform's C and CMake half (not its `probe/`, which this build leaves
+    // off). The vendored trees are not watched: they are submodules, and a
+    // change there needs an explicit rebuild.
     for path in [
         "CMakeLists.txt",
         "crypto-sources.txt",
@@ -81,14 +80,15 @@ fn main() {
     ] {
         println!("cargo:rerun-if-changed={}", backends.join(path).display());
     }
-    // What decides the compilers (see `compilers`). Printing any rerun line
-    // means cargo watches only what is printed, so these have to be said.
+    // The inputs that decide the compilers (see `compilers`). Printing any
+    // rerun line means cargo watches only what is printed, so these have to
+    // be listed.
     for var in ["PATH", "CC", "CXX"] {
         println!("cargo:rerun-if-env-changed={var}");
     }
     // The static FFmpeg the Linux platform crate built (its build script,
-    // through its `links` key), which TigerVNC and FreeRDP link as the Rust
-    // decoder does, so that the client has one FFmpeg and it is not the
+    // through its `links` key), which FreeRDP links for its scaling as the
+    // Rust decoder does, so that the client has one FFmpeg and it is not the
     // system's.
     println!("cargo:rerun-if-env-changed=DEP_VENTO_VIDEO_PREFIX");
     let ffmpeg = PathBuf::from(
@@ -108,9 +108,9 @@ fn main() {
         assert!(path.is_file(), "the C build did not produce {}", path.display());
     }
     beside_the_binary(&lib, &out);
-    // Whether RealVNC's library was made, for the binary
-    // (`backends::all`), which says it was not built where it was not,
-    // rather than that the loader could not find it.
+    // Whether RealVNC's library was made, for the binary (`backends::all`),
+    // which then reports it as not built rather than as not found by the
+    // loader.
     let realvnc = lib.join("libvento_realvnc.so").is_file();
     println!("cargo:rustc-env=VENTO_REALVNC_BUILT={}", u8::from(realvnc));
     if realvnc {
@@ -128,11 +128,11 @@ fn build_c_backends(backends: &Path, out: &Path, ffmpeg: &Path) -> PathBuf {
     let mut cfg = cmake::Config::new(backends);
     cfg.define("VENTO_SHARED", "ON")
         .define("VENTO_FFMPEG_PREFIX", ffmpeg)
-        // The CMake root's own default: a probe at -O0 is not what anybody
-        // wants to watch, and neither is a decoder.
+        // The CMake root's own default: -O0 is too slow for a probe or a
+        // decoder.
         .profile("RelWithDebInfo")
-        // The `cmake` crate would otherwise hand over the `cc` crate's idea
-        // of flags; the tree has its own, and FreeRDP bakes CMAKE_C_FLAGS
+        // The `cmake` crate would otherwise pass the `cc` crate's flags; the
+        // tree has its own, and FreeRDP bakes CMAKE_C_FLAGS
         // into a build string, so the host build is kept the same as a plain
         // `cmake -S backends`.
         .define("CMAKE_C_FLAGS", "")
@@ -157,15 +157,15 @@ fn build_c_backends(backends: &Path, out: &Path, ffmpeg: &Path) -> PathBuf {
     dst.join("build").join("lib")
 }
 
-/// The libraries put where the binary's rpath looks: `lib/` in the profile's
-/// directory of the target directory (`target/debug/lib/`), which `OUT_DIR`
-/// is three levels under (`target/debug/build/vento-…/out`), as it is with
-/// `--target` (`target/<triple>/debug/build/…`). Hard links, which cost
-/// nothing, where the two are on one file system; copies where not. Made
-/// afresh on every run of this script, which is every build of the
-/// libraries. A library this build no
-/// longer makes (RealVNC's, after a switch away from clang) goes from there
-/// too, or the binary would open what an earlier build left.
+/// Puts the libraries where the binary's rpath looks: `lib/` in the
+/// profile's directory of the target directory (`target/debug/lib/`), which
+/// `OUT_DIR` is three levels under (`target/debug/build/vento-…/out`), as it
+/// is with `--target` (`target/<triple>/debug/build/…`). Hard links, which
+/// cost nothing, where the two are on one file system; copies where not.
+/// Made afresh on every run of this script, which is every build of the
+/// libraries. A library this build no longer makes (RealVNC's, after a switch
+/// away from clang) is removed from there too, or the binary would open what
+/// an earlier build left.
 fn beside_the_binary(lib: &Path, out: &Path) {
     let profile = out.ancestors().nth(3).expect("OUT_DIR is target/<profile>/build/<crate>/out");
     let dest = profile.join("lib");
@@ -194,7 +194,7 @@ fn compilers() -> Option<(PathBuf, PathBuf)> {
     Some((found("clang")?, found("clang++")?))
 }
 
-/// The CMake tree under `out` deleted when it was configured for other
+/// Deletes the CMake tree under `out` when it was configured for other
 /// compilers than these, or another FFmpeg, so that the `cmake` crate, which
 /// only configures a tree that has no cache, configures it again. Every
 /// object in it would be rebuilt anyway, and a stale `libvento_realvnc.so`
@@ -202,9 +202,9 @@ fn compilers() -> Option<(PathBuf, PathBuf)> {
 /// prefix is the platform crate's `OUT_DIR`, which moves only when that
 /// crate's build does.)
 ///
-/// What the tree was configured for is a line written beside it. A tree from
-/// before that line existed is judged by its cache's C compiler instead —
-/// clang or not, which is the decision that matters.
+/// The tree's configuration is recorded in a line written beside it. A tree
+/// without that line is judged by its cache's C compiler instead (clang or
+/// not, which is the decision that matters).
 fn reconfigure_if_changed(out: &Path, clang: &Option<(PathBuf, PathBuf)>, ffmpeg: &Path) {
     let var = |name: &str| env::var(name).unwrap_or_default();
     let compilers = match clang {

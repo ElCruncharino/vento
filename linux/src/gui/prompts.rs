@@ -4,8 +4,8 @@
 //! The questions a connection stops and asks, as modal dialogs over the
 //! session that has stopped for them: `PromptDialogs.java`, in egui.
 //!
-//! Every one of them owes an answer — the backend's thread is blocked until
-//! it gets one — so closing a dialog by any route is a no, and the session
+//! Every one of them owes an answer (the backend's thread is blocked until
+//! it gets one), so closing a dialog by any route is a no, and the session
 //! queues what arrives while one is already up. Nothing is written from here:
 //! a certificate is put as the phone's `NativeBackend.onTrustNeeded` puts it,
 //! with why it is being asked about and a *remember server* box, and the
@@ -313,7 +313,7 @@ fn identity_prompt(
 }
 
 /// Only the fields the scheme actually has: a scheme with no user name gets
-/// no box for one, since it is a question nobody can answer.
+/// no box for one, since the answer would go nowhere.
 fn credentials(ui: &mut Ui, form: &mut Form, address: &str, needs_user: bool) -> Option<Answer> {
     heading(ui, "Authentication", address);
     let mut submit = false;

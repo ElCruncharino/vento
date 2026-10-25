@@ -9,12 +9,11 @@
     android:viewportWidth="960"
     android:viewportHeight="960">
     <!--
-        The app's icon with a screen in place of the network: what a shortcut
-        is for is one machine, and what the launcher badges it with is the app's
-        own mark, so this layer says "a desktop" and the badge says whose.
+        The app's icon with a screen in place of the network glyph: a shortcut
+        opens one machine, and the launcher badges it with the app's icon.
 
-        Same half size, same centring and the same colour as ic_launcher, for
-        the same reasons written down there.
+        Same size, centring and colour as ic_launcher, for the reasons given
+        there.
     -->
     <group
         android:scaleX="0.50"

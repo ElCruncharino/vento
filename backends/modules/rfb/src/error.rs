@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Why a session ended, in the words the app puts on the screen.
+//! Why a session ended, in the text the app shows.
 
 use std::fmt;
 
@@ -9,22 +9,22 @@ use std::fmt;
 pub enum Error {
     /// The socket, at any point.
     Io(std::io::Error),
-    /// The server said no before authentication — "too many attempts", usually.
+    /// The server refused before authentication, usually "too many attempts".
     Refused(String),
     /// The credentials were wrong.
     AuthFailed(String),
-    /// Nobody answered the password prompt.
+    /// The password prompt was cancelled.
     Cancelled,
-    /// The server's certificate was not the one this address is pinned to, or
-    /// nobody vouched for a new one.
+    /// The server's certificate was not the one pinned for this address, or a
+    /// new one was not accepted.
     Untrusted,
-    /// Something in this client is not implemented, and the server needs it.
+    /// The server needs something this client does not implement.
     Unsupported(String),
-    /// The bytes did not mean what they have to mean.
+    /// The server sent bytes that violate the protocol.
     Protocol(String),
-    /// What somebody typed is not an address, said in the words they need.
+    /// The entered text is not a valid address, with a message saying why.
     Address(String),
-    /// `Client::close` was called; the only ordinary ending.
+    /// `Client::close` was called; the only normal ending.
     Closed,
 }
 
@@ -33,9 +33,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            // A dropped connection is the common case and the message is what
-            // somebody reads on a screen, so it says what happened rather than
-            // naming an errno.
+            // A dropped connection is the common case and the message is shown
+            // to the user, so it says what happened rather than naming an
+            // errno.
             Error::Io(e) => match e.kind() {
                 std::io::ErrorKind::ConnectionRefused => {
                     write!(f, "Nothing is listening at that address.")

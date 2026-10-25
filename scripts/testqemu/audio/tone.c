@@ -11,9 +11,9 @@
 // client's queue under a steady load rather than a new stream per burst.
 // The card's buffer is kept short (40 ms) and the serial port is looked at
 // every millisecond, and the guest's own share of the delay is answered back
-// on the serial port for each burst — how long after the byte arrived the
+// on the serial port for each burst (how long after the byte arrived the
 // first tone frame was written, and how much was already queued ahead of it
-// in the card — so that the host can take it out of what it measures. An 's'
+// in the card) so that the host can take it out of what it measures. An 's'
 // stops the card's stream for five seconds instead.
 //
 // A third argument makes the silence a square wave of that many LSBs instead

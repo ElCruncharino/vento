@@ -12,9 +12,8 @@ import org.junit.Test;
 
 /**
  * Centre-then-clamp and scale snapping. These are pure functions of
- * (framebuffer, view, scale) and they are the whole reason the cursor appears
- * to stay in the middle of the screen, so they are worth pinning down before
- * anyone tunes them.
+ * (framebuffer, view, scale), and they are what keeps the cursor in the middle
+ * of the screen.
  */
 public class ViewportTest {
 
@@ -189,7 +188,7 @@ public class ViewportTest {
     /**
      * The scale at which the desktop exactly fills its window is a float, and
      * {@code fbW * (cw / fbW)} lands either side of {@code cw} depending on the
-     * numbers — this pair lands 0.00006 px below it. Whether an edge is under a
+     * numbers (this pair lands 0.00006 px below it). Whether an edge is under a
      * rounded corner is not a question about the last fraction of a pixel, so
      * neither is whether the margin applies.
      */
@@ -260,7 +259,7 @@ public class ViewportTest {
     /**
      * The candidates are tried in order against the <em>unsnapped</em> width,
      * so where the fit-width and fit-height bands overlap the last one tried
-     * (fit-height) wins. That is what the original does too.
+     * (fit-height) wins. The original does the same.
      */
     @Test
     public void whereTwoSnapCandidatesOverlapTheLastOneWins() {
@@ -357,9 +356,9 @@ public class ViewportTest {
 
     /**
      * A region worth fitting gets a rung of its own, and one whose scale the
-     * ladder already stops on does not become a second rung on the same scale
-     * — which is the ordinary case rather than the exotic one, since two
-     * monitors side by side fill the window at exactly the fill scale.
+     * ladder already stops on does not become a second rung on the same scale.
+     * That is the ordinary case, since two monitors side by side fill the
+     * window at exactly the fill scale.
      */
     @Test
     public void aFitSizeIsOneMoreRungAndACollidingOneIsNone() {
@@ -493,10 +492,10 @@ public class ViewportTest {
 
     /**
      * A desktop smaller than the window is centred in the <em>view</em> and then
-     * pushed inside the content rect — not centred in the content rect, which is
-     * what the original does. On this axis there is no clamp to hold the picture
-     * still, so centring in the content rect moves the whole desktop by half of
-     * every inset that appears, which is the mouse overlay jumping the desktop.
+     * pushed inside the content rect, not centred in the content rect as the
+     * original does. On this axis there is no clamp to hold the picture still,
+     * so centring in the content rect would move the whole desktop by half of
+     * every inset that appears, such as the mouse overlay.
      */
     @Test
     public void aDesktopSmallerThanTheWindowIsCentredInTheViewAndPushedInside() {

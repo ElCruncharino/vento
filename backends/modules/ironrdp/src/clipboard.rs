@@ -3,17 +3,17 @@
 
 //! The clipboard channel, text only.
 //!
-//! RFB says "here is some Latin-1" in one message and is done. CLIPRDR is a
-//! conversation with delayed rendering: whoever copies announces the *formats*
-//! it could produce, and the other end asks for one of them if and when
-//! somebody pastes. So both directions are two exchanges rather than one, and
-//! the state between them lives here.
+//! RFB sends Latin-1 text in a single message. CLIPRDR uses delayed
+//! rendering: the copying end announces the *formats* it can produce, and the
+//! other end requests one of them when the user pastes. So each direction
+//! takes two exchanges rather than one, and the state between them is kept
+//! here.
 //!
 //! Everything in this file runs on two threads. The [`CliprdrBackend`] half is
 //! called from inside the protocol thread's decode; [`Clipboard::set_local`] is
-//! called from wherever the app noticed a copy. Neither may encode anything —
-//! the channel object that does the encoding is owned by the active stage — so
-//! both sides leave a [`Want`] behind and the protocol loop picks it up.
+//! called from whichever thread noticed a local copy. Neither may encode
+//! anything (the channel object that encodes is owned by the active stage),
+//! so both queue a [`Want`] for the protocol loop to pick up.
 
 use ironrdp_cliprdr::backend::CliprdrBackend;
 use ironrdp_cliprdr::pdu::{
@@ -26,31 +26,31 @@ use runtime::text::{to_crlf, to_lf};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
-/// Longer than this is a file rather than a copy, in bytes of the text as
-/// this side of the seam has it (UTF-8, LF line ends), in either direction:
-/// the bound every backend holds the far end's clipboard to, and the one
-/// FreeRDP's C keeps as `VENTO_MAX_CLIPBOARD`. The phone reads its own
-/// clipboard up to 1 Mi characters (`SessionClipboard`), which past ASCII is
-/// more bytes than this; such a copy is not offered.
+/// The clipboard size limit in either direction, in bytes of the text as
+/// held on this side (UTF-8, LF line ends): the limit every backend applies
+/// to the far end's clipboard, and the one FreeRDP's C uses as
+/// `VENTO_MAX_CLIPBOARD`. The phone reads its own clipboard up to 1 Mi
+/// characters (`SessionClipboard`), which beyond ASCII is more bytes than
+/// this; such a copy is not offered.
 const MAX_CLIPBOARD: usize = runtime::MAX_CLIPBOARD;
 
-/// Something only the channel can encode, left for the protocol thread.
+/// A message only the channel can encode, queued for the protocol thread.
 #[derive(Debug)]
 pub enum Want {
-    /// Announce what we are holding.
+    /// Announce the formats this end holds.
     ///
     /// Also the channel's handshake: the client half stays in its
     /// initialisation state until a format list has been sent *and*
-    /// acknowledged, and a paste before that is refused. So this goes out even
-    /// when the list is empty, which is the honest way to say "nothing here".
+    /// acknowledged, and a paste before that is refused. So this is sent even
+    /// when the list is empty, meaning "nothing here".
     Advertise,
-    /// Ask the remote for what it has copied, in a format it offered.
+    /// Request the remote's copied data, in a format it offered.
     Paste(ClipboardFormatId),
-    /// Answer the remote's request for ours.
+    /// Answer the remote's request for this end's data.
     Send(ClipboardFormatId),
 }
 
-/// The clipboard's half of a session.
+/// A session's clipboard state.
 #[derive(Debug, Default)]
 pub struct Clipboard {
     state: Mutex<State>,
@@ -58,17 +58,17 @@ pub struct Clipboard {
 
 #[derive(Debug, Default)]
 struct State {
-    /// What this phone last copied, or none if it is not being shared.
+    /// What this end last copied, or none if it is not being shared.
     ours: Option<String>,
-    /// What we asked the remote for, so a response can be decoded as the thing
-    /// it answers — a `FormatDataResponse` carries bytes and no format.
+    /// The format requested from the remote, so a response can be decoded
+    /// accordingly: a `FormatDataResponse` carries bytes and no format.
     pending: Option<ClipboardFormatId>,
     wants: VecDeque<Want>,
     incoming: VecDeque<String>,
 }
 
 impl Clipboard {
-    /// Any thread: this phone copied something.
+    /// Any thread: this end copied something.
     pub fn set_local(&self, text: &str) {
         if text.is_empty() {
             return;
@@ -87,10 +87,10 @@ impl Clipboard {
         state.wants.push_back(Want::Advertise);
     }
 
-    /// The formats we can produce. Two rather than one because a server that
-    /// asks for `CF_TEXT` gets it: the remote decides which of the offered
-    /// formats it wants, and offering only Unicode is a paste that fails on
-    /// anything old.
+    /// The formats this end can produce. Two rather than one so that a server
+    /// that asks for `CF_TEXT` gets it: the remote picks one of the offered
+    /// formats, and offering only Unicode would make pasting fail on older
+    /// software.
     pub fn formats(&self) -> Vec<ClipboardFormat> {
         if self.state.lock().unwrap().ours.is_none() {
             return Vec::new();
@@ -101,9 +101,9 @@ impl Clipboard {
         ]
     }
 
-    /// Our text in the format asked for, with the line endings a Windows
-    /// application expects. `None` means we have nothing to give, which is an
-    /// error response rather than empty data.
+    /// This end's text in the requested format, with the line endings a
+    /// Windows application expects. `None` means there is nothing to give,
+    /// which is sent as an error response rather than empty data.
     pub fn data(&self, format: ClipboardFormatId) -> Option<Vec<u8>> {
         let text = to_crlf(self.state.lock().unwrap().ours.as_deref()?);
         match format {
@@ -121,7 +121,7 @@ impl Clipboard {
         self.state.lock().unwrap().incoming.drain(..).collect()
     }
 
-    /// The channel's view of this, for the connector to hold.
+    /// The channel's handle on this, for the connector to hold.
     pub fn backend(self: &Arc<Self>) -> Box<dyn CliprdrBackend> {
         Box::new(Channel {
             shared: Arc::clone(self),
@@ -129,8 +129,8 @@ impl Clipboard {
     }
 }
 
-/// What the channel calls, all of it on the protocol thread and none of it
-/// allowed to encode anything.
+/// The callbacks the channel makes, all on the protocol thread, none of
+/// them allowed to encode anything.
 #[derive(Debug)]
 struct Channel {
     shared: Arc<Clipboard>,
@@ -152,9 +152,9 @@ impl CliprdrBackend for Channel {
     }
 
     fn client_capabilities(&self) -> ClipboardGeneralCapabilityFlags {
-        // The alternative is a fixed 32-byte ASCII name per format, which is
-        // what CLIPRDR had before this flag existed. Nothing is lost by asking
-        // for the newer one and a server that does not have it says so.
+        // The alternative is a fixed 32-byte ASCII name per format, as in
+        // CLIPRDR before this flag existed. Asking for the newer form costs
+        // nothing, and a server without it says so.
         ClipboardGeneralCapabilityFlags::USE_LONG_FORMAT_NAMES
     }
 
@@ -171,8 +171,8 @@ impl CliprdrBackend for Channel {
     }
 
     fn on_remote_copy(&mut self, available_formats: &[ClipboardFormat]) {
-        // Unicode first: `CF_TEXT` is the server's code page, which we would
-        // have to guess at, and every server that has one has the other.
+        // Unicode first: `CF_TEXT` is in the server's code page, which is
+        // unknown here, and every server that offers one offers the other.
         let Some(format) = [
             ClipboardFormatId::CF_UNICODETEXT,
             ClipboardFormatId::CF_TEXT,
@@ -200,7 +200,7 @@ impl CliprdrBackend for Channel {
         let text = match format {
             Some(ClipboardFormatId::CF_UNICODETEXT) => from_utf16le(response.data()),
             Some(ClipboardFormatId::CF_TEXT) => from_latin1(response.data()),
-            // A response to a request nobody remembers making.
+            // A response with no pending request.
             _ => return,
         };
         let text = to_lf(&text);
@@ -214,8 +214,8 @@ impl CliprdrBackend for Channel {
             return;
         }
         let mut state = self.shared.state.lock().unwrap();
-        // Ours already, so that the copy this provokes on the phone is not
-        // announced straight back to the remote.
+        // Stored as this end's already, so that the local copy this triggers
+        // is not announced straight back to the remote.
         state.ours = Some(text.clone());
         state.incoming.push_back(text);
     }
@@ -233,8 +233,8 @@ impl CliprdrBackend for Channel {
 
 fn utf16le(text: &str) -> Vec<u8> {
     text.encode_utf16()
-        // Terminated, because a Windows application reads it as a C string and
-        // pastes whatever follows in the buffer otherwise.
+        // NUL-terminated, because a Windows application reads it as a C
+        // string and would otherwise paste whatever follows in the buffer.
         .chain(std::iter::once(0))
         .flat_map(u16::to_le_bytes)
         .collect()
@@ -249,8 +249,8 @@ fn from_utf16le(bytes: &[u8]) -> String {
     String::from_utf16_lossy(&units)
 }
 
-/// The server's code page, which we do not know; the low 256 code points are
-/// what every candidate for it agrees on.
+/// Text for `CF_TEXT`, in the server's code page, which is unknown here:
+/// sent as Latin-1, with `?` for anything above U+00FF.
 fn latin1(text: &str) -> Vec<u8> {
     text.chars()
         .map(|c| if (c as u32) < 0x100 { c as u8 } else { b'?' })
@@ -277,8 +277,7 @@ mod tests {
             assert_eq!(from_utf16le(&utf16le(text)), text);
         }
         assert_eq!(from_latin1(&latin1("héllo")), "héllo");
-        // Outside the low 256, which is where a code page we do not know would
-        // start disagreeing with itself.
+        // Outside the low 256 code points, which Latin-1 cannot represent.
         assert_eq!(from_latin1(&latin1("日本")), "??");
     }
 
@@ -297,8 +296,8 @@ mod tests {
         assert_eq!(clip.take_incoming(), ["x\ny\nz"]);
     }
 
-    /// Both directions are held to the shared bound in bytes, not in
-    /// characters: a text of two-byte characters is over it at half the count.
+    /// Both directions apply the shared limit in bytes, not characters: a
+    /// text of two-byte characters exceeds it at half the count.
     #[test]
     fn the_bound_is_bytes_both_ways() {
         let clip = Arc::new(Clipboard::default());
@@ -331,7 +330,7 @@ mod tests {
         );
     }
 
-    /// With nothing to offer, the list is empty rather than absent — the
+    /// With nothing to offer, the list is empty rather than absent, since the
     /// channel does not open until one has been sent.
     #[test]
     fn an_empty_clipboard_still_has_a_format_list() {

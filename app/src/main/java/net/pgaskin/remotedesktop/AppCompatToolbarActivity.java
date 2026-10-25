@@ -18,10 +18,9 @@ import androidx.fragment.app.Fragment;
 /**
  * A header over a fragment, with the system bars kept out of both.
  *
- * <p>The settings tree's frame. It was the connection editor's too, until the
- * editor became a sheet with a Save on it — which is the difference between the
- * two: a settings screen has no Save
- * because every row on it takes effect as it is touched, and a form does.
+ * <p>The frame of the settings tree and the licence page. A settings screen has
+ * no Save button because every row takes effect immediately; the connection
+ * editor is a form with a Save button, so it is a dialog instead.
  */
 public abstract class AppCompatToolbarActivity extends AppCompatActivity {
 
@@ -41,9 +40,8 @@ public abstract class AppCompatToolbarActivity extends AppCompatActivity {
     }
 
     /**
-     * The header's own title, which is where a screen's title goes now that
-     * the header is not a toolbar. Everything else about it is unchanged: the
-     * window still has one, and it is still what the recents list shows.
+     * Also shows the title in the header, which is not a toolbar. The window
+     * title is still set, for the recents list.
      */
     @Override
     public void setTitle(CharSequence title) {

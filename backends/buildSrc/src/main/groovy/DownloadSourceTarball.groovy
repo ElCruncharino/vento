@@ -18,17 +18,17 @@ import org.gradle.process.ExecOperations
  * Unpacks one upstream release tarball into {@code third_party/}, from the
  * first mirror that answers, and only if it hashes to the pin.
  *
- * <p>This is what a submodule is for the other upstreams here, and it exists
- * for the two whose git tree does not build: their {@code configure} is an
- * autotools bootstrap output that a release carries and a checkout does not.
- * So the release is the upstream, a SHA-256 names it exactly, and what a
- * mirror sent is verified before it is unpacked rather than after.
+ * <p>It takes the place of a submodule for the two upstreams whose git tree
+ * does not build: their {@code configure} is an autotools bootstrap output
+ * that a release carries and a checkout does not. So the release is the
+ * upstream source, a SHA-256 names it exactly, and the downloaded file is
+ * verified before it is unpacked.
  *
- * <p>Like the APK task, this is <em>ordering</em> rather than a dependency: the
- * phone's build never fetches anything, and a missing tree is a message from
- * CMake saying which command puts it there. The host CMake build unpacks a
- * missing tree itself, from the same pins ({@code backends/crypto-sources.txt})
- * and into the same layout, {@code .pin} included.
+ * <p>No build task depends on this: the Android build never fetches anything,
+ * and CMake reports a missing tree with the command that fetches it. The host
+ * CMake build unpacks a missing tree itself, from the same pins
+ * ({@code backends/crypto-sources.txt}) and into the same layout, {@code .pin}
+ * included.
  */
 abstract class DownloadSourceTarball extends DefaultTask {
 
@@ -97,9 +97,9 @@ abstract class DownloadSourceTarball extends DefaultTask {
     }
 
     /**
-     * Replaces the tree rather than unpacking over it: a half-fetched or
-     * previous-version tree that keeps its stale files is a build that
-     * compiles sources the pin does not name.
+     * Replaces the tree rather than unpacking over it: a partial or older tree
+     * would keep stale files, and the build would compile sources the pin does
+     * not name.
      */
     private void unpack(File tarball, File target) {
         target.deleteDir()

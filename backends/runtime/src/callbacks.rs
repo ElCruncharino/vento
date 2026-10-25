@@ -8,7 +8,7 @@
 ///
 /// This is [`Handler`](crate::Handler) with the blocking taken out: every
 /// question becomes an event that says a question is pending, and the answer
-/// arrives later through the runner — which is how a dialog on another thread
+/// arrives later through the runner, which is how a dialog on another thread
 /// has to work, and how a C caller would want it too. The C API's
 /// `vento_callbacks` is the same list, method for method, with three more; on
 /// Android the calls reach the Java seam's `NativeBackend` as its `on…`
@@ -16,10 +16,10 @@
 ///
 /// Every method is called from the protocol thread, through a shared
 /// reference, and must not block on anything the protocol thread is waiting
-/// for — or, behind the C API, from a thread the C library runs beside it
+/// for; or, behind the C API, from another thread the C library runs
 /// (FreeRDP's graphics pipeline paints on its dynamic channels' thread:
-/// `vento/backend.h`). `Send + Sync` because the session's thread calls these and whoever
-/// created the session holds the other end.
+/// `vento/backend.h`). `Send + Sync` because the session's thread calls these
+/// and the session's creator holds the other end.
 pub trait Callbacks: Send + Sync {
     fn connected(&self, width: usize, height: usize);
     fn desktop_size(&self, width: usize, height: usize);
@@ -45,7 +45,7 @@ pub trait Callbacks: Send + Sync {
     /// and a no mean the same things to the protocol thread.
     fn unverified(&self, why: &str);
     /// The session is over and its thread is about to end. `detail` is empty
-    /// for an ending nobody needs telling about, and otherwise says why in the
-    /// words the error chose.
+    /// for an ending that needs no message, and otherwise is the error's
+    /// description of why.
     fn closed(&self, detail: &str);
 }

@@ -5,10 +5,10 @@ plugins {
     id 'com.android.library'
 }
 
-// Both halves of the RDP backend: the crate at this directory's root
-// (`Cargo.toml`, `src/`), IronRDP in the RFB client's shape, as the library the
-// AAR carries, and `java/`'s provider, which holds a session on it as a
-// `NativeBackend` through the natives class generated below.
+// Both halves of the IronRDP backend: the crate at this directory's root
+// (`Cargo.toml`, `src/`), built as the library the AAR carries, and the
+// provider in `java/`, which wraps a session on it in a `NativeBackend`
+// through the natives class generated below.
 android {
     namespace = 'net.pgaskin.remotedesktop.backend.ironrdp'
     compileSdk 36
@@ -23,17 +23,16 @@ android {
         targetCompatibility JavaVersion.VERSION_21
     }
 
-    // Not AGP's `src/main/`: `src/` here is the crate's. The Java is in
-    // `java/`, the files themselves with no package directories over them
-    // (javac goes by the `package` line), and the provider's registration is
-    // in `resources/`.
+    // Not AGP's `src/main/`: `src/` here is the crate's. The Java files are
+    // directly in `java/` without package directories (javac uses the
+    // `package` line), and the provider's registration is in `resources/`.
     sourceSets.main {
         java.srcDirs = ['java']
         resources.srcDirs = ['resources']
     }
 
-    // The AAR carries the library as well as the Java, so whether a build
-    // speaks RDP is a dependency line.
+    // The AAR carries the library as well as the Java, so including this
+    // backend in a build takes one dependency line.
     publishing {
         singleVariant('release') {
             withSourcesJar()
@@ -42,8 +41,9 @@ android {
 }
 
 dependencies {
-    // The seam, and the only thing of the app's this module may name. `api`
-    // because a session here is a `Backend` and whoever holds one says so.
+    // The backend interface, and the only part of the app this module may
+    // reference. `api` because this module's sessions are exposed as
+    // `Backend`s, so dependents need the type.
     api project(':backends')
 }
 
@@ -69,8 +69,8 @@ androidComponents {
         }
         variant.sources.jniLibs?.addGeneratedSourceDirectory(cargoBuild) { it.outputDir }
 
-        // `IronRdpCatalog`, what the catalog says this backend is, and
-        // `IronRdpNatives`, what the library registers its natives on: see :backends.
+        // `IronRdpCatalog`, this backend's catalog entry, and `IronRdpNatives`,
+        // the class the library registers its natives on: see :backends.
         seam.generateCatalog(project, variant, 'rdp', 'IronRdpCatalog')
         seam.generateNatives(project, variant, 'IronRdpNatives', 'remotedesktop_ironrdp')
     }

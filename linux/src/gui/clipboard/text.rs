@@ -69,7 +69,7 @@ pub fn encode(text: &str, encoding: Encoding) -> Vec<u8> {
     }
 }
 
-/// The text out of what an owner delivered, by the type it says it is —
+/// The text out of what an owner delivered, by the type it says it is,
 /// which need not be the one asked for: xclip answers a `UTF8_STRING`
 /// request with a `STRING` property when that is what it was given.
 ///
@@ -78,8 +78,8 @@ pub fn encode(text: &str, encoding: Encoding) -> Vec<u8> {
 /// whole. Not replaced with U+FFFD: TigerVNC's servers refuse a clipboard
 /// with U+FFFD in it as invalid (`isValidUTF8` counts it as a decoding
 /// failure), so the whole copy would be lost at an Xvnc far end, where
-/// Latin-1 gives every far end a character for every byte — and text that
-/// is not UTF-8 under a UTF-8 name is nearly always an older program's
+/// Latin-1 gives every far end a character for every byte. Text that is
+/// not UTF-8 under a UTF-8 name is also nearly always an older program's
 /// Latin-1, which this reads exactly, and which a Latin-1 far end (plain
 /// RFB) is given back byte for byte.
 pub fn decode(type_name: &str, bytes: &[u8]) -> String {

@@ -1,36 +1,34 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! `spice-vdagent`: the half of a SPICE session that runs inside the machine.
+//! `spice-vdagent`: the part of a SPICE session that runs inside the guest.
 //!
-//! Nothing in here is SPICE's own. The main channel carries opaque bytes
-//! between this client and a program in the guest, and what those bytes mean is
-//! the agent's protocol (`vd_agent.h`) — so the clipboard, the resize and the
-//! monitor layout are answered by a guest that has the agent installed and by
-//! nothing else. That is why every capability here is conditional on something
-//! the far end announced rather than on the protocol version.
+//! None of this is SPICE's own protocol. The main channel carries opaque bytes
+//! between this client and a program in the guest, and their meaning is the
+//! agent's protocol (`vd_agent.h`), so the clipboard, the resize and the
+//! monitor layout work only with a guest that has the agent installed. That is
+//! why every capability here depends on what the guest announced rather than
+//! on the protocol version.
 //!
-//! Three things about the framing that the code below would otherwise not
-//! explain:
+//! Three things about the framing that the code below does not explain:
 //!
-//! * A message is split and the pieces are the **flow control**. Each one costs
-//!   a token the server grants, and a message bigger than a piece is split
-//!   across several with no boundary of its own on the wire — so what arrives
-//!   has to be reassembled out of a running buffer rather than parsed per
-//!   message. The `VDIChunkHeader` in the agent's own header file is *not* part
-//!   of this: it is how the server frames the guest's virtio port, which it
-//!   writes on the way in and strips on the way out. A client that sends one is
-//!   sending a header where a message should start, and what the server does
-//!   about it is drop the agent and announce it again — for ever, with nothing
-//!   said about why.
+//! * A message is split into pieces, and the pieces are the **flow control**.
+//!   Each costs a token the server grants, and a message bigger than a piece is
+//!   split across several with no boundary of its own on the wire, so incoming
+//!   data is reassembled from a running buffer rather than parsed per message.
+//!   The `VDIChunkHeader` in the agent's header file is *not* part of this: the
+//!   server uses it to frame the guest's virtio port, adding it on the way in
+//!   and stripping it on the way out. A client that sends one puts a header
+//!   where a message should start, and the server then drops the agent and
+//!   announces it again, repeatedly, without reporting an error.
 //! * The clipboard messages have **two wire forms**, with and without a leading
-//!   selection byte, and which one is in use is decided by both ends
-//!   announcing `CLIPBOARD_SELECTION`. This end announces it, so a guest that
-//!   does too separates what a person copied from what they merely selected —
-//!   and only the first of those is a clipboard on a phone.
-//! * A grab is an **announcement, not the text**. The seam above takes text, so
-//!   this end asks for it as soon as the guest says it has some, where a
-//!   desktop client would wait until somebody pressed paste.
+//!   selection byte, depending on whether both ends announce
+//!   `CLIPBOARD_SELECTION`. This client announces it, so with a guest that does
+//!   too, the clipboard (what the user copied) is kept apart from the primary
+//!   selection (what they selected); only the clipboard is used.
+//! * A grab is an **announcement, not the text**. The backend API passes text,
+//!   so this client requests it as soon as the guest announces some, where a
+//!   desktop client would wait until the user pastes.
 
 use std::collections::VecDeque;
 
@@ -42,13 +40,14 @@ const MAX_PIECE: usize = 2048;
 const HEADER: usize = 20;
 /// The biggest message this end reads whole: a clipboard of
 /// [`runtime::MAX_CLIPBOARD`] bytes behind its selection and type words.
-/// Every other message it reads is a few words. The size is a 32-bit field
-/// of the guest's and a message is kept until it is whole, so this is what
-/// the guest can make this end hold; one past it is dropped as it arrives.
+/// Every other message it reads is a few words. The size is a 32-bit field set
+/// by the guest, and a message is kept until it is whole, so this bounds what
+/// the guest can make this end hold; a larger message is dropped as it
+/// arrives.
 const MAX_MESSAGE: usize = runtime::MAX_CLIPBOARD + 8;
 
-/// What a message is. The ones this client neither sends nor reads — the file
-/// transfer, the audio volume, the display config — are not here.
+/// Message types. The ones this client neither sends nor reads (file
+/// transfer, audio volume, display config) are omitted.
 mod message {
     pub const MONITORS_CONFIG: u32 = 2;
     pub const REPLY: u32 = 3;
@@ -68,38 +67,35 @@ mod cap {
     pub const GUEST_LINEEND_LF: u32 = 8;
 }
 
-/// The clipboard type this client has: a phone's clipboard is text.
+/// The only clipboard type this client handles: the backend API passes text.
 const UTF8_TEXT: u32 = 1;
-/// `VD_AGENT_CLIPBOARD_SELECTION_CLIPBOARD`, which is what a person copied —
-/// as against `PRIMARY`, which on X11 is anything they dragged a mouse over.
+/// `VD_AGENT_CLIPBOARD_SELECTION_CLIPBOARD`, what the user copied, as opposed
+/// to `PRIMARY`, which on X11 is any text selected with the mouse.
 const SELECTION_CLIPBOARD: u8 = 0;
 
-/// A text bigger than this is not sent: the guest's clipboard is not where a
-/// phone puts a file, and every chunk of it costs a token the session shares
-/// with everything else on the main channel.
+/// Text bigger than this is not sent: the clipboard is not for transferring
+/// files, and every chunk costs a token shared with all other agent messages.
 const MAX_TEXT: usize = 512 * 1024;
 
-/// What the session has to act on. Everything else the agent says is answered
-/// in here.
+/// Agent messages the session has to act on. Everything else is handled
+/// here.
 pub enum Event {
-    /// The guest's clipboard, which this end asked for when the guest said it
-    /// had something.
+    /// The guest's clipboard, requested after the guest announced it had
+    /// something.
     Clipboard(String),
-    /// What the far end can do has changed: the capabilities arrived, or the
-    /// agent went away with them.
+    /// The guest's capabilities arrived.
     Capabilities,
 }
 
-/// The agent as this client sees it: what it can do, what it is owed, and what
-/// is half-said in either direction.
+/// The agent as this client sees it: its capabilities, the tokens for sending
+/// to it, and partial messages in either direction.
 pub struct Agent {
     connected: bool,
     /// How many chunks this end may still send. The server grants them and
-    /// takes none back; a client that sends without one is a client the server
-    /// disconnects.
+    /// takes none back, and disconnects a client that sends without one.
     tokens: u32,
-    /// The guest's capability mask, which is what decides whether there is a
-    /// resize or a clipboard at all.
+    /// The guest's capability mask, which decides whether there is a resize or
+    /// a clipboard at all.
     caps: u32,
     /// Bytes of agent message that have arrived and not yet made a whole one.
     /// At most a header and [`MAX_MESSAGE`] once a piece has been read.
@@ -110,13 +106,13 @@ pub struct Agent {
     skipping: usize,
     /// Pieces waiting for a token.
     outbound: VecDeque<Vec<u8>>,
-    /// The text this end has offered the guest, kept because a grab says only
-    /// that there is some and the guest asks for it afterwards.
+    /// The text this end has offered the guest, kept because a grab only
+    /// announces it and the guest requests it afterwards.
     ours: Option<String>,
     /// Whether the guest has been told about it. The app pushes its clipboard
-    /// the moment a session connects, which is before the agent has said what
-    /// it can do, so an offer waits for the capabilities rather than being
-    /// dropped for arriving a few hundred milliseconds early.
+    /// as soon as a session connects, before the agent has announced its
+    /// capabilities, so an offer waits for them rather than being dropped for
+    /// arriving a few hundred milliseconds early.
     offered: bool,
 }
 
@@ -146,9 +142,9 @@ impl Agent {
         self.announce(true);
     }
 
-    /// The agent went away — a guest logging out, or the program being killed.
-    /// Anything half-received with it is discarded rather than kept for the
-    /// next one, which is a different agent with different capabilities.
+    /// The agent went away (the guest logged out, or the agent was killed).
+    /// Anything half-received is discarded rather than kept for the next
+    /// agent, which may have different capabilities.
     pub fn disconnected(&mut self) {
         self.connected = false;
         self.caps = 0;
@@ -167,8 +163,8 @@ impl Agent {
         self.tokens = self.tokens.saturating_add(tokens);
     }
 
-    /// Whether the guest will take a desktop size, which is
-    /// `Backend.canResize`'s answer for this protocol.
+    /// Whether the guest accepts a desktop size, which is what `can_resize`
+    /// means for this protocol.
     pub fn can_resize(&self) -> bool {
         self.connected && self.has(cap::MONITORS_CONFIG)
     }
@@ -188,8 +184,8 @@ impl Agent {
         Some(piece)
     }
 
-    /// What this phone has on its clipboard, offered to the guest. The text
-    /// itself goes over when the guest asks for it.
+    /// Offers the local clipboard text to the guest. The text itself is sent
+    /// when the guest requests it.
     pub fn offer_clipboard(&mut self, text: String) {
         if text.is_empty() || text.len() > MAX_TEXT {
             return;
@@ -197,8 +193,7 @@ impl Agent {
         if self.offered && self.ours.as_deref() == Some(text.as_str()) {
             // A grab the guest already has. Announcing the same text again
             // makes the guest drop its selection and take ours a second time,
-            // which over there is a clipboard manager with two of everything in
-            // it.
+            // which leaves duplicate entries in the guest's clipboard manager.
             return;
         }
         self.ours = Some(text);
@@ -206,11 +201,10 @@ impl Agent {
         self.grab();
     }
 
-    /// Ask the guest to make its desktop this many monitors of these sizes.
+    /// Asks the guest to make its desktop this many monitors of these sizes.
     ///
-    /// A request and not a setting: the agent hands it to whatever the guest
-    /// uses for displays, and what comes back is a new mode, a different one,
-    /// or nothing at all.
+    /// A request, not a setting: the agent passes it to the guest's display
+    /// system, which may answer with this mode, a different one, or nothing.
     pub fn request_monitors(&mut self, monitors: &[(i32, i32, u32, u32)]) {
         if !self.can_resize() || monitors.is_empty() {
             return;
@@ -224,15 +218,16 @@ impl Agent {
         for (x, y, width, height) in monitors {
             body.extend_from_slice(&height.to_le_bytes());
             body.extend_from_slice(&width.to_le_bytes());
-            body.extend_from_slice(&32u32.to_le_bytes()); // depth, which QXL has one of
+            body.extend_from_slice(&32u32.to_le_bytes()); // depth, always 32 for QXL
             body.extend_from_slice(&(*x as u32).to_le_bytes());
             body.extend_from_slice(&(*y as u32).to_le_bytes());
         }
         self.queue(message::MONITORS_CONFIG, &body);
     }
 
-    /// Bytes out of one `MSG_MAIN_AGENT_DATA`, which is a piece of a message
-    /// and not a message: what this returns is whatever whole ones completed.
+    /// Bytes from one `MSG_MAIN_AGENT_DATA`, which is a piece of a message
+    /// rather than a message. Returns the events from any messages it
+    /// completed.
     pub fn receive(&mut self, body: &[u8]) -> Vec<Event> {
         let mut events = Vec::new();
         // The rest of a message too big to keep, which comes before anything
@@ -248,16 +243,16 @@ impl Agent {
             if protocol != PROTOCOL {
                 // Nothing can be done with a stream whose framing is not
                 // understood: the length that would skip this message is inside
-                // the part that is not understood. Said as soon as the header
-                // is here, rather than after waiting for that length.
+                // the part that is not understood. Reported as soon as the
+                // header arrives, rather than after waiting for that length.
                 log::warn!("agent: protocol {protocol} is not this one");
                 self.inbound.clear();
                 break;
             }
             if size > MAX_MESSAGE {
                 // Dropped, not kept until it is whole, and not the end of the
-                // agent: the size says where the next message starts. Before
-                // the sum below, which on a 32-bit phone could wrap.
+                // agent: the size says where the next message starts. Checked
+                // before the sum below, which could wrap on a 32-bit target.
                 log::warn!(
                     "agent: message {message_type} of {size} bytes is over the {MAX_MESSAGE} this end reads; skipped"
                 );
@@ -284,8 +279,8 @@ impl Agent {
                 }
                 let request = u32::from_le_bytes(payload[0..4].try_into().unwrap());
                 // Only the first word of the mask is read: every capability
-                // this client knows about is in it, and a guest announcing a
-                // second word is announcing things it will not be asked for.
+                // this client knows about is in it, and later words are for
+                // capabilities it never uses.
                 self.caps = u32::from_le_bytes(payload[4..8].try_into().unwrap());
                 log::info!(
                     "agent: capabilities {:#x} — clipboard {}, resize {}",
@@ -296,9 +291,9 @@ impl Agent {
                 if request != 0 {
                     self.announce(false);
                 }
-                // Whatever the app pushed before the guest had said it has a
-                // clipboard, which is the ordinary case for a session that
-                // connects with something already copied on the phone.
+                // Whatever the app pushed before the guest announced a
+                // clipboard, the usual case for a session that connects with
+                // something already copied.
                 self.grab();
                 events.push(Event::Capabilities);
             }
@@ -313,9 +308,9 @@ impl Agent {
                 if !self.is_clipboard_selection(payload) || !wanted {
                     return;
                 }
-                // Theirs now: what this end had offered is no longer the
-                // clipboard, and the same text copied here again is a new offer
-                // rather than a repeat of one the guest has.
+                // The guest owns the clipboard now: what this end offered is
+                // no longer current, and the same text copied here again is a
+                // new offer rather than a repeat of one the guest has.
                 self.ours = None;
                 self.offered = false;
                 let mut body = Vec::new();
@@ -339,10 +334,10 @@ impl Agent {
                 events.push(Event::Clipboard(text));
             }
             message::CLIPBOARD_REQUEST => {
-                // The guest wants what this end offered. Whatever was last
-                // grabbed is what goes: if it is gone, the request is answered
-                // with a release rather than with silence, which is what stops
-                // a paste over there from hanging.
+                // The guest wants what this end offered, so the text last
+                // grabbed is sent. If it is gone, the request is answered with
+                // a release rather than ignored, so a paste in the guest does
+                // not hang.
                 let mut body = Vec::new();
                 self.selection(&mut body);
                 match self.ours.clone() {
@@ -398,7 +393,7 @@ impl Agent {
         let mut whole = Vec::with_capacity(HEADER + body.len());
         whole.extend_from_slice(&PROTOCOL.to_le_bytes());
         whole.extend_from_slice(&message_type.to_le_bytes());
-        whole.extend_from_slice(&0u64.to_le_bytes()); // opaque, which nothing here uses
+        whole.extend_from_slice(&0u64.to_le_bytes()); // opaque, unused
         whole.extend_from_slice(&(body.len() as u32).to_le_bytes());
         whole.extend_from_slice(body);
 
@@ -426,8 +421,8 @@ impl Agent {
 
     fn is_clipboard_selection(&self, payload: &[u8]) -> bool {
         // Without the capability there is one selection and it is the
-        // clipboard; with it, PRIMARY is every drag of a mouse over text and is
-        // not what a phone means by copy.
+        // clipboard; with it, PRIMARY is any text selected with the mouse, not
+        // something the user copied.
         !self.selections() || payload.first() == Some(&SELECTION_CLIPBOARD)
     }
 
@@ -505,9 +500,9 @@ mod tests {
 
     #[test]
     fn what_goes_out_is_a_message_and_not_a_chunk() {
-        // The framing bug this cost a session to find: a `VDIChunkHeader` is
-        // the server's business with the guest's virtio port, and a client that
-        // writes one has its agent dropped and re-announced for ever.
+        // A `VDIChunkHeader` belongs to the server's framing of the guest's
+        // virtio port, and a client that writes one has its agent dropped and
+        // re-announced repeatedly.
         let mut agent = Agent::new();
         agent.connected(10);
         let piece = agent.next_piece().expect("the capabilities announce");
@@ -561,10 +556,9 @@ mod tests {
             .collect()
     }
 
-    /// A message's size is a 32-bit field of the guest's, and the pieces it
-    /// arrives in were kept until it was whole: four gigabytes claimed were
-    /// four gigabytes kept. One past the bound is now dropped as it arrives,
-    /// and the message after it is read in step.
+    /// A message's size is a 32-bit field set by the guest, and its pieces
+    /// are kept until it is whole, so one past the bound is dropped as it
+    /// arrives, and the message after it is read in step.
     #[test]
     fn a_message_past_the_bound_is_dropped_and_the_next_one_read() {
         let mut agent = connected();
@@ -632,8 +626,8 @@ mod tests {
         assert!(sent.ends_with(b"hello"));
     }
 
-    /// The app pushes the phone's clipboard the moment a session connects,
-    /// which is before the guest has said it has one.
+    /// The app pushes its clipboard as soon as a session connects, before the
+    /// guest has announced clipboard support.
     #[test]
     fn an_offer_made_too_early_waits_for_the_capabilities() {
         let mut agent = Agent::new();

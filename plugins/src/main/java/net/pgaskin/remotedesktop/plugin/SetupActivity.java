@@ -32,15 +32,15 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * The screen an add-on acquires what it holds on.
+ * The screen where an add-on obtains the libraries it holds.
  *
- * <p>It runs in the add-on's own process, which is the whole reason it exists:
- * the packages it may look at and the network it may use are the add-on's, so
- * the app's manifest asks for neither. Two routes, both ending in the same
- * check — an archive somebody picks, and one fetched from a mirror.
+ * <p>It runs in the add-on's process, which is why it exists: package
+ * visibility and network access are the add-on's, so the app's manifest needs
+ * neither. There are two routes, both ending in the same check: an archive the
+ * user picks, and one downloaded from a mirror.
  *
- * <p>A subclass says what it is for and what it wants; everything about how a
- * library is verified and stored is here.
+ * <p>A subclass supplies its explanation and the libraries it wants; how a
+ * library is verified and stored is handled here.
  */
 public abstract class SetupActivity extends Activity {
 
@@ -50,14 +50,14 @@ public abstract class SetupActivity extends Activity {
      * One acquisition at a time, for the life of the process rather than of a
      * screen.
      *
-     * <p>It was one per activity, and a rotation part-way through an
-     * acquisition was then two of them: {@code shutdownNow} interrupts a thread
-     * blocked in a file copy without stopping it, and the recreated screen
-     * offered the same buttons — so two threads could be writing one
-     * temporary file. Nothing unverified could come of that, since the hash
-     * would not match, but "it says no twice" is not an answer anybody can act
-     * on. What survives a rotation is here; what the screen shows is worked out
-     * from it in {@link #onResume}.
+     * <p>With one worker per activity, a rotation part-way through an
+     * acquisition would start a second one: {@code shutdownNow} interrupts a
+     * thread blocked in a file copy without stopping it, and the recreated
+     * screen offers the same buttons, so two threads could write one temporary
+     * file. That could not produce an unverified file, since the hash would not
+     * match, but the user would see two failures with no way to act on them.
+     * The state that survives a rotation is kept in static fields here, and
+     * {@link #onResume} draws the screen from it.
      */
     private static final ExecutorService WORKER = Executors.newSingleThreadExecutor(r -> {
         final Thread t = new Thread(r, "plugin-setup");
@@ -67,25 +67,25 @@ public abstract class SetupActivity extends Activity {
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
 
     /**
-     * The application's context, for looking a string up off the worker: a route
-     * outlives a rotation, and a string looked up on a dead screen's context is
-     * one of the ways that shows up much later.
+     * The application's context, for looking up strings on the worker: a route
+     * outlives a rotation, and looking up a string on a destroyed activity's
+     * context can fail in ways that only show up much later.
      */
-    @SuppressLint("StaticFieldLeak") // the application's, as the name above says
+    @SuppressLint("StaticFieldLeak") // the application context, which does not leak
     private static Context strings;
 
     /**
-     * What the process is in the middle of, all main-thread only: whether a
-     * route is running, what it is doing, how far through it is, and what the
-     * last one that finished said. A screen is drawn from these rather than
-     * holding any of it, so a rotation shows what a rotation should.
+     * The process's current state, all main-thread only: whether a route is
+     * running, its current step, its progress, and the last finished route's
+     * result. A screen is drawn from these rather than holding its own copy, so
+     * it shows the right state after a rotation.
      */
     private static boolean busy;
     private static String doing;
     private static long done;
     private static long total;
     private static String failure;
-    /** Whether that failure was this app being refused the network. */
+    /** Whether that failure was this app being denied network access. */
     private static boolean denied;
 
     private TextView status;
@@ -97,16 +97,16 @@ public abstract class SetupActivity extends Activity {
     /** What this add-on is for, and where its library comes from. */
     protected abstract CharSequence explanation();
 
-    /** Where a copy can be fetched, tried in order. */
+    /** Where a copy can be downloaded from, tried in order. */
     protected abstract List<Download.Source> downloads();
 
     /**
-     * Name to SHA-256, for this device. Empty where there is no build of them
-     * for it, which is a screen with nothing to offer rather than an error.
+     * Name to SHA-256, for this device. Empty if there is no build for it, in
+     * which case the screen offers nothing rather than showing an error.
      */
     protected abstract Map<String, String> wanted();
 
-    /** The ABI the libraries are wanted for, null where there is none. */
+    /** The ABI the libraries are wanted for, or null if there is none. */
     protected abstract String abi();
 
     private final ActivityLauncher picker = new ActivityLauncher();
@@ -117,9 +117,9 @@ public abstract class SetupActivity extends Activity {
         setContentView(R.layout.plugin_setup);
         strings = getApplicationContext();
 
-        // The window is edge to edge and this screen has no bar of its own to
-        // hang a title on, so both are done here: the label from the manifest at
-        // the top, and the system's own bars kept out of the content.
+        // The window is edge to edge and this screen has no action bar for a
+        // title, so both are handled here: the manifest label at the top, and
+        // the system bars kept out of the content.
         final View content = findViewById(R.id.plugin_content);
         content.setOnApplyWindowInsetsListener((v, insets) -> {
             final Insets bars = insets.getInsets(
@@ -137,9 +137,9 @@ public abstract class SetupActivity extends Activity {
         fix.setOnClickListener(v -> offerNetwork());
         readColors();
 
-        // A phone none of the pinned builds is for. Nothing below can end in
-        // anything but a refusal, so none of it is offered: the explanation
-        // stays, since it is what this add-on is for either way.
+        // No pinned build is for this phone. Every route below would fail, so
+        // none is offered; the explanation stays, since it describes the add-on
+        // either way.
         nothingForThisDevice = wanted().isEmpty();
         if (nothingForThisDevice) {
             buttons.setVisibility(View.GONE);
@@ -159,8 +159,8 @@ public abstract class SetupActivity extends Activity {
             final File apk = File.createTempFile("download", ".apk", getCacheDir());
             try {
                 requireNetwork();
-                // Named as it goes rather than up front, since which mirror is
-                // answering is the part of this that is not decided in advance.
+                // Each host is shown as it is contacted rather than up front,
+                // since which mirror answers is not known in advance.
                 Download.toFile(downloads(), apk, SetupActivity::progress, new Download.Where() {
                     @Override
                     public void asking(String host) {
@@ -199,20 +199,19 @@ public abstract class SetupActivity extends Activity {
     }
 
     /**
-     * A refusal a download would otherwise report as a DNS failure.
+     * Detects a network denial that a download would otherwise report as a DNS
+     * failure.
      *
-     * <p>An app whose network access has been switched off resolves no host at
-     * all — every lookup fails in a few milliseconds with "unable to resolve
-     * host", which is a sentence about DNS for something that is nothing to do
-     * with it. The state is exactly reported, in the one place that still
-     * reports it: {@code getActiveNetwork} is null either way, and only the
-     * deprecated {@code NetworkInfo} distinguishes being refused from there
-     * being nothing to be refused.
+     * <p>An app whose network access has been switched off cannot resolve any
+     * host: every lookup fails within milliseconds with "unable to resolve
+     * host", which blames DNS for an unrelated problem. Only one API still
+     * reports the state: {@code getActiveNetwork} is null either way, and only
+     * the deprecated {@code NetworkInfo} distinguishes being blocked from having
+     * no network.
      *
-     * <p>It cannot be asked for. The policy behind it is settable only with a
-     * signature permission, so there is no request to make and no result to
-     * wait for — what there is is the screen it is switched on, which
-     * {@link #offerNetwork} opens.
+     * <p>Access cannot be requested. The policy can only be changed with a
+     * signature permission, so there is no request to make; the user has to
+     * switch it on in Settings, which {@link #offerNetwork} opens.
      */
     @SuppressWarnings("deprecation")
     private void requireNetwork() throws IOException {
@@ -224,32 +223,31 @@ public abstract class SetupActivity extends Activity {
         }
     }
 
-    /** Settings' own page for it, on the switch itself. */
+    /** Opens the Settings page with this app's network switch. */
     private void offerNetwork() {
         startActivity(new Intent(
                 Settings.ACTION_IGNORE_BACKGROUND_DATA_RESTRICTIONS_SETTINGS,
                 Uri.fromParts("package", getPackageName(), null)));
     }
 
-    /** The half both routes share: what is in the archive, checked. */
+    /** The part both routes share: extracting and checking the archive's libraries. */
     private Map<String, String> take(File apk) throws IOException {
         say(R.string.plugin_opening);
         progress(0, -1);
-        // Each one named as it comes out: a library is hashed while it is being
-        // written, so this line is also which of them is being verified.
+        // Each library is shown as it is extracted: it is hashed while it is
+        // written, so the line also shows which one is being verified.
         return Apks.take(this, List.of(apk), abi(), wanted(),
                 name -> say(R.string.plugin_extracting, name));
     }
 
     /**
-     * The small print under the line: where in the archive each library is
-     * looked for, and what it has to hash to.
+     * The small print below the status line: where in the archive each library
+     * is looked for, and the hash it must match.
      *
-     * <p>This screen's whole claim is that it keeps a copy only if it is the
-     * build these declarations were read from, and a claim nobody can check is
-     * worth about as much as no claim. So the pins are on the screen making it,
-     * where somebody who has unzipped their own copy of the APK and hashed what
-     * was in it has something to compare that against.
+     * <p>This screen claims to keep a copy only if it is the build these
+     * declarations were read from, and an unverifiable claim is worth little.
+     * So the pins are shown on the screen, where a user who has unzipped and
+     * hashed their own copy of the APK can compare them.
      */
     private CharSequence pins() {
         final StringBuilder sb = new StringBuilder();
@@ -258,8 +256,8 @@ public abstract class SetupActivity extends Activity {
                 sb.append('\n');
             }
             sb.append("lib/").append(abi()).append('/').append(e.getKey());
-            // A SHA-256 is 64 characters and a phone is not that wide: broken
-            // in half here rather than left to wrap wherever the font runs out.
+            // A SHA-256 is 64 characters, too wide for a phone: split in half
+            // here rather than left to wrap at an arbitrary point.
             final String sha256 = e.getValue();
             for (int at = 0; at < sha256.length(); at += 32) {
                 sb.append("\n  ").append(sha256, at, Math.min(at + 32, sha256.length()));
@@ -268,11 +266,11 @@ public abstract class SetupActivity extends Activity {
         return sb;
     }
 
-    /** Nothing here has a build for this phone: see {@link #onCreate}. */
+    /** No pinned build is for this phone: see {@link #onCreate}. */
     private boolean nothingForThisDevice;
 
-    /** The screen a finished route reports to, which is whichever is up. */
-    @SuppressLint("StaticFieldLeak") // cleared in onPause, which is what "is up" means
+    /** The screen a finished route reports to: whichever one is resumed. */
+    @SuppressLint("StaticFieldLeak") // cleared in onPause
     private static SetupActivity onScreen;
 
     @Override
@@ -282,17 +280,16 @@ public abstract class SetupActivity extends Activity {
             return;
         }
         if (LibraryStore.has(this, wanted())) {
-            // Whatever brought us here has been done, possibly by an earlier
-            // visit or by a route that finished while this screen was being
-            // recreated: there is nothing left to ask for.
+            // Setup is already complete, possibly from an earlier visit or a
+            // route that finished while this screen was being recreated.
             setResult(RESULT_OK);
             finish();
             return;
         }
         onScreen = this;
-        // A rotation does not stop what is running, so this screen is whatever
-        // the process is in the middle of rather than a fresh one: the same
-        // three things, drawn from the same three fields.
+        // A rotation does not stop a running route, so this screen shows the
+        // process's current state rather than starting fresh, drawn from the
+        // static fields.
         working(busy);
         show(busy ? doing : failure, !busy);
         fix.setVisibility(!busy && denied ? View.VISIBLE : View.GONE);
@@ -313,7 +310,7 @@ public abstract class SetupActivity extends Activity {
         }
     }
 
-    /** What an acquisition route does, off the main thread. */
+    /** An acquisition route, run off the main thread. */
     private interface Route {
         /** What is still missing afterwards; empty means done. */
         Map<String, String> run() throws Exception;
@@ -336,10 +333,10 @@ public abstract class SetupActivity extends Activity {
                 }
             } catch (Throwable t) {
                 Log.w(TAG, "acquiring: " + t, t);
-                // A message where there is one: this is where "not the build
-                // this was written for" reaches somebody. Where there is not —
-                // a socket giving up says nothing worth reading — the generic
-                // one, since a class name on a screen helps nobody.
+                // The exception's message if it has one: this is how "not the
+                // build this plugin was written for" reaches the user. Otherwise
+                // (a failed socket often has no useful message) the generic
+                // one, since a class name on screen does not help.
                 final String message = t.getMessage();
                 said = message == null || message.isEmpty()
                         ? strings.getString(R.string.plugin_failed) : message;
@@ -349,8 +346,8 @@ public abstract class SetupActivity extends Activity {
                 busy = false;
                 failure = result;
                 doing = null;
-                // Whichever screen is up, which after a rotation is not the one
-                // that started this and after a kill is none.
+                // The currently resumed screen, which after a rotation is not
+                // the one that started this, and after a kill is none.
                 final SetupActivity host = onScreen;
                 if (host == null) {
                     return;
@@ -368,21 +365,20 @@ public abstract class SetupActivity extends Activity {
     }
 
     /**
-     * How long a step is held either side of being said.
+     * How long the worker pauses before and after showing each step.
      *
-     * <p>Most of these steps are quick — an archive already in the cache is
-     * opened and both libraries are out of it in well under a second — and a
-     * line nobody can read is not a line that says anything. Half a second
-     * before and half a second after means each one is on the screen for a
-     * second at least, whatever it went on to do.
+     * <p>Most steps are quick (an archive already in the cache is opened and
+     * both libraries extracted in well under a second), and a line shown too
+     * briefly cannot be read. Half a second before and after keeps each step on
+     * screen for at least a second.
      */
     private static final long LINGER = 500;
 
     /**
-     * What the route is doing now, for the line above the bar. Called from the
-     * worker, so it goes through the same slot a rotation redraws from — and it
-     * blocks the worker for {@link #LINGER} either side, which is the point of
-     * it and the reason nothing calls it from the main thread.
+     * Shows the route's current step on the line above the progress bar.
+     * Called from the worker, so it goes through the field a rotation redraws
+     * from, and it deliberately blocks the worker for {@link #LINGER} before and
+     * after, which is why it is never called from the main thread.
      */
     private static void say(int what, Object... args) {
         final String message = strings.getString(what, args);
@@ -401,15 +397,15 @@ public abstract class SetupActivity extends Activity {
         try {
             Thread.sleep(LINGER);
         } catch (InterruptedException e) {
-            // Nothing interrupts this worker, and a route that is somehow being
-            // stopped should stop rather than sleep through it again.
+            // Nothing interrupts this worker, but if a route is being stopped it
+            // should stop rather than sleep again.
             Thread.currentThread().interrupt();
         }
     }
 
     /**
-     * How far through, where the other end said how far there is to go. A
-     * negative total is a server that did not say, and the bar keeps sweeping.
+     * Download progress, when the server reported a size. A negative total means
+     * it did not, and the bar stays indeterminate.
      */
     private static void progress(long at, long of) {
         MAIN.post(() -> {
@@ -428,9 +424,8 @@ public abstract class SetupActivity extends Activity {
     }
 
     /**
-     * The one line, in the one place, in whichever of its two colours: what is
-     * happening reads as ordinary text and what went wrong reads as an error,
-     * and there is only ever one of them to say.
+     * The single status line, in one of two colours: progress in ordinary text
+     * and failures as an error. Only one is ever shown.
      */
     private void show(String message, boolean working) {
         if (message == null || message.isEmpty()) {
@@ -442,7 +437,7 @@ public abstract class SetupActivity extends Activity {
         status.setVisibility(View.VISIBLE);
     }
 
-    /** Both off the theme: the layout supplies the error one. */
+    /** Both from the theme; the layout sets the error colour. */
     private int errorColor;
     private int ordinaryColor;
 
@@ -462,9 +457,9 @@ public abstract class SetupActivity extends Activity {
     }
 
     /**
-     * The document picker, without androidx: one request code, one callback,
-     * and a result that survives the activity being recreated behind it because
-     * {@link #onResume} re-asks the store rather than trusting a field.
+     * The document picker, without androidx: one request code and one callback.
+     * A result survives the activity being recreated behind the picker because
+     * {@link #onResume} checks the store again rather than trusting a field.
      */
     private final class ActivityLauncher {
 

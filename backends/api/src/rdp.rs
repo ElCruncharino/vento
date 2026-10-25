@@ -1,20 +1,18 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! What the two RDP backends read alike out of their options: the desktop
-//! size to ask for and how many monitors. RDP has no "whatever it already
-//! is": the size is in the client's connection data, so something has to go
-//! there.
+//! Options the two RDP backends read the same way: the desktop size to ask
+//! for and the number of monitors. RDP has no "keep the current size": the
+//! size is in the client's connection data, so some size has to be sent.
 
 use crate::options::Options;
 
-/// US English, and not a choice: the scancode tables both clients send are
-/// a US layout, so the layout the server is told to use has to be the same
-/// one.
+/// US English, fixed: the scancode tables both clients send are a US
+/// layout, so the server has to be told to use the same layout.
 pub const KEYBOARD_LAYOUT: u32 = 0x0409;
 
-/// What to ask for when nothing better is known: the first connection to a
-/// machine under `remote`, and anything unparseable.
+/// The size to ask for when nothing better is known: the first connection
+/// to a machine under `remote`, and any unparseable value.
 pub const FALLBACK_SIZE: (u32, u32) = (1920, 1200);
 
 /// `1920x1200` as its two numbers, or none.
@@ -25,10 +23,9 @@ pub fn parse_size(value: &str) -> Option<(u32, u32)> {
 }
 
 /// The desktop size to ask this connection's server for. `remote` means
-/// "whatever it was last time", which is `last`: a note a client keeps per
-/// address where it keeps one (the phone does), and the fallback where it
-/// does not. `device` is the screen the session will be drawn on, where the
-/// caller knows it.
+/// the size from last time, `last`, which a client may record per address
+/// (the phone does), or the fallback when it does not. `device` is the
+/// screen the session will be drawn on, if the caller knows it.
 pub fn desktop_size(value: &str, screen: Option<(u32, u32)>, last: Option<(u32, u32)>) -> (u32, u32) {
     match value {
         "remote" => last.filter(|&(w, h)| w > 0 && h > 0).unwrap_or(FALLBACK_SIZE),
@@ -39,8 +36,9 @@ pub fn desktop_size(value: &str, screen: Option<(u32, u32)>, last: Option<(u32, 
     }
 }
 
-/// How many monitors a connection asks for, which is a number in a choice
-/// list and so is only a number if nothing has been typed in by hand.
+/// How many monitors a connection asks for, clamped to 1 to 16, or 1 when
+/// the option is not a number (it is a choice list, but a value can be
+/// typed in by hand).
 pub fn monitor_count(options: &Options) -> u8 {
     options.int("Monitors", 1).clamp(1, 16) as u8
 }

@@ -19,12 +19,12 @@ import java.util.Arrays;
  * of the desktop the cursor therefore sits exactly at the centre of the screen
  * and the desktop slides underneath it; near an edge the clamp takes over and
  * the cursor slides away from the centre instead. No code anywhere special-cases
- * "cursor near the edge" — it falls out of the clamp.
+ * "cursor near the edge"; it falls out of the clamp.
  *
  * <p>The view can be <em>inset</em>: everything above works on the content rect
  * (the view minus {@link #setInsets}), so system bars or an on-screen keyboard
  * shrink the window onto the desktop without moving the desktop under the
- * remaining pixels. With zero insets — the default — the content rect is the
+ * remaining pixels. With zero insets (the default) the content rect is the
  * view and nothing changes.
  *
  * <p>It can also be given <em>pan margins</em> ({@link #setPanMargins}), which
@@ -85,7 +85,7 @@ public final class Viewport {
      *
      * <p>Not an inset, which is the opposite question. An inset says the desktop
      * may not be <em>drawn</em> in a strip, and so shrinks the window it is
-     * clamped inside and is subtracted from everything derived from it — the fit
+     * clamped inside and is subtracted from everything derived from it: the fit
      * scale, the zoom ladder, the centre the cursor sits at. A margin changes
      * only how far the clamp lets the picture slide.
      *
@@ -94,13 +94,13 @@ public final class Viewport {
      * desktop is smaller than the window and the gap beside it is wider than the
      * margin does not move at all, one where the gap is narrower may be slid the
      * difference, and one where the desktop overflows may be slid the whole
-     * margin. Which makes the rule continuous across the size the desktop fills
-     * its window at — where "is any of it off screen" is a question about the
-     * last fraction of a pixel, and "is its edge somewhere it can be looked at"
-     * plainly is not.
+     * margin. That makes the rule continuous across the size at which the
+     * desktop fills its window, where "is any of it off screen" is a question
+     * about the last fraction of a pixel, and "is its edge somewhere it can be
+     * looked at" is not.
      *
-     * <p>Capped at half the content on each axis, so no margin anybody asks for
-     * can leave a window with more blank in it than desktop.
+     * <p>Capped at half the content on each axis, so no margin can leave a
+     * window with more blank in it than desktop.
      */
     public void setPanMargins(int left, int top, int right, int bottom) {
         final int l = Math.max(left, 0), t = Math.max(top, 0);
@@ -113,9 +113,9 @@ public final class Viewport {
         marginR = r;
         marginB = b;
         // A margin that shrank can leave the picture outside what the clamp now
-        // allows, and the origin is not state that anything else here rewrites —
-        // so re-centring on the focus, which is what every other thing that
-        // changes the shape of the window ends with, is what brings it back.
+        // allows, and nothing else here rewrites the origin, so re-centring on
+        // the focus (as everything else that changes the shape of the window
+        // does) brings it back.
         centreOn(focusX, focusY);
     }
 
@@ -151,7 +151,7 @@ public final class Viewport {
         return insetB;
     }
 
-    /** View width minus the horizontal insets — the window the desktop gets. */
+    /** View width minus the horizontal insets: the window the desktop gets. */
     public int contentWidth() {
         return Math.max(viewW - insetL - insetR, 0);
     }
@@ -242,7 +242,7 @@ public final class Viewport {
         return Math.max((float) contentWidth() / fbW, (float) contentHeight() / fbH);
     }
 
-    /** {@code 2 * floor(density)} — the original's cap. */
+    /** {@code 2 * floor(density)}, the original's cap. */
     public float maxScale() {
         return 2.0f * (float) Math.floor(density);
     }
@@ -278,7 +278,7 @@ public final class Viewport {
         centreOn(dx, dy, scale);
     }
 
-    /** ScaleManager.g — centre on the focus point, then clamp to the desktop. */
+    /** ScaleManager.g: centre on the focus point, then clamp to the desktop. */
     public void centreOn(float dx, float dy, float s) {
         final int cw = contentWidth(), ch = contentHeight();
         if (cw == 0 || ch == 0) {
@@ -310,7 +310,7 @@ public final class Viewport {
      * asked for it to be.
      *
      * <p>A desktop smaller than the window has one place to be, and it is
-     * centred in the <em>view</em>, then pushed inside the content rect — not
+     * centred in the <em>view</em>, then pushed inside the content rect, not
      * centred in the content rect, which is what makes the original's picture
      * jump by half the inset whenever an overlay appears. Nothing else clamps
      * that axis, so the rule has to be one that comes back on its own: it moves
@@ -322,7 +322,7 @@ public final class Viewport {
      * is not already there as blank, so the two cases meet: at the size the
      * desktop exactly fills its window the pinned place is the only place and
      * the whole margin is free either side of it, which is what the overflowing
-     * case says too. Without them — the default — this is the original: the
+     * case says too. Without them (the default) this is the original: the
      * small case is pinned and the overflowing one is clamped to its edges.
      */
     private static float clampAxis(float o, int inset, int content, float desktop,
@@ -351,7 +351,7 @@ public final class Viewport {
      *
      * <p>It moves the <em>focus</em>, not the origin. The origin is not state:
      * every {@link #centreOn} recomputes it from the focus, so an origin written
-     * here would be silently undone by the next thing that re-centres — an inset
+     * here would be silently undone by the next thing that re-centres: an inset
      * change, an overlay appearing, a desktop resize. Moving the focus keeps
      * every derivation, and with them both edge rules: a pan cannot push the
      * desktop off its window, and an axis where the desktop is smaller than the
@@ -371,7 +371,7 @@ public final class Viewport {
      * <p>Two corrections to it. Each entry goes through {@link #snapScale}, so
      * stepping to an entry lands exactly on it and the index survives the round
      * trip; entries that collide afterwards are dropped, which the original does
-     * not do, leaving it dead steps — fit and fill coincide whenever the desktop
+     * not do, leaving it dead steps: fit and fill coincide whenever the desktop
      * and the window share an aspect ratio, and on a desktop smaller than the
      * window everything below fit clamps onto fit.
      */
@@ -384,13 +384,13 @@ public final class Viewport {
      * the desktop this big fits the window, one rung each.
      *
      * <p>Caller-supplied because what a *region* is depends on what is at the
-     * other end and this class has no business knowing — the same shape as the
+     * other end, which this class cannot know; the same shape as the
      * caller-supplied names on the tap regions. A size that lands on a rung the
      * ladder already has is dropped like any other collision, so handing over a
      * region the size of the desktop changes nothing.
      *
      * @param sizes width and height in desktop pixels, in pairs; anything
-     *              non-positive or longer than the desktop is ignored
+     *              non-positive or larger than the desktop is ignored
      */
     public void setFitSizes(int... sizes) {
         fitSizes = sizes == null ? new int[0] : sizes.clone();
@@ -442,9 +442,9 @@ public final class Viewport {
     }
 
     /**
-     * Fill the window, overflowing on the longer axis — {@code ScaleManager.u},
+     * Fill the window, overflowing on the longer axis ({@code ScaleManager.u},
      * which caps it at {@code floor(density)} (half of {@link #maxScale}) so a
-     * tall desktop on a wide phone cannot jump straight to a huge scale.
+     * tall desktop on a wide phone cannot jump straight to a huge scale).
      */
     public void zoomToFill() {
         setScale(Math.min(fillScale(), (float) Math.floor(density)));
@@ -486,7 +486,7 @@ public final class Viewport {
         selectNearestLadderEntry(scale);
     }
 
-    /** ScaleManager.y — put the index on whichever entry is closest to {@code s}. */
+    /** ScaleManager.y: put the index on whichever entry is closest to {@code s}. */
     private void selectNearestLadderEntry(float s) {
         int best = -1;
         float bestErr = 0;

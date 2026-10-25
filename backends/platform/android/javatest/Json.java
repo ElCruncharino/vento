@@ -13,7 +13,7 @@ import java.util.Map;
  * arrays as lists, strings, numbers as doubles, booleans and null.
  *
  * <p>Written out because a unit test compiles against android.jar, whose
- * {@code org.json} is a set of stubs that throw — and adding the real one
+ * {@code org.json} is a set of stubs that throw, and adding the real one
  * makes it a question of which jar comes first on a class path.
  */
 final class Json {

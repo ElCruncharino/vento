@@ -1,45 +1,45 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The whole of their transport: one length-prefixed frame format, and a hook
+//! RustDesk's entire transport: one length-prefixed frame format, and a hook
 //! for the cipher a session may agree on.
 //!
-//! Split in two because the two directions run on different threads — the
-//! protocol thread reads and a writer thread of its own writes, so a stalled
-//! socket cannot reach whichever thread pressed a key. A cipher counts its
-//! frames, and each direction counts separately, which is why [`Cipher`] is
-//! per-half rather than shared.
+//! Split in two because the two directions run on different threads: the
+//! protocol thread reads and a dedicated writer thread writes, so a stalled
+//! socket cannot block the thread that pressed a key. A cipher counts its
+//! frames, and each direction counts separately, so [`Cipher`] is per
+//! direction rather than shared.
 //!
-//! A direct-access session agrees no cipher at all: their `direct_server` hands
-//! its socket to `create_tcp_connection` with `secure = false`, so nothing is
-//! offered and nothing is asked for, and every frame there is plaintext
-//! protobuf. A session reached by id agrees one before its first message, which
-//! is `crypto::Secretbox`.
+//! A direct-access session agrees no cipher at all: RustDesk's `direct_server`
+//! passes its socket to `create_tcp_connection` with `secure = false`, so
+//! nothing is offered or requested, and every frame is plaintext protobuf. A
+//! session reached by id agrees one (`crypto::Secretbox`) before its first
+//! message.
 
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// What a session's key does to a frame's payload. It is a trait rather than the
-/// cipher itself because this file is the framing and knows nothing about keys:
-/// `crypto::Secretbox` is the one implementation, and a direct-access session
-/// installs none.
+/// Encryption of a frame's payload with the session key. A trait rather than
+/// the cipher itself because this file only does framing and knows nothing
+/// about keys: `crypto::Secretbox` is the only implementation, and a
+/// direct-access session installs none.
 pub trait Cipher: Send {
     fn seal(&mut self, payload: Vec<u8>) -> std::io::Result<Vec<u8>>;
 
     fn open(&mut self, payload: Vec<u8>) -> std::io::Result<Vec<u8>>;
 }
 
-/// The largest payload this will allocate for. Their header can express a
-/// gigabyte; a key frame of a 4K desktop is a few megabytes, and the far end is
-/// not trusted to be well behaved with the difference.
+/// The largest payload this will allocate. The header can express a gigabyte;
+/// a key frame of a 4K desktop is a few megabytes, and the far end is not
+/// trusted to stay within that.
 const MAX_FRAME: usize = 64 << 20;
 
-/// Bytes moved since the socket was opened — protocol bytes, inside whatever is
-/// encrypting them and outside what the link adds, which is what the panel's
-/// row says it means. Shared because the two halves are on two threads and the
-/// row is read from a third.
+/// Bytes received and sent since the socket was opened: the frames as read
+/// from and written to the socket, headers and encryption included, without
+/// what TCP and IP add. Shared because the two directions are on two threads
+/// and the panel's row is read from a third.
 #[derive(Default)]
 pub struct Traffic {
     pub received: AtomicU64,
@@ -58,11 +58,10 @@ pub struct Writer {
     traffic: Arc<Traffic>,
 }
 
-/// Both halves of one socket, and the handle that closes it.
+/// Both directions of one socket, and a handle for closing it.
 ///
-/// The close handle is what ends a session from another thread: a read blocked
-/// on a socket wakes when the socket is shut down, and there is nothing else to
-/// interrupt it with.
+/// The close handle ends a session from another thread: shutting the socket
+/// down is the only way to wake a read blocked on it.
 pub fn split(sock: TcpStream, traffic: Arc<Traffic>) -> std::io::Result<(Reader, Writer, TcpStream)> {
     let write_half = sock.try_clone()?;
     let closer = sock.try_clone()?;
@@ -86,11 +85,11 @@ impl Reader {
         self.cipher = Some(cipher);
     }
 
-    /// One frame's payload, decrypted where a cipher has been agreed.
+    /// One frame's payload, decrypted if a cipher has been agreed.
     ///
-    /// A payload of one byte or less is passed through as it is, which is their
-    /// rule and is what makes the empty `Message` a client sends when it has no
-    /// key legible either way.
+    /// A payload of one byte or less is passed through unchanged, as RustDesk
+    /// does, so the empty `Message` a client without a key sends is readable
+    /// either way.
     pub fn frame(&mut self) -> std::io::Result<Vec<u8>> {
         let mut first = [0u8; 1];
         self.sock.read_exact(&mut first)?;
@@ -119,9 +118,9 @@ impl Reader {
         Ok(payload)
     }
 
-    /// One of their messages, parsed. `Message` on a session and
-    /// `RendezvousMessage` on the way to one: the framing is the same and only
-    /// the top-level type differs.
+    /// One message, parsed: `Message` in a session and `RendezvousMessage`
+    /// while setting one up. The framing is the same and only the top-level
+    /// type differs.
     pub fn message<M: protobuf::Message>(&mut self) -> std::io::Result<M> {
         let bytes = self.frame()?;
         M::parse_from_bytes(&bytes).map_err(|e| std::io::Error::other(format!("not a message: {e}")))
@@ -141,8 +140,8 @@ impl Writer {
         self.send_bytes(msg.write_to_bytes()?)
     }
 
-    /// A message somebody else has already serialized — which is how input
-    /// leaves the thread that produced it without waiting for the socket.
+    /// A message already serialized by the caller, which lets input leave the
+    /// thread that produced it without waiting for the socket.
     pub fn send_bytes(&mut self, payload: Vec<u8>) -> std::io::Result<()> {
         let payload = match self.cipher.as_mut() {
             Some(cipher) => cipher.seal(payload)?,
@@ -177,8 +176,8 @@ mod tests {
     use super::*;
 
     /// Every header length the format has, round-tripped through a socket pair:
-    /// the boundaries are where a shift and a mask are easy to write the wrong
-    /// way round, and each is one byte either side of a header growing.
+    /// shifts and masks are easy to get wrong at the boundaries, and each test
+    /// size is one byte either side of the header growing.
     #[test]
     fn header_lengths() {
         for n in [0usize, 1, 0x3F, 0x40, 0x3FFF, 0x4000, 0x3F_FFFF, 0x40_0000] {

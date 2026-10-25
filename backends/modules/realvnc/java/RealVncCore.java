@@ -18,8 +18,8 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * The process-wide half of the RealVNC backend: load the library, start the one
- * thread that is allowed to talk to it, and initialise it. Once.
+ * The process-wide part of the RealVNC backend: loads the library, starts the
+ * one thread allowed to call into it, and initialises it, once.
  *
  * <p>The single thread is not a style choice. The core registers its socket on
  * whichever thread called {@code createSession} and delivers every callback
@@ -27,14 +27,14 @@ import java.util.Set;
  * and the core's own Android layer funnels every session call through one such
  * thread, created at {@code Application.onCreate} and never torn down, which is
  * the arrangement its locking was written against. The single documented
- * exception — {@code copyScaledRegion} straight from the renderer — is in
+ * exception ({@code copyScaledRegion} called directly from the renderer) is in
  * {@link RealVncBackend}, not here.
  */
 public final class RealVncCore {
 
     static final String TAG = "RealVnc";
 
-    /** Our own namespace, not theirs: theirs would inherit any policy file already on the device. */
+    /** This app's namespace, not RealVNC's, which would pick up any policy file already on the device. */
     private static final String APP_NAME = "net.pgaskin.remotedesktop";
 
     /**
@@ -42,15 +42,15 @@ public final class RealVncCore {
      * sets it to {@code *:android:110}: every category, to logcat, down to the
      * core's level 110, which it writes at VERBOSE. Three categories write a
      * line there per event: {@code CKeyboard} and {@code CConn} one per key
-     * going down and up, naming the keysym (the typed key, which no log should
+     * press and release, naming the keysym (the typed key, which no log should
      * hold), and {@code LineSpeedEstimator} one per estimate, a run of them
      * with every burst of updates. Those three are held at level 100, which
-     * drops their VERBOSE lines: what each says at DEBUG and up ({@code
+     * drops their VERBOSE lines: what each writes at DEBUG and above ({@code
      * CConn}'s "sending client cut text", any warning or error) still reaches
-     * logcat, and every other category is as it was. The parameters given to
+     * logcat, and every other category is unchanged. The parameters given to
      * {@code initApp} are set after the log mode's, at the same priority, so
-     * this one is what the core logs by. The Linux session's {@code CORE_LOG}
-     * is the same string.
+     * this one takes effect. The Linux session's {@code CORE_LOG} is the same
+     * string.
      */
     private static final String CORE_LOG =
             "*:android:110,CKeyboard:android:100,CConn:android:100,LineSpeedEstimator:android:100";
@@ -62,12 +62,11 @@ public final class RealVncCore {
     }
 
     /**
-     * The core's own directory, which is the path {@link #start} gives
-     * {@code initApp} with the app name under it — the core makes it, and what
-     * it puts there is its business rather than this backend's.
+     * The core's own directory: the path {@link #start} gives {@code initApp},
+     * with the app name under it. The core creates it and manages its contents.
      *
-     * <p>Public here because forgetting a server means deleting something out of
-     * it, and nothing else can work out where it is.
+     * <p>Not private because forgetting a server means deleting something from
+     * it, and only this class knows where it is.
      */
     static File dataDir(Context context) {
         return new File(context.getApplicationContext().getFilesDir(), APP_NAME);
@@ -83,9 +82,9 @@ public final class RealVncCore {
         }
         final Context app = context.getApplicationContext();
 
-        // Their library, out of the add-on, by absolute path. This call is what
-        // sets the classloader the core's own lookups are answered from, so it
-        // has to be made from a class of the add-on's — which this is.
+        // RealVNC's library, from the add-on, by absolute path. This call sets
+        // the classloader the core's own lookups resolve against, so it has to
+        // be made from a class in the add-on, as this one is.
         try {
             RealVncLibrary.load(app);
         } catch (IOException e) {
@@ -100,9 +99,9 @@ public final class RealVncCore {
         thread.start();
         handler = new Handler(thread.getLooper());
 
-        // Blocking here rather than posting-and-forgetting: everything else
-        // this class exists for is illegal until initApp has returned, and the
-        // caller is on the main thread at startup where a few ms is invisible.
+        // Blocks here rather than posting without waiting: everything else
+        // this class does is illegal until initApp has returned, and the caller
+        // is on the main thread at startup, where a few ms is not noticeable.
         try {
             runBlocking(() -> {
                 final File logDir = new File(app.getFilesDir(), "vnclog");
@@ -110,11 +109,10 @@ public final class RealVncCore {
                 logDir.mkdirs();
 
                 final Map<String, String> global = Map.of(
-                        // The cursor is ours to draw, at our own scale, over a
-                        // desktop the viewport may be magnifying — which is the
-                        // whole premise of the control stack, and so is not
-                        // offered as a setting the way the other backends'
-                        // cursor rows are.
+                        // The app draws the cursor, at its own scale, over a
+                        // desktop the viewport may be magnifying. The control
+                        // stack depends on that, so it is not offered as a
+                        // setting as the other backends' cursor rows are.
                         "UseLocalCursor", "true",
                         "Locale", "en_US",
                         "SctpMaxMtu", "1200",
@@ -131,31 +129,30 @@ public final class RealVncCore {
                         true,
                         Bindings.LogMode.LOG_DEBUG);
 
-                // The other half of the bootstrap. Everything it wants is about
-                // RealVNC accounts, which we do not use; the bindings answer all
-                // of it themselves, so there is nothing to pass and nothing to
-                // ignore.
+                // The second part of the bootstrap. Everything it takes concerns
+                // RealVNC accounts, which this app does not use; the bindings
+                // answer all of it themselves, so there is nothing to pass.
                 Bindings.initViewer();
 
                 RealVncPrompts.registerFactories();
                 Log.i(TAG, "core initialised on " + Thread.currentThread().getName());
             });
         } catch (Throwable t) {
-            // A bootstrap that failed leaves nothing worth keeping: the thread
-            // goes, so the next attempt is a whole one rather than a second
-            // initApp on a looper that is half set up.
+            // A failed bootstrap leaves nothing worth keeping: the thread is
+            // stopped, so the next attempt starts from scratch rather than
+            // calling initApp again on a half set up looper.
             thread.quitSafely();
             handler = null;
             throw t;
         }
-        // Last, so that a bootstrap which threw is not a core the next caller
-        // is told is ready: everything below is illegal until initApp has
-        // returned, and this flag is the whole of what says it has.
+        // Last, so that the next caller is not told the core is ready after
+        // its bootstrap threw: everything else in this class is illegal until
+        // initApp has returned, and this flag is the only record that it has.
         initialised = true;
         return handler;
     }
 
-    /** Run on the session thread, whether or not we are already on it. */
+    /** Runs on the session thread, inline if already on it. */
     static void post(Runnable r) {
         if (Thread.currentThread() == handler.getLooper().getThread()) {
             r.run();
@@ -173,9 +170,10 @@ public final class RealVncCore {
     }
 
     /**
-     * A throw comes back to the caller rather than up this thread. There is no
-     * handler above a {@code HandlerThread}, so one let out here is the process
-     * — and the caller is the one place that can tell a screen what happened.
+     * An exception is rethrown to the caller rather than up this thread. There
+     * is no handler above a {@code HandlerThread}, so one escaping there kills
+     * the process, and the caller is the only place that can tell a screen what
+     * happened.
      */
     static void runBlocking(Runnable r) {
         if (Thread.currentThread() == handler.getLooper().getThread()) {
@@ -219,9 +217,9 @@ public final class RealVncCore {
     }
 
     /**
-     * A global parameter, applied the way the original applies its "expert
-     * options" string. Anything in the core's parameter registry is reachable
-     * this way, including parameters their UI never exposes.
+     * Sets a global parameter, as the original applies its "expert options"
+     * string. Anything in the core's parameter registry can be set this way,
+     * including parameters RealVNC's UI never exposes.
      */
     public static void setParameter(String name, String value) {
         post(() -> ConfigurationBindings.set(name, value, 10, false));

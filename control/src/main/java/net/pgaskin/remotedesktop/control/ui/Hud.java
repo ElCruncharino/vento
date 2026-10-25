@@ -15,11 +15,11 @@ import net.pgaskin.remotedesktop.control.input.Config;
  *
  * <p>What is shared is the <em>box</em>, not the content. Every screen that
  * drives the control stack wants to see what the stack is doing, and getting
- * that on screen means the same four fiddly things each time: shrink the text
+ * that on screen means the same fiddly things each time: shrink the text
  * until the widest line fits a portrait phone, sit clear of whichever overlay is
  * along the bottom, and draw a panel behind it so white text stays legible over
- * a white window. The lines themselves are the screen's business — the
- * playground's talk about a fake desktop, a session's about a connection.
+ * a white window. The lines themselves are up to the screen: the playground's
+ * talk about a fake desktop, a session's about a connection.
  *
  * <p>Same rule as the rest of {@code control.ui}: {@code android.graphics} only.
  */
@@ -31,8 +31,8 @@ public final class Hud {
 
     /**
      * A per-second rate off a monotonically increasing counter, averaged over a
-     * window so it does not flicker. Every HUD wants one of these — events a
-     * second, frames a second, rectangles a second — and none of them wants to
+     * window so it does not flicker. Every HUD wants one of these (events a
+     * second, frames a second, rectangles a second), and none of them wants to
      * keep three fields to get it.
      */
     public static final class Rate {
@@ -69,8 +69,8 @@ public final class Hud {
     }
 
     /**
-     * @param bottomInsetPx what already occupies the bottom of the view — an
-     *                      overlay, a keyboard, the IME — so the box sits above
+     * @param bottomInsetPx what already occupies the bottom of the view (an
+     *                      overlay, a keyboard, the IME), so the box sits above
      *                      it rather than behind it
      */
     public void draw(Canvas c, String[] lines, int viewW, int viewH, float bottomInsetPx) {

@@ -1,10 +1,9 @@
 # The RustDesk backend's native half. The protocol is plain Rust, and on
 # Android the library is that client as an `api::Backend` (`src/backend.rs`)
-# registered through the platform crate's one JNI layer, so `cargo test` and
+# registered through the platform crate's shared JNI layer, so `cargo test` and
 # `cargo run --features probe --example rustdesk-probe` exercise it on the
-# host. The picture is decoded by whatever `runtime::media::video::Decoders` the
-# client is handed: the phone's MediaCodec, named in `src/lib.rs`, libavcodec
-# in the probe.
+# host. Video is decoded by the `runtime::media::video::Decoders` the client is
+# given: the phone's MediaCodec (see `src/lib.rs`), or libavcodec in the probe.
 [package]
 name = "remotedesktop-rustdesk"
 version.workspace = true
@@ -13,54 +12,54 @@ license.workspace = true
 publish = false
 
 [lib]
-# `lib` for the tests and the example, `cdylib` for the library the app loads —
-# one crate for one protocol.
+# `lib` for the tests, the example and the Linux client, `cdylib` for the
+# library the app loads: one crate per protocol.
 name = "remotedesktop_rustdesk"
 crate-type = ["lib", "cdylib"]
 
 [dependencies]
 log.workspace = true
 remotedesktop-runtime.workspace = true
-# Their session cipher and both signatures: xsalsa20-poly1305, curve25519 boxes
-# and ed25519, which is libsodium's set and is what they link. Pure Rust, so
-# nothing here needs a C library that is not already being built.
+# RustDesk's session cipher and signatures: xsalsa20-poly1305, curve25519 boxes
+# and ed25519, the libsodium set that RustDesk links. Pure Rust, so no extra C
+# library is needed.
 dryoc = "0.7"
-# For the one socket option std does not reach: a peer is dialled from the local
-# port the rendezvous server saw, which is what makes a punch a punch.
-socket2 = { version = "0.6", features = ["all"] } # SO_REUSEPORT is behind it
-# Theirs rather than prost, so the generated code is what their own client
-# would have produced from the same `.proto`. `protobuf-codegen`'s `.pure()`
-# needs no `protoc`, which is a host tool this build would otherwise have to
-# find and pin.
+# For SO_REUSEPORT, which std does not expose: hole punching dials the peer
+# from the same local port the rendezvous server saw.
+socket2 = { version = "0.6", features = ["all"] } # SO_REUSEPORT needs "all"
+# The crate RustDesk uses rather than prost, so the generated code matches
+# what RustDesk's client generates from the same `.proto`.
+# `protobuf-codegen`'s `.pure()` needs no `protoc`, a host tool this build
+# would otherwise have to find and pin.
 protobuf = "3.7"
-# The password hash, which is two rounds of it.
+# The password hash, two rounds of SHA-256.
 sha2 = "0.11"
-# Their clipboard and their cursors are zstd, and this is the one C dependency
-# in here: it builds under the NDK without being asked anything.
+# Clipboard data and cursors are zstd-compressed. This is the only C
+# dependency here, and it builds under the NDK without configuration.
 zstd = "0.13"
 
-# `src/backend.rs`, the protocol as an `api::Backend`: what the Linux
-# client holds, and what the phone's JNI layer stands in front of.
+# `src/backend.rs`, the protocol as an `api::Backend`, used directly by the
+# Linux client and through the JNI layer on the phone.
 remotedesktop-api.workspace = true
 
-# The only part of this crate that knows a phone exists: the one line in
-# `src/lib.rs` that hands the backend to the platform crate's JNI layer, with
-# the MediaCodec decoder that crate has for the picture.
+# The only Android-specific part of this crate: the `natives!` call in
+# `src/lib.rs` that registers the backend with the platform crate's JNI layer,
+# with that crate's MediaCodec decoder for video.
 [target.'cfg(target_os = "android")'.dependencies]
 remotedesktop-platform-android.workspace = true
 
-# The probe decodes what it receives, and on a host that is libavcodec. Under
-# the opposite cfg, so neither the library the app loads nor its licence page
-# has FFmpeg anywhere in its graph, and optional, so that only the probe
-# feature builds it: `cargo test` of this crate builds no FFmpeg. (Optional
-# rather than a dev-dependency, since a dev-dependency cannot be optional;
-# nothing but the example names it.)
+# The probe decodes what it receives, using libavcodec on a host. Under the
+# non-Android cfg, so neither the library the app loads nor its licence page
+# includes FFmpeg, and optional, so that only the probe feature builds it:
+# `cargo test` of this crate builds no FFmpeg. (Optional rather than a
+# dev-dependency, since a dev-dependency cannot be optional; only the example
+# uses it.)
 [target.'cfg(not(target_os = "android"))'.dependencies]
 remotedesktop-platform-linux = { workspace = true, optional = true }
 
-# The probe is a development tool, built only when asked for: `cargo run
-# --features probe --example rustdesk-probe`. Without the feature `cargo test`
-# and `clippy --all-targets` leave it alone.
+# The probe is a development tool, built only on request: `cargo run
+# --features probe --example rustdesk-probe`. Without the feature, `cargo test`
+# and `clippy --all-targets` skip it.
 [features]
 probe = ["dep:remotedesktop-platform-linux"]
 

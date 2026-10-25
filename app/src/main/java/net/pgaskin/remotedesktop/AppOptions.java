@@ -13,18 +13,16 @@ import java.util.Map;
 /**
  * Per-connection settings the <em>app</em> owns.
  *
- * <p>A {@link BackendOption} is a backend describing itself, and these are not
- * that: they are questions about this phone that happen to want a different
- * answer per machine, which is the one thing the app's settings tree cannot
- * express. They ride in the same map as a backend's own options and are shown
- * by the same editor rows, so a person meets one kind of setting rather than
- * two — and the keys carry a prefix nothing else here uses, so a backend never
- * sees one.
+ * <p>A {@link BackendOption} normally describes a backend's own setting. These
+ * are settings of this app that need a different value per machine, which the
+ * app's settings tree cannot express. They are stored in the same map as a
+ * backend's own options and shown by the same editor rows, so the user sees
+ * one kind of setting rather than two. The keys carry a prefix no backend uses,
+ * and {@link Options#forConnection} passes a backend only its own keys.
  *
- * <p>The other half of the rule: nothing goes here that a backend could answer
- * for itself. Whether the far end <em>can</em> resize is a fact about a live
- * session, whether it may be <em>asked</em> to is a question about this phone,
- * and only the second one is here.
+ * <p>Nothing goes here that a backend could decide for itself. Whether the far
+ * end <em>can</em> resize is a fact about a live session; whether it may be
+ * <em>asked</em> to is a setting of this app, and only the second one is here.
  */
 public final class AppOptions {
 

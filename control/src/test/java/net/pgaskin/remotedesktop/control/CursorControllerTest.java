@@ -19,7 +19,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Screen deltas in, absolute desktop pointer events out — plus the per-frame
+ * Screen deltas in, absolute desktop pointer events out, plus the per-frame
  * coalescing, which the original does not have.
  */
 public class CursorControllerTest {
@@ -148,7 +148,7 @@ public class CursorControllerTest {
 
     /**
      * A finger held still keeps producing ACTION_MOVEs, and a cursor pinned at a
-     * desktop edge clamps every delta away — both arrive here as a repeat of the
+     * desktop edge clamps every delta away; both arrive here as a repeat of the
      * position the remote already has.
      */
     @Test
@@ -204,9 +204,9 @@ public class CursorControllerTest {
     }
 
     /**
-     * "The middle" is the middle of the content rect. With a bottom inset —
-     * a soft keyboard, or the extension keyboard — the cursor must
-     * settle above it, not behind it.
+     * "The middle" is the middle of the content rect. With a bottom inset (a
+     * soft keyboard, or the extension keyboard) the cursor must settle above
+     * it, not behind it.
      */
     @Test
     public void centreCursorHonoursTheLayoutInsets() {
@@ -233,8 +233,8 @@ public class CursorControllerTest {
     // ---- the window changing shape ----------------------------------------
 
     /**
-     * An overlay appearing must not move the picture. It is the cursor that
-     * gives way, not the desktop — see {@link CursorController#setInsets}.
+     * An overlay appearing must not move the picture. The cursor moves instead
+     * of the desktop; see {@link CursorController#setInsets}.
      */
     @Test
     public void insetsMoveTheCursorAndLeaveTheDesktopStill() {
@@ -258,7 +258,7 @@ public class CursorControllerTest {
                 1, out.events.size());
     }
 
-    /** Taking them away again puts it back, with the desktop still still. */
+    /** Removing the insets puts the cursor back, and the desktop stays put. */
     @Test
     public void removingTheInsetsIsTheSameMoveBackwards() {
         final float ox = viewport.originX(), oy = viewport.originY();
@@ -292,12 +292,12 @@ public class CursorControllerTest {
     }
 
     /**
-     * The other half of the same question, and the one the device found: on an
-     * axis where the desktop is <em>smaller</em> than the window there is no
-     * clamp and the cursor is not what holds the picture — it is simply placed
-     * in the spare space, so re-placing it in a content rect that just shrank
-     * moves the whole desktop by half the inset. A 1920×1200 desktop on a
-     * portrait phone is letterboxed exactly like this.
+     * The other half of the same case, found on a device: on an axis where the
+     * desktop is <em>smaller</em> than the window there is no clamp and the
+     * cursor does not hold the picture in place. The desktop is placed in the
+     * spare space, so re-placing it in a content rect that just shrank would
+     * move the whole desktop by half the inset. A 1920×1200 desktop on a
+     * portrait phone is letterboxed like this.
      */
     @Test
     public void aLetterboxedDesktopIsNotRecentredByAnOverlay() {
@@ -331,9 +331,9 @@ public class CursorControllerTest {
     // ---- relative mode: the far end owns the cursor -------------------------
 
     /**
-     * The four lines that are the whole centre-follow behaviour stop running:
-     * the delta goes out as a delta, the position stands still, and so does the
-     * desktop — because nothing here knows where the pointer is any more.
+     * Centre-follow stops: the delta goes out as a delta, the position stands
+     * still, and so does the desktop, because the far end owns the pointer
+     * position.
      */
     @Test
     public void inRelativeModeTheDeltaGoesOutAndNothingHereMoves() {
@@ -354,10 +354,10 @@ public class CursorControllerTest {
 
     /**
      * The pan survives an overlay. Relative mode is the only mode a pinch pans
-     * in — there is no centre-follow there to navigate a zoomed desktop with —
-     * and the position an inset would otherwise re-centre on is the one this
-     * mode freezes, so it would put the picture back wherever the cursor was
-     * standing when the far end took it over.
+     * in (there is no centre-follow to navigate a zoomed desktop with), and the
+     * position an inset would otherwise re-centre on is the one this mode
+     * freezes, so re-centring would put the picture back wherever the cursor
+     * was when the far end took it over.
      */
     @Test
     public void anInsetKeepsThePanWhereTheFarEndOwnsTheCursor() {
@@ -387,7 +387,7 @@ public class CursorControllerTest {
     /**
      * The wire carries whole pixels, and a careful drag is a stream of deltas
      * each smaller than one. Rounding each on its own would send nothing at
-     * all — so the fraction is owed, not lost.
+     * all, so the fraction is carried into the next delta.
      */
     @Test
     public void aSlowDragOwesItsFractionsRatherThanLosingThem() {
@@ -406,7 +406,7 @@ public class CursorControllerTest {
     /**
      * The dedupe is the absolute one's mirror image: a second delta identical
      * to the first is a second real movement, and only a frame with nothing
-     * owed and no button change is worth swallowing.
+     * owed and no button change is dropped.
      */
     @Test
     public void anIdenticalRelativeDeltaIsNotADuplicate() {

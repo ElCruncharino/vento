@@ -3,15 +3,14 @@
     SPDX-FileCopyrightText: 2026 Patrick Gaskin
     SPDX-License-Identifier: GPL-3.0-or-later
 
-    One pinned connection, waiting to be moved: what it is called, where it is,
-    and the handle that picks it up.
+    One pinned connection in the reorder sheet: its name, its address, and the
+    drag handle.
 
-    Each row is its own container, which is the one place in this app that a run
-    of rows is not a single group. A group's row wears one of four backgrounds
-    chosen from where it sits, and where these sit is exactly what a drag is
-    changing — so the two rows either side of a swap would have to relearn their
-    corners half way through the gesture. A row that can be picked up is a thing
-    rather than a line of a list, and it is drawn as one.
+    Each row is its own container, the only place in this app where a run of
+    rows is not one group. A group's row background depends on its position,
+    which a drag changes, so the rows on either side of a swap would change
+    corners mid-gesture. A row that can be picked up is drawn as a separate
+    item.
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
@@ -54,9 +53,8 @@
     </LinearLayout>
 
     <!--
-        What the finger goes on. A long press anywhere on the row picks it up as
-        well, since that is what a reorderable list does everywhere else; the
-        handle is what says so without having to be discovered.
+        The drag handle. A long press anywhere on the row also picks it up, as
+        in other reorderable lists; the handle makes dragging discoverable.
     -->
     <ImageView
         android:id="@+id/drag"

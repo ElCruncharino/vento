@@ -129,7 +129,8 @@ pub fn main() {
     println!("READY pid={}", std::process::id());
     std::io::stdout().flush().unwrap();
 
-    // Silence, in real time, until the script has seen where it goes.
+    // Silence, in real time, until the script has checked where the stream
+    // goes.
     let silence = vec![0i16; format.frames(CHUNK) * CHANNELS];
     let waiting = Instant::now();
     let mut next = waiting;
@@ -244,9 +245,9 @@ fn play(stream: &mut Stream, t0: Instant, timeline: &Mutex<Timeline>) {
             let s = match sound {
                 Sound::Tone => AMPLITUDE * (2.0 * std::f64::consts::PI * 440.0 * n as f64 / RATE as f64).sin(),
                 Sound::Clicks => {
-                    // The first 5 ms of each half second but the
-                    // stretch's first: a full-scale 3 kHz burst that
-                    // nothing else in the script makes.
+                    // The first 5 ms of each half second except the
+                    // stretch's first: a full-scale 3 kHz burst, unlike
+                    // anything else in the script.
                     let into = (at * 1000.0).round() as u64 % 500;
                     if into == 0 && at > from + 0.25 && i < RATE as usize / 200 {
                         click = true;
@@ -279,8 +280,8 @@ fn ms(d: Duration) -> f64 {
 }
 
 /// `parec` on `monitor`, read on a thread of its own into `rec.raw`, with
-/// when each piece arrived: what the analysis puts the recording on this
-/// process's clock with.
+/// each piece's arrival time, which the analysis uses to put the recording on
+/// this process's clock.
 struct Recorder {
     child: std::process::Child,
     reader: std::thread::JoinHandle<Vec<(f64, f64)>>,

@@ -19,8 +19,8 @@
 #
 # The default address is the test desktop's (5901), 3389 with -b rdp, 21118
 # with -b rustdesk or 5930 with -b spice; the QEMU rig's VNC port and the H.264
-# rig are 5902 and 5903 and have to be given. RustDesk is an add-on rather than part of the app, so -b rustdesk
-# installs that APK as well.
+# rig are 5902 and 5903 and have to be given. RustDesk is an add-on rather than
+# part of the app, so -b rustdesk installs that APK as well.
 #
 # -6 takes this host's global v6 address instead of its v4 one and brackets it,
 # which is the form the app requires of a literal. Docker publishes every

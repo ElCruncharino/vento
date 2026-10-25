@@ -1,19 +1,19 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! TigerVNC's `vento_tigervnc` as a [`Backend`](api::backend::Backend):
-//! its config from the options, its live options and its rows — what the
-//! Linux client holds, and on the phone what the one JNI layer stands in front
-//! of, linked into the library CMake makes of the C. Its certificates are the client's to judge: the session
-//! hands them to `trust_needed`, so they meet the known hosts as every other
-//! backend's do, and TigerVNC's own known-hosts file is never read or written
-//! — which is why no state directory is given it. Its H.264 is decoded by
-//! the platform's decoders, handed to the C as `vento/video.h`'s table
-//! (`api::c::video`): the Linux client's FFmpeg, with the person's
-//! hardware choice, and the phone's MediaCodec. Its sound — QEMU's audio
-//! extension — is played on the platform's output the same way, handed to
-//! the C as `vento/audio.h`'s table (`api::c::audio`): a PipeWire stream
-//! (or ALSA's default device) on the Linux client, AAudio on the phone.
+//! TigerVNC's `vento_tigervnc` as a [`Backend`](api::backend::Backend): its
+//! config from the options, its live options and its rows. The Linux client
+//! uses it directly; on Android the JNI layer wraps it, linked into the
+//! library CMake builds from the C++. The client decides on its certificates:
+//! the session passes them to `trust_needed`, so they are checked against the
+//! known hosts as every other backend's are, and TigerVNC's own known-hosts
+//! file is never read or written, which is why it is given no state
+//! directory. Its H.264 is decoded by the platform's decoders, passed to the
+//! C as `vento/video.h`'s table (`api::c::video`): FFmpeg on the Linux client,
+//! with the user's hardware choice, and MediaCodec on Android. Its sound
+//! (QEMU's audio extension) is played on the platform's output the same way,
+//! passed to the C as `vento/audio.h`'s table (`api::c::audio`): a PipeWire
+//! stream (or ALSA's default device) on the Linux client, AAudio on Android.
 
 use api::c::{Behaviour, CSession, start};
 use api::backend::{Backend, ConnectionFact, Field, Traffic};
@@ -36,11 +36,11 @@ pub static KIND: Kind = Kind {
     forget: None,
 };
 
-// The phone's library: this backend, registered on the module's generated
-// natives class. Android only — the host opens the C as a library of its own.
-// MediaCodec is what decodes its H.264 there, through the same table as the
-// Linux client's FFmpeg (see `create`), and AAudio is what plays its sound,
-// through the same table as the Linux client's PipeWire or ALSA.
+// The Android library: this backend, registered on the module's generated
+// natives class. Android only; on the host the C++ is a library of its own.
+// MediaCodec decodes its H.264 there, through the same table as the Linux
+// client's FFmpeg (see `create`), and AAudio plays its sound, through the
+// same table as the Linux client's PipeWire or ALSA.
 #[cfg(target_os = "android")]
 platform_android::natives!(
     class = c"net/pgaskin/remotedesktop/backend/tigervnc/TigerVncNatives",
@@ -124,17 +124,17 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
         c,
         &BEHAVIOUR,
         |callbacks| {
-            // H.264 is decoded by the platform's decoders, which the session
-            // is handed here and owns from the call on, released when it
-            // ends (or at once, where it does not start). Made here rather
-            // than above so that it is handed over on every path that makes
-            // it. No decoders, and the session never offers H.264.
+            // H.264 is decoded by the platform's decoders, which are passed
+            // to the session here. It owns them from this call and releases
+            // them when it ends (or at once, if it does not start). Made here
+            // rather than above so that they are passed on every path that
+            // makes them. Without decoders the session never offers H.264.
             let video = c.decoders.clone().map(api::c::video::table);
             if let Some(video) = &video {
                 config.video = video;
             }
-            // The sound output, the same way: the session's from here, and
-            // without one the server is never asked for its sound.
+            // The sound output, the same way: owned by the session from here,
+            // and without one the server is never asked for its sound.
             let audio = c.audio.clone().map(api::c::audio::table);
             if let Some(audio) = &audio {
                 config.audio_output = audio;
@@ -147,9 +147,10 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
     Ok(backend)
 }
 
-/// All of the picture is live: `SetEncodings` at any point, and the pixel
-/// format is this client's to change safely. Shared is decided at ClientInit,
-/// audio at the first SetEncodings, and the bell where the bell arrives.
+/// All of the picture options are live: `SetEncodings` can be sent at any
+/// point, and the client can change the pixel format safely. Shared is decided
+/// at ClientInit, audio at the first SetEncodings, and the bell when a bell
+/// arrives.
 fn set_option(session: &CSession, o: &Options, key: &str) {
     if matches!(key, "Encoding" | "Compression" | "Quality" | "ColorLevel" | "H264") {
         unsafe {
@@ -185,10 +186,10 @@ fn info(s: &[String], traffic: Option<Traffic>) -> Vec<ConnectionFact> {
     facts
 }
 
-/// The library the C is in: on the Linux client `libvento_tigervnc.so`, opened the
-/// first time anything asks, so that one that cannot be loaded makes this
-/// backend not available rather than stopping the client from starting; on
-/// the phone, linked into the same library as this crate.
+/// The library the C++ is in: on the Linux client `libvento_tigervnc.so`,
+/// opened the first time it is needed, so that one that cannot be loaded makes
+/// this backend unavailable rather than stopping the client from starting; on
+/// Android, linked into the same library as this crate.
 #[cfg(target_os = "linux")]
 static LIBRARY: api::c::library::Library<ffi::Library> = api::c::library::Library::new(
     "libvento_tigervnc.so",

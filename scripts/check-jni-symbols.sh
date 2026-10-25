@@ -4,9 +4,9 @@
 # `scripts/check-jni-abi.sh` asks this of somebody else's binary; this
 # asks it of ours, and the failure mode is the same one: a native that is not
 # where Java looks for it does not fail to compile. It fails the first time
-# that method is called, as an UnsatisfiedLinkError — which for something like
-# a thumbnail read might be the first time somebody looks at the home screen
-# after a session.
+# that method is called, as an UnsatisfiedLinkError, which for something like
+# a thumbnail read might be the first time the home screen is shown after a
+# session.
 #
 # A library binds its natives one of two ways, and each is asked its own
 # question:
@@ -16,7 +16,7 @@
 #               native the class declares must be a dynamic symbol.
 #   registered  by `RegisterNatives` from the library's `JNI_OnLoad`: every
 #               other backend, which is one JNI layer (backends/platform/android)
-#               registered on each module's generated natives class — a cdylib
+#               registered on each module's generated natives class: a cdylib
 #               of the protocol crate for the four in Rust, and for the three
 #               in C the same layer linked into the library CMake makes, where
 #               `JNI_OnLoad` is the only export. There is no symbol to look
@@ -156,9 +156,9 @@ for entry in "${MODULES[@]}"; do
     esac
     # The newest, not the first: a CMake module's build tree keeps a directory
     # per configuration, so `find | head -1` can hand back a library from an
-    # older one — which is a check that answers about a binary nobody is
-    # shipping, in both directions. Seen: a MISSING for a method that had been
-    # there for a stage.
+    # older one, and the check would then report on a binary that is not
+    # shipped, in both directions (a MISSING for a method that had been there
+    # for a stage, for example).
     so="$(find "$root" -name "lib${lib}.so" -printf '%T@ %p\n' 2>/dev/null \
             | sort -rn | head -1 | cut -d' ' -f2-)"
     if [ -z "$so" ]; then
@@ -167,8 +167,8 @@ for entry in "${MODULES[@]}"; do
     fi
     echo "== ${module}: ${so#*/build/} (${bound})"
 
-    # The host's readelf, as check-page-alignment.sh uses: these are ordinary
-    # ELF dynamic symbols and no cross toolchain is needed to read them.
+    # The host's readelf: these are ordinary ELF dynamic symbols and no cross
+    # toolchain is needed to read them.
     symbols="$(readelf -W --dyn-syms "$so" | awk '$4=="FUNC"{print $NF}')"
 
     if [ "$bound" = exported ]; then
@@ -212,7 +212,7 @@ for entry in "${MODULES[@]}"; do
 
     declared="$(methods "$natives_class" ' native ' | sort -u)"
     table="$(registered "$so")"
-    # An empty side is a check that passes by asking nothing.
+    # An empty side would make the check pass without checking anything.
     if [ -z "$declared" ]; then
         printf 'MISSING  %s declares no natives\n' "$(basename "$class")"
         fail=1

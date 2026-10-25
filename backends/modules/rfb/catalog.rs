@@ -1,12 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The RFB backend's entry in the catalog: what it is called, where it goes
-//! in a picker, how its identities are pinned, and every option it takes.
-//! Compiled by `remotedesktop-api`, which names this file by path
-//! (`backends/api/src/catalog.rs`), and not by this module's crate: the
-//! Linux client's picker and the phone's generated Java (`vento-codegen`)
-//! read it without building the backend.
+//! The RFB backend's catalog entry: its name, its place in a picker, how its
+//! identities are pinned, and its options. Compiled by `remotedesktop-api`,
+//! which includes this file by path (`backends/api/src/catalog.rs`), not by
+//! this module's crate, so the Linux client's picker and the Android generated
+//! Java (`vento-codegen`) read it without building the backend.
 
 use crate::catalog::About;
 use crate::options::{Scope, Spec, VIEW_ONLY, BELL, SHARED, COMPRESSION_LEVELS, choice, choices};
@@ -14,14 +13,13 @@ use crate::trust::Pinning;
 
 pub static RFB: About = About {
     id: "rfb",
-    // Named for what it is rather than for being the default one: there is
-    // more than one VNC client here, and which implementation a connection
-    // is on is the only thing these names have to tell apart.
+    // Named for the implementation rather than for being the default: there
+    // is more than one VNC client here, and the implementation is the only
+    // thing these names need to distinguish.
     name: "VNC (Rust)",
     short_name: "Rust",
     description: "Rust RFB implementation. Does not support Tight encoding, and typically uses more bandwith and performs worse on slow networks. Allows remote pointer position updates, where supported by the server.",
-    // First in a picker: it is ours, and it is the one that will still be
-    // here.
+    // First in a picker: it is ours, and it will be kept.
     order: 10,
     pinning: Pinning::ADDRESS,
     user_has_domain: false,
@@ -29,19 +27,18 @@ pub static RFB: About = About {
     options: OPTIONS,
 };
 
-/// What the RFB backend can be told.
+/// The RFB backend's options.
 ///
 /// Deliberately shorter than [RealVNC's](crate::catalog::REALVNC). That list
-/// is long because it is a selection from somebody else's parameter registry,
-/// most of which exists for their own transports and identity system; this
-/// one is the whole of what the protocol has to offer, and an option nobody
-/// can describe is worse than no option (the same rule, from the other end).
+/// is long because it is a selection from RealVNC's parameter registry, most
+/// of which exists for their own transports and identity system; this one is
+/// everything the protocol offers, and an option that can't be described is
+/// worse than no option (the same rule, from the other side).
 ///
-/// Two of these are **live in a way RealVNC's are not**, and that is the
-/// protocol rather than a nicety: `SetEncodings` may be sent at any point in a
-/// session, so changing the encoding or the compression acts on the picture in
-/// front of you. RealVNC's equivalent needs a *changed* quality and carries
-/// the group with it.
+/// Two of these **apply live, unlike RealVNC's**, because of the protocol:
+/// `SetEncodings` may be sent at any point in a session, so changing the
+/// encoding or the compression affects the current picture. RealVNC's
+/// equivalent needs a *changed* quality and carries the group with it.
 pub static OPTIONS: &[Spec] = &[
     choices(
         "Security",
@@ -56,12 +53,11 @@ pub static OPTIONS: &[Spec] = &[
             choice("plain", "Never"),
         ],
     ),
-    // The two below are the connection's with the backend's as their default,
-    // since which encoding and how hard to compress is mostly a fact about the
-    // link the phone is on. There is no colour row: the RFB client works in one
-    // pixel format on purpose, which is what makes a region read a row copy,
-    // and a reduced one would put a conversion back in the path for every
-    // decoder it has.
+    // The two below are per connection with the backend's value as their
+    // default, since the best encoding and compression depend mostly on the
+    // link the device is on. There is no colour option: the RFB client works in
+    // one pixel format on purpose, which makes a region read a row copy, and a
+    // reduced format would put a conversion back in the path for every decoder.
     choices(
         "Encoding",
         "Encoding",
@@ -97,9 +93,9 @@ mod tests {
     use crate::kind::Platform;
     use crate::options::find;
 
-    /// The keys it had when the phone's lists became these, in the same
-    /// order: a key is stored in connection records and preference files,
-    /// so one renamed is a setting forgotten.
+    /// The keys the Android lists had when they moved here, in the same
+    /// order: keys are stored in connection records and preference files,
+    /// so renaming one loses the setting.
     #[test]
     fn the_keys_are_the_ones_records_hold() {
         let keys: Vec<&str> = OPTIONS.iter().map(|s| s.key).collect();

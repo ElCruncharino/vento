@@ -1,24 +1,23 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The C and C++ backends, through the vtable in `vento/backend.h`: one
-//! adapter over all of them.
+//! One adapter for all the C and C++ backends, through the vtable in
+//! `vento/backend.h`.
 //!
-//! Everything a session is driven by is the same for each — the vtable is the
-//! same — so [`CSession`] holds the raw session and the mailbox and wraps
-//! each call once, and [`CBackend`] is the [`Backend`] over it. What differs
-//! between them is their config, their live options and the labels on their
-//! info rows, and that is a [`Behaviour`] of function pointers each backend's
-//! crate fills in — the libvncclient, TigerVNC and FreeRDP crates beside
-//! their C sources, and the Linux client's RealVNC adapter.
+//! The vtable is the same for each, so [`CSession`] holds the raw session
+//! and the mailbox and wraps each call once, and [`CBackend`] is the
+//! [`Backend`] over it. What differs between them (their config, their live
+//! options and the labels on their info rows) is a [`Behaviour`] of function
+//! pointers filled in by each backend's crate: the libvncclient, TigerVNC,
+//! FreeRDP and RealVNC crates beside their C sources.
 //!
 //! The callbacks are trampolined into the mailbox: `user` is an `Arc<Mailbox>`
-//! the session carries, recovered by each trampoline as a borrow and reclaimed
-//! in [`CBackend::destroy`], which the header promises runs only after the
-//! protocol thread has ended and no callback can still be in flight.
+//! the session carries, borrowed by each trampoline and reclaimed in
+//! [`CBackend::destroy`], which the header guarantees runs only after the
+//! protocol thread has ended and no callback can still be running.
 //!
-//! Nothing here names one backend's own symbols, so linking this needs none
-//! of their libraries: each crate that does brings its own ([`library`]).
+//! Nothing here references a backend's own symbols, so linking this needs
+//! none of their libraries; each backend crate loads its own ([`library`]).
 
 use crate::backend::{Backend, ConnectionFact, Credentials, Facts, Monitor, Picture, Traffic};
 use crate::events::{Encryption, Identity, Mailbox, Severity};
@@ -34,11 +33,12 @@ pub mod ffi;
 pub mod library;
 pub mod video;
 
-// The clipboard bound `vento/text.h` gives the C session files, which is the
-// one every Rust backend holds to: the two cannot drift apart unbuilt.
+// The clipboard limit `vento/text.h` gives the C session files must equal
+// the one every Rust backend uses; this fails the build if they drift apart.
 const _: () = assert!(ffi::VENTO_MAX_CLIPBOARD as usize == runtime::MAX_CLIPBOARD);
 
-/// A C string the session's bytes become, UTF-8 as the header promises.
+/// A C string from the session as a `String`, UTF-8 as the header
+/// guarantees.
 ///
 /// # Safety
 ///
@@ -51,9 +51,9 @@ pub unsafe fn string(ptr: *const c_char) -> String {
     }
 }
 
-/// `text` into a C buffer of `len` bytes, with its NUL, cut short to fit at a
-/// character boundary. False, with nothing written, where there is no room
-/// for anything but the NUL.
+/// Writes `text` into a C buffer of `len` bytes, with its NUL, truncated to
+/// fit at a character boundary. False, with nothing written, when there is
+/// no room for anything but the NUL.
 ///
 /// # Safety
 ///
@@ -74,7 +74,7 @@ pub(crate) unsafe fn write_string(text: &str, out: *mut c_char, len: usize) -> b
     true
 }
 
-/// The mailbox a callback was handed, as a borrow: `user` is a live
+/// The mailbox a callback was given, as a borrow: `user` is a live
 /// `Arc<Mailbox>` for the length of the session.
 unsafe fn mailbox<'a>(user: *mut c_void) -> &'a Mailbox {
     unsafe { &*(user as *const Mailbox) }
@@ -204,10 +204,10 @@ fn callbacks(user: *mut c_void) -> ffi::vento_callbacks {
     }
 }
 
-/// How far a backend's table reaches, in bytes, which is its `size` member:
-/// the header grows the table at its end, and a backend built against an
-/// older header has a shorter one, whose missing members are not there to be
-/// read at all.
+/// The length of a backend's table in bytes, from its `size` member: the
+/// header grows the table at its end, and a backend built against an older
+/// header has a shorter table whose missing members must not be read at
+/// all.
 ///
 /// # Safety
 ///
@@ -216,15 +216,15 @@ unsafe fn table_size(ops: *const ffi::vento_session_ops) -> usize {
     unsafe { (*ops).size }
 }
 
-/// Where the members every table has end: those up to `destroy`, the last
-/// of the table as it was when `size` was put in front of it.
+/// The end of the members every table has: those up to `destroy`, the last
+/// member of the table when `size` was added at its start.
 const BASE_TABLE: usize =
     std::mem::offset_of!(ffi::vento_session_ops, destroy) + std::mem::size_of::<Option<unsafe extern "C" fn()>>();
 
-/// One of the table's optional members — those after `destroy` — or `None`
-/// where the backend's table ends before it, which is a table from an older
-/// header, as well as where the backend left it NULL. The member is not read
-/// at all unless the table reaches it.
+/// One of the table's optional members (those after `destroy`), or `None`
+/// when the backend's table ends before it (a table from an older header) or
+/// the backend left it NULL. The member is not read at all unless the table
+/// covers it.
 macro_rules! optional {
     ($ops:expr, $member:ident) => {{
         let ops: *const ffi::vento_session_ops = $ops;
@@ -238,17 +238,17 @@ macro_rules! optional {
     }};
 }
 
-/// A started session and the vtable it is reached through. The raw pointers
-/// are the C library's and are safe to touch from any thread, as the header
-/// says of every `vento_session_*` call.
+/// A started session and its vtable. The raw pointers belong to the C
+/// library and may be used from any thread, as the header says of every
+/// `vento_session_*` call.
 pub struct CSession {
-    /// For a backend's own calls beside the vtable — a live option, an
-    /// answer of its own.
+    /// For a backend's own calls outside the vtable (a live option, its own
+    /// kind of answer).
     pub session: *mut ffi::vento_session,
     /// The `Arc<Mailbox>` the callbacks carry, as a raw pointer to reclaim
     /// once the session is destroyed.
     user: *const Mailbox,
-    /// The calls in flight and whether `destroy` has begun.
+    /// The calls in progress and whether `destroy` has begun.
     gate: Gate,
 }
 
@@ -258,14 +258,14 @@ pub struct CSession {
 unsafe impl Send for CSession {}
 unsafe impl Sync for CSession {}
 
-/// What keeps a call from reaching a session `destroy` has freed.
+/// Prevents a call from reaching a session that `destroy` has freed.
 ///
-/// A shared handle can be called from another thread as it is retired — a
-/// drawing thread reading pixels, or a thread holding the backend through a
-/// weak reference to answer a question — so a flag that only `destroy` read
-/// left that call to dereference a freed session. Every call goes through
-/// [`CSession::enter`]: none starts once `destroy` has, and the free waits
-/// for those already in.
+/// A shared handle can be called from another thread while it is being
+/// destroyed (a drawing thread reading pixels, or a thread holding the
+/// backend through a weak reference to answer a question), so a flag read
+/// only by `destroy` would let that call dereference a freed session. Every
+/// call goes through [`CSession::enter`]: none starts once `destroy` has,
+/// and the free waits for those already in progress.
 #[derive(Default)]
 struct Gate {
     state: Mutex<GateState>,
@@ -275,18 +275,18 @@ struct Gate {
 #[derive(Default)]
 struct GateState {
     /// Whether `destroy` has begun: the session is freed and the mailbox
-    /// reclaimed once, however many times a shared handle is retired.
+    /// reclaimed once, however many times `destroy` is called.
     destroyed: bool,
-    /// The thread of each call in flight, once per call (a call can make
-    /// another of these on its way).
+    /// The thread of each call in progress, once per call (a call can make
+    /// another such call).
     inside: Vec<ThreadId>,
-    /// `destroy` came from inside a call on its own thread — a callback
-    /// delivered inline that ended in it — which it cannot wait for, so the
-    /// last call out frees the session instead.
+    /// `destroy` was called from inside a call on the same thread (from a
+    /// callback delivered inline), which it cannot wait for, so the last
+    /// call to leave frees the session instead.
     deferred: bool,
 }
 
-/// A call in flight; see [`Gate`].
+/// A call in progress; see [`Gate`].
 struct Entered<'a>(&'a CSession);
 
 impl Drop for Entered<'_> {
@@ -309,8 +309,7 @@ impl Drop for Entered<'_> {
 }
 
 impl CSession {
-    /// Admits a call, or `None` once `destroy` has begun, when the session
-    /// is not there to call.
+    /// Admits a call, or returns `None` once `destroy` has begun.
     fn enter(&self) -> Option<Entered<'_>> {
         let mut state = self.gate.state.lock().unwrap();
         if state.destroyed {
@@ -320,7 +319,8 @@ impl CSession {
         Some(Entered(self))
     }
 
-    /// `f`, made only while the session is there; `default` otherwise.
+    /// Runs `f` if the session has not been destroyed; returns `default`
+    /// otherwise.
     fn call<R>(&self, default: R, f: impl FnOnce() -> R) -> R {
         match self.enter() {
             Some(_entered) => f(),
@@ -329,8 +329,8 @@ impl CSession {
     }
 
     /// The table, as a pointer rather than a reference: it may be shorter
-    /// than this build's `vento_session_ops` (see [`table_size`]), so a
-    /// member is read through it one at a time, and never the whole.
+    /// than this build's `vento_session_ops` (see [`table_size`]), so
+    /// members are read through it individually, never as a whole.
     fn ops(&self) -> *const ffi::vento_session_ops {
         unsafe { (*self.session).ops }
     }
@@ -377,9 +377,9 @@ impl CSession {
         self.call((), || unsafe { ((*self.ops()).request_desktop_size.unwrap())(self.session, width, height) })
     }
 
-    /// The layout with the far end's own ids, or `None` where the backend
-    /// has none and [`monitors`](CSession::monitors) numbered by index is the
-    /// layout.
+    /// The layout with the far end's own ids, or `None` when the backend has
+    /// no ids and the layout is [`monitors`](CSession::monitors) numbered by
+    /// index.
     fn screens(&self) -> Option<Vec<Monitor>> {
         let _entered = self.enter()?;
         let screens = optional!(self.ops(), screens)?;
@@ -389,8 +389,8 @@ impl CSession {
         Some(Monitor::from_flat5(&flat))
     }
 
-    /// Whether the backend can send a layout at all, whatever the far end
-    /// says to one.
+    /// Whether the backend can send a layout at all, regardless of whether
+    /// the far end accepts it.
     fn has_layout(&self) -> bool {
         self.call(false, || optional!(self.ops(), request_layout).is_some())
     }
@@ -412,8 +412,8 @@ impl CSession {
         }
     }
 
-    /// The info rows, in the backend's own order, or `None` where there are
-    /// none yet. Freed with the header's `vento_strings_free`, which is
+    /// The info rows, in the backend's own order, or `None` when there are
+    /// none yet. Freed as the header's `vento_strings_free` frees them, with
     /// `free` on each item and the array.
     fn info(&self) -> Option<Vec<String>> {
         let _entered = self.enter()?;
@@ -436,8 +436,8 @@ impl CSession {
         Some(rows)
     }
 
-    /// The decoder's overlay line, or `None` where the backend has none —
-    /// no video, no picture yet, or a table from before the member.
+    /// The decoder's overlay line, or `None` when the backend has none (no
+    /// video, no picture yet, or a table from before the member).
     fn decoder_status(&self) -> Option<String> {
         let _entered = self.enter()?;
         let decoder_status = optional!(self.ops(), decoder_status)?;
@@ -450,7 +450,7 @@ impl CSession {
         Some(unsafe { string(line.as_ptr()) })
     }
 
-    /// Received and sent, or `None` while there is nothing to count.
+    /// Bytes received and sent, or `None` while there is nothing to count.
     fn traffic(&self) -> Option<[u64; 2]> {
         let mut out = [0u64; 2];
         self.call(false, || unsafe { ((*self.ops()).traffic.unwrap())(self.session, out.as_mut_ptr()) })
@@ -470,8 +470,8 @@ impl CSession {
         dst_y: usize,
     ) -> bool {
         // The library writes at (dst_y, dst_x) into `dst` itself and checks
-        // only the source, so the destination is this side's to check, as
-        // the header leaves it to the caller.
+        // only the source; the header leaves checking the destination to the
+        // caller.
         let Some([x, y, width, height, dst_x, dst_y]) =
             region_args(dst.len(), [x, y, width, height], dst_stride, dst_x, dst_y)
         else {
@@ -547,12 +547,12 @@ impl CSession {
     }
 
     /// Ends the session, waits for its thread, frees it, and then reclaims
-    /// the mailbox the callbacks carried — in that order, because the
-    /// callbacks are only provably finished once `destroy` has returned.
-    /// Only the first call does anything, as [`Backend::destroy`] promises:
+    /// the mailbox the callbacks carried, in that order, because the
+    /// callbacks are only guaranteed finished once `destroy` has returned.
+    /// Only the first call does anything, as [`Backend::destroy`] requires:
     /// a second would free the session and drop the mailbox's count twice.
-    /// No call starts once this has, and the free waits for the calls other
-    /// threads have in flight (see [`Gate`]).
+    /// No call starts once this has, and the free waits for calls in
+    /// progress on other threads (see [`Gate`]).
     fn destroy(&self) {
         let mut state = self.gate.state.lock().unwrap();
         if std::mem::replace(&mut state.destroyed, true) {
@@ -569,7 +569,7 @@ impl CSession {
         unsafe { self.free() }
     }
 
-    /// The C side's `destroy`, and the mailbox's count back.
+    /// Calls the C side's `destroy` and releases the mailbox reference.
     ///
     /// # Safety
     ///
@@ -582,13 +582,12 @@ impl CSession {
     }
 }
 
-/// `read_region`'s numbers as the C call takes them — `x, y, width, height,
-/// dst_x, dst_y` — or `None` where the call must not be made: a number, or a
-/// far edge, that an `int` cannot hold (passed on, it would wrap to some
-/// other rectangle), an empty rectangle, or a destination of `len` bytes
-/// that does not hold every row of it at `stride`. The last row is the one
-/// that has to fit, and a row wider than the stride is not a rectangle of
-/// `dst` either.
+/// `read_region`'s arguments as the C call takes them (`x, y, width,
+/// height, dst_x, dst_y`), or `None` when the call must not be made: a
+/// value or far edge that an `int` cannot hold (it would wrap to a different
+/// rectangle), an empty rectangle, or a destination of `len` bytes that does
+/// not hold every row at `stride`. Checking the last row is enough, and a
+/// row wider than the stride is rejected too.
 fn region_args(
     len: usize,
     [x, y, width, height]: [usize; 4],
@@ -617,17 +616,18 @@ fn region_args(
 
 /// What differs between the C backends.
 pub struct Behaviour {
-    /// The info rows as this backend's panel reads them, with its own labels;
-    /// `strings` is what `info` returned, and `traffic` is already gathered.
+    /// Builds this backend's info rows with its own labels from the strings
+    /// `info` returned and the already gathered traffic.
     pub info: fn(&[String], Option<Traffic>) -> Vec<ConnectionFact>,
-    /// Whether the sent direction is counted. RealVNC's core counts one way,
-    /// so its row says "in" alone rather than claiming a zero out.
+    /// Whether the sent direction is counted. RealVNC's core counts only one
+    /// way, so its row shows only "in" rather than a misleading zero out.
     pub sent_counted: bool,
-    /// A live option change, after the value has joined `options`. View-only
-    /// goes through the vtable; the rest is the backend's own live call.
+    /// A live option change, after the value has been stored in `options`.
+    /// View-only goes through the vtable; the rest use the backend's own
+    /// live call.
     pub set_option: fn(&CSession, &Options, key: &str),
     /// Whether the credentials carry a domain, which only the RDP backend's
-    /// do; the others send a blank one.
+    /// do; the others send an empty one.
     pub rdp_domain: bool,
 }
 
@@ -642,9 +642,9 @@ pub struct CBackend {
     security: Option<&'static Security>,
 }
 
-/// RealVNC's security prompt, which has a remember to carry and an identity
-/// to hand back: calls of its own, where everyone else has only the plain
-/// yes or no.
+/// RealVNC's security prompt, which has a remember option and an identity to
+/// return, so it has its own calls where the other backends have only the
+/// plain yes or no.
 pub struct Security {
     pub answer: fn(&CSession, accept: bool, remember: bool),
     /// The identity the library asked to have remembered, if any.
@@ -713,7 +713,7 @@ impl Backend for CBackend {
         if key == "ViewOnly" {
             self.session.view_only(options.bool(key));
         }
-        // The backend's own live call reaches the session itself.
+        // The backend's own live call uses the session directly.
         self.session.call((), || (self.behaviour.set_option)(&self.session, &options, key));
     }
 
@@ -724,9 +724,10 @@ impl Backend for CBackend {
             .session
             .screens()
             .unwrap_or_else(|| Monitor::from_flat(&self.session.monitors()));
-        // A backend that sends layouts says whether the far end takes one,
-        // whatever its number of screens; a single size is still one screen
-        // over the lot, which would merge several, so that is not offered.
+        // For a backend that sends layouts, `can_resize` says whether the far
+        // end accepts one, whatever its number of screens; a plain resize
+        // would still merge several screens into one, so it is not offered
+        // for more than one.
         let layout = self.session.has_layout();
         let takes = connected && self.session.can_resize();
         Facts {
@@ -784,9 +785,8 @@ impl Backend for CBackend {
         match credentials {
             None => self.session.answer_credentials("", "", None),
             Some(c) => {
-                // What was typed, with an empty user name sent as the one
-                // the session was created with, as the Java prompts fill it
-                // in. Only RDP has a domain to carry along.
+                // What was typed, with an empty user name replaced by the
+                // one the session was created with. Only RDP sends a domain.
                 let (domain, c) = if self.behaviour.rdp_domain {
                     let (domain, user) = crate::credentials::rdp_identity(&c, &self.domain, &self.user);
                     (domain, Credentials { user, ..c })
@@ -833,19 +833,19 @@ pub fn start(
     security: Option<&'static Security>,
 ) -> Result<Arc<dyn Backend>, String> {
     let mailbox = Arc::clone(&c.mailbox);
-    // The mailbox the callbacks carry, as a raw pointer the session owns.
+    // The mailbox reference the callbacks carry, owned by the session.
     let user = Arc::into_raw(Arc::clone(&mailbox));
     let table = callbacks(user as *mut c_void);
     let session = make(&table);
     if session.is_null() {
-        // Nothing started: reclaim the pointer the callbacks would have.
+        // Nothing started: reclaim the reference meant for the callbacks.
         unsafe { drop(Arc::from_raw(user)) };
         return Err("could not start the connection".into());
     }
-    // A table that says it is shorter than the members every table has is
-    // one whose `size` was never filled in, and every member after them
-    // would be read as absent; said here, where it is the backend's fault,
-    // rather than discovered as a feature that silently does nothing.
+    // A table claiming to be shorter than the members every table has never
+    // had its `size` filled in, so every optional member would be read as
+    // absent. Logged here, as the backend's fault, rather than showing up as
+    // a feature that silently does nothing.
     let size = unsafe { table_size((*session).ops) };
     if size < BASE_TABLE {
         log::warn!("the backend's vento_session_ops says it is {size} bytes, which no table is");
@@ -872,8 +872,8 @@ mod tests {
 
     unsafe extern "C" fn no_layout(_: *mut ffi::vento_session, _: c_int, _: c_int, _: *const i32, _: c_int) {}
 
-    /// A table in a session, with nothing else behind it: only the table is
-    /// read by what is tested.
+    /// A session with only a table behind it: the tested code reads only
+    /// the table.
     fn with_table<T>(ops: &ffi::vento_session_ops, f: impl FnOnce(&CSession) -> T) -> T {
         let mut raw = ffi::vento_session { ops };
         // Never destroyed, so the null mailbox is never reclaimed.
@@ -894,8 +894,8 @@ mod tests {
         hold: Mutex<bool>,
         released: Condvar,
         entered: std::sync::Barrier,
-        /// Called from inside the pointer call, as a listener would that
-        /// destroys the session from a callback delivered inline.
+        /// Called from inside the pointer call, like a listener destroying
+        /// the session from a callback delivered inline.
         inline: Mutex<Option<Box<dyn Fn() + Send>>>,
     }
 
@@ -934,8 +934,8 @@ mod tests {
         ..unsafe { std::mem::zeroed() }
     };
 
-    /// A recorder, leaked (the test outlives nothing it points at), in a
-    /// session holding a real mailbox for `free` to reclaim.
+    /// A leaked recorder, in a session holding a real mailbox for `free` to
+    /// reclaim.
     fn recorded() -> (&'static Recorder, Arc<CSession>, Arc<Mailbox>) {
         let r: &'static Recorder = Box::leak(Box::new(Recorder {
             raw: ffi::vento_session { ops: &TABLE },
@@ -955,7 +955,7 @@ mod tests {
     }
 
     /// Nothing reaches the backend once `destroy` has run, and a second
-    /// `destroy` is nothing: one free, one count back.
+    /// `destroy` does nothing: one free, one reference released.
     #[test]
     fn nothing_reaches_a_destroyed_session() {
         let (r, session, mailbox) = recorded();
@@ -969,7 +969,7 @@ mod tests {
     }
 
     /// A call already inside the backend when another thread destroys the
-    /// session is waited for: the free comes after it, never under it.
+    /// session is waited for: the free comes after it, never during it.
     #[test]
     fn destroy_waits_for_a_call_in_flight() {
         let (r, session, mailbox) = recorded();
@@ -1015,14 +1015,14 @@ mod tests {
             ..Default::default()
         };
         assert!(with_table(&full, |s| s.has_layout()));
-        // The same member, in a table that says it ends before it: an older
-        // backend's, whose bytes there are something else.
+        // The same member, in a table that ends before it: an older
+        // backend's, where those bytes are something else.
         let old = ffi::vento_session_ops {
             size: BASE_TABLE,
             ..full
         };
         assert!(!with_table(&old, |s| s.has_layout()));
-        // And in range but NULL, which is a backend saying no.
+        // In range but NULL: the backend does not support it.
         let none = ffi::vento_session_ops {
             request_layout: None,
             ..full

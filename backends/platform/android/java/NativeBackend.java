@@ -24,24 +24,24 @@ import java.util.function.Consumer;
  * ones it is the small crate beside the C library, over the one vtable in
  * {@code vento/backend.h}, linked into the same library.
  *
- * <p>There used to be one of these per protocol, and they were twins: the
- * same handle, the same retirement, the same posting to the main thread,
- * differing in which natives they called and in a handful of things that
- * really are the protocol's. The natives are now one surface
- * ({@link Natives}), and the handful are {@link Hooks}.
+ * <p>One class serves every native backend: they share the handle, its
+ * retirement and the posting to the main thread, and differ only in their
+ * natives and a few things that depend on the protocol. The natives are one
+ * surface ({@link Natives}), and the protocol-specific parts are
+ * {@link Hooks}.
  *
- * <p>What a module supplies is its natives class — generated, one per module,
- * because each library registers its functions on a class of its own — and
- * its hooks. Everything else is here:
+ * <p>A module supplies its natives class (generated, one per module, because
+ * each library registers its functions on a class of its own) and its hooks.
+ * Everything else is here:
  *
  * <ul>
  *   <li><b>No session thread.</b> RealVNC's core registers its socket on the
  *       calling thread's {@code ALooper}, so every call into it has to be
  *       marshalled onto one {@code Looper} thread. These own their threads, so
- *       a call from anywhere is just a call.
+ *       they can be called from any thread directly.
  *   <li><b>No connect timeout here.</b> It is in each client, on the socket,
- *       and only over the handshake — a deadline that covers the server but not
- *       the person typing a password.
+ *       and only over the handshake: a deadline that covers the server but not
+ *       the user typing a password.
  *   <li><b>No pixel lock against a resize.</b> Each framebuffer is behind a
  *       reader-writer lock inside its client rather than being a scratch buffer
  *       an unlocked allocator can move under a copy in flight.
@@ -52,20 +52,21 @@ import java.util.function.Consumer;
  * so the handle is taken out of circulation under {@link #pixels} before it is
  * freed.
  *
- * <p>What is decided rather than shown is not here either: whether a far
- * end's identity matches its pin, whether a first sight of one is pinned
- * without asking, and what an RDP prompt's name starts with are
- * {@code api::trust} and {@code api::credentials}, the Linux client's
- * rules too, applied in the JNI layer. A question arrives here already worked
- * out, to be shown; the pins themselves stay in {@link KnownHosts}, which that
+ * <p>Decisions are not here either, only what is shown: whether a far end's
+ * identity matches its pin, whether a first sight of one is pinned without
+ * asking, and what an RDP prompt's name starts with are decided by
+ * {@code api::trust} and {@code api::credentials}, which the Linux client
+ * uses too, applied in the JNI layer. A question arrives here already decided,
+ * to be shown; the pins themselves stay in {@link KnownHosts}, which that
  * layer reads and writes through {@link #knownHostsPins} and
  * {@link #knownHostsPin}.
  *
  * <p>Events arrive through the {@code on…} methods below, one at a time and in
- * the order the session said them, on the thread that said them: the protocol
- * thread nearly always, a call into the session (an answer, a close) now and
- * then. Damage arrives once per frame, as one array of rectangles handed to
- * the listener one at a time from here: a crossing a frame, not a rectangle.
+ * the session's order, on the thread that raised them: nearly always the
+ * protocol thread, sometimes a call into the session (an answer, a close).
+ * Damage arrives once per frame, as one array of rectangles handed to the
+ * listener one at a time from here: one JNI crossing per frame, not per
+ * rectangle.
  */
 public final class NativeBackend implements Backend {
 
@@ -91,7 +92,7 @@ public final class NativeBackend implements Backend {
      */
     public interface Natives {
 
-        /** What the library says it is — the one call that proves the whole path. */
+        /** The library's version: the one call that proves the whole path works. */
         String version();
 
         /**
@@ -100,7 +101,8 @@ public final class NativeBackend implements Backend {
          *
          * @param tag        what the library logs under
          * @param password   null to be asked; empty is not a password
-         * @param options    key, value, key, value — over the catalog's defaults
+         * @param options    key, value, key, value, with the catalog's defaults
+         *                   filled in
          * @param screenWidth the window a session gets on this phone, or zero:
          *                   what an RDP {@code DesktopSize=device} asks for
          * @param lastWidth  the size this address's desktop was left at, or zero:
@@ -150,17 +152,17 @@ public final class NativeBackend implements Backend {
 
         void clipboard(long handle, String text);
 
-        /** One option on the running session; what is live is the backend's to say. */
+        /** One option on the running session; the backend decides which are live. */
         void setOption(long handle, String key, String value);
 
         void requestDesktopSize(long handle, int width, int height);
 
         void requestDisplay(long handle, int index);
 
-        /** The session's sound muted or heard, at once; see {@link Backend#setMuted}. */
+        /** Mutes or unmutes the session's sound at once; see {@link Backend#setMuted}. */
         void setMuted(long handle, boolean muted);
 
-        /** The far end asked for its sound or to stop it; see {@link Backend#setSoundEnabled}. */
+        /** Asks the far end for its sound or to stop it; see {@link Backend#setSoundEnabled}. */
         void setSoundEnabled(long handle, boolean enabled);
 
         /** The debug overlay's sound line, or null; see {@link Backend#soundLine}. */
@@ -180,7 +182,7 @@ public final class NativeBackend implements Backend {
          */
         String[] info(long handle);
 
-        /** Received and sent, -1 for a direction nobody counts; null for none. */
+        /** Received and sent, -1 for a direction that is not counted; null for none. */
         long[] traffic(long handle);
 
         boolean readRegion(long handle, int x, int y, int width, int height,
@@ -191,10 +193,10 @@ public final class NativeBackend implements Backend {
     }
 
     /**
-     * What a backend does differently on this side of the boundary: the few
-     * places where what is right depends on the protocol and the decision is
-     * still the app's rather than the session's. Each has the common answer as
-     * its default, so a backend says only where it differs.
+     * A backend's Java-side differences: the few places where the right
+     * behaviour depends on the protocol and the decision is still the app's
+     * rather than the session's. Each has the common answer as its default, so
+     * a backend says only where it differs.
      */
     public interface Hooks {
 
@@ -219,10 +221,10 @@ public final class NativeBackend implements Backend {
         }
 
         /**
-         * What going on means, after why the far end could not be verified:
-         * the second half of {@link #onUnverified}'s question. The common
-         * answer is the plain one; a VNC TLS without a certificate is still
-         * encrypted, and says so.
+         * What connecting anyway means, shown after the reason the far end
+         * could not be verified: the second half of {@link #onUnverified}'s
+         * question. The common answer is the plain one; a VNC TLS without a
+         * certificate is still encrypted, and says so.
          */
         default String unverifiedConsequence() {
             return "Connecting anyway leaves the session unencrypted.";
@@ -256,8 +258,8 @@ public final class NativeBackend implements Backend {
     /** Guards {@link #handle} against being freed under a read in flight. */
     private final Object pixels = new Object();
     // Volatile as well as guarded: the lock holds off the free while a pixel
-    // read is in flight, and every other caller — input, a prompt answered from
-    // the protocol thread, the panel — reads it without taking it.
+    // read is in flight, and every other caller (input, a prompt answered from
+    // the protocol thread, the panel) reads it without taking it.
     private volatile long handle;
 
     private volatile State state = State.IDLE;
@@ -279,25 +281,25 @@ public final class NativeBackend implements Backend {
                          Natives natives, Hooks hooks, String address, String userName,
                          String password, Map<String, String> extraOptions) {
         // The application's, not a screen's: this outlives the activity by
-        // design, and what it is for is the pin store and the hooks' notes.
+        // design, and it is used for the pin store, the window size and the
+        // files directory.
         this.context = context.getApplicationContext();
         this.tag = tag;
         this.natives = natives;
         this.hooks = hooks == null ? Hooks.NONE : hooks;
         this.address = address;
         this.userName = userName == null ? "" : userName;
-        // Empty is not a password, for the reason the RealVNC backend found
-        // it first: something that looks like a stored secret and is not one
-        // fails the connection instead of asking for the real one.
+        // Empty is not a password, as in the RealVNC backend: something that
+        // looks like a stored secret and is not one fails the connection
+        // instead of asking for the real one.
         this.password = password == null || password.isEmpty() ? null : password;
         this.options = new ConcurrentHashMap<>();
         for (var option : catalog) {
             options.put(option.key(), option.defaultValue());
         }
         if (extraOptions != null) {
-            // The map is concurrent, so it takes no nulls: an option nobody
-            // has answered is an absent key, which is what every reader here
-            // expects.
+            // The map is concurrent, so it takes no nulls: an unset option is
+            // an absent key, which is what every reader here expects.
             extraOptions.forEach((k, v) -> {
                 if (k != null && v != null) {
                     options.put(k, v);
@@ -337,8 +339,8 @@ public final class NativeBackend implements Backend {
                 screen == null ? 0 : screen[0], screen == null ? 0 : screen[1],
                 last == null ? 0 : last[0], last == null ? 0 : last[1],
                 // What the far end shows and logs while this session is up.
-                // The phone rather than the app: somebody looking at their own
-                // desktop wants to know which device is on it.
+                // The phone rather than the app: the desktop's owner wants to
+                // know which device is connected.
                 Build.MODEL, context.getFilesDir().getPath());
         if (h == 0) {
             closed("Could not start the connection");
@@ -428,8 +430,8 @@ public final class NativeBackend implements Backend {
      * copy. Asynchronous all the same, because the interface is.
      *
      * <p>The rows and their words are the backend's; the one row whose words
-     * are ours, {@link ConnectionFact.Field#DATA}, is made here from the raw
-     * counts, in the phone's own number format.
+     * are the app's, {@link ConnectionFact.Field#DATA}, is made here from the
+     * raw counts, in the phone's own number format.
      */
     @Override
     public void connectionInfo(Consumer<List<ConnectionFact>> callback) {
@@ -484,10 +486,10 @@ public final class NativeBackend implements Backend {
     public void setSoundEnabled(boolean enabled) {
         final long h = handle;
         if (h != 0 && !dead) {
-            // Kept at once, as the session's controls keep it: what the switch
-            // is set to is the request, and a screen that asks straight after
-            // turning it must not see it turned back until the far end's
-            // answer has crossed. onSound says the same a moment later.
+            // Stored at once, as the session's controls do: the switch's state
+            // is the request, and a screen that asks straight after turning it
+            // must not see it turned back before the far end's answer arrives.
+            // onSound reports the same a moment later.
             if (soundSwitch == SOUND_SWITCH_ENABLE) {
                 soundEnabled = enabled;
             }
@@ -602,7 +604,7 @@ public final class NativeBackend implements Backend {
         if (w <= 0 || h <= 0 || maxWidth <= 0 || maxHeight <= 0) {
             return null;
         }
-        // Any integer step. RealVNC's had to be a power of two because their
+        // Any integer step. RealVNC's has to be a power of two because its
         // scaler computes its stride as (int)(1/scale) and a float reciprocal
         // does not round-trip; these take the step itself and never see a
         // float.
@@ -699,9 +701,9 @@ public final class NativeBackend implements Backend {
     /**
      * The session's sound: its switch ({@code SOUND_SWITCH_*}), whether the
      * far end is asked for its sound, whether it is muted here (which {@link
-     * #setMuted} set), and whether a stream plays — the first stream written
-     * to, until the last one closed. Kept here as well, for a screen that
-     * attaches later.
+     * #setMuted} set), and whether a stream plays (from the first stream
+     * written to until the last one closes). Kept here as well, for a screen
+     * that attaches later.
      */
     void onSound(int soundSwitch, boolean enabled, boolean muted, boolean playing) {
         final boolean started = playing != soundPlaying;
@@ -718,7 +720,7 @@ public final class NativeBackend implements Backend {
         });
     }
 
-    /** Already through {@code AcceptBell}, which the session applies. */
+    /** Already filtered by {@code AcceptBell}, which the session applies. */
     void onBell() {
         main.post(() -> {
             if (listener != null) {
@@ -740,8 +742,8 @@ public final class NativeBackend implements Backend {
 
     /**
      * Credentials are wanted. Answered through {@link Natives#answerCredentials}
-     * with what was typed: what the protocol makes of a blank or a domain is
-     * the session's to say.
+     * with what was typed; the session decides what a blank or a domain means
+     * for the protocol.
      *
      * @param user what the box starts with: the record's name, with an RDP
      *             domain written into it
@@ -771,14 +773,14 @@ public final class NativeBackend implements Backend {
     }
 
     /**
-     * The far end's identity did not match its pin, and somebody has to say
-     * whether to go on: what the JNI layer decided, with why. A match, and a
-     * first sight a backend's identity is vouched for at, never come here —
-     * they are answered there.
+     * The far end's identity is not pinned or does not match its pin, and the
+     * user has to decide whether to continue: what the JNI layer decided, with
+     * the reason. A match, and a first sight that the backend vouches for,
+     * never come here: the JNI layer answers them.
      *
-     * <p>The interesting distinction is between "never seen" and "seen, and
-     * different now", which {@code identity} carries and a screen says the
-     * second of loudly. Answered through {@link Natives#answerPin}, which pins
+     * <p>The important distinction is between "never seen" and "seen, and
+     * different now", which {@code identity} carries; a screen warns loudly
+     * about the second. Answered through {@link Natives#answerPin}, which pins
      * it when it was accepted with <em>remember</em> ticked.
      *
      * @param key             what it is pinned under: the address as written,
@@ -821,14 +823,15 @@ public final class NativeBackend implements Backend {
     /**
      * The machine could not be verified at all, which is a different question
      * from whether an identity is the right one: there is nothing to pin,
-     * nothing to compare it against, and going on means going on in the clear.
+     * nothing to compare it against, and continuing usually means continuing in
+     * the clear ({@link Hooks#unverifiedConsequence}).
      *
      * <p>So it is a question rather than a refusal, and it is
      * {@link Prompt.Message} rather than {@link Prompt.Trust}: a trust prompt
-     * offers to remember an identity, and the whole of this case is that there
-     * is not one. Nothing is remembered and it is asked every time. RustDesk
-     * asks it of a peer with no key, and the two borrowed VNC clients of a TLS
-     * with no certificate; the others have an identity or nothing to ask.
+     * offers to remember an identity, and in this case there is none. Nothing
+     * is remembered and it is asked every time. RustDesk asks it of a peer with
+     * no key, and the two third-party VNC clients of a TLS with no certificate;
+     * the others have an identity or nothing to ask.
      *
      * @param key what an identity would have been pinned under
      */
@@ -854,8 +857,8 @@ public final class NativeBackend implements Backend {
 
     /**
      * A question in the library's own words, which only TigerVNC asks: an
-     * RSA-AES server key, which their viewer asks about every time and keeps
-     * nothing of. So it is a {@link Prompt.Message}, not a pin.
+     * RSA-AES server key, which its viewer asks about every time without
+     * storing it. So it is a {@link Prompt.Message}, not a pin.
      */
     void onQuestion(String title, String text) {
         Log.i(tag, "the library wants an answer: " + title);
@@ -878,7 +881,7 @@ public final class NativeBackend implements Backend {
     /**
      * RealVNC's security question, which is asked of its own Java and never
      * comes this way. Refused rather than dropped, so that a backend that did
-     * ask it would close instead of waiting for an answer nobody can give.
+     * ask it would close instead of waiting for an answer that never comes.
      * Posted, so the handle is there to answer through.
      */
     void onSecurityNeeded(String signature) {

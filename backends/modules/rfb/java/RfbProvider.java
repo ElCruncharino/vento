@@ -14,14 +14,14 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * This module's entry in a build's list of backends. What the RFB backend is
- * called and what it can be told are the catalog's, which the Linux client
- * reads too: {@link RfbCatalog}, generated from {@code backends/api} at
- * build time, holds the words and the option keys.
+ * This module's entry in a build's list of backends. The RFB backend's name and
+ * options come from the catalog, which the Linux client also reads:
+ * {@link RfbCatalog}, generated from {@code backends/api} at build time, holds
+ * the text and the option keys.
  *
- * <p>A session is a {@link NativeBackend} on {@link RfbNatives}, generated
- * too: the client in the module's crate as an {@code api::Backend},
- * with nothing about RFB on this side of the boundary that needs a hook.
+ * <p>A session is a {@link NativeBackend} on {@link RfbNatives}, also
+ * generated: the client in the module's crate as an {@code api::Backend}.
+ * Nothing about RFB on the Java side needs a hook.
  */
 public final class RfbProvider implements BackendProvider {
 

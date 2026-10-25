@@ -11,22 +11,22 @@ import java.util.Map;
 /**
  * The remote cursor's shapes, kept rather than rebuilt.
  *
- * <p>What this saves is <em>not</em> a round trip. Every protocol here sends
- * the shape whenever it changes — RDP's own pointer cache is resolved inside
- * its library before we see it, and RFB has no cache at all — so a shape
- * arrives on the wire either way. What it saves is the {@code ARGB_8888} and
+ * <p>What this saves is <em>not</em> a round trip. A protocol's own cursor
+ * cache (RDP's, SPICE's, RustDesk's cursor ids) is resolved before the shape
+ * reaches this layer, and RFB has no cache at all, so every change arrives
+ * here as a full shape either way. What it saves is the {@code ARGB_8888} and
  * the {@code setPixels} behind each one, and then the texture the renderer
  * uploads for it: a pointer crossing a window's edge changes shape several
  * times a second, between two or three shapes it has already had.
  *
  * <p>The identity is a hash of the pixels, computed by the JNI layer, which
- * has them — every native backend's cursor crosses as an {@code int[]} it
+ * has them: every native backend's cursor crosses as an {@code int[]} it
  * has just filled ({@code runtime::cursor}), so hashing there is a pass over
- * data that is already hot. The consequence is that this class trusts the hash: two
- * shapes that collide are one shape, which is a wrong cursor rather than a
- * crash, and at 64 bits over a few dozen live shapes it will not happen.
+ * data that is already hot. This class trusts the hash: two shapes that
+ * collide are one shape, which is a wrong cursor rather than a crash, and at
+ * 64 bits over at most 16 live shapes it will not happen.
  *
- * <p><b>Bounded, which is the whole of the risk.</b> A far end whose cursor is
+ * <p><b>Bounded, which covers the only risk.</b> A far end whose cursor is
  * an animation would otherwise fill memory with shapes never seen twice, so
  * there is a count and a byte budget and the least recently used goes first.
  * The pathological case then costs exactly what having no cache costs.
@@ -68,9 +68,9 @@ public final class CursorCache {
         shapes.put(hash, shape);
         bytes += width * height * 4;
         // Eviction after insertion rather than before, so a single shape larger
-        // than the whole budget is still returned once. Nothing recycles what
-        // it drops: the renderer may still be drawing the shape it was last
-        // handed, and a bitmap nobody holds is collected anyway.
+        // than the whole budget is still returned once. Dropped bitmaps are
+        // not recycled: the renderer may still be drawing the shape it was
+        // last handed, and an unreferenced bitmap is collected anyway.
         final var it = shapes.entrySet().iterator();
         while (it.hasNext() && (shapes.size() > MAX_SHAPES || bytes > MAX_BYTES)
                 && shapes.size() > 1) {

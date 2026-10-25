@@ -1,18 +1,17 @@
-# A throwaway RDP desktop to point the prototype at — testvnc's twin.
+# A throwaway RDP desktop to point the app at, the RDP counterpart of testvnc.
 #
 # "RDP is a different protocol, not a different server" is a claim about the
 # control stack, and it is only tested by driving the same desktop through
 # both.
 #
-# So this is deliberately the *same* desktop as testvnc — same wallpaper, same
-# four X clients, same scrollable document — with xrdp in front of it instead of
+# So this is deliberately the *same* desktop as testvnc (same wallpaper, same
+# four X clients, same scrollable document) with xrdp in front of it instead of
 # Xvnc. What differs between the two sessions on the phone is then the protocol
 # and nothing else.
 #
-# xrdp rather than a Windows machine because it is the server anybody can run,
-# it authenticates through PAM, and it presents a certificate it generated for
-# itself — which is exactly the trust question the pin store was built
-# for.
+# xrdp rather than a Windows machine because it runs anywhere, it
+# authenticates through PAM, and it presents a certificate it generated for
+# itself, which is the trust question the pin store was built for.
 FROM debian:trixie
 
 ENV DEBIAN_FRONTEND=noninteractive

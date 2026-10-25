@@ -1,6 +1,6 @@
 # Print the X server's current cursor image (XFixesGetCursorImage): size,
 # hotspot, a few pixels as ARGB, and whether any pixel's colour is above its
-# alpha — to check the native cursor without eyes. python3 -I cursor.py :42
+# alpha, to check the native cursor without looking at it. python3 -I cursor.py :42
 import ctypes, sys
 class Img(ctypes.Structure):
     _fields_ = [("x", ctypes.c_short), ("y", ctypes.c_short),

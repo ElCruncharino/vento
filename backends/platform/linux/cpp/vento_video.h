@@ -1,32 +1,32 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// A video decoder on a desktop: libavcodec behind one narrow C API, which is
-// all of FFmpeg the Rust decoder (`platform_linux::ffmpeg`) sees.
+// A desktop video decoder: libavcodec behind one narrow C API, the only FFmpeg
+// interface the Rust decoder (`platform_linux::ffmpeg`) uses.
 //
 // Narrow on purpose. FFmpeg's own API is hundreds of functions and structs
-// whose layout changes with every major release; this is a dozen calls and one
-// struct of plain integers and pointers, written by hand on both sides, so
-// the Rust half needs no generated bindings and no FFmpeg headers, and a new
-// FFmpeg is a change to this file's implementation alone. What crosses it is
-// what a frame-at-a-time decoder needs: a packet in, and the last picture out
-// described plane by plane, for the caller to convert. Conversion stays the
-// caller's (`runtime::media::video::convert`), the same on the phone as here.
+// whose layout changes with every major release; this is about twenty calls and
+// three structs of plain integers and pointers, written by hand on both sides,
+// so the Rust half needs no generated bindings and no FFmpeg headers, and a new
+// FFmpeg changes only this file's implementation. It carries what a
+// frame-at-a-time decoder needs: a packet in, and the last picture out
+// described plane by plane. Conversion stays the caller's
+// (`runtime::media::video::convert`), the same on the phone as here.
 //
-// Hardware decoding is the caller's to ask for and off unless it does: a
-// decoder opened with VENTO_VIDEO_HW_OFF is the software decoder it always
-// was, and nothing of libva is loaded for it. Asked for, the
-// picture still comes out as planes in memory the caller reads (the surface
-// mapped for reading, not copied), so the caller cannot tell the two apart
-// except by asking; and the decoder is software whenever hardware cannot
-// have it, at the open or in the middle of a stream, with the reason kept.
+// Hardware decoding is off unless the caller requests it: a decoder opened with
+// VENTO_VIDEO_HW_OFF is a plain software decoder, and libva is not loaded for
+// it. When requested, the picture still comes out as planes in memory for the
+// caller to read (the surface mapped for reading rather than copied), so the
+// caller cannot tell the two apart except by asking; and the decoder falls back
+// to software whenever the hardware cannot decode the stream, at the open or
+// mid-stream, with the reason kept.
 //
 // Unless the caller asks to `hold` a VAAPI picture instead: then it is not
-// mapped at all but handed out as it is, a `vento_video_frame` that keeps
-// its surface for as long as the caller does, which the caller can export
-// as DMA-BUFs for its GPU to read, or map after all where it needs the
-// pixels in memory. That is for a caller that draws on the same GPU, and
-// saves the readback, which is most of what a hardware picture costs.
+// mapped at all but handed out as a `vento_video_frame` that keeps its surface
+// until the caller frees it, and that the caller can export as DMA-BUFs for its
+// GPU to read, or map where it needs the pixels in memory. That is for a caller
+// that draws on the same GPU, and saves the readback, which is most of a
+// hardware picture's cost.
 #ifndef VENTO_VIDEO_H
 #define VENTO_VIDEO_H
 
@@ -37,7 +37,8 @@
 extern "C" {
 #endif
 
-// The codecs, numbered as the Rust side's `Codec` asks for them.
+// The codecs, numbered as the Rust side (`platform_linux::ffmpeg`) maps its
+// `Codec` to them.
 enum vento_video_codec {
     VENTO_VIDEO_H264 = 1,
     VENTO_VIDEO_H265 = 2,
@@ -46,7 +47,7 @@ enum vento_video_codec {
     VENTO_VIDEO_AV1 = 5,
 };
 
-// How a decoder may decode, as the caller asks for it: numbered as
+// How a decoder may decode, as the caller requests it: numbered in the order
 // `runtime::media::video::Hardware` declares them.
 enum vento_video_hardware {
     // libavcodec's software decoders, and nothing else: the default.
@@ -55,8 +56,8 @@ enum vento_video_hardware {
     // DRM render node: `Hardware::On`, the one hardware API here.
     VENTO_VIDEO_HW_VAAPI = 1,
     // VAAPI where it has a decoder for the stream, else software: the same
-    // as VAAPI here, which is the one device there is; the person's "use the
-    // GPU where it can" rather than a choice of API.
+    // as VAAPI here, the only device; the setting means "use the GPU where
+    // possible" rather than a choice of API.
     VENTO_VIDEO_HW_AUTO = 2,
 };
 
@@ -64,13 +65,13 @@ enum vento_video_hardware {
 // `packed`.
 enum vento_video_packing {
     VENTO_VIDEO_PLANES = 0,
-    // XV30: 4:4:4, one little-endian 32-bit word a pixel in plane 0, U in
+    // XV30: 4:4:4, one little-endian 32-bit word per pixel in plane 0, U in
     // its low ten bits, Y in the next ten, V in the ten above, the top two
-    // unused. What VAAPI decodes HEVC 4:4:4 at ten bits into.
+    // unused. VAAPI decodes 10-bit HEVC 4:4:4 into it.
     VENTO_VIDEO_XV30 = 1,
 };
 
-// What `vento_video_decode` made of a packet.
+// The result of `vento_video_decode` for a packet.
 enum vento_video_status {
     // A picture came out, and `out` describes it.
     VENTO_VIDEO_PICTURE = 1,
@@ -90,11 +91,11 @@ enum vento_video_status {
 // U and V share plane 1, alternating, U first unless `v_first` (NV12, NV21,
 // and at more than eight bits P010), and `data[2]` is `data[1]`. Chroma is
 // subsampled by `1 << chroma_shift_x` across and `1 << chroma_shift_y` down.
-// A `depth` of 8 is a byte a sample; nine to sixteen is two bytes,
+// A `depth` of 8 is a byte per sample; nine to sixteen is two bytes,
 // little-endian, the value in the low bits unless `shift` says how far up
 // it is (P010 has its ten bits at the top, `shift` 6, and zeros below).
-// Unless `packed` is not VENTO_VIDEO_PLANES, when plane 0 alone holds every
-// sample as that packing says, and `depth` is each sample's.
+// If `packed` is not VENTO_VIDEO_PLANES, plane 0 alone holds every sample in
+// that packing, and `depth` is each sample's.
 struct vento_video_picture {
     const uint8_t *data[3];
     int32_t stride[3];
@@ -116,11 +117,12 @@ struct vento_video_picture {
     int32_t shift;
     // A `vento_video_packing`.
     int32_t packed;
-    // The picture came out of the hardware, mapped for reading.
+    // Nonzero if the picture came out of the hardware: 1 mapped for reading,
+    // 2 copied (the driver does not map its surfaces), 3 held.
     int32_t hardware;
-    // The decoder on this packet's way in could not take it, and the
-    // software one is in its place from here on: the hardware failed, or
-    // `av1` had no device decoder for the stream. The packet was given
+    // The decoder that received this packet failed on it, and the software
+    // one replaces it from here on: the hardware failed, or `av1` had no
+    // device decoder for the stream. The packet was given
     // to the new decoder, but anything it refers to was decoded by the old
     // one, so until a key frame there may be no picture or a broken one.
     // The caller should ask the far end for one, unless no picture had come
@@ -195,11 +197,10 @@ vento_video *vento_video_open(int codec, int width, int height, int hardware, ch
 // The name of libavcodec's decoder behind it ("h264", "libdav1d", ...).
 const char *vento_video_name(const vento_video *video);
 
-// The device the decoder decodes on, a `vento_video_hardware` (VAAPI), or
-// OFF for software — which it is from the start without a
-// device, and from a mid-stream fallback on. A decoder on a device whose
-// stream it cannot take is still on it: its pictures say they are not
-// `hardware`, and the reason is kept.
+// The decoder's device, a `vento_video_hardware` (VAAPI), or OFF for software:
+// from the start without a device, and after a mid-stream fallback. A decoder
+// on a device that cannot take its stream stays on it: its pictures are not
+// marked `hardware`, and the reason is kept.
 int vento_video_method(const vento_video *video);
 
 // A `vento_video_hardware`'s name: "vaapi", "auto" or "off".
@@ -207,14 +208,14 @@ const char *vento_video_method_name(int method);
 
 // Why the decoder is not decoding in hardware though it was asked to, such as
 // "vaapi: no device (...)", "vaapi: H.264 High 10 is not supported" or
-// "vaapi: decode failed (...)", or "" where it was not asked to or nothing
-// has stood in the way. Valid until the next call on the decoder.
+// "vaapi: decode failed (...)", or "" when hardware was not requested or
+// nothing prevents it. Valid until the next call on the decoder.
 const char *vento_video_software_reason(const vento_video *video);
 
 // Whether the shared device of a `vento_video_hardware` (VAAPI, which AUTO
 // tries too, so both say the same) has been asked for in this process: 0
 // never, 1 open, -1 tried and failed; always 0 for OFF, which has none. For
-// tests, and for whoever wants to know that OFF opened nothing.
+// tests, and to check that OFF opened nothing.
 int vento_video_device_state(int method);
 
 // Whether the decoder maps VAAPI's pictures in place (1) rather than as an
@@ -223,25 +224,26 @@ int vento_video_device_state(int method);
 // -1 until then.
 int vento_video_maps_in_place(const vento_video *video);
 
-// For tests: the next hardware picture of this decoder fails as a device
-// that has gone away would, which is otherwise not something a test can
-// make happen; with `software_too`, so does opening the software decoder
-// that would take its place, which leaves the decoder refusing every packet.
+// For tests: the next hardware picture of this decoder fails as if the device
+// had gone away, which a test cannot otherwise cause; with `software_too`, so
+// does opening the software decoder that would replace it, which leaves the
+// decoder refusing every packet.
 void vento_video_fail_next(vento_video *video, int software_too);
 
-// One encoded frame in, which is copied and not kept, and every picture the
-// decoder then has ready read, of which the last is described in `out`.
+// Decodes one encoded frame (copied, not kept) and reads every picture the
+// decoder then has ready, describing the last in `out`.
 // On VENTO_VIDEO_REFUSED, `out->error` holds the decoder's error; on
 // VENTO_VIDEO_UNSUPPORTED, `format` (cut to `format_len`) names the format.
 //
 // With `hold`, a picture on VAAPI in NV12 or P010 is waited for (the GPU has
 // finished decoding it when this returns) and handed out in `out->held`
-// rather than mapped and described; any other picture is described as ever.
+// rather than mapped and described; any other picture is described as usual.
 int vento_video_decode(vento_video *video, const uint8_t *data, size_t len, int hold,
                        struct vento_video_picture *out, char *format, size_t format_len);
 
 // A held picture's surface as DMA-BUFs, every descriptor a new one of the
-// caller's; or a negative error, with why in `error` (cut to `error_len`).
+// caller's; or a negative error, with the reason in `error` (cut to
+// `error_len`).
 // From any thread, as often as wanted.
 int vento_video_frame_export(vento_video_frame *frame, struct vento_video_export *out,
                              char *error, size_t error_len);
@@ -253,12 +255,12 @@ int vento_video_frame_export(vento_video_frame *frame, struct vento_video_export
 int vento_video_frame_map(vento_video_frame *frame, struct vento_video_picture *out);
 void vento_video_frame_unmap(vento_video_frame *frame);
 
-// Let go of a held picture, from any thread: its surface is the decoder's
-// to decode into again once nothing else holds it. The decoder may be gone
+// Releases a held picture, from any thread: the decoder can decode into its
+// surface again once nothing else holds it. The decoder may be closed
 // already.
 void vento_video_frame_free(vento_video_frame *frame);
 
-// libavcodec's words for an error code.
+// libavcodec's message for an error code.
 void vento_video_strerror(int error, char *buf, size_t len);
 
 void vento_video_close(vento_video *video);

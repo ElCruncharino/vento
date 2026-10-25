@@ -10,11 +10,10 @@
 # with the right label.
 #
 # Fixtures are raw touch streams, so they are independent of the PRESET
-# toggle — each gesture only needs recording once.
+# toggle: each gesture only needs recording once.
 #
-# The recorder itself is TouchRecorder, driven by the playground view; PKG is
-# whichever app is hosting that view, and is the one thing here that is not
-# about this library.
+# The recorder is TouchRecorder, driven by the playground view. PKG is the app
+# hosting that view, the only setting here that is not about this library.
 
 set -uo pipefail
 
@@ -23,7 +22,7 @@ ACTIVITY=${ACTIVITY:-$PKG/.PlaygroundActivity}
 REMOTE=/sdcard/Android/data/$PKG/files/touchlogs
 OUT=$(cd "$(dirname "$0")" && pwd)
 
-# name[:count] — count > 1 records that many in one go (label-01, label-02, ...)
+# name[:count]: a count above 1 records that many in one go (label-01, label-02, ...)
 CHECKLIST=(
     two-finger-tap
     three-finger-tap
@@ -45,7 +44,7 @@ CHECKLIST=(
     tap:20
 )
 
-# What to actually do, for the ones where it matters.
+# Instructions for the gestures that need them.
 declare -A HINT=(
     [four-finger-tap]="should do nothing at all"
     [two-finger-tap-then-drag]="two-finger tap, then within 250 ms put one finger down and drag — right-button drag"

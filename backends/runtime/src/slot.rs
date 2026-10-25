@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Where a protocol thread waits for a person.
+//! Where a protocol thread waits for the user's answer.
 
 use std::sync::{Condvar, Mutex};
 
-/// There are two of these in a [`Bridge`](crate::Bridge) — the credentials
-/// and the trust decision — and both work the same way: the handler fires an
+/// There are two of these in a [`Bridge`](crate::Bridge) (the credentials
+/// and the trust decision), and both work the same way: the handler fires an
 /// event, blocks here, and [`Slot::answer`] wakes it from whatever thread the
 /// answer arrives on.
 ///

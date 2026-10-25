@@ -1,14 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The rules every client keeps alike, held to their cases. The credentials
-//! and known-hosts cases are written out here, since both clients apply
-//! those rules from this crate and nothing else reads them. The options
-//! cases are in `options.json` beside this file, which the Java tests in
-//! `backends/platform/android/javatest` read too, for the one rule with a
-//! Java copy (`BackendOption.settle`, which the option screens run as
-//! somebody edits), so that the copy cannot drift from this one without one
-//! of these failing.
+//! Test cases for the rules every client applies the same way. The
+//! credentials and known-hosts cases are written out here, since both
+//! clients apply those rules from this crate and only these tests use them.
+//! The options cases are in `options.json` beside this file, which the Java
+//! tests in `backends/platform/android/javatest` also read, for the only
+//! rule with a Java copy (`BackendOption.settle`, which the option screens
+//! run during editing), so that the two copies cannot drift apart without a
+//! test failing.
 
 use serde_json::Value;
 use std::path::PathBuf;
@@ -18,11 +18,10 @@ use api::events::Identity;
 use api::options::{Choice, Options, Scope, Spec, Type};
 use api::trust::{self, Verdict};
 
-// What a credentials prompt's answer comes to, for every client that has
-// one. A name is read trimmed everywhere, so one that is only spaces is an
-// empty one.
+// How a credentials prompt's answer is read, for every client. A name is
+// trimmed everywhere, so one that is only spaces counts as empty.
 
-/// A typed user name, and the `(domain, user)` it is read as.
+/// A typed user name, and the expected `(domain, user)`.
 const SPLIT_DOMAIN: &[(&str, &str, &str)] = &[
     ("CORP\\alice", "CORP", "alice"),
     ("alice@corp.example", "corp.example", "alice"),
@@ -38,10 +37,10 @@ const SPLIT_DOMAIN: &[(&str, &str, &str)] = &[
     ("DOM\\", "DOM", ""),
 ];
 
-/// An RDP prompt's answer against the session's own domain and user
-/// (already split): `(session domain, session user, answer user, answer
-/// domain, domain, user)`. The answer's domain is one given beside the name,
-/// which only the Linux client's `--domain` has; empty where none is.
+/// An RDP prompt's answer given the session's own domain and user (already
+/// split): `(session domain, session user, answer user, answer domain,
+/// domain, user)`. The answer domain is one given separately from the name,
+/// which only the Linux client's `--domain` provides; empty otherwise.
 const RDP_IDENTITY: &[(&str, &str, &str, &str, &str, &str)] = &[
     ("CORP", "proto", "", "", "CORP", "proto"),
     ("CORP", "proto", "   ", "", "CORP", "proto"),
@@ -57,8 +56,8 @@ const RDP_IDENTITY: &[(&str, &str, &str, &str, &str, &str)] = &[
     ("CORP", "proto", "", "LAB", "CORP", "proto"),
 ];
 
-/// Any other backend's answer, where an empty user name is the session's:
-/// `(session user, answer user, user)`.
+/// Any other backend's answer, where an empty user name means the
+/// session's: `(session user, answer user, user)`.
 const FILL_USER: &[(&str, &str, &str)] = &[
     ("proto", "", "proto"),
     ("proto", "alice", "alice"),
@@ -69,41 +68,42 @@ const FILL_USER: &[(&str, &str, &str)] = &[
 
 // The known-hosts rule, for every client that pins a far end's identity.
 
-/// The address a pin is filed under, folded for case and trimmed of what
-/// Java's `trim()` takes (ASCII controls and the space, nothing wider),
-/// since the phone's pins are already filed that way.
+/// The address a pin is filed under, folded for case and trimmed as Java's
+/// `trim()` trims (ASCII controls and the space, nothing wider), since the
+/// phone's pins are already filed that way.
 const KEY: &[(&str, &str)] = &[
     ("Host.Example", "host.example"),
     ("  [FE80::1]:5900 ", "[fe80::1]:5900"),
     ("\tHOST:3389\n", "host:3389"),
-    // No-break spaces, which are wider than what is trimmed.
+    // No-break spaces, which are not trimmed.
     ("\u{a0}host\u{a0}", "\u{a0}host\u{a0}"),
     ("", ""),
     ("123456789@hbbs.Example", "123456789@hbbs.example"),
 ];
 
-/// A fingerprint as it is compared: its ASCII hex digits alone, and upper
-/// case.
+/// A fingerprint in the form used for comparison: only its ASCII hex
+/// digits, upper case.
 const CANONICAL: &[(&str, &str)] = &[
     ("66:cc:ED", "66CCED"),
     ("66 CC-ed", "66CCED"),
     ("", ""),
     ("SHA256:ab:cd", "A256ABCD"),
-    // Fullwidth digits, which are not ASCII ones.
+    // Fullwidth digits, which are not ASCII.
     ("\u{ff10}\u{ff11}:ab", "AB"),
 ];
 
 /// A store of pins: `(key, fingerprint)`.
 type Pins = &'static [(&'static str, &'static str)];
 
-/// What a verdict comes to: `None` where it matches, or why it asks — the
-/// identity, and the key a fingerprint is pinned under when it matches another.
+/// The expected verdict: `None` for a match, or the reason it asks (the
+/// identity, and the key the fingerprint is pinned under when it matches
+/// another).
 type Asks = Option<(Identity, &'static str)>;
 
 /// A fingerprint against a store of pins (keys as filed): `(pins, address,
-/// fingerprint, verdict)`, where an ask carries why — new, matches another
-/// (with the key it is pinned under; no case has two, since which of several
-/// a store finds first is its own order), or changed.
+/// fingerprint, verdict)`, where an ask carries the reason: new, matches
+/// another (with the key it is pinned under; no case has two, since which
+/// one a store finds first depends on its order), or changed.
 const VERDICT: &[(Pins, &str, &str, Asks)] = &[
     (&[("host:3389", "AB:CD:EF")], "HOST:3389", "ab:cd:ef", None),
     (&[("host:3389", "abcdef")], " host:3389", "AB CD EF", None),
@@ -188,8 +188,8 @@ fn cases<'a>(file: &'a Value, section: &str) -> &'a Vec<Value> {
     file[section].as_array().unwrap_or_else(|| panic!("no {section}"))
 }
 
-/// A spec from the vectors' own description of one. Leaked, since a spec
-/// is `'static` by design and a test has a handful.
+/// A spec from its description in the vectors. Leaked, since a spec is
+/// `'static` by design and a test has only a handful.
 fn spec(value: &Value) -> Spec {
     let leak = |s: &str| -> &'static str { Box::leak(s.to_string().into_boxed_str()) };
     let choices: Vec<Choice> = value["choices"]

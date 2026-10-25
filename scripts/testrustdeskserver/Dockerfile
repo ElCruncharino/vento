@@ -1,9 +1,9 @@
-# A rendezvous server and a relay of somebody's own, which is the half of the
-# id path the public network cannot show: a server whose key came from the
-# person connecting rather than from a constant in every build.
+# A self-hosted rendezvous server and relay, which is the half of the id path
+# the public network cannot show: a server whose key the client is given rather
+# than a constant in every build.
 #
-# Their released binaries rather than a build from source, pinned by SHA-256 —
-# `scripts/testrustdesk`'s rule and `third_party/`'s. Two programs come out of
+# Their released binaries rather than a build from source, pinned by SHA-256
+# (`scripts/testrustdesk`'s rule and `third_party/`'s). Two programs come out of
 # the zip: hbbs introduces two peers and hbbr copies bytes between them.
 FROM debian:trixie-slim
 

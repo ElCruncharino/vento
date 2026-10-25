@@ -13,7 +13,7 @@ package net.pgaskin.remotedesktop.control.input;
  * behind this interface; {@link AndroidScheduler} is the real one.
  *
  * <p>Everything is called on one thread and callbacks must run on that same
- * thread — the state machines are not synchronised.
+ * thread, since the state machines are not synchronised.
  */
 public interface Scheduler {
 
@@ -25,9 +25,8 @@ public interface Scheduler {
 
     /**
      * Run {@code r} at the next display frame. At most one post is outstanding
-     * per instance: posting one that is already queued does nothing, since a
-     * frame callback that ran twice for one frame would be a redraw the caller
-     * did not ask for.
+     * per instance: posting one that is already queued does nothing, so it
+     * never runs twice for one frame.
      */
     void postFrame(Runnable r);
 

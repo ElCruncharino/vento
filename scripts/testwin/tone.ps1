@@ -3,8 +3,8 @@
 # seconds after -Lead seconds of silence, for -Seconds in all, as one WAV
 # through System.Media.SoundPlayer. In an RDP session the session's sound is
 # what the client hears, so this has to run there, as a task with an
-# Interactive principal (usage.md); run from ssh it plays in session 0, which
-# nobody hears.
+# Interactive principal (usage.md); run from ssh it plays in session 0, where
+# it is not heard.
 #
 # -Out gets two lines, "start <seconds>" just before the sound is handed to
 # the player and "end <seconds>" after it has finished, in Unix seconds from

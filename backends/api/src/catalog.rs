@@ -1,21 +1,21 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! What each of the eight backends is, before anything is connected: its
-//! name, why somebody would pick it, where it goes in a picker, and what it
-//! can be told. One list for every client — the Linux client's picker reads
-//! it, and each of the phone's `BackendProvider`s answers from a class
-//! `vento-codegen` writes out of it — so that a backend is described once.
+//! The static description of each of the eight backends: its name, why to
+//! pick it, its place in a picker, and its options. One list for every
+//! client (the Linux client's picker reads it, and each of the phone's
+//! `BackendProvider`s answers from a class `vento-codegen` generates from
+//! it), so that a backend is described once.
 //!
 //! Each entry is its backend's own file, `backends/modules/<name>/catalog.rs`
-//! (its [`About`], its options table and the tests of both), compiled here
-//! by path rather than by the backend's crate: `vento-codegen` builds on the
-//! host from this crate alone, with none of the backends' libraries, bindgen
-//! or async runtimes in its way, and Gradle reruns it when any of those files
-//! changes (`codegenSources` in `backends/build.gradle`). What this file
-//! keeps is the shape of an entry and the registry; a rule that is the same
-//! for every backend reads an entry's data (its pinning, whether its user
-//! name carries a domain) rather than naming one.
+//! (its [`About`], its options table and their tests), compiled here by path
+//! rather than by the backend's crate: `vento-codegen` builds on the host
+//! from this crate alone, without the backends' libraries, bindgen or async
+//! runtimes, and Gradle reruns it when any of those files changes
+//! (`codegenSources` in `backends/build.gradle`). This file holds the shape
+//! of an entry and the registry; a rule shared by every backend reads an
+//! entry's data (its pinning, whether its user name carries a domain) rather
+//! than checking which backend it is.
 
 use crate::options::Spec;
 use crate::trust::Pinning;
@@ -23,31 +23,30 @@ use crate::trust::Pinning;
 /// One backend, described.
 #[derive(Debug, PartialEq, Eq)]
 pub struct About {
-    /// What a connection record stores and a command line names it by, so it
-    /// must not change once shipped.
+    /// Stored in connection records and used on the command line, so it must
+    /// not change once shipped.
     pub id: &'static str,
     /// For a picker and a title.
     pub name: &'static str,
-    /// A word or two, for a badge with no room for more. Two backends may
-    /// speak one protocol, so this sometimes names the implementation.
+    /// A word or two, for a small badge. Two backends may speak one
+    /// protocol, so this sometimes names the implementation.
     pub short_name: &'static str,
-    /// Why somebody would choose this one, in a sentence or two: what it does
-    /// that the others do not, and what that costs.
+    /// Why to choose this backend, in a sentence or two: what it does that
+    /// the others do not, and at what cost.
     pub description: &'static str,
-    /// Where in a picker, lowest first.
+    /// Position in a picker, lowest first.
     pub order: i32,
-    /// What a far end's identity is pinned under, and whether a first one is
-    /// taken without asking ([`trust::pinned_as`](crate::trust::pinned_as)).
+    /// What a far end's identity is pinned under, and whether the first one
+    /// is accepted without asking ([`trust::pinned_as`](crate::trust::pinned_as)).
     pub pinning: Pinning,
     /// Whether a user name carries a domain, `DOMAIN\user` or `user@domain`
-    /// (RDP's): a credentials prompt, which has no box for one, starts with
-    /// it in the name ([`credentials::prompt_user`](crate::credentials::prompt_user)).
+    /// (as in RDP): a credentials prompt has no domain field, so it starts
+    /// with the domain in the name ([`credentials::prompt_user`](crate::credentials::prompt_user)).
     pub user_has_domain: bool,
-    /// Whether the backend's library keeps identities of its own: one it
-    /// hands out to be remembered ([`Backend::saved_identity`]) and wants
-    /// handed back the next time ([`Connect::identity`]), RealVNC's core's
-    /// being the one. A client reads what it keeps of them only for such a
-    /// backend.
+    /// Whether the backend's library has its own identity store: it returns
+    /// an identity to be remembered ([`Backend::saved_identity`]) and expects
+    /// it back the next time ([`Connect::identity`]). Only RealVNC's core
+    /// does. A client reads its stored identities only for such a backend.
     ///
     /// [`Backend::saved_identity`]: crate::backend::Backend::saved_identity
     /// [`Connect::identity`]: crate::kind::Connect::identity
@@ -55,8 +54,8 @@ pub struct About {
     pub options: &'static [Spec],
 }
 
-// One file per backend, in the module that is that backend's; the paths are
-// relative to this file.
+// One file per backend, in that backend's module; the paths are relative to
+// this file.
 #[path = "../../modules/rfb/catalog.rs"]
 mod rfb;
 #[path = "../../modules/libvnc/catalog.rs"]
@@ -83,11 +82,11 @@ pub use rustdesk::RUSTDESK;
 pub use spice::SPICE;
 pub use tigervnc::TIGERVNC;
 
-/// All eight, in the picker's order.
+/// All eight, in picker order.
 pub static ALL: [&About; 8] = [&RFB, &LIBVNC, &TIGERVNC, &FREERDP, &IRONRDP, &REALVNC, &SPICE, &RUSTDESK];
 
-/// An entry that is no backend, for the tests of the rules that read one:
-/// pinned under the address, no domain, no options.
+/// A placeholder entry for testing the rules that read one: pinned under
+/// the address, no domain, no options.
 #[cfg(test)]
 pub(crate) const FIXTURE: About = About {
     id: "fixture",

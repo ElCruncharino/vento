@@ -1,8 +1,8 @@
-# `ignore = all` is load-bearing, not tidiness. A gitlink here always names the
-# pristine upstream commit; the working tree sits on that commit plus whatever
-# is in patches/, applied by patch.sh. Without this, `git add -A` records the
-# *patched* commit as the pin, after which the patches apply to themselves and
-# a fresh clone gets them twice. patch.sh check catches it; this stops it.
+# `ignore = all` is required. A gitlink here always names the pristine upstream
+# commit; the working tree is that commit plus the patches in patches/, applied
+# by patch.sh. Without this, `git add -A` records the *patched* commit as the
+# pin, after which the patches are applied on top of themselves and a fresh
+# clone gets them twice. `patch.sh check` detects that; this prevents it.
 [submodule "third_party/libvncserver"]
 	path = third_party/libvncserver
 	url = https://github.com/LibVNC/libvncserver.git
@@ -48,12 +48,12 @@
 	url = https://github.com/shakenfist/ryll.git
 	shallow = true
 	ignore = all
-# The four below are the host build's only: what runs RealVNC's bionic viewer
-# core in a glibc process (backends/modules/realvnc/cpp/host). None of
-# them is in an APK or on its licence page; see that module's CMakeLists for
-# each one's licence. mcpelauncher-linker's pin is on its `ng` branch and carries two
-# nested submodules of its own (AOSP's bionic and core), so it is initialised
-# with --recursive.
+# The four below are used only by the host build, to run RealVNC's bionic
+# viewer core in a glibc process (backends/modules/realvnc/cpp/host). None of
+# them is in an APK or on its licence page; backends/modules/realvnc/cpp/
+# CMakeLists.txt lists each one's licence. mcpelauncher-linker's pin is on its
+# `ng` branch and has two nested submodules (AOSP's bionic and core), so it is
+# initialised with --recursive.
 [submodule "third_party/logger"]
 	path = third_party/logger
 	url = https://github.com/minecraft-linux/logger.git
@@ -74,23 +74,22 @@
 	url = https://github.com/ChristopherHX/libjnivm.git
 	shallow = true
 	ignore = all
-# The Linux client's only (linux/, a workspace of its own, through its
+# Used only by the Linux client (linux/, a separate workspace, through its
 # [patch.crates-io]): winit, at the tag of the release linux/Cargo.lock
-# would otherwise take from crates.io, so that a fix of ours to it can be a
-# patch here like every other. Nothing of it is in an APK.
+# would otherwise take from crates.io, so that our fixes to it can be patches
+# like the other submodules'. None of it is in an APK.
 [submodule "third_party/winit"]
 	path = third_party/winit
 	url = https://github.com/rust-windowing/winit.git
 	shallow = true
 	ignore = all
-# The Linux client's only, as winit is: the FFmpeg every desktop consumer of a
-# video or sound codec links (the Rust decoder, TigerVNC's H.264, FreeRDP's
+# Used only by the Linux client, like winit: FFmpeg, linked by every desktop
+# user of a video or sound codec (the Rust decoder, TigerVNC's H.264, FreeRDP's
 # H.264, sound and scaling), built statically by
 # backends/platform/linux/build.rs with --disable-everything and the
 # decoders those use, and dav1d for its AV1. Each at a release tag (FFmpeg
-# n8.1.3, the newest release; dav1d 1.5.4). The phone decodes with MediaCodec
-# and builds neither. FFmpeg as configured is LGPL 2.1 or later, dav1d
-# BSD-2-Clause.
+# n8.1.3, dav1d 1.5.4). Android decodes with MediaCodec and builds neither.
+# FFmpeg as configured is LGPL 2.1 or later, dav1d BSD-2-Clause.
 [submodule "third_party/ffmpeg"]
 	path = third_party/ffmpeg
 	url = https://github.com/FFmpeg/FFmpeg.git

@@ -9,23 +9,22 @@ import net.pgaskin.remotedesktop.control.input.Keysym;
 import net.pgaskin.remotedesktop.control.input.Scheduler;
 
 /**
- * Pasting is <b>typing</b>: the clipboard's characters go to the remote one at
- * a time as key presses, rather than as a Ctrl+V that assumes the far end can
- * reach a clipboard of its own and that its desktop pastes with that shortcut.
+ * Pasting is <b>typing</b>: the clipboard's characters are sent to the remote
+ * one at a time as key presses, rather than as a Ctrl+V that assumes the far
+ * end has a synced clipboard and pastes with that shortcut.
  *
- * <p>Two things can make that a bad idea, and both are worth a question first
- * because none of it can be undone from here: a lot of text, and a modifier
- * locked on the extension row. Asking is somebody else's — a canvas has no
- * dialogs — so both are handed out as callbacks and this only decides when
- * there is a question.
+ * <p>Two cases need confirmation first, because typed text cannot be undone
+ * from here: a lot of text, and a modifier locked on the extension row. The
+ * view cannot show dialogs, so confirmation is a callback, and this class only
+ * decides when to ask.
  */
 final class PasteTyper {
 
     interface Confirm {
 
         /**
-         * Something worth asking about before any of it is typed. Run
-         * {@code proceed} if the answer is yes.
+         * Ask for confirmation before typing anything. Run {@code proceed} if
+         * confirmed.
          *
          * @param heldModifiers the locked ones, "Ctrl + Shift", or empty
          */
@@ -34,7 +33,7 @@ final class PasteTyper {
 
     private static final int CONFIRM_CHARS = 250; // longer is worth confirming first
 
-    private static final long CHAR_MS = 8;        // so a long paste is not a burst
+    private static final long CHAR_MS = 8;        // spaces out a long paste
 
     private final KeySink keys;
     private final Scheduler scheduler;
@@ -52,21 +51,20 @@ final class PasteTyper {
     }
 
     /**
-     * Type {@code text} out, asking first if there is a reason to.
+     * Type {@code text}, asking for confirmation first if needed.
      *
-     * @param text            the clipboard's, or null or empty for none
-     * @param lockedModifiers what {@link #lockedModifiers} says about the row
-     *                        these keys will arrive alongside
+     * @param text            the clipboard text, or null or empty for none
+     * @param lockedModifiers {@link #lockedModifiers} for the extension row
      */
     void paste(String text, String lockedModifiers) {
         if (text == null || text.isEmpty()) {
             nothingToPaste.run();
             return;
         }
-        // A locked modifier is held at the far end for as long as it is locked,
-        // so every character of the paste would arrive as a shortcut — worth a
-        // question at any length. One-shot modifiers are not: the row consumes
-        // those the moment the paste key fires.
+        // A locked modifier is held at the far end while it is locked, so every
+        // character of the paste would arrive as a shortcut, at any length.
+        // One-shot modifiers do not matter: the row releases them as soon as
+        // the paste key fires.
         final int chars = text.codePointCount(0, text.length());
         if (chars > CONFIRM_CHARS || !lockedModifiers.isEmpty()) {
             confirm.ask(chars, lockedModifiers, () -> typeOut(text));
@@ -90,10 +88,10 @@ final class PasteTyper {
     }
 
     /**
-     * A character per tick. On a clock rather than in a loop for two reasons: a
-     * thousand key events posted in one go is a burst the far end has no reason
-     * to survive in order, and a paste in progress has to be abandonable, which
-     * {@link #cancel()} does.
+     * One character per tick. Scheduled rather than in a loop for two reasons:
+     * a thousand key events sent at once may not arrive intact or in order at
+     * the far end, and a paste in progress has to be cancellable
+     * ({@link #cancel()}).
      */
     private void typeOut(String text) {
         pasting = text;
@@ -114,8 +112,8 @@ final class PasteTyper {
             }
             final int cp = pasting.codePointAt(at);
             at += Character.charCount(cp);
-            // A newline is Return, a tab is Tab: the characters a text field
-            // holds but a keyboard does not have as characters.
+            // A newline is sent as Return and a tab as Tab, since they are keys
+            // rather than characters on a keyboard.
             final int keysym = Keysym.forCharacter(cp);
             if (keysym != 0) {
                 keys.keyDown(keysym, KeySink.ID_TEXT);
@@ -125,7 +123,7 @@ final class PasteTyper {
         }
     };
 
-    /** Give up on the rest of it; what has already been typed is typed. */
+    /** Stop typing; what has already been typed stays. */
     void cancel() {
         pasting = null;
         scheduler.removeCallbacks(tick);

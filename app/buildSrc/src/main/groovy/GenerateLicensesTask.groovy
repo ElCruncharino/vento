@@ -26,14 +26,13 @@ import java.util.regex.Pattern
 
 /**
  * The app's licence page, as an asset: what this build is made of, and what that
- * means for handing it on.
+ * means for redistributing it.
  *
- * <p>The first-party modules come from the caller; the Rust
- * crates are resolved from Cargo, because a hand-written list is wrong the
- * first time a dependency moves. Per <em>target</em>, since which crates are in
- * the graph is platform-dependent, and a crate reached by more than one ABI is
- * listed once. The workspace's own members are excluded: they are this
- * project.
+ * <p>The first-party modules come from the caller; the Rust crates are resolved
+ * from Cargo, because a hand-written list goes stale as soon as a dependency
+ * changes. Per <em>target</em>, since the crates in the graph depend on the
+ * platform, and a crate reached by more than one ABI is listed once. The
+ * workspace's own members are excluded: they are this project.
  *
  * <p>What is listed is what the artefact's libraries are compiled from, and
  * nothing that only builds them: see {@link #resolveCrates}.
@@ -68,12 +67,10 @@ abstract class GenerateLicensesTask extends DefaultTask {
 
     /**
      * Third-party components that are not crates: {@code [name, spdx, text]}
-     * each. The Cargo lock accounts for everything under a Rust protocol module
-     * and for a C one's adapter crate, and for nothing of the C library a CMake
-     * module builds nor anything in the app's own dependency block, so a
-     * library vendored as a submodule and a library resolved from Maven both
-     * have to be named here or the page would not know the build contains
-     * them.
+     * each. The Cargo lock covers everything under a Rust protocol module and a
+     * C module's adapter crate, but not the C library a CMake module builds or
+     * anything in the app's own dependency block, so libraries vendored as
+     * submodules and libraries resolved from Maven have to be listed here.
      */
     @Input
     abstract ListProperty<Map<String, String>> getOtherComponents()
@@ -88,11 +85,10 @@ abstract class GenerateLicensesTask extends DefaultTask {
      * Which of the workspace's members this artefact actually contains, by
      * package name. Every member when it is empty.
      *
-     * <p>The workspace holds one crate per protocol and an artefact holds the
-     * protocols it ships, which stopped being the same set the first time a
-     * backend shipped in an add-on: a page that listed the whole workspace
-     * would tell somebody the app carries code that is in a different APK
-     * under a different licence.
+     * <p>The workspace holds one crate per protocol and an artefact holds only
+     * the protocols it ships, which differ once a backend ships in an add-on:
+     * a page listing the whole workspace would claim the app contains code
+     * that is in a different APK under a different licence.
      */
     @Input
     @Optional
@@ -151,24 +147,24 @@ abstract class GenerateLicensesTask extends DefaultTask {
      * <p>That is {@code cargo tree -e normal}, once per member, rather than a
      * walk of {@code cargo metadata}'s resolve graph, whose features are
      * unified across every member and every kind of dependency at once: a
-     * crate's dev-dependency on rustls with its default features (ryll's
-     * protocol crate's) switched on rustls's {@code aws_lc_rs} there, and
-     * aws-lc-rs and aws-lc-sys were listed although no library has them.
-     * {@code cargo tree} resolves features the way {@code cargo build} does for
-     * the same package and target — no dev-dependency in it, nothing of another
-     * platform — and it is run for each member alone because that is how each
+     * dev-dependency on rustls with its default features (in ryll's protocol
+     * crate) enabled rustls's {@code aws_lc_rs} there, and aws-lc-rs and
+     * aws-lc-sys were listed although no library contains them.
+     * {@code cargo tree} resolves features as {@code cargo build} does for the
+     * same package and target (no dev-dependencies, nothing for other
+     * platforms), and it is run for each member alone because that is how each
      * library is built ({@code CargoBuildTask}, one {@code --package} each), so
      * one member's features do not leak into another's page either.
      *
-     * <p>Two kinds of crate run while building and are not in what is built,
+     * <p>Two kinds of crate run during the build but are not part of its output,
      * and are left out. Build-dependencies (bindgen, protobuf-codegen, cc and
-     * what those use): what a build script emits is generated from inputs this
-     * page already covers — the C headers of the libraries named beside the
-     * crates, RustDesk's message definitions — and the runtime that generated
-     * code calls into, such as {@code protobuf}, is a normal dependency and
-     * listed. And what a proc-macro crate itself depends on (syn, quote,
-     * proc-macro2), which runs inside the compiler. The proc-macro crates
-     * themselves stay: the code a derive writes out is theirs, and it is in
+     * their dependencies): build script output is generated from inputs this
+     * page already covers (the C headers of the libraries listed beside the
+     * crates, RustDesk's message definitions), and the runtime the generated
+     * code calls into, such as {@code protobuf}, is a normal dependency and is
+     * listed. And the dependencies of proc-macro crates (syn, quote,
+     * proc-macro2), which run inside the compiler. The proc-macro crates
+     * themselves are kept: the code a derive generates is theirs, and it is in
      * the library.
      */
     List<Map> resolveCrates(String target) {
@@ -179,17 +175,17 @@ abstract class GenerateLicensesTask extends DefaultTask {
         final byNameVersion = [:].withDefault { [] }
         packages.values().each { byNameVersion.get([it.name.toString(), it.version.toString()]).add(it.id) }
 
-        // A virtual manifest has no root package, which is what a workspace of
-        // several cdylibs is; a manifest that does have one is still allowed,
-        // and then it is the only root.
+        // A virtual manifest, as for a workspace of several cdylibs, has no
+        // root package; a manifest with one is still allowed, and then it is
+        // the only root.
         final members = new HashSet<>(metadata.workspace_members as List)
         final root = (metadata.resolve as Map).root
         def roots = root != null ? [root] : (metadata.workspace_default_members ?: members).toList()
         final wanted = cargoPackages.getOrElse([] as Set)
         if (!wanted.isEmpty()) {
-            // Looked up among every member, not the default ones the roots
-            // otherwise are: a crate left out of `default-members` (the root
-            // manifest's) is still one an APK can ship.
+            // Looked up among all members, not only the default members used as
+            // roots otherwise: a crate left out of the root manifest's
+            // `default-members` can still ship in an APK.
             final byName = members.collectEntries { [(packages.get(it).name.toString()): it] }
             final missing = wanted - byName.keySet()
             if (!missing.isEmpty()) {
@@ -229,9 +225,9 @@ abstract class GenerateLicensesTask extends DefaultTask {
      * proc-macro crate, which is compiled for the host to run in the compiler.
      *
      * <p>A package the tree has already shown is shown again as {@code (*)}
-     * without its dependencies. That loses nothing here, since the tree tells
-     * a crate built for the target from the same crate built for the host
-     * apart, and shows each one's dependencies at its first appearance.
+     * without its dependencies. That loses nothing here, since the tree
+     * distinguishes a crate built for the target from the same crate built for
+     * the host, and shows each one's dependencies at its first appearance.
      */
     static Set<List<String>> compiledInto(String tree) {
         final compiled = new LinkedHashSet<List<String>>()

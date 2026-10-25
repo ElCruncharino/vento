@@ -7,11 +7,11 @@
 //! `platform_android::mediacodec_audio`.
 //!
 //! Through `cpp/vento_ffaudio.h`, as the video is through `cpp/vento_video.h`:
-//! four calls declared by hand, and the conversion to interleaved 16-bit
+//! five functions declared by hand, and the conversion to interleaved 16-bit
 //! samples done on the C side, where the decoder's own sample format is
 //! known. The FFmpeg is the client's one, the same build its video decodes
-//! with (`build.rs`); FreeRDP's sound, which used to be decoded by the
-//! library's own FFmpeg path, is decoded here now.
+//! with (`build.rs`); FreeRDP's sound is decoded here rather than by the
+//! library's own FFmpeg path.
 //!
 //! [`Audio`]: crate::audio::Audio
 

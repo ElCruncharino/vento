@@ -1,21 +1,21 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// What the files of this directory share: the one way to log, the two Java
+// Shared by the files in this directory: the logging macros, the Java
 // stand-ins every translation unit has to agree on, and the way back from a
 // `jobject` to the C++ object behind it. Internal to the hosting layer; the
 // seam the session sees is `HostedCore.h`, one directory up.
 //
-// The hosting layer is this: RealVNC's `libvncviewer.so` is a bionic library that
-// talks to Android through JNI, `liblog`, `libandroid`'s looper and
-// `libjnigraphics`, and nothing else. mcpelauncher-linker loads it into a
-// glibc process with libc-shim standing in for bionic's libc, and libjnivm
-// stands in for the JVM: every Java class the core resolves by name is a C++
-// struct registered under that name, with the methods the core calls hooked
-// one by one. The set of classes is what the core touched on its way to a
-// connected session, found by running it and reading the trace (the CMake
-// option `VENTO_REALVNC_TRACE` turns that trace on); the Android half of
-// the backend never sees any of this, since there the real classes exist.
+// How the hosting layer works: RealVNC's `libvncviewer.so` is a bionic
+// library that talks to Android only through JNI, `liblog`, `libandroid`'s
+// looper and `libjnigraphics`. mcpelauncher-linker loads it into a glibc
+// process with libc-shim standing in for bionic's libc, and libjnivm stands
+// in for the JVM: every Java class the core resolves by name is a C++ struct
+// registered under that name, with the methods the core calls hooked one by
+// one. The set of classes is what the core used on its way to a connected
+// session, found by running it and reading the trace (the CMake option
+// `VENTO_REALVNC_TRACE` turns that trace on); the Android side of the
+// backend never sees any of this, since the real classes exist there.
 
 #ifndef VENTO_REALVNC_HOST_H
 #define VENTO_REALVNC_HOST_H
@@ -50,7 +50,7 @@ struct SessionHandle final : jnivm::Object {
 };
 
 /* `android.graphics.Bitmap`, `ARGB_8888` only, which in memory is `R, G, B,
-   A` — the seam's own order. The core makes one per cursor through
+   A`, the order `HostedCore.h` uses. The core makes one per cursor through
    `createBitmap` and draws into it through `libjnigraphics`. */
 struct Bitmap final : jnivm::Object {
     jint width = 0, height = 0;
@@ -59,7 +59,7 @@ struct Bitmap final : jnivm::Object {
 
 /* jnivm hands out raw `Object*` as `jobject`, and a global or weak reference
    is a wrapper around the real object; this follows the wrappers down to the
-   object and says whether it is a `T`. */
+   object and returns it if it is a `T`, or nullptr. */
 template <class T>
 T *unwrap(jobject o) {
     auto *obj = (jnivm::Object *) o;

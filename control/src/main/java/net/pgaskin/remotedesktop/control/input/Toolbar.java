@@ -12,9 +12,9 @@ import java.util.Set;
  * A column of buttons over the desktop, on the left edge, that can be dragged up
  * and down: the affordance {@link TapRegions} deliberately is not.
  *
- * <p>The two are alternatives to each other and never meet — the regions are a
+ * <p>The two are alternatives to each other and never meet (the regions are a
  * classification of <em>taps</em> inside the gesture layer, and this claims
- * pointers before the gesture layer sees them — so nothing arbitrates between
+ * pointers before the gesture layer sees them), so nothing arbitrates between
  * them and a host may run either, or both. What they do is the same, because
  * both hand the host a name and the host has one place it answers them.
  *
@@ -30,9 +30,9 @@ import java.util.Set;
 public final class Toolbar implements TouchRouter.Claim {
 
     /**
-     * One button. {@code name} is the host's word — this package says nothing
-     * about what any of them mean, exactly as it says nothing about what a tap
-     * region means — and {@code icon} names a glyph the renderer may know.
+     * One button. {@code name} is the host's word (this package says nothing
+     * about what any of them mean, as it says nothing about what a tap region
+     * means), and {@code icon} names a glyph the renderer may know.
      */
     public record Item(String name, String icon) {
     }
@@ -104,7 +104,7 @@ public final class Toolbar implements TouchRouter.Claim {
 
     /**
      * The four the tap regions already declare, in the order a column of them
-     * reads: what each one does is the host's business.
+     * reads; what each one does is up to the host.
      */
     public static List<Item> standard() {
         return List.of(
@@ -144,9 +144,9 @@ public final class Toolbar implements TouchRouter.Claim {
 
     /**
      * What the column may not sit in: the left edge's own inset, whatever is at
-     * the top of the window, and whatever covers the bottom of it — the
-     * extension keyboard, in practice, which is a thing drawn over the desktop
-     * rather than an inset of it.
+     * the top of the window, and whatever covers the bottom of it (in practice
+     * the extension keyboard, which is drawn over the desktop rather than an
+     * inset of it).
      */
     public void setInsets(float left, float top, float bottom) {
         if (left == insetLeft && top == insetTop && bottom == insetBottom) {
@@ -175,10 +175,10 @@ public final class Toolbar implements TouchRouter.Claim {
     }
 
     /**
-     * Mark a button as showing something that is on right now — the keyboard is
-     * up, the mouse overlay is out — so that it can be drawn the way the info
-     * bar draws an armed modifier. Which of them have a state at all is the
-     * host's business, as their names are.
+     * Mark a button as showing something that is on right now (the keyboard is
+     * up, the mouse overlay is out), so that it can be drawn the way the info
+     * bar draws an armed modifier. Which of them have a state at all is up to
+     * the host, as their names are.
      */
     public void setActive(String name, boolean on) {
         if (on ? active.add(name) : active.remove(name)) {
@@ -285,8 +285,8 @@ public final class Toolbar implements TouchRouter.Claim {
         }
         activeId = id;
         activeItem = itemAt(x, y);
-        // The grip is a hint rather than a requirement — a pointer that lands on
-        // a button and travels drags too (see claimMoved) — but one that lands
+        // The grip is a hint rather than a requirement (a pointer that lands on
+        // a button and travels drags too, see claimMoved), but one that lands
         // on the grip is dragging from the first pixel, since there is nothing
         // else it could be doing.
         dragging = activeItem == null;

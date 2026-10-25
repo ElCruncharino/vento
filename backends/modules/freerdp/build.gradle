@@ -5,22 +5,22 @@ plugins {
     id 'com.android.library'
 }
 
-// The three parts of the FreeRDP backend: `cpp/`, a shim over FreeRDP's own
-// client that names no platform; the crate at this directory's root
-// (`Cargo.toml`, `src/`), the backend as an `api::Backend` over it — the one
-// the Linux client holds — and the JNI layer every backend shares, registered
-// on the generated natives class; and `java/`'s provider, which holds a session
-// as a `NativeBackend` with the RDP hooks. The AAR carries the one library
-// CMake links the first two into.
+// The FreeRDP backend has three parts: `cpp/`, a platform-independent shim
+// over FreeRDP's client; the crate at this directory's root (`Cargo.toml`,
+// `src/`), which wraps the shim as an `api::Backend` (used directly by the
+// Linux client) and registers the shared JNI layer on the generated natives
+// class; and the provider in `java/`, which holds a session as a
+// `NativeBackend` with the RDP hooks. The AAR carries the single library CMake
+// links the first two into.
 //
-// As with the two borrowed VNC clients, the native half is not in this
-// directory: it is `third_party/freerdp`, a submodule at the repository root
-// pinned by its gitlink — and, under it, `backends/platform/android/ports/
-// openssl`, since RDP's crypto is OpenSSL and nothing else, which is 64% of
-// what this backend adds to a build.
+// As with the libvncclient and TigerVNC backends, the native client is not in
+// this directory: it is `third_party/freerdp`, a submodule at the repository
+// root, plus its dependency `backends/platform/android/ports/openssl` (FreeRDP
+// uses only OpenSSL for crypto). OpenSSL is 64% of what this backend adds to a
+// build.
 
-// The crate at this directory's root, as the static library CMake links in:
-// see `rustStaticLibrary` in :backends.
+// Builds the crate at this directory's root as the static library CMake links
+// in: see `rustStaticLibrary` in :backends.
 final rustLibraries = project(':backends').rustStaticLibrary(project, 'remotedesktop-freerdp')
 
 android {
@@ -34,8 +34,8 @@ android {
             cmake {
                 targets 'remotedesktop_freerdp'
                 arguments "-DVENTO_RUST_LIBRARY_DIR=${rustLibraries}"
-                // scripts/check-warnings.sh, and nothing in the path of building
-                // the app: see backends/cmake/warnings.cmake.
+                // Set only by scripts/check-warnings.sh, not by app builds: see
+                // backends/cmake/warnings.cmake.
                 if (project.hasProperty('strictWarnings')) {
                     arguments '-DSTRICT_WARNINGS=ON'
                 }
@@ -61,9 +61,9 @@ android {
     }
 
     // Not AGP's `src/main/`: `src/` here is the crate's. The Java is in
-    // `java/`, the files themselves with no package directories over them
-    // (javac goes by the `package` line), and the provider's registration is
-    // in `resources/`; the C is `cpp/`, above.
+    // `java/` without package directories (javac uses the `package` line), the
+    // provider's registration is in `resources/`, and the C is in `cpp/`
+    // (above).
     sourceSets.main {
         java.srcDirs = ['java']
         resources.srcDirs = ['resources']
@@ -80,8 +80,8 @@ dependencies {
     api project(':backends')
 }
 
-// A build must not come out of sources that look pristine and are not, nor out
-// of a submodule nobody has initialised.
+// Fails the build if a submodule is not initialised or its patches are not
+// applied (`patch.sh check`).
 def patchCheck = tasks.register('patchCheck', PatchCheckTask) {
     patchScript.set(rootProject.file('patch.sh'))
 }
@@ -90,8 +90,8 @@ tasks.named('preBuild') {
     dependsOn patchCheck
 }
 
-// `FreeRdpCatalog`, what the catalog says this backend is, and `FreeRdpNatives`, what
-// the library registers its natives on: see :backends.
+// Generates `FreeRdpCatalog` (this backend's catalog entry) and `FreeRdpNatives`
+// (the class the library registers its natives on): see :backends.
 androidComponents {
     onVariants(selector().all()) { variant ->
         project(':backends').generateCatalog(project, variant, 'freerdp', 'FreeRdpCatalog')

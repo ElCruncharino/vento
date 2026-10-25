@@ -8,8 +8,8 @@ MEMORY="${MEMORY:-256}"
 VNC_PASSWORD="${VNC_PASSWORD:-vncpass}"
 SPICE_PASSWORD="${SPICE_PASSWORD:-spicepass}"
 # Absolute is what a `usb-tablet` gives, and it is here only so that the two
-# modes can be compared against the same guest — the point of the container is
-# the default.
+# modes can be compared against the same guest; the container exists for the
+# default.
 POINTER="${POINTER:-relative}"
 
 accel="tcg"
@@ -60,10 +60,10 @@ openssl x509 -in /certs/server-cert.pem -noout -fingerprint -sha256
 # for half a second whenever a 't' arrives on the serial port, which is a TCP
 # server on 4555. The card's output goes to QEMU's `none` audiodev, which
 # plays nothing anywhere but still runs the mixer that the VNC server's audio
-# capture taps — so the only place the guest is heard is a VNC client that
+# capture taps, so the only place the guest is heard is a VNC client that
 # asks. 48 kHz stereo S16 at both ends, which is what TigerVNC asks for, so
 # QEMU resamples nothing. The codec's mixer is off so that the guest's volume
-# controls (nobody sets them) cannot change the level.
+# controls (never set) cannot change the level.
 #
 # AUDIO=spice sends the card's output to the SPICE server instead
 # (`-audiodev spice`), whose playback channel is the other way QEMU has of

@@ -6,14 +6,14 @@
 //!
 //! Declared here rather than taken from a crate, for the reason
 //! [`mediacodec`](crate::mediacodec) gives: a couple of dozen functions with
-//! a stable ABI, and `#[link]` on the extern block is the whole of the build
-//! configuration. Everything used is from API 26 or 28, and the app's
+//! a stable ABI, and `#[link]` on the extern block is the only build
+//! configuration needed. Everything used is from API 26 or 28, and the app's
 //! minimum is 34, so nothing is looked up at run time.
 //!
-//! **A data callback**, rather than the non-blocking writes TigerVNC's old
-//! sink (`AndroidAudioOutput`, which this replaced) made: AAudio asks for each buffer on a thread of its own, and the
-//! callback fills it from the stream's queue, which is exactly the shape the
-//! queue was made for — the protocol thread only ever queues, and the
+//! **A data callback**, rather than non-blocking writes (as TigerVNC's former
+//! `AndroidAudioOutput` sink did): AAudio asks for each buffer on a thread of
+//! its own, and the callback fills it from the stream's queue, which is the
+//! shape the queue was made for; the protocol thread only ever queues, and the
 //! callback never waits on anything but the queue's copy. Opening the stream
 //! takes a trip to the audio server, so it is done on a thread started for
 //! it, and closing (which waits for a callback in flight) likewise.
@@ -23,8 +23,8 @@
 //! Bluetooth), and the stream is dead from then on. AAudio forbids closing a
 //! stream from its own callback, so a thread is started for it, as the
 //! AAudio documentation and Oboe do, and that thread opens the replacement
-//! on whatever the output is now. A few times per stream; an output that
-//! keeps failing is given up on rather than retried for ever.
+//! on whatever the output is now. At most a few times per stream: an output
+//! that keeps failing is given up on rather than retried forever.
 
 use std::ffi::{CStr, c_char, c_void};
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
@@ -82,14 +82,14 @@ unsafe extern "C" {
 
 /// How many times a stream is opened again after its output went away
 /// without having played in between: a limit on a stream that fails as soon
-/// as it opens, not on how often the person changes the output device.
+/// as it opens, not on how often the user changes the output device.
 const REOPENS: u32 = 3;
 
 fn text(result: i32) -> String {
     unsafe { CStr::from_ptr(AAudio_convertResultToText(result)) }.to_string_lossy().into_owned()
 }
 
-/// The phone's output, as a session is handed it: one a session, for its
+/// The phone's output as handed to a session: one per session, for its
 /// controls.
 pub struct AAudio {
     controls: Arc<Controls>,
@@ -150,7 +150,7 @@ struct State {
     /// The stream while it is open.
     open: Option<Open>,
     /// The session's stream has gone: nothing more is opened, and what is
-    /// open is closed by whoever finds it.
+    /// open is closed by whichever thread finds it.
     closed: bool,
     reopens: u32,
 }
@@ -163,13 +163,14 @@ struct Open {
     context: *mut Context,
 }
 
-// The stream handle is AAudio's, whose calls are any thread's; it is only
-// ever used under the state's lock or by the one thread that took it out.
+// The stream handle is AAudio's, whose calls may be made from any thread; it
+// is only ever used under the state's lock or by the one thread that took it
+// out.
 unsafe impl Send for Open {}
 
 impl Open {
-    /// Stops and closes the stream, which waits for a callback in flight —
-    /// so never on the protocol thread, nor on AAudio's own.
+    /// Stops and closes the stream, which waits for a callback in flight, so
+    /// this never runs on the protocol thread or on AAudio's own.
     fn close(self) {
         unsafe {
             AAudioStream_requestStop(self.stream);
@@ -180,8 +181,9 @@ impl Open {
 }
 
 /// What the callbacks are handed: the queue to fill from, the format the
-/// stream opened at, which the queue converts to, and what the device holds
-/// and takes at once, which the data callback keeps the queue told of.
+/// stream opened at, which the queue converts to, and how much the device
+/// holds and takes at once, which the data callback keeps the queue informed
+/// of.
 struct Context {
     shared: Arc<Shared>,
     format: Format,
@@ -309,10 +311,11 @@ fn try_open(shared: &Arc<Shared>, rate: i32, channels: i32) -> Result<Open, i32>
         (*context).period = AtomicU64::new(burst);
     }
     shared.latency_us.store(buffered.as_micros() as u64, Ordering::Relaxed);
-    // AAudio keeps its buffer topped up from the callback, delay behind the
-    // queue; and each callback asks for a burst, which the queue has to have
-    // left over — until the data callback has seen what the mixer reads,
-    // which is the most the queue is asked for at once (see `data`).
+    // AAudio keeps its buffer topped up from the callback, adding delay behind
+    // the queue; and each callback asks for a burst, which the queue has to
+    // have left over. The burst is the period until the data callback has seen
+    // how much the mixer reads, which is the most the queue is asked for at
+    // once (see `data`).
     shared.queue.set_device(buffered, device.duration(burst as usize));
     let result = unsafe { AAudioStream_requestStart(stream) };
     if result != AAUDIO_OK {
@@ -334,14 +337,14 @@ fn try_open(shared: &Arc<Shared>, rate: i32, channels: i32) -> Result<Open, i32>
 ///
 /// The queue's period is what the mixer reads at a time rather than a
 /// burst: on the Pixel 8 (Android 17) this was measured on, a Legacy stream
-/// (what a stream that does not ask for low latency is) is read by the
-/// mixer two bursts at a time — 1920 frames every 40 ms, refilled in two or
-/// three callbacks within 1.5 ms — from the first read after the buffer is
-/// filled on. A queue told a burst started with a millisecond or less to
-/// spare after that first read, and ran dry 0.3 s in on a write 3 ms late;
-/// it would again wherever it starts over, after running dry or a pause.
-/// The first read comes before the callback that starts the queue (it is
-/// what frees the room that callback fills), so the queue has the period
+/// (the kind a stream gets when it does not ask for low latency) is read by
+/// the mixer two bursts at a time (1920 frames every 40 ms, refilled in two
+/// or three callbacks within 1.5 ms) from the first read after the buffer is
+/// filled on. A queue given a burst as its period started with a millisecond
+/// or less to spare after that first read, and ran dry 0.3 s in on a write
+/// 3 ms late; it would again wherever it starts over, after running dry or a
+/// pause. The first read comes before the callback that starts the queue (it
+/// is what frees the room that callback fills), so the queue has the period
 /// from the start.
 unsafe extern "C" fn data(stream: *mut AAudioStream, user: *mut c_void, audio: *mut c_void, frames: i32) -> i32 {
     let context = unsafe { &*(user as *const Context) };

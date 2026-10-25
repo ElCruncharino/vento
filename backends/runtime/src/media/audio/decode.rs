@@ -6,12 +6,12 @@
 //! a protocol does not send.
 //!
 //! As with [`video::Decoders`](crate::media::video::Decoders), a protocol
-//! asks for a decoder and does not know whose it is: what it holds is the
-//! session's [`Outputs`](super::Outputs), whose
-//! [`decoders`](super::Outputs::decoders) are the platform's — libavcodec on
-//! the Linux client (built with the client's own FFmpeg), MediaCodec on the
-//! phone — so that RDP's AAC is decoded by the same code on both, and by none
-//! of FreeRDP's.
+//! asks for a decoder without knowing which implementation it gets: what it
+//! holds is the session's [`Outputs`](super::Outputs), whose
+//! [`decoders`](super::Outputs::decoders) are the platform's (libavcodec on
+//! the Linux client, built with the client's own FFmpeg; MediaCodec on
+//! Android), so that RDP's AAC is decoded by the same code in both RDP
+//! backends, and by none of FreeRDP's.
 //!
 //! What comes out is what a [`Stream`](super::Stream) takes, signed 16-bit
 //! samples interleaved, whatever the decoder works in: both libraries decode
@@ -25,8 +25,8 @@ use super::{Controls, Format};
 /// Which codec a stream's packets are in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Codec {
-    /// MPEG-4 AAC, as raw access units — one frame a packet, with no ADTS
-    /// header — which is how RDP's sound sends it (`WAVE_FORMAT_AAC_MS`).
+    /// MPEG-4 AAC, as raw access units (one frame a packet, with no ADTS
+    /// header), which is how RDP's sound sends it (`WAVE_FORMAT_AAC_MS`).
     Aac,
     /// Opus packets, as RDP's sound (`WAVE_FORMAT_OPUS`) and RustDesk send
     /// them: one a packet, 48 kHz, mono or stereo.
@@ -49,8 +49,8 @@ impl Codec {
 pub trait Decoder: Send {
     /// One packet, as the far end sent it: its samples appended to `out`,
     /// signed 16-bit and interleaved, in the format returned. `None`, with
-    /// nothing appended, where the packet made no samples yet — a decoder
-    /// that holds a packet or two back has them on a later call — and an
+    /// nothing appended, where the packet made no samples yet (a decoder
+    /// that holds a packet or two back has them on a later call), and an
     /// error where it could not be decoded, which drops that packet and
     /// leaves the decoder ready for the next.
     ///
@@ -71,17 +71,17 @@ pub trait Decoders: Send + Sync {
     /// again.
     fn decodable(&self, codec: Codec) -> bool;
 
-    /// A decoder for a stream of `format`, set up by `config` — AAC's
+    /// A decoder for a stream of `format`, set up by `config` (AAC's
     /// AudioSpecificConfig or Opus's identification header, as a protocol
-    /// that sends one has it — or, where `config` is empty, by the format
+    /// that sends one has it) or, where `config` is empty, by the format
     /// alone: AAC LC, and Opus as RFC 7845 describes a stream with no
     /// pre-skip, which is what RDP's sound sends without either.
     fn decoder(&self, codec: Codec, format: Format, config: &[u8]) -> Result<Box<dyn Decoder>, String>;
 }
 
 /// A decoder opened for a session, which says its codec to the session's
-/// [`Controls`] for as long as it is open — for the facts row, since the
-/// stream its samples go to never sees it — and unsays it when dropped.
+/// [`Controls`] for as long as it is open (for the facts row, since the
+/// stream its samples go to never sees it) and clears it when dropped.
 /// What a protocol's [`Player`](super::Player) and a C backend's table
 /// (`api::c::audio`) both hold an open decoder as.
 pub struct Decoding {

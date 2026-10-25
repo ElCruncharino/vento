@@ -6,9 +6,9 @@ plugins {
 }
 
 // Both halves of the SPICE backend: the crate at this directory's root
-// (`Cargo.toml`, `src/`), their protocol and their decoders under a session of
-// ours, as the library the AAR carries, and `java/`'s provider, which holds a
-// session on it as a `NativeBackend` through the natives class generated below.
+// (`Cargo.toml`, `src/`), built as the native library in the AAR, and the
+// provider in `java/`, which opens sessions on it as a `NativeBackend` through
+// the natives class generated below.
 android {
     namespace = 'net.pgaskin.remotedesktop.backend.spice'
     compileSdk 36
@@ -24,9 +24,8 @@ android {
     }
 
     // Not AGP's `src/main/`: `src/` here is the crate's. The Java is in
-    // `java/`, the files themselves with no package directories over them
-    // (javac goes by the `package` line), and the provider's registration is
-    // in `resources/`.
+    // `java/`, without package directories (javac goes by the `package`
+    // line), and the provider's registration is in `resources/`.
     sourceSets.main {
         java.srcDirs = ['java']
         resources.srcDirs = ['resources']
@@ -40,13 +39,13 @@ android {
 }
 
 dependencies {
-    // The only thing of the app's this module may name.
+    // The only app project this module may depend on.
     api project(':backends')
 }
 
-// The first Rust module with a patched submodule under it, so the check the
-// CMake ones run is this one's too: a build must not come out of sources that
-// look pristine and are not, nor out of a submodule nobody has initialised.
+// The crate builds from a patched submodule, so it runs the same check as the
+// CMake modules: no build from sources that look pristine but are not, or from
+// an uninitialised submodule.
 def patchCheck = tasks.register('patchCheck', PatchCheckTask) {
     patchScript.set(rootProject.file('patch.sh'))
 }

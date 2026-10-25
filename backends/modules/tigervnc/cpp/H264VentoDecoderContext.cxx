@@ -40,7 +40,8 @@ H264VentoDecoderContext::~H264VentoDecoderContext() {
 void H264VentoDecoderContext::open(vento::Video *video) {
     const vento_video_decoders &t = video->table();
     mode_ = video->mode();
-    // Off asks nothing of the GPU, so it takes no place either.
+    // With hardware decoding off nothing is asked of the GPU, so no hardware
+    // slot is taken either.
     hardware_ = mode_ != 0 && video->claimHardware();
     if (mode_ != 0 && !hardware_) {
         LOGI("H264: %d contexts already decode in hardware, so the one for %dx%d+%d+%d is "
@@ -76,7 +77,7 @@ void H264VentoDecoderContext::decode(const uint8_t *buffer, uint32_t len,
                                      ModifiablePixelBuffer *pb) {
     // Always the session's framebuffer, which is the only buffer their
     // DecodeManager decodes into; checked rather than assumed, since a
-    // wrong cast here is somebody else's memory.
+    // wrong cast here would write to unrelated memory.
     auto *fb = dynamic_cast<vento::VideoPixelBuffer *>(pb);
     vento::Video *video = fb != nullptr ? fb->video() : nullptr;
     if (video == nullptr || !video->available()) {
@@ -89,18 +90,18 @@ void H264VentoDecoderContext::decode(const uint8_t *buffer, uint32_t len,
     if (failed_ || len == 0) {
         return;
     }
-    // One session's for the context's whole life: their H264Decoder belongs
-    // to one connection, which has one session.
+    // The context belongs to one session for its whole life: their
+    // H264Decoder belongs to one connection, which has one session.
     video_ = video;
 
     if (decoder_ == nullptr) {
         open(video);
     } else if (video->mode() != mode_) {
-        // The person changed how video is decoded: a decoder in the new mode,
-        // and a whole picture asked for, since the new one has none of the
-        // pictures the stream refers back to. A server that answers a
-        // non-incremental request with a key frame, as wayvnc does, makes
-        // this a switch at the next picture.
+        // The user changed how video is decoded: open a decoder in the new
+        // mode, and ask for a whole picture, since the new decoder has none
+        // of the pictures the stream refers back to. With a server that
+        // answers a non-incremental request with a key frame, as wayvnc does,
+        // the switch happens at the next picture.
         LOGI("H264: hardware decoding changed, asking for a whole picture");
         close();
         open(video);
@@ -129,9 +130,8 @@ void H264VentoDecoderContext::decode(const uint8_t *buffer, uint32_t len,
 
     // Whether the framebuffer still holds this decoder's last picture: only
     // then is writing what moved enough. Anything else that drew over the
-    // rectangle since — another encoding, a CopyRect — means the whole
-    // picture is drawn again, which is what upstream's context does with
-    // every frame.
+    // rectangle since (another encoding, a CopyRect) means the whole picture
+    // is drawn again, which is what upstream's context does with every frame.
     const uint64_t before = fb->writes();
     const bool inStep = fb->id() == fbId_ && before == fbWrites_;
 
@@ -166,7 +166,7 @@ void H264VentoDecoderContext::decode(const uint8_t *buffer, uint32_t len,
         }
     }
 
-    // In step from here if it was, or if this picture was drawn whole — and
+    // In step from here if it was, or if this picture was drawn whole, but
     // only if nothing else was committed while it was being decoded, which
     // another decoder thread may have done.
     const bool nowInStep = inStep || picture;

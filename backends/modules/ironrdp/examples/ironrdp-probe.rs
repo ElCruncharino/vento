@@ -1,19 +1,19 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Connect to a server, print what it says, and write the first frame out.
+//! Connect to a server, print what it reports, and write out the first frame.
 //!
-//! The protocol crate's own test rig, and `rfb`'s probe line for line so that
-//! the two can be compared: it runs on the host against `scripts/testrdp`, so
-//! "does the desktop decode?" is a question with a picture for an answer
-//! instead of a phone.
+//! The protocol crate's own test rig, modelled on `rfb`'s probe so that the
+//! two can be compared: it runs on the host against `scripts/testrdp`, so
+//! whether the desktop decodes can be checked from a picture, without a
+//! phone.
 //!
 //! ```sh
 //! scripts/testrdp/run.sh
 //! cargo run --features probe --example ironrdp-probe -- 127.0.0.1:3389 proto protopass /tmp/rdp.ppm
 //! RDP_PIN=AB:CD:… cargo run --features probe --example ironrdp-probe -- …    # refuse anything else
 //! RDP_NLA=off RDP_SIZE=1280x800 cargo run --features probe --example ironrdp-probe -- …
-//! RDP_CLIP='hello' cargo run --features probe --example ironrdp-probe -- …    # offer it, print theirs
+//! RDP_CLIP='hello' cargo run --features probe --example ironrdp-probe -- …    # offer it, print the remote's
 //! RDP_RFX=off RDP_COMPRESSION=rdp61 cargo run --features probe --example ironrdp-probe -- …
 //! ```
 
@@ -26,7 +26,7 @@ struct Probe {
     user: String,
     password: String,
     domain: String,
-    /// What the certificate has to hash to, if anything is being insisted on.
+    /// The fingerprint the certificate must have, if one is required.
     pin: Option<String>,
     frames: usize,
     damage: usize,
@@ -77,8 +77,8 @@ impl Handler for Probe {
     fn trust(&mut self, fingerprint: &str) -> bool {
         println!("certificate: {fingerprint}");
         match &self.pin {
-            // The rig's stand-in for the app's pin store, so that "a changed
-            // certificate is refused" is testable from a shell.
+            // Stands in for the app's pin store, so that refusing a changed
+            // certificate can be tested from a shell.
             Some(pin) => {
                 let ok = pin.eq_ignore_ascii_case(fingerprint);
                 println!(
@@ -137,15 +137,15 @@ fn main() {
 
     let clip = std::env::var("RDP_CLIP").ok().filter(|c| !c.is_empty());
 
-    // A few seconds of whatever the desktop is doing, then look at it. Longer
-    // than the RFB probe's two, because an xrdp session has a window manager
-    // and four X clients to start before there is anything to see.
+    // Wait a few seconds, then capture the desktop. Longer than the RFB
+    // probe's two, because an xrdp session has a window manager and four X
+    // clients to start before there is anything to see.
     let watcher = {
         let client = Arc::clone(&client);
         std::thread::spawn(move || {
             if let Some(text) = clip {
-                // A second in, so the channel's opening exchange is over and
-                // this is a copy rather than part of the handshake.
+                // After a second, so the channel's opening exchange is over
+                // and this is a copy rather than part of the handshake.
                 std::thread::sleep(Duration::from_secs(1));
                 println!("offering {} chars to the remote", text.chars().count());
                 client.clipboard(&text);
@@ -202,8 +202,8 @@ fn main() {
 }
 
 /// IronRDP logs through `tracing`, which forwards to `log`; on the phone that
-/// is `android_logger` and here it is this. Fifteen lines rather than a
-/// dependency, since the probe is a rig and not a program.
+/// goes to `android_logger`, and here to this. A few lines rather than a
+/// dependency, since the probe is a test rig, not a product.
 fn env_logger_lite() {
     struct Stderr;
     impl log::Log for Stderr {

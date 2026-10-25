@@ -16,8 +16,8 @@ use super::{CLEAN, CLEAN_START, Controls, Format, Gain, LIMIT, MARGIN, MARGIN_MA
 /// How long a queue that ran dry may stay dry with the far end's sound
 /// still to come: sound that arrives again sooner was late, and the session
 /// remembers how late ([`Controls::late`]); sound that arrives later is the
-/// far end's next sound after a pause of its own — the end of a
-/// notification, a guest that stopped playing — which no margin is for.
+/// far end's next sound after a pause of its own (the end of a
+/// notification, a guest that stopped playing), which no margin is for.
 const RESUME: Duration = Duration::from_millis(500);
 
 /// How much more than its margin a queue has to have kept, at its least,
@@ -54,10 +54,10 @@ pub struct Stats {
 /// and how many of them it keeps in front of the device: its **target**.
 ///
 /// The target is the least that keeps the device from finding the queue
-/// empty as the far end's sound arrives — a period of the device's, which
-/// it takes at once ([`Queue::set_device`]), and what the far end's rhythm
-/// has needed of late, its largest write or bunch of writes and how late
-/// they come (`Rhythm`) — and a **margin** on top, for lateness the
+/// empty as the far end's sound arrives (a period of the device's, which
+/// it takes at once, [`Queue::set_device`], and what the far end's rhythm
+/// has needed recently, its largest write or bunch of writes and how late
+/// they come, `Rhythm`) and a **margin** on top, for lateness the
 /// rhythm has not shown lately: [`MARGIN`], and as much of the lateness the
 /// session remembers ([`Controls::late`]) as the rhythm does not already
 /// cover, or, where it is more, what is left of the stream's start: a
@@ -67,31 +67,31 @@ pub struct Stats {
 /// it: what is heard is the target and the device's buffer behind what
 /// arrived.
 ///
-/// The queue starts playing once it has the target — from a far end that sends
-/// its writes in groups, once the group has landed (`GATHER`) — and plays
+/// The queue starts playing once it has the target (from a far end that sends
+/// its writes in groups, once the group has landed: `GATHER`) and plays
 /// silence when it runs dry until it has it again. Where it ran dry with the
-/// far end's sound arriving again within `RESUME` — the sound was later than
-/// anything the rhythm had shown — the session remembers that lateness, so that
-/// the next time it is not too late, and forgets it again slowly after a long
-/// while of sound that did not run dry; and the queue starts again as soon as
-/// what it has lasts, with the period and the margin, until the far end's next
-/// write if that is no later against its sound than this one was
+/// far end's sound arriving again within `RESUME` (the sound was later than
+/// anything the rhythm had shown), the session remembers that lateness, so
+/// that the next time it is not too late, and forgets it again slowly after a
+/// long while of sound that did not run dry. The queue then starts again as
+/// soon as what it has lasts, with the period and the margin, until the far
+/// end's next write if that is no later against its sound than this one was
 /// (`Rhythm::keep`), rather than once it has the whole target, which counts the
 /// lateness from the earliest write of the window on (for Windows' PCM, whose
 /// next pair is 372 ms away, the difference between a gap of the lateness and
-/// one of the pair); unless it was later than
-/// [`MARGIN_MAX`](super::MARGIN_MAX), a stall, after which the rhythm starts a
-/// new run, what the far end sends to catch up counts as a burst, and the queue
+/// one of the pair). The exception is sound later than
+/// [`MARGIN_MAX`](super::MARGIN_MAX), a stall: the rhythm then starts a new
+/// run, what the far end sends to catch up counts as a burst, and the queue
 /// starts again only once it has caught up, at its target, the rest of the
 /// backlog dropped while the device was still playing silence. Where the queue
-/// has kept more than its margin beyond what it needed for a whole `WINDOW` —
-/// it started on a write that arrived late, the lateness remembered was
-/// forgotten, a late write the rhythm remembered has been, the far end's clock
-/// runs faster than the device's — the excess is dropped at once, faded over
-/// `FADE`, so that the sound is no further behind than it has to be.
+/// has kept more than its margin beyond what it needed for a whole `WINDOW`
+/// (it started on a write that arrived late, the remembered lateness was
+/// forgotten, a late write the rhythm remembered was forgotten too, the far
+/// end's clock runs faster than the device's), the excess is dropped at once,
+/// faded over `FADE`, so that the sound is no further behind than it has to be.
 ///
-/// A lock rather than a lock-free ring, because what the policy needs —
-/// dropping the oldest when the writer has got too far ahead — is the writer
+/// A lock rather than a lock-free ring, because what the policy needs
+/// (dropping the oldest when the writer has got too far ahead) is the writer
 /// moving the reader's end, which a single-producer ring does not allow.
 /// The lock is held for a copy of one write or one device buffer and the
 /// bookkeeping of the policy, never across a call into the device or the
@@ -208,17 +208,17 @@ impl Queue {
         self.gain.set(gain);
     }
 
-    /// What the device holds once it is running, `buffer` — which a device
-    /// that is written to as soon as it has room keeps full — and the most
+    /// What the device holds once it is running, `buffer` (which a device
+    /// that is written to as soon as it has room keeps full), and the most
     /// it takes from the queue at once, `period`. The platform says them
     /// when the device has opened, before it first pulls, and again where
     /// they change (a PipeWire graph's cycle does); until then the queue
     /// plays as though the device held nothing and took a sample at a time.
     ///
     /// The period is part of the target: the queue has to have it left
-    /// when the device comes for it. The buffer is not — it is behind the
+    /// when the device comes for it. The buffer is not (it is behind the
     /// queue, delay on top of the target, and what the overlay and RDP's
-    /// confirmations add — but the limit is counted with it ([`LIMIT`]).
+    /// confirmations add), but the limit is counted with it ([`LIMIT`]).
     pub fn set_device(&self, buffer: Duration, period: Duration) {
         let micros = |d: Duration| d.as_micros().min(u64::MAX as u128) as u64;
         self.buffer.store(micros(buffer), Ordering::Relaxed);
@@ -270,8 +270,8 @@ impl Queue {
         self.format.duration(self.margin(&inner))
     }
 
-    /// Which of the platform's outputs the device plays on — the desktop's
-    /// PipeWire stream, or ALSA's device where there is no PipeWire — for
+    /// Which of the platform's outputs the device plays on (the desktop's
+    /// PipeWire stream, or ALSA's device where there is no PipeWire), for
     /// the facts row and the overlay to say. A platform with one way out
     /// (AAudio) need not say; a device that falls back to another output
     /// mid-stream says it again.
@@ -419,7 +419,7 @@ impl Queue {
     }
 
     /// Drops what the queue kept beyond the target's margin for a whole
-    /// window — the least it held before a write, less the margin — where
+    /// window (the least it held before a write, less the margin) where
     /// that is worth a skip, and starts the next window. What was dropped,
     /// if anything, for a log line.
     fn settle(&self, inner: &mut Inner) -> Option<Duration> {
@@ -475,8 +475,8 @@ impl Queue {
         inner.resampler.reset();
     }
 
-    /// Fills `out`, frames of `device` — the format the device opened at,
-    /// which the stream is converted to where it differs — with what is
+    /// Fills `out`, frames of `device` (the format the device opened at,
+    /// which the stream is converted to where it differs), with what is
     /// queued, gained, or silence. The device's call, on its own thread;
     /// never waits on anything but the copy.
     pub fn pull(&self, out: &mut [i16], device: Format) {
@@ -512,8 +512,8 @@ impl Queue {
                 let caught_up = inner.catching.is_none();
                 let full = queued >= target && caught_up;
                 // The target reached on a write whose group is still
-                // landing — the first of Windows' PCM pair, the second a
-                // few milliseconds behind it — is waited on until the rest
+                // landing (the first of Windows' PCM pair, the second a
+                // few milliseconds behind it) is waited on until the rest
                 // could no longer be part of it: started on the first, the
                 // queue had the second on top of its target, a pair's
                 // worth further behind than it needs to be until the
@@ -524,8 +524,8 @@ impl Queue {
                 if gathering {
                     inner.gathering = true;
                 } else if full || (queued > 0 && inner.waited >= device.frames(self.format.duration(target))) {
-                    // Whatever arrived while nothing was playing — a device
-                    // that took a while to open, a burst after a stall —
+                    // Whatever arrived while nothing was playing (a device
+                    // that took a while to open, a burst after a stall)
                     // starts at the target and not behind it; and after
                     // waiting for a group, where it would have been had it
                     // started on the group's last write, which the far
@@ -583,7 +583,7 @@ impl Queue {
 #[derive(Default)]
 struct Notes {
     /// The queue had run dry: for how long, how late the write was, and what
-    /// the session allows for now — `None` for a stall, which it does not.
+    /// the session allows for now; `None` for a stall, which it does not.
     dry: Option<(Duration, Duration, Option<Duration>)>,
     /// The stream's margin came down a step, to this.
     margin: Option<Duration>,
@@ -860,7 +860,7 @@ mod tests {
     fn a_stream_still_arriving_waits_for_the_whole_target() {
         // 5 ms written for each 10 ms pulled: the queue grows slower than
         // the waiting, and is never started for having waited a target's
-        // worth across writes — only once it has the target, here once the
+        // worth across writes: only once it has the target, here once the
         // far end has caught up and kept up for a few writes.
         let q = queue();
         for i in 0..19 {
@@ -1105,10 +1105,10 @@ mod tests {
         // Windows' PCM pairs with the second write 3 ms behind the first,
         // as a sender gets to it, and a device that opened late, whose
         // first pull after its buffer's, which finds the target, lands
-        // between the two writes of the third pair: a queue that started on the first had the
-        // second on top of its target, a wave further behind than it needed
-        // to be until the window settled it eight seconds in, with a 186 ms
-        // skip.
+        // between the two writes of the third pair: a queue that started on
+        // the first had the second on top of its target, a wave further
+        // behind than it needed to be until the window settled it eight
+        // seconds in, with a 186 ms skip.
         let format = Format::new(44_100, 2).unwrap();
         let period = 551; // 12.49 ms
         let mut writes = Vec::new();
@@ -1170,7 +1170,7 @@ mod tests {
     #[test]
     fn a_stall_is_remembered_and_the_next_is_ridden_out() {
         // QEMU's 10 ms writes on time, but for a 40 ms stall every twenty
-        // seconds — less often than the rhythm remembers: the first runs
+        // seconds, less often than the rhythm remembers: the first runs
         // the queue dry, the session remembers how late it was, and the
         // ones after it are heard whole.
         let q = queue();
@@ -1327,7 +1327,7 @@ mod tests {
         // QEMU's 10 ms writes, the one due at the device's sixth read 4 ms
         // late and the one due at its second after the pause, in a stream
         // past its start, and a second's pause of the far end's
-        // 15 s in, after which the queue starts again from nothing — long
+        // 15 s in, after which the queue starts again from nothing, long
         // after a first window, so nothing but the period can allow for the
         // read. Told a burst as the period, the queue starts again with the
         // first read and little to spare after it, and the late writes are
@@ -1416,8 +1416,8 @@ mod tests {
     #[test]
     fn a_stall_up_to_the_most_is_remembered_and_kept_as_before() {
         // Held back 90 ms: late, not a stall; the queue starts again with
-        // the backlog as before — cut only to the target, which has the
-        // lateness in it, 9 ms here — and the session remembers it and a
+        // the backlog as before (cut only to the target, which has the
+        // lateness in it, 9 ms here), and the session remembers it and a
         // step.
         let q = queue();
         let (_, seen) = stalled(&q, 90.0);
@@ -1459,7 +1459,7 @@ mod tests {
         // Windows' PCM, its pair due 15 s in 60 ms late: the queue runs dry
         // for what the margin did not cover, and the pair is measured as the
         // 60 ms late it is, not as a wave more (the second of the pair before
-        // it is a wave further on and arrived with the first) — which would
+        // it is a wave further on and arrived with the first), which would
         // be a stall: remembered, nothing of it dropped, and the queue plays
         // on from where it stopped.
         let format = Format::new(44_100, 2).unwrap();

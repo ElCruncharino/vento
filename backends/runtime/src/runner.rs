@@ -1,16 +1,16 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! What runs one session: a client, the thread it runs on, and the state
-//! whoever started it holds a handle to.
+//! What runs one session: a client, the thread it runs on, and the state its
+//! creator holds a handle to.
 //!
 //! Two threads reach a session: the protocol thread, which owns the connection
-//! and delivers every callback, and whoever else holds the handle — on Android
-//! that is Java, calling in from the UI thread and from **whichever thread is
-//! drawing**, which reads regions straight through so that pixel fetches never
-//! queue behind connection work. The client is behind an `Arc` for that
-//! reason, and the protocol crates keep their own state behind locks fine
-//! enough for the drawing thread to take the read side of.
+//! and delivers every callback, and the holder of the handle. On Android that
+//! is Java, calling in from the UI thread and from **whichever thread is
+//! drawing**, which reads regions directly so that pixel fetches never queue
+//! behind connection work. The client is behind an `Arc` for that reason, and
+//! the protocol crates keep their own state behind locks fine-grained enough
+//! for the drawing thread to take the read side.
 //!
 //! There was one of these per protocol, and the four were copies of each
 //! other but for the thread's name and the shape of the credentials; what
@@ -27,8 +27,8 @@ use std::thread::JoinHandle;
 /// A [`Handler`] over a [`Callbacks`]: everything is forwarded as is, and the
 /// questions become an event and a wait.
 ///
-/// Cheap to clone — three `Arc`s — because the runner keeps one end to
-/// answer through and the protocol thread takes the other.
+/// Cheap to clone (three `Arc`s), because the runner keeps one end to answer
+/// through and the protocol thread takes the other.
 pub struct Bridge {
     events: Arc<dyn Callbacks>,
     credentials: Arc<Slot<Credentials>>,
@@ -62,8 +62,7 @@ impl Bridge {
 
     /// The answer to [`Callbacks::trust_needed`] and to [`Callbacks::unverified`],
     /// which share a slot because they are one question at the protocol
-    /// thread's end — go on, or do not — and only one of them can be
-    /// outstanding.
+    /// thread's end (go on or not), and only one of them can be outstanding.
     pub fn answer_trust(&self, accept: bool) {
         self.trust.answer(Some(accept));
     }
@@ -116,8 +115,8 @@ impl Handler for Bridge {
 
     fn trust(&mut self, fingerprint: &str) -> bool {
         self.events.trust_needed(fingerprint);
-        // A cancelled prompt is a refusal, which is the safe direction for the
-        // one question whose wrong answer is a stranger's desktop.
+        // A cancelled prompt is a refusal, the safe default for the one
+        // question where a wrong answer connects to an impersonated host.
         self.trust.wait().unwrap_or(false)
     }
 
@@ -128,9 +127,9 @@ impl Handler for Bridge {
 }
 
 /// One session of a [`Client`], running: the thread it is on, and the handle
-/// whoever started it holds.
+/// its creator holds.
 pub struct Runner<C: Client> {
-    /// The protocol's own surface — pointer, keys, region reads — reached
+    /// The protocol's own interface (pointer, keys, region reads), used
     /// directly, because what it offers differs per protocol and a runner is
     /// only the thread and the questions.
     pub client: Arc<C>,
@@ -141,9 +140,8 @@ pub struct Runner<C: Client> {
 
 impl<C: Client> Runner<C> {
     /// Creates the session and starts connecting. Returns immediately; the
-    /// protocol runs on a thread of its own, which is where every event comes
-    /// from — including [`Callbacks::closed`], which is the last thing the
-    /// thread does.
+    /// protocol runs on its own thread, which is where every event comes from,
+    /// including [`Callbacks::closed`], the last thing the thread does.
     pub fn start(client: Arc<C>, config: C::Config, bridge: Bridge) -> Runner<C> {
         let thread = {
             let client = Arc::clone(&client);
@@ -153,8 +151,8 @@ impl<C: Client> Runner<C> {
                 .spawn(move || {
                     let detail = match client.run(&config, &mut handler) {
                         Ok(()) => String::new(),
-                        // Asked for, which the screen already knows about:
-                        // what it wants said is nothing.
+                        // Requested, so the screen already knows and shows no
+                        // message.
                         Err(e) if C::closed_on_request(&e) => String::new(),
                         Err(e) => e.to_string(),
                     };
@@ -182,27 +180,27 @@ impl<C: Client> Runner<C> {
     /// Ends the session without waiting for it. Idempotent.
     pub fn disconnect(&self) {
         if !self.closed.swap(true, Ordering::AcqRel) {
-            // A session sitting behind an unanswered prompt is blocked in one
-            // of the slots, not in a socket read — and on a current-thread
-            // runtime that means the whole session is — so closing has to wake
-            // those too or the thread never ends. The client is closed first:
-            // the woken thread sees a refused prompt, and only a protocol that
-            // already knows it was closed reports that as the close it was
-            // (`closed_on_request`) rather than as a refusal — woken the other
-            // way round, it can read its flag before `close` has set it.
+            // A session waiting on an unanswered prompt is blocked in one of
+            // the slots, not in a socket read (and on a current-thread runtime
+            // that blocks the whole session), so closing has to wake those too
+            // or the thread never ends. The client is closed first: the woken
+            // thread sees a refused prompt, and only a protocol that already
+            // knows it was closed reports that as a requested close
+            // (`closed_on_request`) rather than as a refusal. Woken in the
+            // other order, it can read its flag before `close` has set it.
             self.client.close();
             self.bridge.cancel();
         }
     }
 
     /// Ends the session and waits for its thread, so that when this returns
-    /// the events are provably finished and whatever they were delivered to —
-    /// on Android, a `Global` reference into Java — can be dropped.
+    /// the events are finished and their receiver (on Android, a `Global`
+    /// reference into Java) can be dropped.
     ///
-    /// The RealVNC backend had to solve the same problem the other way round —
-    /// retire the handle, then post the free — because their core keeps
-    /// calling after `sessionClosed`. Here both ends of the boundary are ours,
-    /// so a join is enough and there is no corpse to leave behind.
+    /// The RealVNC backend solves the same problem the other way round (retire
+    /// the handle, then post the free) because RealVNC's core keeps calling
+    /// after `sessionClosed`. Here both sides of the boundary are ours, so a
+    /// join is enough and nothing has to outlive the session.
     pub fn destroy(&self) {
         self.disconnect();
         let thread = self.thread.lock().unwrap().take();

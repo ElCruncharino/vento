@@ -11,9 +11,9 @@ import org.junit.Test;
 
 /**
  * The composing region as a difference. The cases are the ones a real IME
- * produces — a word grown a letter at a time, a syllable rewritten in place, a
- * prediction accepted, an emoji — because the failure this class exists to stop
- * is silent: every character is sent, just several times over.
+ * produces (a word grown a letter at a time, a syllable rewritten in place, a
+ * prediction accepted, an emoji), because the failure this class prevents is
+ * silent: every character is sent, just several times over.
  */
 public class TextDeltaTest {
 
@@ -67,7 +67,7 @@ public class TextDeltaTest {
     }
 
     /**
-     * The case the whole class is for: a syllabic IME rewriting the
+     * The main case for this class: a syllabic IME rewriting the
      * <em>same</em> character position. Naively typed, three characters arrive
      * where one was meant.
      */

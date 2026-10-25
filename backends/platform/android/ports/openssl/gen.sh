@@ -3,8 +3,8 @@
 # submodule pin; must produce an empty git diff otherwise).
 #
 # OpenSSL's build is a perl Configure, which writes a Makefile, a configuration
-# header, nine DER templates and — the part that makes this a port rather than a
-# file list — every assembly file, out of perlasm, per ABI. None of that may
+# header, nine DER templates and (the part that makes this a port rather than a
+# file list) every assembly file, out of perlasm, per ABI. None of that may
 # happen while the app is building, so it happens here.
 #
 # The source list is read out of the Makefile's own rules rather than out of a
@@ -16,8 +16,8 @@
 # NDK below.
 set -eu
 
-# Every list below is sorted, and what `sort` thinks of an underscore is a
-# question of locale; the answer that is the same everywhere is C's.
+# Every list below is sorted, and where `sort` puts an underscore depends on
+# the locale; C's order is the same everywhere.
 export LC_ALL=C
 
 cd "$(dirname "$0")"
@@ -35,7 +35,8 @@ for m in FindBin IPC::Cmd Time::Piece Pod::Usage; do
 done
 
 # The build date is compiled in, as OpenSSL_version(OPENSSL_BUILT_ON), and
-# today is a diff on every rerun; the date of the commit the pin names is not.
+# today's date would be a diff on every rerun; the date of the pinned commit is
+# not.
 SOURCE_DATE_EPOCH=$(git -C "$src" log -1 --format=%ct \
     "$(git -C "$root" rev-parse :third_party/openssl)")
 export SOURCE_DATE_EPOCH
@@ -43,7 +44,7 @@ export SOURCE_DATE_EPOCH
 # Under the port rather than under mktemp: the Makefile writes the path it read
 # each template from into the header it generated, relative to where it ran,
 # and a build directory in a fixed place is what makes that path the same on
-# every machine. `build` is a name .gitignore already knows.
+# every machine. `build` is already in .gitignore.
 tmp=$port/build
 rm -rf "$tmp" && mkdir -p "$tmp"
 trap 'rm -rf "$tmp"' EXIT
@@ -54,10 +55,10 @@ abis="arm64-v8a x86_64"
 # list is upstream's own scripts/android-build-openssl.sh minus what an RDP
 # client cannot reach.
 #   no-legacy    RC4, MD4 and MD5 are in the legacy provider, and RDP needs all
-#                three on the wire — FreeRDP's WITH_INTERNAL_* switches compile
+#                three on the wire; FreeRDP's WITH_INTERNAL_* switches compile
 #                its own instead, which is why the provider can go.
-#   no-dso       Loading a provider by path is not a thing an app's sandbox has,
-#                and it takes engines and the module directory with it.
+#   no-dso       An app's sandbox cannot load a provider by path, and this
+#                takes engines and the module directory with it.
 #   no-apps      Everything here is the two libraries; nothing installs a binary.
 #   asm          Kept, unlike the gnutls port's: this is the TLS under a session
 #                that carries video, and AES in C is where that shows. It is
@@ -117,9 +118,9 @@ done
 # grouped by the archive they are compiled for, because that is what the include
 # paths and the defines are per. Read out of the Makefile's own rules: the first
 # prerequisite of an object is what compiles into it, which is the only place
-# that says whether a name came from the tree or from a generator — by where
-# the path leads rather than by where the checkout is, since the Makefile
-# writes it relative to the build directory.
+# that says whether a name came from the tree or from a generator (by where the
+# path leads rather than by where the checkout is, since the Makefile writes it
+# relative to the build directory).
 #
 # The -D flags come out of the same rule, and are per group rather than a union
 # over the build: `aes_platform.h` and three provider files read these macros,

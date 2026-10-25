@@ -1,11 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Their session encryption: two signatures, one sealed key, and a stream
-//! cipher counting its own frames.
+//! RustDesk's session encryption: two signatures, one sealed key, and a stream
+//! cipher that counts its frames.
 //!
-//! The design is worth reading before the code, because it is easy to read as
-//! one signature and it is two:
+//! The design is easy to misread as one signature, but it has two:
 //!
 //! 1. the rendezvous server's `PunchHoleResponse` carries an `IdPk{id, pk}`
 //!    signed with **its** secret key, where `pk` is the peer's **long-term**
@@ -16,9 +15,9 @@
 //!    after the one carrying it is encrypted under it.
 //!
 //! So the server never sees the key a session is sealed to and cannot
-//! substitute one. A server that lies can introduce the wrong machine, and only
-//! for an id it has not already introduced honestly — which is what the pin on
-//! the long-term key catches.
+//! substitute one. A dishonest server can introduce the wrong machine, but only
+//! for an id it has not already introduced honestly, which the pin on the
+//! long-term key detects.
 
 use crate::error::{Error, Result};
 use crate::protos::message::IdPk;
@@ -30,14 +29,15 @@ use dryoc::classic::crypto_sign::crypto_sign_open;
 use protobuf::Message as _;
 use sha2::{Digest, Sha256};
 
-/// An ed25519 signature is attached to the message it signs rather than beside
-/// it, so an opened message is the frame minus this much.
+/// An ed25519 signature is prepended to the message it signs rather than sent
+/// separately, so an opened message is the frame minus this much.
 const SIGNATURE: usize = 64;
 
-/// Their session cipher: xsalsa20-poly1305 under a nonce that is the frame's
-/// sequence number, little-endian and zero-padded. Theirs increments before
-/// use, so a frame numbered zero never goes on the wire, and each direction
-/// counts on its own — which is why this is one per half rather than shared.
+/// RustDesk's session cipher: xsalsa20-poly1305 with the frame's sequence
+/// number as the nonce, little-endian and zero-padded. The counter increments
+/// before use, so frame zero is never sent, and each direction counts
+/// separately, so there is one instance per direction rather than a shared
+/// one.
 pub struct Secretbox {
     key: [u8; 32],
     counter: u64,
@@ -86,12 +86,12 @@ impl Cipher for Secretbox {
     }
 }
 
-/// One link of the chain: open an attached signature, parse the `IdPk` inside,
-/// insist the id is the one that was dialled, and hand back its key.
+/// One link of the chain: opens a signed message, parses the `IdPk` inside,
+/// checks that the id is the dialled one, and returns its key.
 ///
-/// The id check is the whole point of the message. Without it a server could
-/// introduce any machine it liked for any id, since the signature would still
-/// be its own.
+/// The id check is the purpose of the message. Without it a server could
+/// introduce any machine for any id, since the signature would still be its
+/// own.
 pub fn open_id_pk(signed: &[u8], with: &[u8; 32], peer_id: &str) -> Result<[u8; 32]> {
     if signed.len() < SIGNATURE {
         return Err(Error::Protocol("a signature shorter than a signature".into()));
@@ -114,11 +114,12 @@ pub fn open_id_pk(signed: &[u8], with: &[u8; 32], peer_id: &str) -> Result<[u8; 
         .map_err(|_| Error::Protocol("the key inside is not 32 bytes".into()))
 }
 
-/// A fresh session key sealed to the peer's per-connection box key: what to
-/// send, and the key itself.
+/// A fresh session key sealed to the peer's per-connection box key: returns our
+/// public box key, the sealed key to send, and the key itself.
 ///
-/// The nonce is zero, which is safe exactly once for a key pair and is used
-/// once — the box key is new for this connection and ours is new for this call.
+/// The nonce is zero, which is safe for a single use per key pair, and it is
+/// used once: the peer's box key is new for this connection and ours is new
+/// for this call.
 pub fn seal_session_key(their_box_pk: &[u8; 32]) -> Result<(Vec<u8>, Vec<u8>, [u8; 32])> {
     let (our_pk, our_sk) = crypto_box_keypair();
     let mut key = [0u8; 32];
@@ -129,13 +130,13 @@ pub fn seal_session_key(their_box_pk: &[u8; 32]) -> Result<(Vec<u8>, Vec<u8>, [u
     Ok((our_pk.to_vec(), sealed, key))
 }
 
-/// What a person is shown of a peer's long-term key, and what the pin store
-/// holds: its SHA-256, spelled the way `openssl dgst -sha256 -c` spells one.
+/// The form of a peer's long-term key shown to the user and stored in the pin
+/// store: its SHA-256 as colon-separated uppercase hex pairs.
 ///
-/// A digest rather than the base64 their own client shows, because the store
-/// compares hex digits and drops everything else — it is keyed on machines
-/// rather than on clients, so what it holds has to be in the one form every
-/// backend here already writes.
+/// A digest rather than the base64 RustDesk's client shows, because the store
+/// compares hex digits and ignores everything else: it is keyed on machines
+/// rather than clients, so entries have to be in the form every backend here
+/// already uses.
 pub fn fingerprint(key: &[u8; 32]) -> String {
     Sha256::digest(key)
         .iter()
@@ -144,17 +145,16 @@ pub fn fingerprint(key: &[u8; 32]) -> String {
         .join(":")
 }
 
-/// A rendezvous server's public key as it is written down: 32 bytes of base64,
-/// which is the form their config file, their web UI and their `id_ed25519.pub`
-/// all use.
+/// A rendezvous server's public key in its text form: 32 bytes in base64, as
+/// used by RustDesk's config file, web UI and `id_ed25519.pub`.
 pub fn server_key(text: &str) -> Result<[u8; 32]> {
     base64(text.trim())?
         .try_into()
         .map_err(|_| Error::Protocol("a rendezvous key that is not 32 bytes".into()))
 }
 
-/// Standard base64, decoded. Padding and whitespace are ignored rather than
-/// insisted on: this decodes something somebody pasted.
+/// Decodes standard base64. Padding and whitespace are ignored rather than
+/// required, since the input is pasted by the user.
 fn base64(text: &str) -> Result<Vec<u8>> {
     const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = Vec::new();
@@ -182,8 +182,8 @@ fn base64(text: &str) -> Result<Vec<u8>> {
 mod tests {
     use super::*;
 
-    /// The public network's own key, which is a constant in every build of
-    /// theirs and the one piece of this with a known answer.
+    /// The public network's key, which is built into every RustDesk build and
+    /// is the only input here with a known value.
     #[test]
     fn the_public_network_key_is_32_bytes() {
         let key = server_key(crate::rendezvous::PUBLIC_KEY).unwrap();
@@ -191,9 +191,9 @@ mod tests {
         assert_eq!(key[0], 0x39);
     }
 
-    /// Both directions of a session, one after another, which is the property
-    /// the counter has to have: the nonce is the frame's number and the two
-    /// ends agree on it only because each direction counts alone.
+    /// Frames open in the order they were sealed: the nonce is the frame's
+    /// number, and the two ends agree on it only because each direction counts
+    /// separately.
     #[test]
     fn frames_open_in_the_order_they_were_sealed() {
         let key = [7u8; 32];
@@ -206,8 +206,8 @@ mod tests {
         }
     }
 
-    /// A frame opened out of order fails rather than producing something: the
-    /// nonce is wrong, so the tag does not check.
+    /// A frame opened out of order fails rather than producing garbage: the
+    /// nonce is wrong, so the tag does not verify.
     #[test]
     fn a_frame_out_of_order_does_not_open() {
         let key = [9u8; 32];
@@ -219,9 +219,9 @@ mod tests {
         assert!(receiver.open(first).is_err());
     }
 
-    /// Their whole chain, built here and taken apart the way a session takes it
-    /// apart: a server vouching for a peer's long-term key, the peer signing a
-    /// box key with it, and a session key sealed to that.
+    /// The whole chain, built here and verified as a session verifies it: a
+    /// server vouching for a peer's long-term key, the peer signing a box key
+    /// with it, and a session key sealed to that.
     #[test]
     fn the_two_signatures_and_the_sealed_key() {
         use dryoc::classic::crypto_box::crypto_box_open_easy;

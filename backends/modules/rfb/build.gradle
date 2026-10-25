@@ -6,9 +6,9 @@ plugins {
 }
 
 // Both halves of the RFB backend: the crate at this directory's root
-// (`Cargo.toml`, `src/`), our own client, as the library the AAR carries, and
-// `java/`'s provider, which holds a session on it as a `NativeBackend` through
-// the natives class generated below.
+// (`Cargo.toml`, `src/`), our own client, built as the library the AAR carries,
+// and the provider in `java/`, which holds a session on it as a
+// `NativeBackend` through the natives class generated below.
 android {
     namespace = 'net.pgaskin.remotedesktop.backend.rfb'
     compileSdk 36
@@ -24,15 +24,14 @@ android {
     }
 
     // Not AGP's `src/main/`: `src/` here is the crate's. The Java is in
-    // `java/`, the files themselves with no package directories over them
-    // (javac goes by the `package` line), and the provider's registration is
-    // in `resources/`.
+    // `java/` without package directories (javac uses the `package` line), and
+    // the provider's registration is in `resources/`.
     sourceSets.main {
         java.srcDirs = ['java']
         resources.srcDirs = ['resources']
     }
 
-    // The AAR carries the library too, so speaking RFB is a dependency line.
+    // The AAR includes the library too, so RFB support is one dependency line.
     publishing {
         singleVariant('release') {
             withSourcesJar()
@@ -41,13 +40,13 @@ android {
 }
 
 dependencies {
-    // The only thing of the app's this module may name. `api` because a
-    // session here is a `Backend` and whoever holds one says so.
+    // The only project of the app's this module may depend on. `api` because
+    // a session here is a `Backend`, and its users need that type.
     api project(':backends')
 }
 
-// `libremotedesktop_rfb.so`, compiled by cargo-ndk into a generated jniLibs
-// directory the AAR packages. Every variant: both flavours get this client.
+// `libremotedesktop_rfb.so`, built by cargo-ndk into a generated jniLibs
+// directory the AAR packages. Every variant: both flavours include this client.
 androidComponents {
     onVariants(selector().all()) { variant ->
         final cap = variant.name.substring(0, 1).toUpperCase(Locale.ROOT) + variant.name.substring(1)
@@ -68,8 +67,8 @@ androidComponents {
         }
         variant.sources.jniLibs?.addGeneratedSourceDirectory(cargoBuild) { it.outputDir }
 
-        // `RfbCatalog`, what the catalog says this backend is, and
-        // `RfbNatives`, what the library registers its natives on: see :backends.
+        // Generates `RfbCatalog` (this backend's catalog entry) and `RfbNatives`
+        // (the class the library registers its natives on): see :backends.
         seam.generateCatalog(project, variant, 'rfb', 'RfbCatalog')
         seam.generateNatives(project, variant, 'RfbNatives', 'remotedesktop_rfb')
     }

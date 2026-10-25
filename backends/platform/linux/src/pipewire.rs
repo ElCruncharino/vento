@@ -13,13 +13,13 @@
 //! and plays through ALSA there (or, with no libasound either, without
 //! sound). The ABI used is libpipewire's stable one
 //! (`pw_stream_events` version 2, `pw_buffer` with `requested`, `pw_time` by
-//! size), so any PipeWire from 0.3.50 on; a library without one of these
-//! functions is no PipeWire to this, and its streams are ALSA's.
+//! size), so any PipeWire from 0.3.50 on; a library missing one of these
+//! functions is treated as no PipeWire, and its streams go to ALSA.
 //!
 //! **Pulled, not pushed.** A stream is connected with `RT_PROCESS`: its
 //! process callback runs on PipeWire's data thread once a graph cycle, is
 //! asked for `requested` frames (the cycle's quantum, in the stream's rate)
-//! and takes them from the stream's queue then and there — which is what
+//! and takes them from the stream's queue then and there, which is what
 //! `Queue::pull` is for, and what AAudio's data callback does on the phone.
 //! There is no ring between the queue and the graph, so the device's share
 //! of the delay is the graph's: the cycle being played, and whatever the
@@ -27,9 +27,9 @@
 //! and PipeWire's headroom for a real one). That share is read off the
 //! stream's clock every cycle (`pw_stream_get_time_n`) and told to the queue
 //! ([`Queue::set_device`]) with the cycle, which is part of what the queue
-//! keeps, and to the stream's latency, which RDP confirms its waves with. The stream asks for
-//! a 512-frame cycle (`node.latency`, 10.7 ms at 48 kHz); the graph runs at
-//! the smallest any of its nodes asks for.
+//! keeps, and stored as the stream's latency, which RDP confirms its waves
+//! with. The stream asks for a 512-frame cycle (`node.latency`, 10.7 ms at
+//! 48 kHz); the graph runs at the smallest any of its nodes asks for.
 //!
 //! The stream's format is the far end's: PipeWire's adapter converts the
 //! rate and the channels to the sink's, so the queue's resampler never runs
@@ -37,7 +37,7 @@
 //!
 //! **One connection for the process.** A thread loop and a context are made
 //! once, by the first stream, and a connection to the daemon (a core) is made
-//! from them while any stream is open and let go of a while after the last
+//! from them while any stream is open and closed a while after the last
 //! closes. Every session's streams are nodes of that one client. All of it
 //! is driven by one thread of ours, `vento-pipewire`, which every call that
 //! can wait on the daemon is made from: a stream's [`Device`] is handed back
@@ -45,20 +45,20 @@
 //! the sound server, as the trait asks.
 //!
 //! **The daemon going away.** A daemon that restarts (or dies) breaks the
-//! connection: every stream is let go of, and the connection is made again
+//! connection: every stream is destroyed, and the connection is made again
 //! a moment later and then a second apart, three times, the streams made
 //! again on the new one as soon as it is up (a restart is heard as a second
-//! of silence). A daemon that is not back by then is played around: the
-//! streams it had go to ALSA (or, where PipeWire was asked for by name, to
-//! silence), and each looks for the daemon again every few seconds and
-//! comes back to it when it is there. A stream that fails on its own, whether
+//! of silence). If the daemon is not back by then, its streams go to ALSA
+//! (or, where PipeWire was requested by name, to silence), and each checks
+//! for the daemon again every few seconds and returns to it when it is
+//! there. A stream that fails on its own, whether
 //! refused as it is made or failed by the daemon later, is made again the
 //! same way, alone, and stays ALSA's after its third failure in a row. A
 //! new stream tries the daemon whenever there is no connection, so a
 //! PipeWire that starts later is used from the next stream on.
 //!
-//! What the stream is called is the session's: `media.name` is the
-//! desktop's name (its address until the far end says one), changed live
+//! The stream is named for the session: `media.name` is the desktop's
+//! name (its address until the far end says one), changed live
 //! when it does, under `application.name` Vento; `media.role` Movie, since
 //! it is sound that goes with a picture. libpipewire itself honours
 //! `PIPEWIRE_REMOTE` (which daemon), `PIPEWIRE_NODE` (the sink to play to,
@@ -76,8 +76,8 @@ use runtime::media::audio::{Device, Format, Queue};
 
 use crate::dl::Library;
 
-/// What [`crate::audio::Audio`] calls this output, in the facts row and the
-/// overlay.
+/// This output's name for the queue (`Queue::set_output`), shown in the
+/// facts row and the overlay.
 pub const NAME: &str = "PipeWire";
 
 /// The cycle a stream asks the graph for, in frames of its own rate.
@@ -92,7 +92,8 @@ const ATTEMPTS: u32 = 3;
 const RETRY: Duration = Duration::from_secs(1);
 const FIRST_RETRY: Duration = Duration::from_millis(250);
 
-/// How often a stream that the daemon left to ALSA looks for it again.
+/// How often a stream handed to ALSA after the daemon went away checks for it
+/// again.
 const LATER: Duration = Duration::from_secs(5);
 
 /// How long the connection is kept after the last stream closes: RDP opens
@@ -349,7 +350,7 @@ struct Slot {
 }
 
 /// A stream's hold on its slot. Dropping it hands the slot back to the
-/// supervisor, which lets go of the PipeWire stream on its own thread.
+/// supervisor, which destroys the PipeWire stream on its own thread.
 struct PwDevice {
     slot: Arc<Slot>,
 }
@@ -370,7 +371,7 @@ impl Drop for PwDevice {
 }
 
 /// A PipeWire stream draining `queue`, called `title`: handed back at once,
-/// and made by the supervisor as soon as it gets to it — or, where there is
+/// and made by the supervisor as soon as it gets to it, or, where there is
 /// no PipeWire, handed to ALSA (`fallback`) or left silent.
 pub fn device(queue: Arc<Queue>, title: Arc<Title>, fallback: bool) -> Box<dyn Device> {
     let slot = Arc::new(Slot {
@@ -393,9 +394,9 @@ enum Msg {
     /// Stream `bound` (its [`Bound::id`]) stopped working: unconnected, or
     /// failed, and why.
     Ended(u64, String),
-    /// The connection numbered so broke: the daemon went away.
+    /// The connection with this number broke: the daemon went away.
     Lost(u64, String),
-    /// Stream `bound` played its first cycle, of so many frames.
+    /// Stream `bound` played its first cycle, of this many frames.
     Playing(u64, usize),
     Retitle(Arc<Title>),
 }
@@ -413,7 +414,7 @@ fn send(msg: Msg) {
         }
         tx
     });
-    // Without its thread there is no one to tell, and a stream's slot is
+    // Without its thread the message goes nowhere, and a stream's slot is
     // dropped here: silence, as for any output that could not start.
     let _ = tx.send(msg);
 }
@@ -501,8 +502,8 @@ struct Live {
     away: bool,
 }
 
-/// What the log last said of PipeWire as a whole, so that it is said once
-/// a change and not once a stream.
+/// What the log last said of PipeWire as a whole, so that it is logged once
+/// per change rather than once per stream.
 #[derive(Clone, PartialEq)]
 enum Said {
     Nothing,
@@ -731,7 +732,7 @@ impl Supervisor {
         }
     }
 
-    /// The connection, made where there is none.
+    /// Makes the connection where there is none.
     fn connect(&mut self) -> Result<(), String> {
         if self.core.is_some() {
             return Ok(());
@@ -765,7 +766,7 @@ impl Supervisor {
         Ok(())
     }
 
-    /// Lets go of the connection and every stream on it.
+    /// Closes the connection and destroys every stream on it.
     fn disconnect(&mut self) {
         let Some(Ok(pw)) = self.pw.as_ref() else { return };
         let api = pw.api;
@@ -780,8 +781,8 @@ impl Supervisor {
         }
     }
 
-    /// The daemon went away: everything on the connection is let go of, and
-    /// the connection is made again at once and then a second apart.
+    /// The daemon went away: everything on the connection is destroyed, and
+    /// the connection is made again after a moment and then a second apart.
     fn lost(&mut self, why: &str) {
         log::warn!("audio: lost PipeWire ({why}); connecting again");
         self.disconnect();
@@ -850,10 +851,10 @@ impl Supervisor {
 
     /// `live`'s stream stopped working, or could not be made (`why` says
     /// which): made again a second later, alone, and handed to ALSA (or to
-    /// silence) at its third failure in a row. Both ways alike: a stream
-    /// that `pw_stream_new` or `pw_stream_connect` refused at once had gone
-    /// to ALSA for good at the first, where one the daemon failed a moment
-    /// later was tried again.
+    /// silence) at its third consecutive failure. Both cases are treated
+    /// alike, so a stream refused at once by `pw_stream_new` or
+    /// `pw_stream_connect` gets the same retries as one the daemon failed a
+    /// moment later.
     fn failed(&mut self, mut live: Live, why: &str) {
         self.unbind(&mut live);
         live.failures += 1;
@@ -866,7 +867,7 @@ impl Supervisor {
         }
     }
 
-    /// Lets go of `live`'s stream, if it has one.
+    /// Destroys `live`'s stream, if it has one.
     fn unbind(&mut self, live: &mut Live) {
         let Some(bound) = live.bound.take() else { return };
         let Some(Ok(pw)) = self.pw.as_ref() else { return };
@@ -876,10 +877,10 @@ impl Supervisor {
         unsafe { (pw.api.stream_destroy)(bound.stream) };
     }
 
-    /// What is left for a stream PipeWire cannot have: ALSA, or silence —
-    /// which, where libasound cannot be loaded either, is said once as the
-    /// machine having no sound output, and every stream after it is
-    /// dropped as quietly as the first.
+    /// The fallback for a stream PipeWire cannot have: ALSA, or silence.
+    /// Where libasound cannot be loaded either, the machine having no sound
+    /// output is logged once, and later streams with the same reason are
+    /// dropped without logging again.
     fn give_up(&mut self, slot: &Arc<Slot>, why: &str) {
         let said = Said::Unavailable(why.to_string());
         let first = self.said != said;
@@ -1037,10 +1038,11 @@ static CORE_EVENTS: PwProxyEvents = PwProxyEvents {
 
 /// How long until the first of a cycle's `n` frames is heard: the cycle,
 /// what the stream's converter holds, and what is downstream of the stream
-/// (the graph's delay, in its clock's ticks) where the time says its clock.
-/// Neither `Duration::from_secs_f64` nor `+`, which panic past what a
-/// `Duration` holds, on PipeWire's data thread: a delay no `Duration` holds
-/// (a nonsense delay or rate from the graph) counts as none.
+/// (the graph's delay, in its clock's ticks) where the time gives its clock
+/// rate. Uses neither `Duration::from_secs_f64` nor `+`, which panic past
+/// what a `Duration` holds, since this runs on PipeWire's data thread: a
+/// delay no `Duration` holds (a nonsense delay or rate from the graph)
+/// counts as none.
 fn heard_in(format: Format, n: usize, t: &PwTime) -> Duration {
     let mut latency = format.duration(n).saturating_add(format.duration(t.buffered as usize));
     if t.rate_denom > 0 {

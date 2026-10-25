@@ -1,9 +1,9 @@
 # CargoBuildTask checks `rustc --version` against this channel before it runs
-# anything, so an unexpected compiler is an error rather than a surprise later.
+# anything, so an unexpected compiler fails the build up front.
 #
-# The targets must stay the same list as `ndk.abiFilters` and as the ABIs
-# ExtractApkNativeLibs unpacks: a Rust library shipped for an ABI with no
-# RealVNC one beside it fails at System.loadLibrary on somebody's device.
+# The targets must cover `nativeAbis` in backends/build.gradle, of which the
+# app's `ndk.abiFilters` is a subset: a backend library missing for a shipped
+# ABI makes System.loadLibrary fail on devices of that ABI.
 [toolchain]
 channel = "1.96.0"
 components = ["clippy", "rustfmt"]

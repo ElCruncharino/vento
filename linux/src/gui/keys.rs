@@ -5,14 +5,14 @@
 //! the physical key that ties a release to its press.
 //!
 //! The keysym comes from the *logical* key, which is what the layout says
-//! the key means — a `z` on a German keyboard is `y` at the far end too,
-//! which is what somebody typing expects. A character is its Latin-1 keysym
-//! where it has one and the Unicode keysym (`0x01000000 | codepoint`)
-//! otherwise, which is `xkeysym`'s `from_char`; a named key is looked up in
-//! a table of the ones a desktop has a use for. Modifiers are told apart by
-//! side, since the far end's applications can be, and the number pad by
-//! location, since `KP_1` and `1`, or `KP_Home` and `Home`, are different
-//! keys to the same applications.
+//! the key means: the key that types `y` on a German keyboard is `y` at the
+//! far end too, whichever key it is on a US one. A character is its Latin-1
+//! keysym where it has one and the Unicode keysym
+//! (`0x01000000 | codepoint`) otherwise, which is `xkeysym`'s `from_char`; a
+//! named key is looked up in a table of the ones a desktop has a use for. Modifiers are
+//! told apart by side, since the far end's applications can be, and the
+//! number pad by location, since `KP_1` and `1`, or `KP_Home` and `Home`,
+//! are different keys to the same applications.
 //!
 //! Where the layout's level for the modifiers held has no name winit gives
 //! or this table sends, the key's own (its first level, the layout's again)
@@ -26,8 +26,8 @@
 //! keysym is what the far end takes anyway.
 //!
 //! The identity is per physical key rather than per keysym, because the
-//! keysym of a key can change while it is held — Shift released before the
-//! letter is — and the release must still find its press. `KeyIds` hands out
+//! keysym of a key can change while it is held (Shift released before the
+//! letter is), and the release must still find its press. `KeyIds` hands out
 //! a small integer per `PhysicalKey` as they are first seen, which is stable
 //! for the life of the process and is all the backends ask of it.
 //!

@@ -5,9 +5,9 @@
 # GnuTLS is autotools with gnulib underneath it: configure writes config.h and
 # forty-odd replacement headers, and decides several hundred feature tests that
 # describe the platform rather than the machine that ran them. None of that may
-# happen while the app is building, so it happens here, out of tree — which is
-# what makes "everything in the build directory is generated" true, and the
-# copying below a `find` rather than a list somebody maintains.
+# happen while the app is building, so it happens here, out of tree, which makes
+# "everything in the build directory is generated" true, and the copying below a
+# `find` rather than a hand-maintained list.
 #
 # The source list is read out of the objects the build produced, grouped by the
 # Makefile that compiled them, because that grouping is what the include paths
@@ -16,9 +16,8 @@
 # Host prereqs: cc (for nettle's eccdata), make, and the NDK below.
 set -eu
 
-# The objects are grouped by sorting them, and what `sort` thinks of an
-# underscore is a question of locale; the answer that is the same everywhere
-# is C's.
+# The objects are grouped by sorting them, and where `sort` puts an underscore
+# depends on the locale; C's order is the same everywhere.
 export LC_ALL=C
 
 cd "$(dirname "$0")"
@@ -44,10 +43,11 @@ trap 'rm -rf "$tmp"' EXIT
 #   no trust store   Only configure's, which would otherwise be whichever path
 #                    the *host* that ran this script keeps its CAs in. It does
 #                    not turn the trust store off: gnutls compiles in Android's
-#                    own store on Android, which is the right one. A certificate
-#                    somebody vouches for verifies against it and still goes to
-#                    the app's known hosts, as every VNC server that signed its
-#                    own does (both VNC libraries are patched to hand it over).
+#                    own store on Android, which is the right one. A CA-signed
+#                    certificate verifies against it and still goes to the
+#                    app's known hosts, as every self-signed VNC server
+#                    certificate does (both VNC libraries are patched to hand it
+#                    over).
 #   prefix           Never installed; it is here because configure bakes it into
 #                    a locale path, and a scratch directory in it would make
 #                    this script's output depend on where it ran.
@@ -107,13 +107,13 @@ done
 
 # The objects, mapped back to their sources: automake prefixes an object with
 # the target it is compiled for when that target has its own flags, and puts a
-# subdirectory's objects under the Makefile that lists them — which is the
+# subdirectory's objects under the Makefile that lists them, which is the
 # grouping the include paths are per, so it is the grouping here.
 cd "$tmp/arm64-v8a/gnutls"
 # Not `find … | while read`: that loop is a subshell of a pipeline, so its
 # `exit 1` would end only the subshell, the pipeline would take sort's status,
-# and set -e would see a success — leaving a sources.cmake with whatever could
-# not be mapped silently missing from it.
+# and set -e would see a success, leaving a sources.cmake silently missing
+# whatever could not be mapped.
 find lib gl -name '*.o' -not -path '*/.libs/*' > "$tmp/objects"
 : > "$tmp/mapped"
 while read -r obj; do

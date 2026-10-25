@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The fixtures, and the clips in them cut into frames the way a protocol
-//! delivers them — one encoded frame per call — so IVF is walked by its frame
+//! delivers them (one encoded frame per call), so IVF is walked by its frame
 //! headers and Annex B is cut at its access unit delimiters, rather than
-//! handed to a demuxer that would do the framing a protocol does not. Shared
+//! handed to a demuxer that would do framing a protocol does not. Shared
 //! by the test binaries that decode them.
 
 #![allow(dead_code)]
@@ -36,7 +36,7 @@ pub fn ivf(bytes: &[u8]) -> Vec<&[u8]> {
 }
 
 /// An Annex B stream cut into access units at each delimiter, start code
-/// included — which is what one of RustDesk's H.264 or H.265 frames is.
+/// included, which is what one of RustDesk's H.264 or H.265 frames is.
 pub fn annex_b(bytes: &[u8], is_delimiter: fn(u8) -> bool) -> Vec<&[u8]> {
     let mut starts = Vec::new();
     let mut i = 0;

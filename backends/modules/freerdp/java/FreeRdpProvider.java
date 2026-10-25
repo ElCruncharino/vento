@@ -17,23 +17,22 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * This module's entry in a build's list of backends. What the FreeRDP backend
- * is called and what it can be told are the catalog's, which the Linux client
- * reads too: {@link FreeRdpCatalog}, generated from {@code backends/api} at
- * build time, holds the words and the option keys.
+ * This module's entry in a build's list of backends. The FreeRDP backend's name
+ * and options come from the catalog, which the Linux client also reads:
+ * {@link FreeRdpCatalog}, generated from {@code backends/api} at build time,
+ * holds the text and the option keys.
  *
- * <p>A session is a {@link NativeBackend} on {@link FreeRdpNatives}, generated
- * too: the shim over FreeRDP in {@code cpp/}, with the module's crate
- * linked into the same library as the backend over it —
- * which reads the desktop size option, splits a domain out of the user name,
- * and gives the library a directory of ours to keep its configuration in.
- * Where it differs from IronRDP, the library is why: credentials are asked for
- * by FreeRDP itself, and only where the record has none to give (a mistyped
- * password is the server's refusal, and the session closes with it, as
- * "Logon failed."); and its own certificate store is told to stay out of it,
- * so the pins in {@code KnownHosts} are the only thing that decides. What is left on this side
- * is {@link RdpHooks}, the same as IronRDP's — the size this machine was left
- * at, and the prompt's words — and the store below.
+ * <p>A session is a {@link NativeBackend} on {@link FreeRdpNatives}, also
+ * generated: the shim over FreeRDP in {@code cpp/}, with the module's crate
+ * linked into the same library as the backend over it, which reads the desktop
+ * size option, splits a domain out of the user name, and gives the library a
+ * directory of ours for its configuration. The differences from IronRDP come
+ * from the library: FreeRDP itself asks for credentials, and only when the
+ * record has none (a mistyped password is refused by the server, and the
+ * session closes with "Logon failed."); and its own certificate store is
+ * bypassed, so only the pins in {@code KnownHosts} decide. What remains on this
+ * side is {@link RdpHooks}, shared with IronRDP (the desktop size remembered
+ * for this machine, and the prompt's text), and the store cleanup below.
  */
 public final class FreeRdpProvider implements BackendProvider {
 
@@ -77,18 +76,18 @@ public final class FreeRdpProvider implements BackendProvider {
     }
 
     /**
-     * The library's own certificate store, emptied: one PEM per server, under
-     * {@code files/freerdp/server/}, which builds before this one wrote and
-     * this one neither writes nor reads (the shim answers
+     * Empties the library's own certificate store: one PEM per server, under
+     * {@code files/freerdp/server/}, written by earlier builds and neither
+     * written nor read by this one (the shim answers
      * {@code VerifyX509Certificate} from the trust prompt). The {@code certs/}
-     * directory beside it is left alone, since the library only ever read it
-     * and nothing here puts anything there.
+     * directory next to it is left alone, since the library only ever read it
+     * and nothing here writes to it.
      *
-     * <p>So nothing in it decides anything — but it is still a list of the
-     * machines this phone has been to, written without anybody asking, and
-     * "forget every server" that left it behind would be a half-truth. The
-     * directory is the one the crate hands the library, under the files
-     * directory {@link NativeBackend} gives every session.
+     * <p>Nothing in it affects trust, but it is still a list of the machines
+     * this phone has connected to, written without asking, so "forget every
+     * server" removes it too. The directory is the one the crate gives the
+     * library, under the files directory {@link NativeBackend} gives every
+     * session.
      */
     @Override
     public void forgetHosts(Context context) {

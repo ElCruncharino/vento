@@ -4,16 +4,16 @@ plugins {
     id 'com.android.library'
 }
 
-// Declarations and nothing else. The library they bind to is in no artefact
-// this builds: `Library` says which build of it they were read from, and
-// whoever acquires a copy checks it against that.
+// Declarations only. The library they bind to is in no artefact this module
+// builds: `Library` names the build they were read from, and code that
+// acquires a copy checks it against that.
 android {
     namespace = 'com.realvnc.vncviewer.jni'
     compileSdk 36
 
     defaultConfig {
         minSdk 34
-        // The whole package is names the native side resolves at run time.
+        // The native side resolves every name in the package at run time.
         consumerProguardFiles 'consumer-rules.pro'
     }
 

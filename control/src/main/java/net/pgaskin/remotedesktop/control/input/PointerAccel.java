@@ -6,7 +6,7 @@ package net.pgaskin.remotedesktop.control.input;
 /**
  * Pointer acceleration, ported from RealVNC Viewer's.
  *
- * <p>The input is <em>jerk</em> — the change in per-event displacement — not
+ * <p>The input is <em>jerk</em> (the change in per-event displacement), not
  * speed, so moving at a constant velocity gives a factor of ~1.1 no matter how
  * fast, and only changes in speed get amplified. That is why the original feels
  * snappy on flicks but precise on slow movement without any explicit precision
@@ -18,7 +18,7 @@ package net.pgaskin.remotedesktop.control.input;
  *
  * <p>The original's 3-sample history is a FIFO that gets fully <em>drained</em>
  * whenever it fills, so a real factor is only computed on every 3rd move event
- * and the other two get the 1.1 floor — the emitted motion is a
+ * and the other two get the 1.1 floor: the emitted motion is a
  * {@code 1.1, 1.1, F, 1.1, 1.1, F} sawtooth. Almost certainly unintentional, but
  * it is what the original feels like, so it is reproduced here and
  * {@link Config#accelDrainHistory} switches to a proper sliding window.
@@ -133,7 +133,7 @@ public final class PointerAccel {
         return lastFactor;
     }
 
-    /** Smoothed finger speed, px/ms — what the adaptive gate reads. */
+    /** Smoothed finger speed, px/ms, as the adaptive gate reads it. */
     public float speed() {
         return speed;
     }
@@ -158,8 +158,7 @@ public final class PointerAccel {
 
     public void move(float ax, float ay, long t) {
         track(ax, ay, t);
-        // Before the lock has been at the delta, since what a detent spends is
-        // finger travel rather than what comes out of this.
+        // Before the axis lock, since a detent spends finger travel.
         final float hoverGain = hover.gain(ax, ay, t);
 
         if (cfg.axisLockEnabled) {
@@ -209,7 +208,7 @@ public final class PointerAccel {
         }
         // Multiplied in rather than replacing the factor: in the slow band the
         // adaptive gate has already pulled that to the floor, and a detent is
-        // meant to take a quarter off whatever the accelerator decided.
+        // meant to scale down whatever the accelerator decided.
         factor *= hoverGain;
         lastFactor = factor;
         sink.mouseMove(ax * factor, ay * factor);
@@ -245,8 +244,8 @@ public final class PointerAccel {
         fastX += (ax - fastX) * wFast;
         fastY += (ay - fastY) * wFast;
         if (turnDegrees() > cfg.axisLockCornerDeg) {
-            // Not a curve — a corner. Forgetting the direction outright is what
-            // locks "up, then across" a few events into the across rather than a
+            // Not a curve but a corner. Forgetting the direction outright locks
+            // "up, then across" a few events into the across rather than a
             // whole span into it.
             slowX = fastX = ax;
             slowY = fastY = ay;

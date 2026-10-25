@@ -1,32 +1,32 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Trust on first sight: the certificate check both protocol clients share.
+//! Trust on first use: the certificate check the Rust TLS clients (RFB, RDP,
+//! SPICE) share.
 //!
 //! A VNC server presents a certificate it generated for itself on first start,
-//! and so does an xrdp; a Windows RDP host presents one signed by nothing a
-//! phone has ever heard of. Verifying any of them against a certificate
-//! authority would reject every server anybody runs, and a client that then
-//! offered "continue anyway" would have taught its user to click through the
-//! only check it has.
+//! and so does an xrdp; a Windows RDP host presents one signed by no authority
+//! a client knows. Verifying any of them against a certificate authority would
+//! reject nearly every server in use, and a client that then offered "continue
+//! anyway" would have taught its user to click through the only check it has.
 //!
 //! So the identity is the **key**, as it is over SSH: the leaf certificate is
-//! fingerprinted, the app pins it against the address on first sight, a match
-//! is silent, and anything else is a question. This module is the half of that
-//! which is the same whatever the protocol underneath — and it is shared rather
-//! than sitting in whichever client needed it first because "what does trusted
-//! mean here" should have exactly one answer in this app, not one per
-//! protocol.
+//! fingerprinted, the app pins it against the address on first use, a match
+//! is silent, and anything else is a question. This module is the part of
+//! that which does not depend on the protocol, and it is shared rather than
+//! kept in the first client that needed it so that "trusted" has one meaning
+//! in this app, not one per protocol.
 //!
 //! What is **not** deferred is the signature over the handshake:
 //! [`Pinning::verify_tls12_signature`] and its 1.3 counterpart are the
-//! provider's own. Without them a fingerprint proves only that somebody can
-//! copy a public certificate; with them it proves the far end holds the key.
+//! provider's own. Without them a fingerprint proves only that the far end has
+//! a copy of a public certificate; with them it proves the far end holds the
+//! key.
 //!
 //! The decision itself is taken above this, on the protocol thread, after the
-//! handshake and before anything secret goes out — which is both the last safe
-//! moment and the first one on a thread that is allowed to wait for a person.
-//! A rustls verifier callback is neither.
+//! handshake and before anything secret goes out: both the last safe moment
+//! and the first one on a thread that is allowed to wait for the user. A
+//! rustls verifier callback is neither.
 
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::{CryptoProvider, verify_tls12_signature, verify_tls13_signature};
@@ -114,8 +114,8 @@ impl ServerCertVerifier for Pinning {
 /// A rustls client configuration that pins rather than verifies, and the
 /// verifier to ask afterwards what it saw.
 ///
-/// `ring` is the provider because aws-lc-rs wants cmake and bindgen to build
-/// for Android; it is the only dependency in this workspace with any C in it.
+/// `ring` is the provider because aws-lc-rs needs cmake and bindgen to build
+/// for Android.
 pub fn client_config() -> Result<(ClientConfig, Arc<Pinning>), rustls::Error> {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let verifier = Arc::new(Pinning::new(Arc::clone(&provider)));
@@ -127,19 +127,18 @@ pub fn client_config() -> Result<(ClientConfig, Arc<Pinning>), rustls::Error> {
     Ok((config, verifier))
 }
 
-/// What rustls insists on having, out of an address somebody typed.
+/// The `ServerName` rustls requires, from the host the user entered.
 ///
-/// Nothing here checks the name — the name in a certificate a server signed for
-/// itself is whatever it felt like writing, and the pin is the identity — so a
-/// host that is not a valid DNS name or address becomes a placeholder rather
-/// than an error.
+/// Nothing here checks the name (a self-signed certificate can name anything,
+/// and the pin is the identity), so a host that is not a valid DNS name or
+/// address becomes a placeholder rather than an error.
 pub fn server_name(host: &str) -> ServerName<'static> {
     ServerName::try_from(host.to_string())
         .unwrap_or_else(|_| ServerName::try_from("server.invalid").expect("a literal name"))
 }
 
-/// `openssl x509 -fingerprint -sha256`'s output, so that a fingerprint on the
-/// phone can be checked against one printed by something that is not us.
+/// `openssl x509 -fingerprint -sha256`'s output, so that a fingerprint shown
+/// by the app can be checked against one printed by other tools.
 pub fn fingerprint(cert: &CertificateDer<'_>) -> String {
     let digest = Sha256::digest(cert.as_ref());
     digest

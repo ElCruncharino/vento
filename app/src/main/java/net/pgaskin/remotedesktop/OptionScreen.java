@@ -24,21 +24,20 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Turning a description of a setting into a row on a screen.
+ * Builds preference rows from setting descriptions.
  *
- * <p>Two descriptions, one builder: {@link BackendOption}, which a backend
- * supplies about itself, and {@link InputSettings.Tunable}, which the app keeps
- * about the input stack. Neither knows anything about androidx, which is the
- * point — {@code control} may not depend on it at all, and a backend describing
- * its options in terms of {@code SwitchPreferenceCompat} would be a backend
- * that can only be used from an Android app with androidx in it.
+ * <p>Two kinds of description, one builder: {@link BackendOption}, which a
+ * backend supplies about itself, and {@link InputSettings.Tunable}, which the
+ * app keeps about the input stack. Neither depends on androidx, deliberately:
+ * {@code control} may not depend on it at all, and a backend describing its
+ * options in terms of {@code SwitchPreferenceCompat} could only be used from
+ * an Android app that includes androidx.
  *
  * <h2>Everything is a string</h2>
  * Both descriptions carry string values, so the preference screens store
- * strings — including the switches, whose {@code true}/{@code false} would
- * otherwise land in the preference file as booleans and come back out through a
- * different door than they went in. The {@link PreferenceDataStore} below is
- * what makes that uniform.
+ * strings, including for switches, whose {@code true}/{@code false} would
+ * otherwise be stored as booleans and read back differently from how other
+ * values are. The {@link PreferenceDataStore} below makes that uniform.
  */
 final class OptionScreen {
 
@@ -51,28 +50,26 @@ final class OptionScreen {
     }
 
     /**
-     * The same, over a file whose values are booleans — the app's own switches,
-     * which were written that way before there was a store here and are read
-     * that way by {@link AppSettings}.
+     * The same, over a file whose switch values are booleans: the app's own
+     * switches, which {@link AppSettings} reads as booleans.
      */
     static Store switches(SharedPreferences prefs) {
         return new Store(prefs, false);
     }
 
     /**
-     * Where a screen's values are kept, deaf until {@link #built()} says the
-     * screen is up.
+     * Where a screen's values are stored, ignoring writes until {@link #built()}
+     * says the screen is complete.
      *
-     * <p>The deafness is the point. A preference persists its default the moment
-     * it is bound — androidx has no "show this and store nothing" — so a screen
-     * that had merely been <em>looked at</em> wrote an answer to every row on
-     * it, and everything here rests on an unanswered setting being absent: a
-     * backend cannot tell "this asked for full colour" from "nobody has said",
-     * a connection that agrees with a backend's answer stores nothing so that
-     * moving the answer moves it too, and a default improved in a later version
-     * reaches nobody whose file already claims to have chosen the old one. A
-     * write while the rows are going in is the framework filling them; a write
-     * after that is a person.
+     * <p>Ignoring them is deliberate. A preference persists its default as soon
+     * as it is bound (androidx has no "show this and store nothing"), so merely
+     * opening a screen would store a value for every row on it, and everything
+     * here relies on an unset setting being absent: otherwise a backend cannot
+     * tell "this asked for full colour" from "never set", a connection that
+     * matches its backend's value would no longer follow changes to it, and an
+     * improved default in a later version would not reach an install whose file
+     * already stores the old one. A write while the rows are being added is the
+     * framework filling them in; a write after that is the user's.
      */
     static final class Store extends PreferenceDataStore {
 
@@ -104,8 +101,8 @@ final class OptionScreen {
         }
 
         /**
-         * Back to unanswered, whatever is building: for a value the screen
-         * itself takes back ({@link #requirements}), which is nobody's answer.
+         * Removes the value even while building: for a value the screen itself
+         * withdraws ({@link #requirements}), which the user did not set.
          */
         void remove(String key) {
             prefs.edit().remove(key).apply();
@@ -182,18 +179,18 @@ final class OptionScreen {
     }
 
     /**
-     * The choices that need a switch, offered only while it is on, and one
-     * already chosen taken back when it goes off — {@link
-     * BackendOption#settle}, the rule the connection panel keeps and the Linux
-     * client's too. Taken back to unanswered rather than to a stored fallback:
-     * the fallback is nobody's choice, and an unanswered row is one a later
-     * default reaches.
+     * Choices that require a switch are offered only while it is on, and one
+     * already chosen is withdrawn when it goes off ({@link
+     * BackendOption#settle}, the same rule the connection panel and the Linux
+     * client follow). Withdrawn to unset rather than to a stored fallback: the
+     * fallback is not the user's choice, and an unset row follows later
+     * default changes.
      *
-     * <p>The switch may be in another group of the same screen — a backend's
-     * own switches are above its connection defaults — so it is looked for
-     * from the top. One that is not on the screen at all counts as on, as the
-     * panel counts it: rewriting a choice for a reason nobody can see is worse
-     * than offering one that the switch elsewhere may yet allow.
+     * <p>The switch may be in another group of the same screen (a backend's own
+     * switches are above its connection defaults), so it is searched for from
+     * the root. One not on the screen at all counts as on, as in the panel:
+     * changing a choice for a reason not visible on the screen is worse than
+     * offering one that the switch elsewhere may allow.
      */
     private static void requirements(PreferenceGroup group, List<BackendOption> options) {
         PreferenceGroup root = group;
@@ -223,8 +220,8 @@ final class OptionScreen {
             if (control == null) {
                 continue;
             }
-            // After whatever else is listening: the value handed over is the
-            // one about to be stored, which the rows have to be offered for.
+            // Chained after any existing listener. The value passed in is the
+            // one about to be stored, which the choices have to be offered for.
             final Preference.OnPreferenceChangeListener before =
                     control.getOnPreferenceChangeListener();
             control.setOnPreferenceChangeListener((pref, value) -> {
@@ -257,8 +254,8 @@ final class OptionScreen {
                 if (l.getPreferenceDataStore() instanceof Store store) {
                     store.remove(o.key());
                 }
-                // Shown, not stored: the store has just been told the row is
-                // unanswered, which is what the default it shows means.
+                // Shown, not stored: the value was just removed from the store,
+                // and the row shows the default that unset value stands for.
                 l.setPersistent(false);
                 l.setValue(fallback);
                 l.setPersistent(true);
@@ -267,17 +264,17 @@ final class OptionScreen {
     }
 
     /**
-     * The rows that are only offered for some answers to another row, hidden
-     * now and kept in step with it after.
+     * Rows only offered for some values of another row: hidden now if needed,
+     * and kept in step with that row afterwards.
      *
      * <p>One listener per controlling row rather than one per dependent, since
-     * a preference has room for exactly one and a mode dial may own several
-     * rows. The listener runs <em>before</em> the value is stored, so what it
-     * decides on is what it was handed.
+     * a preference has exactly one listener and one controlling row may gate
+     * several rows. The listener runs <em>before</em> the value is stored, so
+     * it decides on the value passed in.
      *
-     * <p>A gate whose controlling row is not on this screen closes: it is a
-     * screen that cannot answer the question the option depends on, so it has
-     * no business offering the option.
+     * <p>A gate whose controlling row is not on this screen is closed: the
+     * screen cannot set the value the option depends on, so it does not offer
+     * the option.
      */
     private static void gates(PreferenceGroup group, List<BackendOption> options) {
         final Map<String, List<BackendOption>> byControl = new LinkedHashMap<>();
@@ -306,9 +303,9 @@ final class OptionScreen {
     }
 
     /**
-     * The input stack's tunables, each showing what {@code defaults} says until
-     * it is overridden — the stack's own answer rather than a copy of it kept on
-     * this screen.
+     * The input stack's tunables, each showing its value from {@code defaults}
+     * until overridden, so the defaults are the stack's own rather than a copy
+     * kept on this screen.
      */
     static void addTunables(PreferenceGroup group, List<InputSettings.Tunable> tunables,
                             Config defaults) {
@@ -342,8 +339,8 @@ final class OptionScreen {
     }
 
     /**
-     * The summary of a row whose value is already its summary: the value, then
-     * the explanation under it. A choice with no explanation is just its value.
+     * The summary of a row that shows its value as the summary: the value, then
+     * the explanation under it, if any.
      */
     private static CharSequence withNote(CharSequence value, String note) {
         final CharSequence v = value == null ? "" : value;

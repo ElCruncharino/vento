@@ -6,39 +6,39 @@
 //
 // FFmpeg's VAAPI device and its hardware decoders call the libva functions
 // defined below, and nothing else of libva or libva-drm; `vento_video.c` calls
-// two of the same, to wait for a held picture's surface and export it. Linked
-// against the real libraries, every vento would need libva installed just to
-// start, and would load it into every process, though hardware decoding is off
-// unless it is asked for and most sessions never touch it. So each function is
-// defined here instead, forwarding to the real one, and the real ones are
-// looked up the first time any of them is called: `libva.so.2` and
-// `libva-drm.so.2`, the sonames every libva 2 has had. With hardware decoding
-// off nothing calls them, and neither library is ever opened (`/proc/PID/maps`
-// shows no libva).
+// three of the same, to wait for a held picture's surface, export it and name
+// an error. Linked against the real libraries, every vento would need libva
+// installed just to start, and would load it into every process, though
+// hardware decoding is off unless requested and most sessions never use it.
+// So each function is defined here instead, forwarding to the real one, and
+// the real ones are looked up the first time any of them is called:
+// `libva.so.2` and `libva-drm.so.2`, the sonames every libva 2 has had. With
+// hardware decoding off nothing calls them, and neither library is ever
+// opened (`/proc/PID/maps` shows no libva).
 //
 // **Without libva everything fails the way a machine without a device does.**
 // FFmpeg's first call is `vaGetDisplayDRM`, which then returns NULL, so
 // `av_hwdevice_ctx_create` fails and the decoder is software; every other
 // function here returns an error, though nothing gets as far as calling one.
 // A libva older than 2.21 has no `vaMapBuffer2`, which FFmpeg built against
-// these headers calls, and that is `vaMapBuffer` for it, which is what FFmpeg
-// itself calls against older headers.
+// these headers calls; for such a libva the shim calls `vaMapBuffer` instead,
+// as FFmpeg itself does against older headers.
 //
-// **Hidden.** These are definitions of libva's own names, and visible they
-// would be in the executable's dynamic symbol table, where the real libva-drm
-// (and a driver that links libva) would bind to them instead of to libva: a
-// loop. Hidden, they are only what FFmpeg's objects in the same link reach,
-// and the real libva's are what everything it loads reaches.
+// **Hidden.** These are definitions of libva's own names. Visible, they would
+// be in the executable's dynamic symbol table, where the real libva-drm (and a
+// driver that links libva) would bind to them instead of to libva: a loop.
+// Hidden, they are reached only by FFmpeg's objects in the same link, and
+// everything libva loads reaches the real ones.
 //
 // **A library of its own.** It is built before FFmpeg is configured, as
 // `libvento_va.a` in FFmpeg's prefix, and `build.rs` writes a `libva.pc` and a
-// `libva-drm.pc` there that name it, which is what FFmpeg's configure checks
-// for libva with: a test program linked against what pkg-config says. That is
-// the least to keep working across FFmpeg releases, since it is the check
-// configure makes of a real libva, rather than a patch to configure or a
-// cache of its answers. Named `vento_va` and not `va`, so that no linker's
-// search can find the system's `libva.so` in its place, which would make
-// libva a dependency of the binary after all.
+// `libva-drm.pc` there naming it. FFmpeg's configure checks for libva by
+// linking a test program against what pkg-config says, so this is the same
+// check it makes of a real libva, and more likely to keep working across
+// FFmpeg releases than a patch to configure or a cache of its answers. Named
+// `vento_va` and not `va`, so that no linker search can find the system's
+// `libva.so` in its place, which would make libva a dependency of the binary
+// after all.
 
 #pragma GCC visibility push(hidden)
 #include <va/va.h>
@@ -144,8 +144,8 @@ static struct {
 #define FIELD(ret, name, params, args, lib, fail) ret(*name) params;
     VA_FUNCTIONS(FIELD)
 #undef FIELD
-    // libva 2.21's, looked up beside the rest and standing in for nothing:
-    // without it, `vaMapBuffer2` is `vaMapBuffer`.
+    // Added in libva 2.21 and looked up with the rest, but without a failure
+    // value of its own: without it, `vaMapBuffer2` calls `vaMapBuffer`.
     VAStatus (*vaMapBuffer2)(VADisplay dpy, VABufferID buf, void **pbuf, uint32_t flags);
 } real;
 
@@ -155,7 +155,7 @@ static int loaded;
 
 static void load(void) {
     // Local: the symbols are only ever reached through `real`, and global
-    // they would be there for whatever the process dlopens next to bind to.
+    // ones would be bound to by whatever the process dlopens next.
     // libva-drm needs libva, and its own dependency on it brings in the same
     // copy rather than a second.
     void *libs[2] = {dlopen("libva.so.2", RTLD_NOW | RTLD_LOCAL), NULL};

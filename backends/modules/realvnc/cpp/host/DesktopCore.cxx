@@ -3,13 +3,13 @@
 
 // `HostedCore` and `HostedSession` for a Linux host: the viewer core loaded
 // by `Loader.cxx`, a jnivm VM with the stand-ins of `Classes.cxx` and
-// `Files.cxx` in it, and this file's own classes — the `com.realvnc.vncviewer.
+// `Files.cxx` in it, and this file's own classes: the `com.realvnc.vncviewer.
 // jni` callbacks and dialog factories the core resolves by name, each
 // bridged to the session's `Listener`. The natives are the core's exported
 // `Java_com_realvnc_vncviewer_jni_*` functions, called directly with the
 // VM's `JNIEnv`, which is all a JVM would do.
 //
-// Three rules found by running the core here, and kept:
+// Four rules found by running the core here:
 //
 //   * A deleted global reference stays alive. In `sessionClosed` the core
 //     deletes its reference to the `Session` object and then calls
@@ -17,20 +17,20 @@
 //     and tolerates that; jnivm hands out the wrapper's own pointer and frees
 //     it, so the late call was a use-after-free. `DeleteGlobalRef` is
 //     replaced in the VM's function table with one that keeps every wrapper
-//     it is given — a handful of objects a session, for the process's life.
+//     it is given: a handful of objects per session, for the process's life.
 //   * Nothing is destroyed or closed after `sessionClosed`; the session file
 //     keeps that rule and this file never calls `destroySession` at all.
 //   * The JNI env is per thread. The core's own thread has one from the
 //     start; the drawing thread, which calls `setScaleBufferSize` and
-//     `copyScaledRegion`, attaches itself on first use, as a JVM would ask.
+//     `copyScaledRegion`, attaches itself on first use, as a JVM requires.
 //   * Every call into the core runs in a local frame of its own. A JVM drops
 //     a native's local references when it returns, and the core relies on
 //     that: it never deletes one. Its natives here are called from C++, not
 //     from a JVM, and the looper's callbacks are not natives at all, so
-//     without a frame popped around each every local the core or a hook
-//     made stayed in the thread's top frame, which grew for the life of the
-//     process: strings, map entries and arrays, hundreds to thousands of
-//     them a minute.
+//     without a frame popped around each, every local reference the core or
+//     a hook created would stay in the thread's top frame, which would grow
+//     for the life of the process: strings, map entries and arrays, hundreds
+//     to thousands of them a minute.
 
 #include "HostedCore.h"
 
@@ -50,7 +50,7 @@
 
 namespace vento_realvnc {
 
-/* `Classes.cxx`'s. */
+/* Defined in `Classes.cxx`. */
 std::shared_ptr<jnivm::Object> makeMap(const std::vector<std::pair<std::string, std::string>> &entries);
 std::shared_ptr<jnivm::Object> makeLogMode(int ordinal);
 std::shared_ptr<jnivm::Object> makeNoCloud(int which);
@@ -78,11 +78,11 @@ void keepDeleteGlobalRef(JNIEnv *env, jobject obj) {
 
 // ---- the core's own classes ----------------------------------------------------------
 
-/* The listener each of these answers to is found through the `Session`
-   object the core hands the factory, or — for a prompt that arrives during
-   `createSession`, before there is one — through `pending`, the listener
-   whose `createSession` is in flight; there is at most one, since every
-   `createSession` happens on the one thread. */
+/* Each of these finds its listener through the `Session` object the core
+   passes to the factory, or, for a prompt that arrives during
+   `createSession` before that object exists, through `pending_`, the
+   listener of the `createSession` call in progress; there is at most one,
+   since every `createSession` runs on the core thread. */
 struct SessionCallback final : jnivm::Object {
     Listener *listener = nullptr;
 };
@@ -144,9 +144,9 @@ struct Natives {
 class DesktopCore;
 DesktopCore *theCore = nullptr;
 
-/* A local frame for the length of a scope, which is what a JVM gives every
-   native call. Whatever has to outlive it is held by a `shared_ptr` of our
-   own (the session's handle and buffer) or copied out (a string). */
+/* A local frame for the length of a scope, as a JVM gives every native
+   call. Anything that must outlive it is held by a `shared_ptr` of this
+   file's (the session's handle and buffer) or copied out (a string). */
 class LocalFrame {
 public:
     explicit LocalFrame(JNIEnv *env) : env_(env) { env_->PushLocalFrame(16); }
@@ -179,7 +179,7 @@ private:
     DesktopCore *core_;
     jobject handle_;                        // what the natives take
     std::shared_ptr<SessionHandle> object_; // kept, so the token stays readable
-    std::shared_ptr<jnivm::Object> buffer_; // the last ByteBuffer, so its memory stays
+    std::shared_ptr<jnivm::Object> buffer_; // the last ByteBuffer, so its memory stays valid
 };
 
 class DesktopCore : public HostedCore {
@@ -204,7 +204,7 @@ public:
         scb->listener = listener;
         auto dcb = std::make_shared<DesktopCallback>();
         dcb->listener = listener;
-        // Kept, as the core keeps them: a session's callbacks are its for life.
+        // Kept, as the core keeps them, for the life of the session.
         keep_.push_back(scb);
         keep_.push_back(dcb);
         pending_ = listener;
@@ -265,12 +265,11 @@ public:
         return mine;
     }
 
-    /* An answer a hook gives without asking anyone — a question with no
-       session to ask, or one this host declines — which goes to the core
-       after the call that asked has returned, from between two turns of the
-       looper, as `RealVncPrompts` posts its declines; the core takes its
-       answers from outside the question (realvnc_session.cxx, rule 5). Core
-       thread only. */
+    /* Queues an answer a hook gives without prompting (a question with no
+       session to ask, or one this host declines). It goes to the core after
+       the asking call has returned, between two turns of the looper, as
+       `RealVncPrompts` posts its declines; the core takes answers only from
+       outside the question (realvnc_session.cxx, rule 5). Core thread only. */
     void later(std::function<void()> answer) {
         later_.push_back(std::move(answer));
         looper_->wake();
@@ -311,8 +310,8 @@ private:
     std::vector<std::shared_ptr<jnivm::Object>> keep_;
     std::unordered_map<jlong, Listener *> owners_;
     Listener *pending_ = nullptr;
-    std::vector<DesktopSession *> sessions_; // never freed, as the core never lets one go
-    std::vector<std::function<void()>> later_; // `later`'s, core thread only
+    std::vector<DesktopSession *> sessions_; // never freed, as the core never releases one
+    std::vector<std::function<void()>> later_; // queued by `later`; core thread only
 };
 
 // ---- the session's natives -------------------------------------------------------------
@@ -459,8 +458,8 @@ bool DesktopCore::open(const std::string &libraryDir, const Bootstrap &b, std::s
     SYM(identityChosen, "AuthkeyChoiceDlgBindings_identityChosen");
 #undef SYM
 
-    // `RealVncCore.start`: the log directory is ours to make, the data one
-    // the core makes under its root.
+    // As in `RealVncCore.start`: this makes the log directory, and the core
+    // makes the data directory under its root.
     mkdir(b.logDir.c_str(), 0700);
     JNIEnv *env = jenv_;
     natives_.initApp(env, nullptr, env->NewStringUTF(b.appName.c_str()),
@@ -519,10 +518,10 @@ bool DesktopCore::open(const std::string &libraryDir, const Bootstrap &b, std::s
     return true;
 }
 
-/* The classes of this file, hooked. Each dialog answers through the core's
-   static result natives, called later from the core thread — by the session
-   (through `HostedCore`), or, for a question this host answers itself, from
-   `later` — never from inside the question. */
+/* Hooks this file's classes. Each dialog is answered through the core's
+   static result natives, called later from the core thread (by the session
+   through `HostedCore`, or from `later` for a question this host answers
+   itself), never from inside the question. */
 void DesktopCore::registerBindings() {
     auto env = vm_->GetEnv();
     auto *E = env.get();
@@ -710,9 +709,9 @@ void DesktopCore::registerBindings() {
         c->HookInstanceFunction(E, "close", [](jnivm::ENV *, PasswdDlg *) {});
     }
 
-    // ---- the two declined without asking, as `RealVncPrompts` declines
-    // them: interactive authentication needs a form, and choosing a client
-    // identity needs identities nobody enrols ----
+    // ---- the two prompts declined without asking, as `RealVncPrompts`
+    // declines them: interactive authentication needs a form, and choosing a
+    // client identity needs enrolled identities, of which there are none ----
     env->GetClass("com/realvnc/vncviewer/jni/InteractiveTextDlgBindings$InteractiveTextDlgFactory")
             ->HookInstanceFunction(E, "createInteractiveTextDlg",
                                    [](jnivm::ENV *, InteractiveFactory *, std::shared_ptr<SessionHandle>, jlong cookie) {
@@ -798,8 +797,8 @@ HostedCore *openHostedCore(const std::string &libraryDir, const Bootstrap &boots
     }
     auto *core = new DesktopCore;
     if (!core->open(libraryDir, bootstrap, why)) {
-        // Half a core is not worth keeping, and not safe to unload either;
-        // the process keeps what was mapped.
+        // A partly opened core is unusable and not safe to unload; the
+        // process keeps what was mapped.
         return nullptr;
     }
     theCore = core;

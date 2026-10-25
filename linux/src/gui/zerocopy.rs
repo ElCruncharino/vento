@@ -5,9 +5,9 @@
 //! into: the VAAPI surface imported as DMA-BUFs and converted on the GPU,
 //! with nothing read back to the processor and nothing converted there.
 //!
-//! On Lunar Lake the readback was most of what a hardware picture cost —
-//! iHD's map of a 1080p surface is 4 to 7 ms, and the conversion after it
-//! another 3 — so the hardware path was slower than software's. Left on the
+//! On Lunar Lake the readback was most of what a hardware picture cost
+//! (iHD's map of a 1080p surface is 4 to 7 ms, and the conversion after it
+//! another 3), so the hardware path was slower than software's. Left on the
 //! GPU (`runtime::media::video::GpuPicture`), a picture costs the decode, the
 //! wait for it, and a pass of this module's.
 //!
@@ -15,9 +15,9 @@
 //! converted by one render pass (`zerocopy.wgsl`) into a single `R, G, B,
 //! A` texture of the picture's size, registered with egui-wgpu as a texture
 //! of its own, which the desktop draws in place of its tiles (`desktop.rs`).
-//! Everything about where and how the desktop is drawn — the view's scale
+//! Everything about where and how the desktop is drawn (the view's scale
 //! and pan, nearest at 1:1 and linear elsewhere, every pop-out window, the
-//! cursor over it — is then the same code as for a picture read back, and
+//! cursor over it) is then the same code as for a picture read back, and
 //! the pixels on screen are the same bytes through the same sampler. Drawing
 //! the two planes straight into each window instead would save one write of
 //! the picture on the GPU (a fraction of a millisecond) and cost a second
@@ -49,9 +49,9 @@
 //! **Only on Vulkan, and only where it works.** The import is wgpu-hal's
 //! `texture_from_dmabuf_fd`, Vulkan's, with the device asked for
 //! `VULKAN_EXTERNAL_MEMORY_DMA_BUF` (and 16-bit textures for P010) where it
-//! has them (`mod.rs`). Anywhere else — GL, a driver without the
+//! has them (`mod.rs`). Anywhere else (GL, a driver without the
 //! extensions, an import or a pass that fails, a picture past the device's
-//! largest texture — the window says why once and the session goes on with
+//! largest texture) the window says why once and the session goes on with
 //! its pictures read back, as without this.
 
 use runtime::media::video::convert::coefficients;
@@ -673,7 +673,7 @@ mod tests {
         Some((adapter, device, queue))
     }
 
-    /// A plane of `w × h` samples of `bytes` each as a texture.
+    /// A plane of `w × h` samples, `data` row by row, as a texture.
     fn plane(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat, w: u32, h: u32, data: &[u8]) -> wgpu::Texture {
         let size = wgpu::Extent3d {
             width: w,

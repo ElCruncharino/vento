@@ -3,18 +3,16 @@
     SPDX-FileCopyrightText: 2026 Patrick Gaskin
     SPDX-License-Identifier: GPL-3.0-or-later
 
-    A BackendOption.Type.TEXT or INT, and the shape the connection editor's own
-    fields take too.
+    A BackendOption.Type.TEXT or INT, also used for the connection editor's own
+    fields.
 
-    A field rather than a row that opens a dialog to type in: the rule for a
-    sheet is that nothing in it opens a second window over the first, and an
-    editor made of rows-that-open-dialogs is the androidx preference screen this
-    replaced — where the value being typed is in a window that hides the form it
-    belongs to.
+    An inline field rather than a row that opens a dialog, so the value is
+    typed without a second window hiding the form it belongs to (as in the
+    androidx preference screen this replaced).
 
-    The one row that is not on a group's container: an outlined box has corners
-    of its own, and a card behind it is a second set. RowGroups leaves it alone
-    and ends the run either side of it.
+    The only row not on a group's container: an outlined box has its own
+    corners, and a container behind it would add a second set. RowGroups gives
+    it no background and ends the group on either side of it.
 -->
 <com.google.android.material.textfield.TextInputLayout
     xmlns:android="http://schemas.android.com/apk/res/android"

@@ -23,9 +23,9 @@ import java.util.Map;
  * without one of these failing.
  *
  * <p>One rule is left with a Java copy: {@link BackendOption#settle}, which the
- * option screens run as somebody edits. The credentials and known-hosts
- * cases are the Rust side's alone, written in that file, since the rules
- * they hold are only there.
+ * option screens run as the user edits. The credentials and known-hosts cases
+ * are only on the Rust side, written in {@code vectors.rs}, since those rules
+ * exist only there.
  */
 public class VectorsTest {
 

@@ -1,31 +1,30 @@
-# What a backend's native half needs of Android and no protocol owns: the one
-# JNI layer every backend but RealVNC is reached through (any `api::Backend`,
-# registered on its module's natives class), the locked bitmap, the logger —
-# and MediaCodec, which is the phone's video decoder and is reached through
-# the NDK rather than through Java.
+# The Android side of a backend's native half, apart from any protocol: the
+# JNI layer every backend except RealVNC is reached through (any
+# `api::Backend`, registered on its module's natives class), the locked
+# bitmap, the logger, and MediaCodec and AAudio for video, audio decoding and
+# sound output, reached through the NDK rather than through Java.
 #
 # This is the only crate in the workspace with `jni` in it. A protocol crate
-# depends on it under a target cfg and nowhere else, which keeps the host
-# build — tests, examples, `remotedesktop-platform-linux` — free of anything
-# that knows a phone exists; and neither `remotedesktop-runtime` nor
-# `remotedesktop-api` depends on it at all, because the layering runs the
-# other way: this crate holds an `api::Backend` for Java and implements
-# `runtime::media::video::Decoders` for MediaCodec, and neither `runtime` nor
-# `api` hears about either.
+# depends on it only under a target cfg, which keeps the host build (tests,
+# examples, `remotedesktop-platform-linux`) free of Android code. Neither
+# `remotedesktop-runtime` nor `remotedesktop-api` depends on it: the layering
+# runs the other way. This crate holds an `api::Backend` for Java and
+# implements `runtime::media::video::Decoders` for MediaCodec, and neither
+# `runtime` nor `api` knows about either.
 #
-# On a host target the crate is the JNI table and nothing else: plain data,
-# no dependencies to fetch, read by `vento-codegen` (`codegen/`) to write
-# each module's natives class.
+# On a host target the crate is only the JNI table: plain data, no
+# dependencies to fetch, read by `vento-codegen` (`codegen/`) to write each
+# module's natives class.
 #
-# The directory is the whole of the phone's platform, not only this crate:
-# `java/` beside it is the seam every backend's provider is written against
-# (`Backend`, `NativeBackend` and the rest, the `:backends` Gradle module's
-# Java, whose natives this crate implements), and `javatest/` is its tests;
-# `backends/build.gradle` points AGP at both. `codegen/` is a crate of its
-# own, `remotedesktop-codegen`, the host tool that writes each module's
-# generated Java out of `api` and this crate's table: a workspace member by
-# name, and none of this package (cargo leaves a directory with a manifest of
-# its own out of the package above it).
+# The directory holds the whole Android platform, not only this crate:
+# `java/` is the Java every backend's provider is written against (`Backend`,
+# `NativeBackend` and the rest, the `:backends` Gradle module's Java, whose
+# natives this crate implements), and `javatest/` holds its tests;
+# `backends/build.gradle` points AGP at both. `codegen/` is a separate crate,
+# `remotedesktop-codegen`, the host tool that writes each module's generated
+# Java from `api` and this crate's table. It is a workspace member and not
+# part of this package (cargo leaves a directory with its own manifest out of
+# the package above it).
 [package]
 name = "remotedesktop-platform-android"
 version.workspace = true

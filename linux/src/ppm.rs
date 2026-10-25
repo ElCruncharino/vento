@@ -1,10 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Rows of `R, G, B, A` as a binary PPM, which is the one picture format that
-//! needs no library and that every viewer and `magick` reads. What the C
-//! probe writes, written again here so the two can be compared byte for
-//! byte.
+//! Rows of `R, G, B, A` as a binary PPM, a picture format that needs no
+//! library and that every viewer and `magick` reads. The same output as the C
+//! probe's, so the two can be compared byte for byte.
 
 use crate::backend::Picture;
 use std::io::{self, Write};
@@ -26,8 +25,8 @@ pub fn write(path: &Path, picture: &Picture) -> io::Result<()> {
     file.flush()
 }
 
-/// `FILE.ppm` to `FILE-thumb.ppm`, as the C probe names its thumbnail — and
-/// `FILE` to `FILE-thumb` where there is no extension to go after.
+/// `FILE.ppm` to `FILE-thumb.ppm`, as the C probe names its thumbnail, and
+/// `FILE` to `FILE-thumb` where there is no extension.
 pub fn thumbnail_path(out: &Path) -> std::path::PathBuf {
     let name = out.file_name().and_then(|n| n.to_str()).unwrap_or("out.ppm");
     let thumb = match name.rsplit_once('.') {

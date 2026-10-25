@@ -10,14 +10,14 @@ import android.content.pm.ApplicationInfo;
 import net.pgaskin.remotedesktop.backend.Backends;
 
 /**
- * The one hook that runs before the app's classloader is settled, which is what
- * an add-on's classes have to be reachable from.
+ * The only hook that runs before the app's class loader is created, and an
+ * add-on's classes have to be reachable from that class loader.
  *
  * <p>Nothing else about component instantiation is changed.
  *
- * <p>The base class is androidx-internal, and extending it is the point: androidx
- * declares this factory in its own manifest, so a factory of ours either
- * continues theirs or silently replaces it.
+ * <p>The base class is androidx-internal, and extending it is deliberate: androidx
+ * declares this factory in its own manifest, so a replacement factory has to
+ * extend it or silently drop its behaviour.
  */
 @SuppressLint("RestrictedApi")
 public final class AppFactory extends CoreComponentFactory {

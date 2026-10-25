@@ -27,19 +27,18 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * The pinned connections, in the order they sit in, to be dragged into another.
+ * The pinned connections in their current order, for reordering by drag.
  *
  * <p>A sheet rather than a mode over the home screen. Pressing a card opens the
- * machine and holding one edits it, and the list is a grid of pictures as often
- * as it is a column of rows — a drag would need a third meaning for the same
- * finger, a fence around the pinned run so nothing lands outside it, and an
- * answer for what dragging sideways means. None of that is the question, which
- * is only ever "which of these comes first".
+ * connection and a long press edits it, and the list is as often a grid as a
+ * column: dragging there would need a third meaning for the same gesture, a
+ * boundary around the pinned run so nothing lands outside it, and a meaning
+ * for dragging sideways. The only question here is which comes first.
  *
- * <p>What it holds is a snapshot: the pinned connections as they were when it
- * opened, moved about locally, and written whenever a move finishes. Written
- * then rather than on the way out, because a sheet can be swiped away and this
- * is not a form — every arrangement somebody stops at is one they meant.
+ * <p>It holds a snapshot: the pinned connections as they were when it opened,
+ * reordered locally and written whenever a move finishes. Written then rather
+ * than on dismissal, because a sheet can be swiped away and this is not a form
+ * with a save button.
  */
 final class PinnedOrderPanel {
 
@@ -55,8 +54,8 @@ final class PinnedOrderPanel {
     private final List<Connection> items = new ArrayList<>();
 
     /**
-     * @param onChanged run after the order is written — the list behind the
-     *                  sheet is showing what has just been rearranged
+     * @param onChanged run after the order is written, so the list behind the
+     *                  sheet can show the new order
      */
     static PinnedOrderPanel show(Activity activity, Runnable onChanged) {
         final PinnedOrderPanel panel = new PinnedOrderPanel(activity, onChanged);
@@ -82,9 +81,8 @@ final class PinnedOrderPanel {
                 .inflate(R.layout.sheet_pinned, null);
         dialog.setContentView(content);
         dialog.getBehavior().setMaxWidth(dp(MAX_WIDTH_DP));
-        // A sheet that is a page, not a peek — the same choice ConnectionPanel
-        // makes, and for the same reason: half a list of pins is not half an
-        // answer to which one is first.
+        // Fully expanded with no collapsed state, as in ConnectionPanel: half
+        // of the pinned list is not useful for ordering it.
         dialog.getBehavior().setSkipCollapsed(true);
         dialog.getBehavior().setState(BottomSheetBehavior.STATE_EXPANDED);
         ViewCompat.setOnApplyWindowInsetsListener(content, (v, insets) -> {
@@ -116,11 +114,11 @@ final class PinnedOrderPanel {
     }
 
     /**
-     * The order as it now stands, written and handed to the screen behind.
+     * Writes the current order and notifies the screen behind.
      *
-     * <p>Only the pinned ids go, so {@link Connections#reorder} moves them among
-     * the places they already occupy and the rest of the list is untouched by a
-     * sheet that was never about it.
+     * <p>Only the pinned ids are passed, so {@link Connections#reorder} moves
+     * them among the positions they already occupy and leaves the rest of the
+     * list unchanged.
      */
     private void commit() {
         final List<String> order = new ArrayList<>(items.size());
@@ -134,9 +132,8 @@ final class PinnedOrderPanel {
     }
 
     /**
-     * One place up or down, which is what the screen reader gets instead of the
-     * drag: a reorder that can only be done by dragging cannot be done at all
-     * with a finger that does not know where the rows are.
+     * Moves a row one place up or down: the screen reader's alternative to
+     * dragging, which needs to see where the rows are.
      */
     private boolean move(RecyclerView.ViewHolder holder, int by) {
         final int from = holder.getBindingAdapterPosition();
@@ -154,18 +151,17 @@ final class PinnedOrderPanel {
 
     private final class Adapter extends RecyclerView.Adapter<Holder> {
 
-        // The handle below is not a click and must not become one: what it does
-        // is hand the gesture to the touch helper. A finger that cannot drag gets
-        // the two accessibility actions instead.
+        // The handle below is not a click and must not become one: it hands the
+        // gesture to the touch helper. Users who cannot drag get the two
+        // accessibility actions instead.
         @SuppressLint("ClickableViewAccessibility")
         @NonNull
         @Override
         public Holder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
             final Holder h = new Holder(LayoutInflater.from(parent.getContext())
                     .inflate(R.layout.item_pinned, parent, false));
-            // Fixed, so they are set here rather than on every bind: each row is
-            // its own container, so what a row is given does not depend on where
-            // it has been dragged to.
+            // Set here rather than on every bind: each row is its own
+            // container, so its margins do not depend on its position.
             final ViewGroup.MarginLayoutParams lp =
                     (ViewGroup.MarginLayoutParams) h.itemView.getLayoutParams();
             final int inset = parent.getResources().getDimensionPixelSize(R.dimen.group_inset);
@@ -186,9 +182,8 @@ final class PinnedOrderPanel {
                 if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
                     drags.startDrag(h);
                 }
-                // Not consumed: the handle is a way in rather than a control of
-                // its own, and the gesture belongs to the touch helper from the
-                // moment it is told to start.
+                // Not consumed: the handle only starts the drag, and the touch
+                // helper handles the gesture from then on.
                 return false;
             });
             return h;
@@ -199,9 +194,9 @@ final class PinnedOrderPanel {
             final Connection c = items.get(position);
             h.title.setText(c.title());
             h.subtitle.setText(c.subtitle());
-            // GONE rather than the home screen's INVISIBLE: these rows are one
-            // under another and nothing is beside them to line up with, so a
-            // connection with no name is simply a shorter row.
+            // GONE rather than the home screen's INVISIBLE: these rows have
+            // nothing beside them to line up with, so a connection with no name
+            // is a shorter row.
             h.subtitle.setVisibility(c.subtitle().isEmpty() ? View.GONE : View.VISIBLE);
         }
 
@@ -225,8 +220,8 @@ final class PinnedOrderPanel {
     }
 
     /**
-     * Up and down, and nothing else: there is no swipe here, because the one
-     * thing a swipe would mean is unpinning and that is the editor's toggle.
+     * Up and down only. No swipe: the only meaning it could have is unpinning,
+     * which is the editor's toggle.
      */
     private final class Callback extends ItemTouchHelper.SimpleCallback {
 
@@ -257,10 +252,10 @@ final class PinnedOrderPanel {
         }
 
         /**
-         * The end of the gesture, which is when it is written: a drag passes
-         * over every row between where it started and where it is going, and a
-         * write per step would be the file rewritten a dozen times for one move
-         * — and the launcher's shortcuts republished behind each of them.
+         * The end of the gesture, when the order is written: a drag passes
+         * every row between its start and end, and writing per step would
+         * rewrite the file and republish the launcher's shortcuts once per
+         * row passed.
          */
         @Override
         public void clearView(@NonNull RecyclerView list,

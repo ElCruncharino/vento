@@ -7,13 +7,13 @@
 //! the window's size, where the far end takes a layout; otherwise the main
 //! window asks for the desktop its size, where the far end has one screen.
 //!
-//! Off unless somebody has said so per session: resizing a desktop is a
-//! change to somebody else's machine, and one that happens because a window
-//! was tiled differently is not one they asked for.
+//! Off unless turned on for the session: resizing a desktop changes the far
+//! end's machine, which may be another person's, and a window tiled
+//! differently is not a request to resize it.
 //!
 //! It is asked on a tick rather than told, because whether the far end will
-//! take a size becomes true some time after the connection — a VNC server
-//! says so by sending a rectangle, which may arrive seconds in — and a
+//! take a size becomes true some time after the connection (a VNC server
+//! says so by sending a rectangle, which may arrive seconds in), and a
 //! one-shot that fired too early would never fire again. The session ticks
 //! it once a second with its poll, and [`DEBOUNCE`] after any window last
 //! changed shape; nothing here touches a backend or a clock.
@@ -28,9 +28,9 @@ use std::time::{Duration, Instant};
 /// tiling compositor re-tiling an output) are one question and not several.
 pub const DEBOUNCE: Duration = Duration::from_millis(600);
 
-/// A sanity check on the rectangle rather than the protocol's limit:
-/// anything outside this is not a window somebody is looking at a desktop
-/// in, and asking for it would be asking for nonsense.
+/// A sanity check on the rectangle rather than the protocol's limit: a
+/// window outside this is too small or too large to show a desktop in, and
+/// is not asked for.
 const MIN: u32 = 200;
 const MAX: u32 = 16384;
 
@@ -80,7 +80,7 @@ pub struct Follower {
     /// The windows at the previous tick: two the same means they have
     /// settled.
     settled: Option<Vec<Shown>>,
-    /// When a window last changed shape asks for a tick.
+    /// When the tick asked for by a window's last change of shape is due.
     due: Option<Instant>,
 }
 
@@ -95,8 +95,8 @@ impl Follower {
     }
 
     /// Turning it on forgets what was asked for before, so that it takes
-    /// effect where it was turned on — the desktop may have been given a
-    /// size by hand meanwhile, and the windows are then a new question.
+    /// effect where it was turned on: the desktop may have been given a size
+    /// by hand meanwhile, and the windows are then a new question.
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
         if enabled {
@@ -106,7 +106,7 @@ impl Follower {
 
     /// A window changed shape: bring the next tick forward to `DEBOUNCE`
     /// from now, rather than starting a second timer, so there is one place
-    /// the question is asked — and one debounce whichever window it was.
+    /// the question is asked, and one debounce whichever window it was.
     pub fn resized(&mut self, now: Instant) {
         if self.enabled {
             self.due = Some(now + DEBOUNCE);
@@ -123,11 +123,11 @@ impl Follower {
     ///
     /// `windows` are the session's, the main window first; `monitors` the
     /// far end's layout as the poll last read it. "Stopped moving" is two
-    /// ticks the same, which is the debounce. Nothing is asked twice — the
-    /// same question, and a far end that refused it will refuse it again —
+    /// ticks the same, which is the debounce. Nothing is asked twice (the
+    /// same question, and a far end that refused it will refuse it again),
     /// so a refusal costs one request rather than one a second. `takes` is
-    /// the caller's own poll, since asking again here would be a second
-    /// crossing for an answer that arrived a line ago.
+    /// from the caller's own poll, since asking again here would be a second
+    /// call into the backend for an answer the poll has just read.
     pub fn tick(&mut self, windows: &[Shown], monitors: &[Monitor], takes: Takes) -> Option<Ask> {
         self.due = None;
         if !self.enabled || windows.is_empty() {

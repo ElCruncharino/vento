@@ -8,11 +8,11 @@
 //! winit, egui-winit and egui-wgpu are driven directly rather than through
 //! eframe. eframe is less code for an ordinary application, but this one
 //! needs what eframe wraps away: the window's raw handles for the shortcuts
-//! inhibitor (`wayland.rs`), the X11 keyboard grab (`x11.rs`) and the Wayland
-//! clipboard (`clipboard/`), device
-//! events for the raw motion a captured pointer sends, focus and keyboard events as winit delivers them (with
-//! the layout's logical key, which egui's events drop), and a say in when
-//! the loop wakes — the backend's mailbox wakes it through an event-loop
+//! inhibitor (`wayland.rs`), the X11 keyboard grab (`x11.rs`) and the
+//! Wayland clipboard (`clipboard/`), device events for the raw motion a
+//! captured pointer sends, focus and keyboard events as winit delivers them
+//! (with the layout's logical key, which egui's events drop), and a say in
+//! when the loop wakes: the backend's mailbox wakes it through an event-loop
 //! proxy, and egui's own repaint requests set a deadline it waits for. That
 //! is four things eframe would have to be worked around for, against a page
 //! of surface setup to do without it.
@@ -27,9 +27,9 @@
 //! A session shows the far end in the main window, and in a window of its
 //! own for each monitor popped out of it (`session.rs`, `pane.rs`): the
 //! session asks for those between frames ([`WindowOp`]) and this opens and
-//! closes them. The main window is the one that matters most — the dialog,
+//! closes them. The main window is the one that matters most (the dialog,
 //! the prompts and the panel are only ever there, and closing it ends the
-//! session — and the rest come and go with the session: closed before it
+//! session), and the rest come and go with the session: closed before it
 //! ends, each letting go of what it held. What is the process's rather than
 //! a window's follows the focus between them: X11's keyboard grab, the
 //! pointer capture, the shortcuts inhibitor (one per surface, only the
@@ -92,7 +92,7 @@ pub struct Request {
 /// What the window opens with.
 pub struct Launch {
     /// What the command line described, if anything: the dialog is filled
-    /// in from it, or — with `connect` — a session is opened on it at once.
+    /// in from it, or, with `connect`, a session is opened on it at once.
     pub request: Option<Request>,
     pub connect: bool,
     pub dirs: Dirs,
@@ -353,9 +353,9 @@ enum After {
 }
 
 /// `vento <backend> <address> --connect` is a session and nothing else, so
-/// disconnecting it is the end of the program; any other ending of it —
-/// the far end hanging up, an error — goes back to the dialog so that the
-/// reason stays on screen, and every session after it is the dialog's.
+/// disconnecting it is the end of the program; any other ending of it (the
+/// far end hanging up, an error) goes back to the dialog so that the reason
+/// stays on screen, and every session after it is the dialog's.
 /// `launched`: the session was the one `--connect` opened; `asked`: its
 /// ending was a disconnect from this side (the toolbar's, or the Cancel
 /// while connecting).
@@ -374,7 +374,7 @@ enum FocusChange<W> {
     /// `W` had it, and none of ours has.
     Lost(W),
     /// It went from one of our windows to another: nothing has left the
-    /// process, so nothing is let go of — the keys held stay down, and the
+    /// process, so nothing is let go of: the keys held stay down, and the
     /// clipboard is not read again.
     Moved { from: W, to: W },
 }
@@ -488,8 +488,8 @@ impl App {
         // fold in egui takes its length from `animation_time`, which an
         // `Area`'s fade-in and a `Window`'s fade-out read as instant at
         // zero; a programmatic scroll has its own, `scroll_animation`.
-        // The toolbar's slide is not egui's — it names its own time — and
-        // stays.
+        // The toolbar's slide names its own time (`animate_value_with_time`)
+        // and stays.
         self.egui.all_styles_mut(|style| {
             style.animation_time = 0.0;
             style.scroll_animation = egui::style::ScrollAnimation::none();
@@ -503,9 +503,9 @@ impl App {
             // egui's repaint requests become a deadline the loop waits for,
             // one per viewport; the proxy wakes it in case it is already
             // waiting. A request for later must not draw at once: one made
-            // from inside a frame (the panel's once-a-second poll is one)
+            // from inside a frame (the session's once-a-second poll is one)
             // would otherwise draw the next frame straight away, and that
-            // one ask again — a loop that a Wayland compositor's frame
+            // one ask again: a loop that a Wayland compositor's frame
             // callbacks slow to the refresh rate and X11 does not slow at
             // all.
             let repaint_at = Arc::clone(&self.repaint_at);
@@ -567,9 +567,9 @@ impl App {
         window.request_redraw();
     }
 
-    /// Opens a window as `viewport`, with a surface on the shared device —
-    /// made now, for the first window, with the adapter chosen to suit its
-    /// surface.
+    /// Opens a window as `viewport`, with a surface on the shared device
+    /// (made now, for the first window, with the adapter chosen to suit its
+    /// surface).
     fn add_window(
         &mut self,
         event_loop: &ActiveEventLoop,
@@ -681,9 +681,9 @@ impl App {
 
     /// Keep the shortcuts inhibitor in step with the focus and the session:
     /// held while one of the windows has the focus and the session takes
-    /// input, released otherwise. Not merely connected, as it was: in view
-    /// only, or under a prompt, the keys go nowhere at the far end, and the
-    /// grab kept Alt+Tab and the rest from the window manager too. Released
+    /// input, released otherwise. Not merely while connected: in view only,
+    /// or under a prompt, the keys go nowhere at the far end, and the grab
+    /// would keep Alt+Tab and the rest from the window manager too. Released
     /// while the pointer is on the toolbar as well, and never taken with the
     /// grab keyboard setting off (`Session::holds_shortcuts`). This runs
     /// after every frame and on focus changes, but the grab and the
@@ -745,18 +745,18 @@ impl App {
     /// Tell the session whether it can be seen, which is what lets a
     /// backend pause: not while a window merely lacks the keyboard focus,
     /// which leaves the picture on screen, but while every window it is in
-    /// is minimised or wholly covered. One window that can be seen is a
-    /// picture someone is looking at.
+    /// is minimised or wholly covered. One window that can be seen keeps
+    /// the session from pausing.
     ///
     /// What can be told depends on the display server. X11 says both: the
     /// window manager's `_NET_WM_STATE_HIDDEN`, asked on every frame (a
     /// minimised session still runs one a second, for the poll, so it is
     /// seen within a second, or at once with the focus-out a minimise
-    /// usually brings) — no round trip to the server, since winit keeps the
-    /// property from its change notifications (`patches/winit/0005`) — and
-    /// the server's visibility events, which winit
-    /// reports as `Occluded` — under a compositing manager the window is
-    /// never reported covered, and then only minimising pauses. Neither
+    /// usually brings) with no round trip to the server, since winit keeps
+    /// the property from its change notifications (`patches/winit/0005`);
+    /// and the server's visibility events, which winit reports as
+    /// `Occluded`. Under a compositing manager the window is never reported
+    /// covered, and then only minimising pauses. Neither
     /// says anything of a window whose frame the window manager unmapped
     /// (i3's workspaces not on any output and its scratchpad, Openbox's
     /// other desktops): X sends no visibility event for a window that
@@ -869,8 +869,8 @@ impl App {
         let egui = self.egui.clone();
         let settings = &mut self.settings;
         let mut output = egui.run_ui(raw_input, |ui| {
-            // egui keeps a viewport — its input, its memory of areas and of
-            // what the pointer is on — only while the root's pass says it is
+            // egui keeps a viewport (its input, its memory of areas and of
+            // what the pointer is on) only while the root's pass says it is
             // still wanted, and forgets the rest when that pass ends. Every
             // other window is said to be here, with a callback egui is never
             // to call (its pass is run from this loop, in its own window's
@@ -903,7 +903,7 @@ impl App {
             }
         }
         // The window's cursor: egui-winit's icon, and the far end's shape
-        // over it where the session wants that — put back before, applied
+        // over it where the session wants that: put back before, applied
         // after, so the two never fight (see `cursor.rs`).
         let icon = output.platform_output.cursor_icon;
         if let Screen::Session(session) = &mut self.screen {
@@ -930,7 +930,7 @@ impl App {
         for id in &output.textures_delta.free {
             gpu.renderer.free_texture(id);
         }
-        // Applied above; epaint asserts that nobody drops one unapplied.
+        // Applied above; epaint asserts that none is dropped unapplied.
         output.textures_delta.clear();
 
         // What the frame asked of the other windows: to draw what it took
@@ -1418,7 +1418,7 @@ impl ApplicationHandler<Wake> for App {
                 // A paste into a text field is of the clipboard as it is now,
                 // which egui-winit would read on this thread and wait for;
                 // here it is read on the clipboard's, and pasted when it is in
-                // (see `draw`) — or not at all, from an owner that does not
+                // (see `draw`), or not at all, from an owner that does not
                 // answer within the clipboard's deadline.
                 if key.state == ElementState::Pressed
                     && let Some(clipboard) = &self.clipboard
@@ -1683,7 +1683,8 @@ mod tests {
     #[test]
     fn only_a_disconnected_command_line_session_quits() {
         assert_eq!(after_session(true, true), After::Quit);
-        // The far end ended it: the reason is shown, whoever started it.
+        // The far end ended it: the reason is shown, even for the session
+        // `--connect` opened.
         assert_eq!(after_session(true, false), After::Dialog);
         // Started from the dialog: back to it either way.
         assert_eq!(after_session(false, true), After::Dialog);

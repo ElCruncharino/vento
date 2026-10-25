@@ -18,10 +18,10 @@ android {
         targetCompatibility JavaVersion.VERSION_21
     }
 
-    // One variant, because debug and release differ in nothing here, and the
-    // sources beside it, because most of what is worth knowing about this code
-    // is in its comments. There is no publishing plugin: where it goes, if
-    // anywhere, is a decision for whoever publishes it.
+    // One variant, because debug and release do not differ here, and a sources
+    // jar, because much of the documentation for this code is in its comments.
+    // There is no publishing plugin: the destination, if any, is left to the
+    // publisher.
     publishing {
         singleVariant('release') {
             withSourcesJar()
@@ -60,9 +60,9 @@ androidComponents {
 }
 
 dependencies {
-    // The whole suite runs on a plain JVM — the four classes with an Android
-    // dependency are adapters with nothing to test — so no Robolectric and no
-    // androidx.test.
+    // The whole suite runs on a plain JVM (the Android-dependent classes are
+    // adapters and views, tested only through their platform-independent
+    // parts, if at all), so no Robolectric and no androidx.test.
     testImplementation 'junit:junit:4.13.2'
 }
 

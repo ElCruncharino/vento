@@ -1,7 +1,7 @@
-# The SPICE backend's native half: their protocol and their decoders under a
-# session of ours. The session layer is plain Rust, and on Android the library
-# is that session as an `api::Backend` (`src/backend.rs`) registered through
-# the platform crate's one JNI layer, so `cargo test` and `cargo run
+# The SPICE backend's native half: ryll's protocol and decoder crates under
+# this crate's own session layer. The session layer is plain Rust; on Android
+# the library exposes it as an `api::Backend` (`src/backend.rs`) registered
+# through the platform crate's JNI layer, so `cargo test` and `cargo run
 # --features probe --example spice-probe` exercise it on the host against a
 # real server.
 [package]
@@ -12,24 +12,22 @@ license.workspace = true
 publish = false
 
 [lib]
-# `lib` for the tests and the example, `cdylib` for the library the app loads —
-# one crate for one protocol.
+# `lib` for the tests and the example, `cdylib` for the library the app loads.
 name = "remotedesktop_spice"
 crate-type = ["lib", "cdylib"]
 
 [dependencies]
 log.workspace = true
 remotedesktop-runtime.workspace = true
-# `src/backend.rs`, the protocol as an `api::Backend`: what the Linux
-# client holds, and what the phone's JNI layer stands in front of.
+# `src/backend.rs` implements `api::Backend`, used directly by the Linux
+# client and through the JNI layer on Android.
 remotedesktop-api.workspace = true
 
-# A submodule rather than the published crates, because two things had to
-# change upstream before either would build for a phone: `patches/ryll/`, and
-# note 83 §2 for what they are. `client` is deliberately not among them — it is
-# their TLS opinion with a bundled root store in it, which is 922 KB and is
-# replaced here by `remotedesktop-runtime`'s pinning (`runtime::tls`). The
-# paths, and `default-features = false`, are the root `Cargo.toml`'s
+# A submodule rather than the published crates, because both needed changes
+# before they would build for Android (`patches/ryll/`). The protocol crate's
+# `client` module is unused: it has its own TLS setup with a bundled root store
+# (922 KB), replaced here by `remotedesktop-runtime`'s pinning (`runtime::tls`).
+# The paths, and `default-features = false`, are in the root `Cargo.toml`'s
 # `[workspace.dependencies]`.
 shakenfist-spice-protocol.workspace = true
 shakenfist-spice-compression = { workspace = true, features = [
@@ -40,10 +38,10 @@ shakenfist-spice-compression = { workspace = true, features = [
     "jpeg", # images and MJPEG streams, through the pure-Rust decoder
 ] }
 
-# The first async runtime in this repository, and the reason is the protocol:
-# a session is four sockets that have to be read concurrently, which is the one
-# shape here where a thread each is the awkward answer. One current-thread
-# runtime per session, owned by the thread the session already has.
+# The only async runtime in this repository, because a SPICE session is four
+# sockets (five with audio) that have to be read concurrently, where a thread
+# per socket is awkward. One current-thread runtime per session, run on the
+# session's existing thread.
 tokio = { version = "1", default-features = false, features = [
     "rt",
     "net",
@@ -52,9 +50,9 @@ tokio = { version = "1", default-features = false, features = [
     "sync",
     "macros",
 ] }
-# The TLS port, with `runtime::tls`'s verifier in it. No provider feature:
-# the patched protocol crate takes the process-wide default, which is the
-# `ring` our own crate installs.
+# The TLS port, with `runtime::tls`'s verifier. No provider feature: the
+# patched protocol crate uses the process-wide default, which `src/tls.rs`
+# installs as `ring`.
 tokio-rustls = { version = "0.26", default-features = false, features = [
     "logging",
     "tls12",
@@ -65,18 +63,17 @@ rustls = { version = "0.23", default-features = false, features = [
     "tls12",
     "logging",
 ] }
-# ZLIB_GLZ_RGB, which is a GLZ image with a zlib wrapper round it. The RFB
-# client already inflates with this one.
+# ZLIB_GLZ_RGB, a GLZ image with a zlib wrapper. The RFB backend uses the same
+# crate.
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 
 [dev-dependencies]
-# The example's own logger, which is where the client's warnings go when there
-# is no logcat to put them in.
+# The example's logger, for the client's warnings when there is no logcat.
 log.workspace = true
 
 # The probe is a development tool, built only when asked for: `cargo run
 # --features probe --example spice-probe`. Without the feature `cargo test` and
-# `clippy --all-targets` leave it alone.
+# `clippy --all-targets` skip it.
 [features]
 probe = []
 
@@ -84,7 +81,7 @@ probe = []
 name = "spice-probe"
 required-features = ["probe"]
 
-# The only part of this crate that knows a phone exists: the one line in
-# `src/lib.rs` that hands the backend to the platform crate's JNI layer.
+# Used only by the line in `src/lib.rs` that registers the backend with the
+# platform crate's JNI layer.
 [target.'cfg(target_os = "android")'.dependencies]
 remotedesktop-platform-android.workspace = true

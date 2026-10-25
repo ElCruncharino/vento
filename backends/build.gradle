@@ -5,10 +5,10 @@ plugins {
     id 'com.android.library'
 }
 
-// The seam and nothing else: no androidx, no app class, no
-// protocol. A protocol is a module under this one, depending on this and on
-// nothing else of the app's — so the compiler is what says the seam survived
-// another implementation unchanged.
+// The seam and nothing else: no androidx, no app class, no protocol. A
+// protocol is a module under this one, depending on this and on nothing else
+// of the app's, so the compiler checks that each implementation needs nothing
+// beyond the seam.
 android {
     namespace = 'net.pgaskin.remotedesktop.backend'
     compileSdk 36
@@ -23,23 +23,22 @@ android {
     }
 
     // Not AGP's `src/main/`: this project is `backends/` itself, the parent
-    // of every module and of the crates, and its Java is the phone's half of
-    // the platform, so it lives with the rest of that in `platform/android/`
-    // — the files themselves in `java/`, with no package directories over
-    // them (javac goes by the `package` line), and their tests beside it in
-    // `javatest/` rather than under it, since a source directory takes in
-    // everything below it.
+    // of every module and of the crates, and its Java is the Android half of
+    // the platform, so it is with the rest of that in `platform/android/`:
+    // the files in `java/`, with no package directories (javac uses the
+    // `package` line), and their tests beside it in `javatest/` rather than
+    // under it, since a source directory includes everything below it.
     sourceSets {
         main.java.srcDirs = ['platform/android/java']
         test.java.srcDirs = ['platform/android/javatest']
     }
 
-    // The one rule this module keeps that the Linux client keeps too
-    // (`BackendOption.settle`), held to one set of cases:
-    // `api/tests/options.json`, which `cargo test` reads from the other side.
-    // Read at run time from the module's directory, which is where a test
-    // runs, so the file is declared as an input of the task, or a changed case
-    // would not make it out of date.
+    // `BackendOption.settle` implements the same rule as the Linux client's
+    // `api::options::Options::settle`, tested against the same cases:
+    // `api/tests/options.json`, which `cargo test` reads too. The tests read
+    // it at run time from the module's directory, so the file is declared as
+    // an input of the task; otherwise a changed case would not make the task
+    // out of date.
     testOptions {
         unitTests.all {
             testLogging {
@@ -62,8 +61,8 @@ androidComponents {
 }
 
 dependencies {
-    // A plain JVM, as `control/` has it: what is tested here is rules, and
-    // the classes they are in touch nothing of Android's.
+    // A plain JVM, as in `control/`: the tests cover rules, in classes that
+    // use no Android APIs.
     testImplementation 'junit:junit:4.13.2'
 }
 
@@ -81,16 +80,16 @@ ext {
 }
 
 /*
- * What Rust says a backend is, as Java its module compiles: `vento-codegen`
- * (`platform/android/codegen/`) writes the catalog's entry for the backend — id, name,
- * description, place in a picker, and every option with its key as a
- * constant — and the module's provider answers from it. A generated source
- * directory, one per variant, decided by AGP: nothing of it is in the tree,
- * and `codegenSources` is everything it can depend on, so the task is out of
- * date exactly when the catalog may have changed. That includes each
- * backend's own entry, `modules/<name>/catalog.rs`, which the `api` crate
- * compiles by path from outside its own directory: left out, a changed
- * option would be a stale Java catalog.
+ * The backend's description from Rust, as Java its module compiles:
+ * `vento-codegen` (`platform/android/codegen/`) writes the backend's catalog
+ * entry (id, name, description, position in a picker, and every option with
+ * its key as a constant), and the module's provider answers from it. The
+ * output is a generated source directory per variant, placed by AGP; none of
+ * it is in the tree. `codegenSources` is everything the generator can depend
+ * on, so the task is out of date exactly when the catalog may have changed.
+ * That includes each backend's own entry, `modules/<name>/catalog.rs`, which
+ * the `api` crate compiles by path from outside its own directory: without
+ * it, a changed option would leave the Java catalog stale.
  */
 ext.codegenSources = files(
         '../Cargo.toml', '../Cargo.lock', '../rust-toolchain.toml',
@@ -112,11 +111,11 @@ ext.generateCatalog = { Project module, variant, String backend, String classNam
 
 /*
  * A Rust backend's natives class, `<className>` in the module's package: the
- * `native` methods of `NativeBackend.Natives`, out of the JNI table in
+ * `native` methods of `NativeBackend.Natives`, from the JNI table in
  * `platform/android/src/surface.rs`, on a class that loads `library`. One per
  * module rather than one shared class because each library registers its
- * functions on a class from its `JNI_OnLoad`, and two libraries registering
- * on one class would leave the last one loaded answering for both.
+ * functions on a class from its `JNI_OnLoad`, and with two libraries
+ * registering on one class, the last one loaded would handle calls for both.
  */
 ext.generateNatives = { Project module, variant, String className, String library ->
     final cap = variant.name.substring(0, 1).toUpperCase(Locale.ROOT) + variant.name.substring(1)
@@ -129,16 +128,16 @@ ext.generateNatives = { Project module, variant, String className, String librar
 }
 
 /*
- * A C backend's Rust half, for its CMake to link: the module's crate — the
- * backend as an `api::Backend` over the C library's vtable, and the one JNI
- * layer in `platform/android` registered on the module's natives class — as a
- * static library per ABI, under the directory returned, which the module hands
+ * A C backend's Rust half, for its CMake to link: the module's crate (the
+ * backend as an `api::Backend` over the C library's vtable, and the JNI layer
+ * in `platform/android` registered on the module's natives class) as a static
+ * library per ABI, under the returned directory, which the module passes to
  * CMake as `VENTO_RUST_LIBRARY_DIR` (`platform/android/cmake/vento_android.cmake`
  * links it).
  *
- * One task for every variant, since each builds the crate `--release` alike,
- * and before any CMake build, which links what it leaves; CMake itself only
- * names the file, so configuring needs nothing of it.
+ * One task for every variant, since each builds the crate `--release` the same
+ * way, and it runs before any CMake build, which links its output; CMake only
+ * names the file, so configuring does not need it.
  */
 ext.rustStaticLibrary = { Project module, String crate ->
     final out = module.layout.buildDirectory.dir('generated/rustStaticLibs')
@@ -163,17 +162,17 @@ ext.rustStaticLibrary = { Project module, String crate ->
 }
 
 /*
- * The two upstreams that arrive as a release rather than as a submodule, both
- * of them the encryption the borrowed VNC clients reach TLS through. Their git
- * trees have no `configure` — it is an autotools bootstrap output, and gnutls'
- * bootstrap wants gnulib and four host tools — so what a release carries is
- * what upstream *is* here, named by a hash rather than by a gitlink.
+ * The two upstreams that come as a release rather than as a submodule, both
+ * used for TLS by the vendored VNC clients. Their git trees have no
+ * `configure` (it is an autotools bootstrap output, and gnutls' bootstrap
+ * needs gnulib and four host tools), so the release tarball, pinned by its
+ * hash rather than by a gitlink, is the upstream source here.
  *
  * Their versions, hashes and mirrors are in `crypto-sources.txt`, which the
- * host CMake build reads too: a host build unpacks a missing tree itself, the
- * way the tasks here do. The phone's build fetches nothing;
- * `./gradlew fetchCryptoSources` does, and a tree that is not there is a
- * message from its CMake saying so.
+ * host CMake build reads too: a host build unpacks a missing tree itself, as
+ * the tasks here do. The Android build fetches nothing;
+ * `./gradlew fetchCryptoSources` does, and its CMake fails with a message
+ * when a tree is missing.
  */
 ext.cryptoSources = [:]
 file('crypto-sources.txt').eachLine { line ->

@@ -5,17 +5,17 @@
 // (libfreerdp/codec/h264.h, H264_CONTEXT_SUBSYSTEM) over vento's decoders.
 // See h264_vento.h for why it exists and how it finds its session.
 //
-// What the library asks of a subsystem is little: Init makes one for a
-// context, Decompress takes one frame and leaves its picture's I420 planes
-// in the context (pYUVData, iStride, YUVWidth, YUVHeight) for the library to
-// read until the next frame, and Uninit undoes Init. Everything above that
-// — the rectangles a frame updates, AVC444's combining of the main picture
-// and the auxiliary one, the conversion into the surface — is the library's
-// own code, the same whichever subsystem decoded. One context per surface,
-// and AVC444's two pictures are two frames of the one stream through its
-// one decoder (avc444_process_rects calls the same context twice), which is
-// why the planes call hands back every picture in order and never a newer
-// one in place of the one asked for.
+// The library asks little of a subsystem: Init creates one for a context,
+// Decompress takes one frame and leaves its picture's I420 planes in the
+// context (pYUVData, iStride, YUVWidth, YUVHeight) for the library to read
+// until the next frame, and Uninit undoes Init. Everything above that (the
+// rectangles a frame updates, AVC444's combining of the main and auxiliary
+// pictures, the conversion into the surface) is the library's own code, the
+// same whichever subsystem decoded. There is one context per surface, and
+// AVC444's two pictures are two frames of one stream through its one decoder
+// (avc444_process_rects calls the same context twice), which is why the
+// planes call returns every picture in order and never a newer one in place
+// of the one requested.
 
 #include <stdint.h>
 #include <stdio.h>
@@ -25,8 +25,8 @@
 
 #include <freerdp/codec/h264.h>
 
-/* The library's own declarations of the subsystem table and the context,
-   which it keeps out of its public headers. */
+/* The library's declarations of the subsystem table and the context, which
+   it keeps out of its public headers. */
 #include "h264.h"
 
 #include <vento/log.h>
@@ -37,8 +37,8 @@
 #define LOGI(...) vento_log(VENTO_LOG_INFO, TAG, __VA_ARGS__)
 #define LOGW(...) vento_log(VENTO_LOG_WARN, TAG, __VA_ARGS__)
 
-/* The status line is asked for twice a second rather than every frame: it is
-   formatted on the other side of the table each time. */
+/* The status line is requested twice a second rather than every frame, since
+   it is formatted on the other side of the table each time. */
 #define STATUS_EVERY_US 500000u
 
 static _Thread_local VentoH264 *current;
@@ -46,10 +46,10 @@ static _Thread_local VentoH264 *current;
 typedef struct {
     VentoH264 *video;
     vento_video_decoder *decoder;
-    UINT32 width, height; /* what the decoder was opened for */
-    int mode;             /* the person's choice when it was */
-    bool hardware;        /* whether it holds one of the hardware places */
-    bool restartAsked;    /* for a change of mode, once */
+    UINT32 width, height; /* the size the decoder was opened for */
+    int mode;             /* the user's mode when it was opened */
+    bool hardware;        /* whether it holds one of the hardware slots */
+    bool restartAsked;    /* restart requested for a mode change, only once */
     bool refused;         /* no decoder would open at width x height */
     uint64_t lastStatus;
 } Context;
@@ -137,8 +137,8 @@ static void closeDecoder(Context *c) {
 static bool openDecoder(Context *c, UINT32 width, UINT32 height) {
     const vento_video_decoders *t = &c->video->table;
     c->mode = t->mode != NULL ? t->mode(t->user) : 0;
-    // Off asks nothing of the GPU, so it takes no place either; nor does a
-    // session whose device has failed it.
+    // Off uses no GPU, so it takes no slot; nor does a session whose device
+    // has failed.
     c->hardware = c->mode != 0 && !atomic_load(&c->video->failed) && claimHardware(c->video);
     if (c->mode != 0 && !c->hardware && !atomic_load(&c->video->failed)) {
         LOGI("H.264: %d surfaces already decode in hardware, so the one at %ux%u is software",
@@ -146,8 +146,8 @@ static bool openDecoder(Context *c, UINT32 width, UINT32 height) {
     }
     c->decoder = t->open(t->user, VENTO_VIDEO_H264, (int) width, (int) height, c->hardware);
     if (c->decoder == NULL && c->hardware) {
-        // At once, on the same frame: the stream is at its start, so a
-        // software decoder has every picture it will be asked for.
+        // Immediately, on the same frame: the stream is at its start, so a
+        // software decoder gets every picture it will need.
         LOGW("H.264: no hardware decoder for %ux%u, trying software", width, height);
         closeDecoder(c);
         c->decoder = t->open(t->user, VENTO_VIDEO_H264, (int) width, (int) height, false);
@@ -156,9 +156,9 @@ static bool openDecoder(Context *c, UINT32 width, UINT32 height) {
     c->height = height;
     c->restartAsked = false;
     if (c->decoder == NULL) {
-        // Said once and not asked again at this size: every frame would ask
-        // and be told the same, in the log at the frame rate. The surface
-        // keeps what it has until the server makes one of another size.
+        // Logged once and not retried at this size: otherwise every frame
+        // would retry and fail, logging at the frame rate. The surface keeps
+        // its content until the server creates one of another size.
         LOGW("H.264: no decoder for %ux%u; the surface is not drawn at that size", width, height);
         closeDecoder(c);
         c->refused = true;
@@ -176,10 +176,10 @@ static BOOL vento_h264_subsystem_init(H264_CONTEXT *h264) {
     if (c == NULL) {
         return FALSE;
     }
-    // NULL for a context made outside any session's surface command: the
-    // one the library makes at connect for nothing but to see whether it
-    // can (codecs.c), which is never fed, and would otherwise be a warning
-    // that H.264 is missing in every connection's log.
+    // NULL for a context created outside any session's surface command: the
+    // one the library creates at connect only to check that it can
+    // (codecs.c), which is never fed and would otherwise log a warning about
+    // missing H.264 in every connection.
     c->video = current != NULL && current->available ? current : NULL;
     h264->pSystemData = c;
     return TRUE;
@@ -195,8 +195,8 @@ static void vento_h264_subsystem_uninit(H264_CONTEXT *h264) {
     h264->pSystemData = NULL;
 }
 
-/* 1 with a picture's planes in the context, below zero without one, as the
-   library's other subsystems answer. */
+/* Returns 1 with a picture's planes in the context, below zero without one,
+   as the library's other subsystems do. */
 static int vento_h264_subsystem_decompress(H264_CONTEXT *WINPR_RESTRICT h264,
                                            const BYTE *WINPR_RESTRICT data, UINT32 size) {
     Context *c = h264->pSystemData;
@@ -217,11 +217,11 @@ static int vento_h264_subsystem_decompress(H264_CONTEXT *WINPR_RESTRICT h264,
             return -1;
         }
     } else if (!c->restartAsked && t->mode != NULL && t->mode(t->user) != c->mode) {
-        // The person changed how video is decoded. A decoder in the new mode
-        // would have none of the pictures the stream refers back to, so the
-        // server is asked to start the pipeline again instead: its new
-        // surfaces are new contexts, whose decoders are opened in the new
-        // mode. This one goes on decoding until then.
+        // The user changed the video decoding mode. A decoder in the new mode
+        // would have none of the reference pictures, so the server is asked
+        // to restart the pipeline instead: its new surfaces are new contexts,
+        // whose decoders open in the new mode. This one keeps decoding until
+        // then.
         LOGI("H.264: hardware decoding changed, restarting the graphics pipeline");
         c->restartAsked = true;
         atomic_store(&v->failed, false);
@@ -232,9 +232,9 @@ static int vento_h264_subsystem_decompress(H264_CONTEXT *WINPR_RESTRICT h264,
     const bool picture = t->decode_planes(c->decoder, data, size, &planes);
     if (t->take_key_frame_request != NULL && t->take_key_frame_request(c->decoder)) {
         // A hardware decoder failed mid-stream and was replaced by a software
-        // one, which has none of the pictures the stream refers back to (or
-        // the phone's dropped a frame too large for it); and a server sends a
-        // key frame only when it starts a stream.
+        // one, which has none of the reference pictures (or Android's decoder
+        // dropped a frame too large for it), and a server sends a key frame
+        // only when it starts a stream.
         LOGW("H.264: the decoder lost its reference pictures, restarting the graphics pipeline");
         atomic_store(&v->failed, true);
         atomic_store(&v->restart, true);

@@ -3,9 +3,9 @@
 package com.realvnc.vncviewer.jni;
 
 /**
- * "Remember this server's identity." What arrives here is what a later
- * connection passes back as the {@code Identity} option, and what turns a new
- * server's security prompt into a silent one the next time.
+ * "Remember this server's identity." The identity delivered here is what a
+ * later connection passes back as the {@code Identity} option, which makes the
+ * next security prompt for that server silent.
  *
  * <p>Required by
  * {@code Java_com_realvnc_vncviewer_jni_SaveIdentityBindings_setIdentityStore}

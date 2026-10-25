@@ -4,8 +4,8 @@
 //! Connect to a server, print what it says, and write the first frame out.
 //!
 //! The protocol crate's own test rig: it runs on the host against
-//! `scripts/testvnc`, so "does ZRLE decode?" is a question with a picture for
-//! an answer instead of a phone.
+//! `scripts/testvnc`, so whether ZRLE decodes can be checked with a picture on
+//! the host instead of on a phone.
 //!
 //! ```sh
 //! scripts/testvnc/run.sh
@@ -13,13 +13,12 @@
 //! cargo run --features probe --example rfb-probe -- 127.0.0.1:5901 vncpass /tmp/frame.ppm hextile
 //! ```
 //!
-//! The name carries the protocol because the workspace has one of these per
+//! The name includes the protocol because the workspace has one of these per
 //! protocol and an example's output file is named after the example alone.
 //!
-//! The last argument names the encoding to ask for, which is how the ones the
-//! server would never pick on its own — Raw, RRE, Hextile — get exercised
-//! against a real server rather than only against the unit tests' hand-written
-//! bytes.
+//! The last argument names the encoding to request, which is how the ones the
+//! server would never pick itself (Raw, RRE, Hextile) get exercised against a
+//! real server rather than only against the unit tests' hand-written bytes.
 
 use remotedesktop_rfb::{Client, Config, Credentials, Handler, Security};
 use std::io::Write;
@@ -29,7 +28,7 @@ use std::time::Duration;
 struct Probe {
     user: String,
     password: Option<String>,
-    /// What the certificate has to hash to, if anything is being insisted on.
+    /// The fingerprint the certificate must match, if one is required.
     pin: Option<String>,
     frames: usize,
     damage: usize,
@@ -96,8 +95,7 @@ impl Handler for Probe {
 }
 
 /// Which characters a US keyboard puts behind Shift. The rig types shell
-/// commands, and a redirection nobody can type is a rig that cannot ask the
-/// guest anything.
+/// commands, and without a typable redirection it can't query the guest.
 fn needs_shift(c: char) -> bool {
     c.is_ascii_uppercase() || "~!@#$%^&*()_+{}|:\"<>?".contains(c)
 }
@@ -116,8 +114,8 @@ fn main() {
         None => Config::default().encodings,
     };
 
-    // The environment rather than more positional arguments: these are the
-    // knobs a TLS session needs and none of them is wanted twice in a row.
+    // Environment variables rather than more positional arguments: these are
+    // the settings a TLS session needs, and none of them changes between runs.
     let security = match std::env::var("RFB_SECURITY").as_deref() {
         Ok("require") => Security::Require,
         Ok("plain") => Security::Plain,
@@ -136,11 +134,11 @@ fn main() {
         ..Config::default()
     };
 
-    // `RFB_MOVE=dx,dy,count` walks the pointer before the picture is taken, in
-    // whichever coordinates the server asked for. The point is that the
-    // *command* is the same for both: the same walk against `testvnc` (which is
-    // absolute) and `testqemu` (which is relative) should move the pointer the
-    // same distance, and the screenshot is what says whether it did.
+    // `RFB_MOVE=dx,dy,count` moves the pointer before the picture is taken, in
+    // whichever coordinates the server requested. The *command* is the same
+    // for both: the same walk against `testvnc` (absolute) and `testqemu`
+    // (relative) should move the pointer the same distance, and the screenshot
+    // shows whether it did.
     let walk = std::env::var("RFB_MOVE").ok().map(|s| {
         let mut it = s.split(',').map(|n| n.trim().parse::<i32>().expect("RFB_MOVE"));
         (
@@ -151,9 +149,9 @@ fn main() {
     });
 
     // `RFB_TYPE=...` types a line into whatever has the far end's focus, `\n`
-    // included. A shell on the other side of it makes the whole guest
-    // scriptable through the client being tested, which is what `testqemu`
-    // needs: there is no way in to a virtual machine except its screen.
+    // included. With a shell on the far end, the whole guest becomes
+    // scriptable through the client under test, which `testqemu` needs: the
+    // virtual machine can only be reached through its screen.
     let typing = std::env::var("RFB_TYPE").ok();
 
     // Two seconds of whatever the desktop is doing, then look at it.
@@ -172,9 +170,9 @@ fn main() {
                     };
                     let id = i as i64;
                     // Shift has to be sent, not implied: QEMU's server turns a
-                    // keysym into a *scancode*, so `*` with no Shift held
-                    // arrives as `8`. The same thing the RDP client has to do
-                    // when a layout needs Shift for a character.
+                    // keysym into a *scancode*, so `*` without Shift held
+                    // arrives as `8`. The RDP client has to do the same when a
+                    // layout needs Shift for a character.
                     let shifted = needs_shift(ch);
                     if shifted {
                         client.key_down(0xffe1, -1);
@@ -197,10 +195,11 @@ fn main() {
                     if relative { "relative" } else { "absolute" }
                 );
                 // Somewhere with room to move in either direction, for the
-                // absolute case; the relative one starts wherever the far end's
-                // pointer already is — and must not be sent a position at all,
-                // since to a server in relative mode `(600, 400)` is a delta of
-                // (−32167, −32367) and the pointer ends up in the corner.
+                // absolute case; the relative case starts wherever the far
+                // end's pointer already is, and must not be sent a position at
+                // all, since to a server in relative mode `(600, 400)` is a
+                // delta of (−32167, −32367) and the pointer ends up in the
+                // corner.
                 let (mut x, mut y) = (600i32, 400i32);
                 if !relative {
                     client.pointer(x as u16, y as u16, 0);
@@ -213,16 +212,16 @@ fn main() {
                         y += dy;
                         client.pointer(x.max(0) as u16, y.max(0) as u16, 0);
                     }
-                    // Roughly a frame apart, as a finger's moves arrive.
+                    // Roughly a frame apart, as touch moves arrive.
                     std::thread::sleep(Duration::from_millis(16));
                 }
                 std::thread::sleep(Duration::from_millis(500));
             }
-            // `RFB_CLICK=256` presses and releases a button mask where it is.
-            // 128 is button 8 and 256 is button 9 — the one that needs
-            // `ExtendedMouseButtons` to have anywhere to go.
+            // `RFB_CLICK=256` presses and releases a button mask at the current
+            // position. 128 is button 8 and 256 is button 9, which needs
+            // `ExtendedMouseButtons`.
             if let Ok(spec) = std::env::var("RFB_CLICK") {
-                // `mask` or `mask@x,y` — the position matters because what an
+                // `mask` or `mask@x,y`: the position matters because what an
                 // X server does with a button depends on the window under it.
                 let (mask, at) = match spec.split_once('@') {
                     Some((m, pos)) => {

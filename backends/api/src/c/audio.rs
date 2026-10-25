@@ -1,22 +1,21 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The platform's sound output as `vento/audio.h`'s table, for a C backend
-//! whose far end sends sound: TigerVNC's QEMU audio and FreeRDP's rdpsnd,
-//! which until now each had a sink of their own on each platform.
+//! The platform's sound output as the table in `vento/audio.h`, for a C
+//! backend whose far end sends sound: TigerVNC's QEMU audio and FreeRDP's
+//! rdpsnd.
 //!
-//! What that buys is the same thing [`video`](super::video) buys for
-//! pictures: one queue and one policy for every backend on both platforms —
-//! how far ahead sound is kept, what is dropped when it gets too far ahead,
-//! the device opened off the protocol thread — and the session's mute,
-//! which a window sets on the [`Outputs`]' controls without the backend
-//! hearing of it.
+//! As [`video`](super::video) does for pictures, this gives every backend on
+//! both platforms one queue and one policy (how far ahead sound is buffered,
+//! what is dropped when it gets too far ahead, opening the device off the
+//! protocol thread), and the session's mute, which a window sets on the
+//! [`Outputs`]' controls without involving the backend.
 //!
-//! The platform's decoders ride along in the same table
-//! ([`Outputs::decoders`]): a backend whose far end sends AAC or Opus
-//! (FreeRDP's rdpsnd) offers what they decode and hands the packets here, so
-//! the decoding is the platform's on both platforms rather than whatever the
-//! library would have linked.
+//! The platform's decoders are in the same table ([`Outputs::decoders`]): a
+//! backend whose far end sends AAC or Opus (FreeRDP's rdpsnd) offers the
+//! codecs they decode and passes the packets here, so decoding uses the
+//! platform's decoders on both platforms rather than whatever the library
+//! would have linked.
 
 use std::ffi::{c_int, c_void};
 use std::sync::Arc;
@@ -27,8 +26,8 @@ use runtime::media::audio::{Format, Outputs, Stream};
 use super::ffi;
 
 /// `outputs` as the table a backend's config carries. The table's `user` is
-/// a box holding its own count of `outputs`, which is the backend's from the
-/// moment the table is handed over and comes back through `release`.
+/// a box holding its own reference to `outputs`, owned by the backend from
+/// the moment the table is handed over and released through `release`.
 pub fn table(outputs: Arc<dyn Outputs>) -> ffi::vento_audio {
     ffi::vento_audio {
         user: Box::into_raw(Box::new(outputs)) as *mut c_void,
@@ -47,7 +46,7 @@ pub fn table(outputs: Arc<dyn Outputs>) -> ffi::vento_audio {
     }
 }
 
-/// The codec a C caller names, by `VENTO_AUDIO_CODEC_*`.
+/// The codec for a `VENTO_AUDIO_CODEC_*` number.
 fn codec(number: c_int) -> Option<Codec> {
     match number as u32 {
         ffi::VENTO_AUDIO_CODEC_AAC => Some(Codec::Aac),
@@ -64,7 +63,7 @@ unsafe extern "C" fn decodable(user: *mut c_void, number: c_int) -> bool {
     }
 }
 
-/// A decoder behind a handle, with the samples of its last packet: what
+/// A decoder behind a handle, with the samples of its last packet, which
 /// `decode` lends the caller until its next call.
 struct Open {
     decoding: Decoding,
@@ -121,7 +120,8 @@ unsafe extern "C" fn decode(
     if d.is_null() || samples.is_null() || rate.is_null() || channels.is_null() {
         return -1;
     }
-    // The handle is the caller's alone for the call, as the header says.
+    // The caller has exclusive use of the handle for the call, as the
+    // header says.
     let d = unsafe { &mut *(d as *mut Open) };
     d.samples.clear();
     unsafe { *samples = d.samples.as_ptr() };
@@ -166,12 +166,13 @@ unsafe extern "C" fn open(user: *mut c_void, format: c_int, rate: c_int, channel
     }
 }
 
-/// The stream behind a handle, this thread's for the call.
+/// The stream behind a handle, used exclusively by this thread for the
+/// call.
 ///
 /// # Safety
 ///
-/// `s` came from [`open`] and is not closed, and nothing else is inside a
-/// call on it, as the header says. A [`Stream`] is `Send`, so the thread may
+/// `s` came from [`open`] and is not closed, and no other call on it is in
+/// progress, as the header says. A [`Stream`] is `Send`, so the thread may
 /// differ from call to call.
 unsafe fn stream<'a>(s: *mut ffi::vento_audio_stream) -> &'a mut Stream {
     unsafe { &mut *(s as *mut Stream) }
@@ -204,9 +205,9 @@ unsafe extern "C" fn close(s: *mut ffi::vento_audio_stream) {
     }
 }
 
-/// A backend's `ctx`, carried to whichever thread turns the switch: the
-/// header has the backend keep it alive until it withdraws, and the call is
-/// the backend's to make safe on any thread.
+/// A backend's `ctx`, carried to the thread that turns the switch: the
+/// header requires the backend to keep it alive until it withdraws, and to
+/// make the call safe on any thread.
 struct Ctx(*mut c_void);
 
 unsafe impl Send for Ctx {}
@@ -234,8 +235,8 @@ unsafe extern "C" fn offer(
                 }),
             );
         }
-        // A mute, or an enable with no way to ask: either way the far end
-        // sends, and the switch can only silence it here.
+        // A mute, or an enable without a callback: either way the far end
+        // keeps sending, and the switch can only mute it locally.
         _ => controls.offer_mute(),
     }
 }
@@ -249,7 +250,8 @@ unsafe extern "C" fn withdraw(user: *mut c_void) {
 unsafe extern "C" fn release(user: *mut c_void) {
     if !user.is_null() {
         let outputs = unsafe { Box::from_raw(user as *mut Arc<dyn Outputs>) };
-        // The backend's `ctx` goes with it, whether or not it withdrew.
+        // The backend's `ctx` is released with it, whether or not it
+        // withdrew.
         outputs.controls().withdraw();
     }
 }
@@ -292,7 +294,7 @@ mod tests {
         }
     }
 
-    /// Decodes AAC alone: each byte of a packet is a frame of two samples,
+    /// Decodes only AAC: each byte of a packet is a frame of two samples,
     /// the byte and its double, at twice the stream's rate (as SBR is); a
     /// packet of zeros is an error, and a packet of one byte is held back.
     struct Doubler;
@@ -371,15 +373,15 @@ mod tests {
             let queue = Arc::clone(&fake.queues.lock().unwrap()[0]);
             let format = queue.format();
             t.set_gain.unwrap()(s, 0.5);
-            // How much of the 100 ms the queue's target is depends on the
-            // far end's rhythm, which is timed by the clock: the writes
-            // above are one group when they come quickly and several when
-            // the machine is busy, and a target below what was written
-            // would start the sound at once and cut its oldest frames. A
-            // device that takes 150 ms at a time puts the target past the
-            // 100 ms whatever the rhythm says, so the queue starts the way
-            // a stream's short tail does, once it has played a target's
-            // worth of silence: counted in frames pulled, not in time.
+            // The queue's target depends on the far end's write timing,
+            // measured by the clock: the writes above form one group when
+            // they come quickly and several when the machine is busy, and a
+            // target below what was written would start the sound at once
+            // and cut its oldest frames. A device that takes 150 ms at a
+            // time puts the target above 100 ms regardless of the timing, so
+            // the queue starts as it does for a stream's short tail, after
+            // playing a target's worth of silence, counted in frames pulled
+            // rather than time.
             queue.set_device(Duration::ZERO, Duration::from_millis(150));
             let target = format.frames(queue.target_now());
             assert!(target > format.frames(Duration::from_millis(100)));
@@ -394,13 +396,13 @@ mod tests {
                 assert!(silent <= target / 4 + 1, "never played");
             }
             assert!(silent * 4 >= target, "played before it waited a target's worth");
-            // Then from the first frame written, at half: sample i is i / 2,
-            // so frame k is k twice.
+            // Then from the first frame written, at half gain: sample i is
+            // i / 2, so frame k is k twice.
             assert_eq!(out, [0, 0, 1, 1, 2, 2, 3, 3]);
             queue.pull(&mut out, format);
             assert_eq!(out, [4, 4, 5, 5, 6, 6, 7, 7]);
-            // And the rest of it, every frame in order and none dropped,
-            // then nothing.
+            // Then the rest, every frame in order and none dropped, then
+            // silence.
             let mut rest = vec![0i16; (4800 - 8) * 2];
             queue.pull(&mut rest, format);
             assert!(rest.chunks(2).zip(8..).all(|(f, k)| f == [k, k]), "all of it, in order");
@@ -443,16 +445,16 @@ mod tests {
             assert_eq!((frames, rate, channels), (3, 44_100, 2));
             assert_eq!(std::slice::from_raw_parts(samples, 6), [4, 2, 5, 4, 6, 6], "the config reached it");
 
-            // Held back, broken, and nothing at all: no frames, and the
-            // decoder still decodes after them.
+            // A held-back packet, a broken one, and no data: no frames, and
+            // the decoder still works afterwards.
             assert_eq!(t.decode.unwrap()(d, [9u8].as_ptr(), 1, &mut samples, &mut rate, &mut channels), 0);
             assert_eq!(t.decode.unwrap()(d, [0u8, 0].as_ptr(), 2, &mut samples, &mut rate, &mut channels), -1);
             assert_eq!(t.decode.unwrap()(d, std::ptr::null(), 0, &mut samples, &mut rate, &mut channels), 0);
             assert_eq!(t.decode.unwrap()(d, [7u8, 8].as_ptr(), 2, &mut samples, &mut rate, &mut channels), 2);
             assert_eq!(std::slice::from_raw_parts(samples, 4), [10, 14, 11, 16]);
 
-            // What the decoded samples play as is said to be AAC for as
-            // long as the decoder is open.
+            // The decoded samples are reported as AAC for as long as the
+            // decoder is open.
             let mut stream = fake.open(Format::new(44_100, 2).unwrap()).unwrap();
             stream.write(&[1, 2]);
             assert_eq!(controls.playback().unwrap().describe(), "AAC 44.1 kHz stereo");
@@ -468,7 +470,7 @@ mod tests {
         use runtime::media::audio::Switch;
         use std::sync::atomic::AtomicI32;
 
-        // What a backend's ctx would be: here, a count of what it was asked.
+        // Stands in for a backend's ctx: counts the requests.
         static ASKED: AtomicI32 = AtomicI32::new(0);
         unsafe extern "C" fn enable(ctx: *mut c_void, on: bool) {
             assert_eq!(ctx as usize, 42);
@@ -494,7 +496,7 @@ mod tests {
             t.withdraw.unwrap()(t.user);
             assert_eq!(controls.sound().switch, None);
             assert!(!controls.set_enabled(true));
-            // Offered again and released without a withdraw: the release
+            // Offered again and released without a withdraw: `release`
             // withdraws.
             t.offer.unwrap()(t.user, ffi::VENTO_AUDIO_SWITCH_ENABLE as c_int, true, Some(enable), ctx);
             t.release.unwrap()(t.user);

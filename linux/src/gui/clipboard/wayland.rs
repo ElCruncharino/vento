@@ -10,14 +10,14 @@
 //! window's `wl_display` is borrowed (as `wayland.rs` borrows it for the
 //! shortcuts inhibitor), and this thread binds a seat, a data device on it
 //! and a keyboard and pointer of its own for the serials. Its queue is read
-//! the way libwayland has threads share a connection — prepare, poll, read
-//! — which winit's loop does too, so neither starves the other.
+//! the way libwayland has threads share a connection (prepare, poll, read),
+//! which winit's loop does too, so neither starves the other.
 //!
 //! - **Reading**: a `wl_display.sync` first, so that a selection the
 //!   compositor sent just before the focus (it comes "immediately before")
 //!   has been dispatched here; then the selection's offer is asked for the
 //!   best text type it has (`text.rs`) into a non-blocking pipe, read as it
-//!   fills — modelled on xwlrvnc's `PendingReceive`. It is given up if the
+//!   fills (modelled on xwlrvnc's `PendingReceive`). It is given up if the
 //!   source writes nothing for [`READ_IDLE`], or has not finished within
 //!   [`READ_DEADLINE`] of being asked, or passes [`MAX_TEXT`]; a source that
 //!   is a stopped process holds the pipe open and is one of those. Our own
@@ -109,7 +109,7 @@ fn pipe() -> std::io::Result<(OwnedFd, OwnedFd)> {
     if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC | libc::O_NONBLOCK) } != 0 {
         return Err(std::io::Error::last_os_error());
     }
-    // SAFETY: both were just opened and are owned by nobody else.
+    // SAFETY: both were just opened and have no other owner.
     Ok(unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) })
 }
 
@@ -130,8 +130,10 @@ impl Worker {
             _ => return None,
         };
         // SAFETY: winit's live display, which outlives this worker: the
-        // window stops it (`Clipboard`'s drop) before the event loop goes.
-        // Foreign, so the connection is never closed from here.
+        // window stops it (`Clipboard::stop`, from `App::exiting`) before
+        // the event loop goes, and keeps the connection open to the end of
+        // the process if it does not stop. Foreign, so the connection is
+        // never closed from here.
         let backend = unsafe { Backend::from_foreign_display(display.cast()) };
         let conn = Connection::from_backend(backend);
         let queue = conn.new_event_queue::<State>();

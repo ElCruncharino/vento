@@ -1,10 +1,9 @@
 # GnuTLS as a set of static libraries, built from the release tarball in
 # third_party/gnutls plus the configure output in gen/ (see gen.sh). One target
-# per Makefile upstream has, because the include path is what differs between
-# them and that is what a Makefile is here.
+# per upstream Makefile, because the include path is what differs between them.
 #
-# `gnutls` is the one a consumer links: an interface over the lot of them, with
-# the public headers — one of which is generated — on its include path.
+# `gnutls` is the one a consumer links: an interface over all of them, with the
+# public headers (one of which is generated) on its include path.
 
 set(GNUTLS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../third_party/gnutls")
 if(NOT EXISTS "${GNUTLS_DIR}/lib/gnutls.h.in" AND NOT EXISTS "${GNUTLS_DIR}/lib/global.c")
@@ -12,8 +11,9 @@ if(NOT EXISTS "${GNUTLS_DIR}/lib/gnutls.h.in" AND NOT EXISTS "${GNUTLS_DIR}/lib/
 endif()
 
 set(GEN "${CMAKE_CURRENT_SOURCE_DIR}/gen")
-# Four answers depend on the ABI — the width of a wchar_t, the layout of a long
-# double — so those files are generated per ABI and this directory comes first.
+# A few answers depend on the ABI (the width of a wchar_t, the layout of a long
+# double), so the files holding them are generated per ABI and this directory
+# comes first.
 set(GEN_ABI "${GEN}/${CMAKE_ANDROID_ARCH_ABI}")
 if(NOT EXISTS "${GEN_ABI}/config.h")
     message(FATAL_ERROR "no gnutls config.h for ${CMAKE_ANDROID_ARCH_ABI}; add the ABI to gen.sh")
@@ -33,19 +33,19 @@ if(NOT TARGET nettle)
 endif()
 
 # The gnulib half. It is compiled with its own directory and the build root on
-# the path and nothing else, which is what keeps its replacement headers — a
-# stdint.h, a string.h — from reaching anything that did not ask for them.
+# the path and nothing else, which keeps its replacement headers (a stdint.h, a
+# string.h) from reaching anything that did not ask for them.
 add_library(gnutls_gl STATIC ${GNUTLS_SOURCES_gl})
 target_include_directories(gnutls_gl PRIVATE
         "${GEN_ABI}" "${GEN}" "${GEN_ABI}/gl" "${GEN}/gl" "${GNUTLS_DIR}/gl")
 
-# Their bundled unistring, likewise compiled against itself alone.
+# GnuTLS's bundled unistring, likewise compiled against itself alone.
 add_library(gnutls_unistring STATIC ${GNUTLS_SOURCES_lib_unistring})
 target_include_directories(gnutls_unistring PRIVATE
         "${GEN_ABI}" "${GEN}" "${GEN_ABI}/lib/unistring" "${GEN}/lib/unistring"
         "${GNUTLS_DIR}/lib/unistring")
 
-# Their bundled libtasn1, which is what parses a certificate.
+# GnuTLS's bundled libtasn1, which parses certificates.
 add_library(gnutls_minitasn1 STATIC ${GNUTLS_SOURCES_lib_minitasn1})
 target_include_directories(gnutls_minitasn1 PRIVATE
         "${GEN_ABI}" "${GEN}" "${GEN}/gl" "${GNUTLS_DIR}/gl"
@@ -77,8 +77,8 @@ target_include_directories(gnutls_lib_nettle PRIVATE
         "${GNUTLS_DIR}/lib/nettle/int" "${GNUTLS_DIR}/lib/nettle/backport")
 
 # lib/ itself is the only part that reads either of these. The priority file is
-# the one an administrator writes to change a system's TLS defaults; naming a
-# path that cannot exist on Android is how this build says there is none.
+# the one an administrator writes to change a system's TLS defaults; a path
+# that cannot exist on Android means there is none.
 target_compile_definitions(gnutls_lib PRIVATE
         SYSTEM_PRIORITY_FILE="/etc/gnutls/config"
         LOCALEDIR="/usr/share/locale")
@@ -88,7 +88,7 @@ foreach(target gnutls_gl gnutls_unistring gnutls_minitasn1 gnutls_lib
         gnutls_lib_ext gnutls_lib_extras gnutls_lib_hpke gnutls_lib_nettle
         gnutls_lib_x509)
     target_compile_definitions(${target} PRIVATE HAVE_CONFIG_H)
-    # Upstream's build turns these off; they are somebody else's warnings.
+    # Upstream's build turns these off; they are warnings in third-party code.
     target_compile_options(${target} PRIVATE
             -Wno-unused-parameter -Wno-sign-compare -Wno-unused-but-set-variable)
 endforeach()

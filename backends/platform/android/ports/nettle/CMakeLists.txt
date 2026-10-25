@@ -5,7 +5,7 @@
 # answers already written down.
 #
 # Both libraries are built whole. What a protocol actually calls is a few
-# dozen of the 382 objects — the rest cost link time and nothing in the APK,
+# dozen of the 382 objects; the rest cost link time and nothing in the APK,
 # since a static archive contributes only the members something references.
 
 set(NETTLE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../third_party/nettle")
@@ -38,7 +38,7 @@ foreach(target nettle hogweed)
             PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/gen" "${NETTLE_DIR}"
             INTERFACE "${CMAKE_CURRENT_BINARY_DIR}/include")
     target_compile_definitions(${target} PRIVATE HAVE_CONFIG_H)
-    # Upstream builds with these off; they are somebody else's warnings.
+    # Upstream builds with these off; they are warnings in third-party code.
     target_compile_options(${target} PRIVATE -Wno-unused-parameter -Wno-sign-compare)
 endforeach()
 

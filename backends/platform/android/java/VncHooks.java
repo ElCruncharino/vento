@@ -4,17 +4,17 @@
 package net.pgaskin.remotedesktop.backend;
 
 /**
- * What the two borrowed VNC clients, libvncclient and TigerVNC, do differently
- * on this side of {@link NativeBackend}: one thing, the same in both, so one
- * object.
+ * The Java-side difference of the two third-party VNC clients, libvncclient
+ * and TigerVNC, on top of {@link NativeBackend}: one thing, the same in both,
+ * so one object.
  *
  * <ul>
  *   <li><b>A TLS with no certificate is still encrypted.</b> Anonymous TLS is
  *       a server with nothing to verify it by, which {@link NativeBackend}
- *       asks about every time — but what going on means is not "in the clear"
- *       as it is for a RustDesk peer with no key: it is hidden from somebody
- *       listening and not from a machine in the middle, and the question says
- *       that, in the same words in both clients.
+ *       asks about every time, but connecting anyway does not mean "in the
+ *       clear" as it does for a RustDesk peer with no key: the session is
+ *       hidden from an eavesdropper and not from a machine in the middle, and
+ *       the question says that, in the same words in both clients.
  * </ul>
  */
 public final class VncHooks implements NativeBackend.Hooks {

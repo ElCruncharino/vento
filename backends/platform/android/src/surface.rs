@@ -18,7 +18,7 @@
 //! up have to be the ones `NativeBackend` declares, both ways.
 //!
 //! A table rather than a Java file per module because the declarations are
-//! the same for every backend — what differs is the class they are on, which
+//! the same for every backend. What differs is the class they are on, which
 //! has to be the module's own: a `.so` registers its natives on a class, and
 //! two libraries registering on one class would leave whichever came last
 //! answering for both.
@@ -29,13 +29,13 @@ pub struct Native {
     pub name: &'static str,
     /// The JNI descriptor, from which the Java types are written.
     pub descriptor: &'static str,
-    /// The Java parameter names, in order, for a declaration somebody reads.
+    /// The Java parameter names, in order, for a readable declaration.
     pub params: &'static [&'static str],
 }
 
-/// Every native, in the order `NativeBackend.Natives` declares them. The
-/// handle is the first argument of everything that has one: a pointer to
-/// the session, which Java retires before `destroy` frees it.
+/// Every native `NativeBackend.Natives` declares. The handle is the first
+/// argument of everything that has one: a pointer to the session, which Java
+/// retires before `destroy` frees it.
 pub const NATIVES: &[Native] = &[
     Native {
         name: "version",

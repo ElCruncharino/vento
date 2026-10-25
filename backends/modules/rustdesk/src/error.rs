@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Why a session ended, in the words the app puts on the screen.
+//! Why a session ended, as the message the app shows.
 
 use std::fmt;
 
@@ -11,16 +11,15 @@ pub enum Error {
     Io(std::io::Error),
     /// The peer refused the login, in its own words.
     Refused(String),
-    /// Nobody answered the password prompt.
+    /// A password or identity prompt was cancelled or declined.
     Cancelled,
-    /// The bytes did not mean what they have to mean.
+    /// The peer sent something malformed or unexpected.
     Protocol(String),
-    /// What somebody typed is not an address, said in the words they need.
+    /// The address is invalid; the message says why.
     Address(String),
-    /// The peer stopped saying anything at all. Their server sends a
-    /// `TestDelay` about once a second whatever else is happening, so silence
-    /// for as long as this takes is a connection that has gone rather than a
-    /// desktop nobody is touching.
+    /// The peer stopped sending anything. RustDesk's server sends a
+    /// `TestDelay` about once a second regardless of activity, so silence for
+    /// this long means the connection is gone rather than the desktop idle.
     Silent,
     /// `Client::close` was called; the only ordinary ending.
     Closed,
@@ -31,9 +30,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            // A dropped connection is the common case and the message is what
-            // somebody reads on a screen, so it says what happened rather than
-            // naming an errno.
+            // A dropped connection is the common case and the message is shown
+            // to the user, so it says what happened rather than naming an
+            // errno.
             Error::Io(e) => match e.kind() {
                 std::io::ErrorKind::ConnectionRefused => {
                     write!(f, "Nothing is listening at that address.")

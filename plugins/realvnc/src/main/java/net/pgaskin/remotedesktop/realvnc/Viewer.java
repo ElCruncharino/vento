@@ -10,31 +10,31 @@ import net.pgaskin.remotedesktop.plugin.Download;
 import java.util.List;
 
 /**
- * Where a copy of RealVNC's viewer can be got, which is this add-on's own
- * business and nothing the app knows.
+ * Where a copy of RealVNC's viewer can be downloaded. Only this add-on knows
+ * this, not the app.
  *
- * <p>What is checked is never any of this: {@link Library} says which build the
- * declarations bind to and what each library in it hashes to, and that is what
- * decides whether a copy is kept. A mirror repacks, so an archive is a copy and
- * a library is a build.
+ * <p>None of this is what gets verified: {@link Library} names the build the
+ * declarations bind to and the hash of each library in it, and that decides
+ * whether a copy is kept. A mirror may repack the APK, so the libraries in it
+ * are checked, not the archive.
  */
 final class Viewer {
 
-    /** Their own viewer, whose copy of the library is as good as any. */
+    /** RealVNC Viewer's package name, as the Aptoide API takes it. */
     static final String PACKAGE = "com.realvnc.viewer.android";
 
-    /** The release {@link Library} was read from, as the store knows it. */
+    /** The version code of the release {@link Library} was read from. */
     static final int VERSION_CODE = 2070175;
 
     private Viewer() {
     }
 
     /**
-     * Tried in order. Aptoide answers an API for an exact version code, with
-     * nothing to scrape; behind the second is a snapshot of the file that API
-     * pointed at when this was written. APKMirror is left out on purpose: it
-     * answers a script with 403, so it would cost a cookie jar and a page of
-     * HTML.
+     * Tried in order. Aptoide has an API that takes an exact version code, with
+     * nothing to scrape; the second is a Wayback Machine snapshot of the file
+     * that API pointed at when this was written. APKMirror is left out on
+     * purpose: it returns 403 to scripts, so it would need a cookie jar and
+     * HTML parsing.
      */
     static List<Download.Source> sources() {
         return List.of(

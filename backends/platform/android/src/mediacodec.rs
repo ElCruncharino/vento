@@ -7,21 +7,19 @@
 //! The decode is the phone's hardware, which is what keeps a backend that
 //! receives video from being a codec project: nothing here implements VP9,
 //! and MediaCodec is a C API, so this reaches it with an `extern "C"` block
-//! and no JNI, no Java and no thread of its own. Everything after the decode —
-//! what moved, and the conversion of only that — is
+//! and no JNI, no Java and no thread of its own. Everything after the decode
+//! (what moved, and the conversion of only that) is
 //! `runtime::media::video::Output`, the same as libavcodec's on a desktop.
 //!
 //! Declared here rather than taken from a crate: it is a dozen functions with a
-//! stable ABI, and `#[link]` on the extern block is the whole of the build
-//! configuration — the same argument [`bitmap`](crate::bitmap) makes for
+//! stable ABI, and `#[link]` on the extern block is the only build
+//! configuration needed, the same argument [`bitmap`](crate::bitmap) makes for
 //! `jnigraphics`.
 //!
-//! Three things are not obvious and each cost a measurement to find, two of
-//! them in [49](../../../../notes/49-h264.md)'s H.264 path before this
-//! existed:
+//! Three things are not obvious and each took a measurement to find:
 //!
-//! - **No surface.** The pixels have to come back to the CPU, because what the
-//!   seam promises is a region read out of a framebuffer.
+//! - **No surface.** The pixels have to come back to the CPU, because
+//!   `Backend.readRegion` promises a region read out of a framebuffer.
 //! - **`low-latency`, because a held frame is a desktop that lags the finger on
 //!   it.** A decoder is free to hold frames back to reorder them, and a remote
 //!   desktop has nothing to reorder.
@@ -169,7 +167,7 @@ const MEDIA_IMAGE2_PLANE: usize = 20; // offset, colInc, rowInc, 2 × subsamplin
 const MEDIA_IMAGE_TYPE_YUV: u32 = 1;
 
 /// How long a decode waits for the frame it just fed. A frame that misses is
-/// not lost — the next update draws one — so this bounds what a stall costs the
+/// not lost (the next update draws one), so this bounds what a stall costs the
 /// protocol thread rather than being a deadline. The first is longer because it
 /// is the one the decoder is still working its output format out on.
 const FIRST_FRAME_TIMEOUT_US: i64 = 200_000;
@@ -188,11 +186,10 @@ const PICTURE_TIMEOUT_US: i64 = 500_000;
 ///
 /// `Send`: in synchronous mode a codec is used from one thread at a time,
 /// which is all either decoder trait promises, and the NDK's codec holds
-/// nothing tied to the thread that made it — each call is posted to the
+/// nothing tied to the thread that made it: each call is posted to the
 /// codec's own looper thread and waited for. TigerVNC's worker threads
-/// feed one decoder from several threads in turn (see `api::c::video`),
-/// as the C++ context before it did. Not `Sync`: two calls at once are
-/// nowhere promised to be safe.
+/// feed one decoder from several threads in turn (see `api::c::video`).
+/// Not `Sync`: nothing promises that two calls at once are safe.
 pub(crate) struct Handle {
     raw: *mut AMediaCodec,
     /// Whether it has ever been started, which is when dropping it stops it
@@ -269,7 +266,7 @@ pub(crate) fn exists(mime: &str) -> bool {
 
 /// How much of a frame one input buffer is asked to hold: the picture
 /// uncompressed, at 4:2:0, which a frame of video does not reach in
-/// practice — a key frame of a 3840x2160 desktop of random colours was 10 MB
+/// practice: a key frame of a 3840x2160 desktop of random colours was 10 MB
 /// of the 12.4 this asks for. Asked for rather than left to the decoder,
 /// whose own choice need not grow with the picture: the Pixel 8's H.264
 /// decoder gives 7 MiB at any size (and keeps to it when asked for less),
@@ -349,7 +346,7 @@ pub struct Decoder {
     bt709: bool,
     full_range: bool,
     /// The last frame's planes and the vectorised conversion's verdict, which
-    /// between them are how little of this one is converted.
+    /// together decide how little of this one is converted.
     output: Output,
     /// Frames fed for their planes whose pictures have not come out yet.
     owed: u32,
@@ -406,8 +403,8 @@ impl Decoder {
     /// The frame into the decoder's input: one buffer for one frame, which is
     /// what a decoder takes a buffer to be.
     ///
-    /// A frame larger than an input buffer — a key frame of a large, busy
-    /// desktop — starts the decoder over with buffers large enough, and is
+    /// A frame larger than an input buffer (a key frame of a large, busy
+    /// desktop) starts the decoder over with buffers large enough, and is
     /// fed to it if it is one a fresh decoder can start from; otherwise it is
     /// dropped and a key frame asked for. Where the codec will not give
     /// buffers that large, a codec that takes a frame in parts is given it in
@@ -461,7 +458,7 @@ impl Decoder {
             if self.partial_frames {
                 return self.feed_parts(index as usize, buffer, capacity, data);
             }
-            // Dropped, and a key frame asked for — unless this was one, since
+            // Dropped, and a key frame asked for, unless this was one, since
             // the next would be as large, and asking would only have the far
             // end send that again and again. The picture then waits for a key
             // frame that fits.
@@ -552,8 +549,8 @@ impl Decoder {
     ///
     /// **Only the last one is converted.** A decoder that has fallen behind
     /// hands back several buffers at once, and every frame here is a whole
-    /// picture — so converting each in turn is 9 MB of writes for a picture the
-    /// next one overwrites before anybody sees it. The earlier buffers are
+    /// picture, so converting each in turn is 9 MB of writes for a picture the
+    /// next one overwrites before it is shown. The earlier buffers are
     /// released unread, which is what lets a session that fell behind catch up
     /// inside one update instead of over the next several.
     fn draw_next(
@@ -587,7 +584,7 @@ impl Decoder {
 
     /// The next decoded buffer in the order they were fed, for
     /// [`decode_planes`](runtime::media::video::Decoder::decode_planes): one
-    /// picture a frame, none passed over. A wait that runs out leaves its
+    /// picture per frame, none passed over. A wait that runs out leaves its
     /// picture owed, and an owed picture is the frame before's, so it is
     /// released unread when it comes rather than handed over as this frame's.
     fn planes_next(&mut self, planes: &mut dyn FnMut(&Frame<'_>)) -> bool {
@@ -622,12 +619,12 @@ impl Decoder {
             unsafe { AMediaFormat_delete(format) };
         }
 
-        // One `D/Codec2Buffer: ConstGraphicBlockBuffer::canCopy: wrapped ;
-        // buffer ref doesn't exist` a frame comes out of the platform here, and
-        // it is the good case rather than a fault: the framework is saying it
-        // will not copy this decoded block into a client buffer, so what comes
-        // back below wraps the codec's own memory and the conversion reads it
-        // in place. Every no-surface `getOutputBuffer` user prints it.
+        // The platform logs one `D/Codec2Buffer: ConstGraphicBlockBuffer::
+        // canCopy: wrapped ; buffer ref doesn't exist` per frame here, and it is
+        // the good case rather than a fault: the framework is saying it will not
+        // copy this decoded block into a client buffer, so what comes back
+        // below wraps the codec's own memory and the conversion reads it in
+        // place. It is logged for every no-surface `getOutputBuffer` user.
         let mut size = 0usize;
         let buffer = unsafe { AMediaCodec_getOutputBuffer(self.codec.raw(), index, &mut size) };
         let readable = !buffer.is_null() && info.size > 0 && self.have_layout;
@@ -673,9 +670,10 @@ impl Decoder {
 
             // Both out of the bitstream's own description of itself. A stream
             // that says nothing is taken for BT.601, which is what the encoders
-            // this has met produce untagged — a RustDesk peer's libvpx and
-            // libaom are handed libyuv's BT.601 and told nothing — and what
-            // `platform_linux`'s libavcodec path takes silence for too.
+            // this has met produce untagged (a RustDesk peer's libvpx and
+            // libaom are handed libyuv's BT.601 and told nothing), and what
+            // `platform_linux`'s libavcodec path assumes for an untagged stream
+            // too.
             // (A framework that fills in a default of its own by picture size
             // answers before this does.)
             let mut standard = 0;
@@ -805,10 +803,10 @@ fn start(handle: &mut Handle, codec: Codec, width: usize, height: usize, max_inp
 
 /// Whether the codec of this name decodes in hardware.
 ///
-/// The platform's own answer where it has one to give — Android 16's
+    /// The platform's own answer where it has one to give (Android 16's
 /// codec store says hardware-accelerated, software-only or vendor software
 /// for a codec by name, which is what `MediaCodecInfo.isHardwareAccelerated`
-/// reads in Java — and before that, the rule apps had to use: the
+/// reads in Java), and before that, the rule apps had to use: the
 /// platform's own codecs are named `c2.android.`, `c2.google.` or
 /// `omx.google.`, and a few vendors mark a software one in its name.
 pub(crate) fn is_hardware(name: &str) -> Option<bool> {

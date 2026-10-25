@@ -9,13 +9,14 @@
 //! and handed to egui as an `ImageDelta::partial`, which egui-wgpu turns into
 //! a `write_texture` of just that region. The staging buffers come back once
 //! egui has let go of them and are read into again, so that a rectangle is
-//! not first filled with black only for `read_region` to overwrite it. This is the same shape as the
-//! Android `Mirror` — the damage is already coalesced by the mailbox, and a
-//! partial texture write costs what the rectangle costs.
+//! not first filled with black only for `read_region` to overwrite it. This
+//! is the same shape as the Android `Mirror`: the damage is already
+//! coalesced by the mailbox, and a partial texture write costs what the
+//! rectangle costs.
 //!
 //! A desktop that fits in the device's largest texture is one texture. One
-//! that does not — a row of monitors past 16384 pixels, or past 8192 on
-//! hardware with that limit — is cut into tiles, a texture each, drawn side by
+//! that does not (a row of monitors past 16384 pixels, or past 8192 on
+//! hardware with that limit) is cut into tiles, a texture each, drawn side by
 //! side. A tile's texture holds a row or column of each neighbour's pixels
 //! around its own, and only its own are drawn: linear filtering at a seam,
 //! which reaches half a pixel past the edge, then blends the same pixels it
@@ -89,7 +90,7 @@ impl Staging {
     /// is done with comes back to be written again: whatever it held is
     /// overwritten, and only a buffer shorter than `n` is lengthened, which
     /// fills just the part it lacked. The spares are the longest few and,
-    /// together, no more than `budget` pixels — a desktop's worth, so that
+    /// together, no more than `budget` pixels (a desktop's worth), so that
     /// what is kept between frames is bounded by the framebuffer the backend
     /// already holds.
     fn take(&mut self, n: usize, budget: usize) -> Vec<Color32> {

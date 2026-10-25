@@ -15,16 +15,16 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * This module's entry in a build's list of backends. What the IronRDP backend
- * is called and what it can be told are the catalog's, which the Linux client
- * reads too: {@link IronRdpCatalog}, generated from {@code backends/api} at
- * build time, holds the words and the option keys.
+ * This module's entry in a build's list of backends. The IronRDP backend's
+ * name and options come from the catalog, which the Linux client reads too:
+ * {@link IronRdpCatalog}, generated from {@code backends/api} at build time,
+ * holds the text and the option keys.
  *
- * <p>A session is a {@link NativeBackend} on {@link IronRdpNatives}, generated
- * too: IronRDP in the module's crate as an {@code api::Backend}, which
+ * <p>A session is a {@link NativeBackend} on {@link IronRdpNatives}, also
+ * generated: IronRDP in the module's crate as an {@code api::Backend}, which
  * reads the desktop size option and splits a domain out of the user name
- * itself. What is left on this side is {@link RdpHooks}: the size this machine
- * was left at, and the prompt's words.
+ * itself. The Java side only adds {@link RdpHooks}: the desktop size this
+ * address was left at, and the prompt's text.
  */
 public final class IronRdpProvider implements BackendProvider {
 

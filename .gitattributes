@@ -1,4 +1,4 @@
-# The ports' gen/ directories are somebody else's build system's output, put
-# under version control so that no build has to run it. Neither a review nor a
-# language count has any business reading them.
+# The ports' gen/ directories hold the output of the upstream autotools builds
+# (see each port's gen.sh), committed so that no build has to run them. They
+# are collapsed in GitHub diffs and left out of its language statistics.
 backends/platform/android/ports/*/gen/** linguist-generated linguist-vendored

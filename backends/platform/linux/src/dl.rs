@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! `dlopen` and `dlsym`, for the system libraries the sound outputs load at
-//! run time rather than link — libpipewire-0.3 (`pipewire.rs`) and libasound
-//! (`alsa.rs`) — so that the binary starts on a machine with neither, and
-//! that machine's sessions go without sound rather than the client without a
+//! run time rather than link (libpipewire-0.3 in `pipewire.rs`, libasound in
+//! `alsa.rs`), so that the binary starts on a machine with neither, and that
+//! machine's sessions go without sound rather than the client without a
 //! window. (libva is loaded the same way, from C: `cpp/va_shim.c`.)
 //!
 //! A library is opened for good: what is looked up in it is kept for the
@@ -25,9 +25,9 @@ const RTLD_NOW: c_int = 2;
 pub struct Library(*mut c_void);
 
 impl Library {
-    /// `soname`, with every symbol bound at once, or the loader's sentence
-    /// for why not (`libasound.so.2: cannot open shared object file: No such
-    /// file or directory`).
+    /// Opens `soname`, with every symbol bound at once, or returns the
+    /// loader's error message (`libasound.so.2: cannot open shared object
+    /// file: No such file or directory`).
     pub fn open(soname: &CStr) -> Result<Library, String> {
         // Opening a system library runs its constructors, which is what
         // linking it would have done at start.

@@ -5,11 +5,11 @@
 //
 // Their two are FFmpeg's libavcodec and Windows' Media Foundation, each a
 // decoder of the library's own. This one hands the rectangle to the platform's
-// `runtime::media::video::Decoders` through `vento/video.h` — the Linux
-// client's FFmpeg, on VAAPI where the person chose it, and the phone's
-// MediaCodec — so that TigerVNC's H.264 is decoded by the same code as
-// RustDesk's video on both platforms: one colour rule, one hardware path with
-// one fallback, and the same facts about it. Selected by `H264_VENTO`, the one
+// `runtime::media::video::Decoders` through `vento/video.h` (the Linux
+// client's FFmpeg, on VAAPI where the user chose it, and MediaCodec on
+// Android), so that TigerVNC's H.264 is decoded by the same code as RustDesk's
+// video on both platforms: one colour rule, one hardware path with one
+// fallback, and the same panel rows about it. Selected by `H264_VENTO`, the one
 // patch to their factory.
 //
 // Upstream's semantics are kept: a context per rectangle, made and reset by
@@ -48,7 +48,7 @@ public:
     void decode(const uint8_t *buffer, uint32_t len, ModifiablePixelBuffer *pb) override;
 
 private:
-    /** A decoder in the mode the person has chosen now, or none. */
+    /** A decoder in the mode the user has chosen now, or none. */
     void open(vento::Video *video);
 
     void close();
@@ -56,7 +56,7 @@ private:
     vento::Video *video_ = nullptr;
     vento_video_decoder *decoder_ = nullptr;
     /** The mode the decoder was opened in, and whether it holds one of the
-        session's hardware places. */
+        session's hardware slots (`Video::claimHardware`). */
     int mode_ = 0;
     bool hardware_ = false;
     bool failed_ = false;

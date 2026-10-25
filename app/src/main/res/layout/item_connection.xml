@@ -5,13 +5,13 @@
 
     One connection: the desktop as it last looked, its name, its address.
 
-    Filled rather than outlined: a Material 3 card separates itself from the
-    background by its container colour, not by a line around it. The preview
-    band sits one step down the surface ladder from the card, so a card with no
-    thumbnail yet still reads as a picture well rather than as a flat block.
+    Filled rather than outlined: a Material 3 card is separated from the
+    background by its container colour, not by an outline. The preview area is
+    one surface tone below the card, so a card with no thumbnail yet still
+    shows an empty picture area rather than a flat block.
 
-    The card's colour and corner are a group of rows', so that a connection here
-    and an option on a settings screen are the same shape on the same page.
+    The card uses the colour and corner radius of a group of rows, so a
+    connection here and an option on a settings screen have the same shape.
 -->
 <com.google.android.material.card.MaterialCardView
     xmlns:android="http://schemas.android.com/apk/res/android"
@@ -35,8 +35,8 @@
 
         <!--
             A fixed ratio rather than the desktop's own: see PreviewImageView.
-            Cropped to fill, so a preview is a recognisable corner of the desktop
-            rather than a letterboxed postage stamp.
+            Cropped to fill, so a preview shows a recognisable part of the
+            desktop rather than a small letterboxed image.
         -->
         <FrameLayout
             android:layout_width="match_parent"
@@ -51,11 +51,10 @@
                 android:scaleType="centerCrop" />
 
             <!--
-                Which backend this connection is on. Over the preview rather
-                than beside the address, because it is a property of the card
-                and not a second line of text to read: there are four or five
-                of them depending on the build, and they behave differently
-                enough that "which one is this?" is worth answering at a glance.
+                The connection's backend. Over the preview rather than beside
+                the address, because it is a label rather than a line of text to
+                read: the backends behave differently enough that it is worth
+                seeing at a glance.
             -->
             <TextView
                 android:id="@+id/badge"
@@ -72,11 +71,11 @@
                 android:textColor="#e8ffffff" />
 
             <!--
-                Live right now, which is the one thing on this card that is not
-                a property of the saved connection. The accent rather than the
-                scrim the other two wear: it is the only colour on the screen
-                that means something is happening, and the corner opposite the
-                text block is where it does not cover the desktop's own.
+                Shown while a session is running, the only thing on this card
+                that is not a property of the saved connection. HomeActivity
+                tints it with the accent colour rather than the scrim the other
+                two use, since the accent is the only colour on this screen that
+                means something is live.
             -->
             <TextView
                 android:id="@+id/connected"
@@ -93,9 +92,9 @@
                 android:visibility="gone" />
 
             <!--
-                Pinned, at the other end of the same band. The same scrim as the
-                badge, for the same reason: whatever is behind it is somebody's
-                desktop and may be any colour.
+                Pinned, at the other end of the band from the backend badge. The
+                same scrim as the badge, for the same reason: the preview behind
+                it may be any colour.
             -->
             <ImageView
                 android:id="@+id/pin"
@@ -115,9 +114,8 @@
         <!--
             The inset is the text block's padding, not margins on the two
             labels. A connection with no name puts its address in the title and
-            hides the subtitle, and a bottom margin that lives on the subtitle
-            goes with it — leaving the title jammed against the bottom of the
-            card on exactly the cards that have one line instead of two.
+            hides the subtitle, and a bottom margin on the subtitle would be
+            hidden with it, leaving the title against the bottom of the card.
         -->
         <LinearLayout
             android:layout_width="match_parent"

@@ -11,11 +11,11 @@
 //! planes are got at:
 //!
 //! - **Through `vento_video.h`, not FFmpeg's API.** libavcodec is reached
-//!   through seventeen C calls of our own (`cpp/vento_video.c`), and this file
+//!   through C functions of our own (`cpp/vento_video.c`), and this file
 //!   declares those by hand: no generated bindings, no FFmpeg headers, and
-//!   nothing here that changes with an FFmpeg release. The choices that are
-//!   libavcodec's — low delay, slice threads, AV1 as dav1d, only the last of
-//!   several pictures — are made there, and the file says why.
+//!   nothing here that changes with an FFmpeg release. The libavcodec
+//!   settings (low delay, slice threads, AV1 as dav1d, only the last of
+//!   several pictures) are chosen there, and the file says why.
 //! - **Three allocations, not one.** libavcodec hands back a data pointer and a
 //!   line size per plane, each in a buffer of its own, which is what
 //!   `convert::Frame` takes three slices for. Nothing is copied to make them
@@ -23,45 +23,44 @@
 //!
 //! The FFmpeg is the build's own (see `build.rs`): FFmpeg and dav1d from their
 //! submodules, configured for exactly the decoders vento's desktop backends
-//! use, and linked statically, so nothing of a system FFmpeg is asked for.
+//! use, and linked statically, so no system FFmpeg is needed.
 //!
 //! Colour follows the frame, as MediaCodec's follows the buffer's format: the
-//! two BT.601 matrices are taken for BT.601, BT.709 for BT.709 (and for
-//! anything else that names itself), and BT.601 again for a stream that says
-//! nothing — which is what the encoders this has met produce untagged, and
-//! what libavcodec's own scaler takes silence for. A RustDesk peer converts
+//! two BT.601 matrices are taken for BT.601, BT.709 for BT.709 (and for any
+//! other tagged colour space), and BT.601 again for an untagged stream, since
+//! the encoders seen so far produce BT.601 untagged, and libavcodec's own
+//! scaler assumes it for untagged input. A RustDesk peer converts
 //! its desktop with libyuv's `ARGBToI420`, BT.601 limited range, and hands
 //! that to libvpx and libaom with no colour description at all; VP8's
 //! bitstream has nowhere to put one, and libavcodec reports its one colour
 //! space, BT.601, as unspecified too.
 //!
-//! **Deeper than eight bits** — a High 10 H.264 stream, or VP9's and AV1's
-//! profiles that carry ten or twelve — is narrowed to eight bits plane by plane
+//! **Deeper than eight bits** (a High 10 H.264 stream, or VP9's and AV1's
+//! profiles that carry ten or twelve) is narrowed to eight bits plane by plane
 //! into buffers the decoder keeps, and then converted like any other frame,
 //! rather than refused: a picture a little less precise than the stream is
 //! better than none, and a refusal is a session with no picture for good and an
 //! info row that still names the codec.
 //!
-//! **Hardware decoding is opt-in** ([`Hardware`], off by default): asked for,
-//! a decoder decodes on VAAPI where the device has a decoder
-//! for the stream's profile, and in software where it has not, with the
-//! reason kept for [`status`](runtime::media::video::Decoder::status). What
-//! comes back is still planes in memory — the hardware's surface mapped for
-//! reading, in NV12, P010 or XV30 — converted by the same code as software's,
-//! so the picture is the same either way. A hardware failure mid-stream is a
-//! software decoder in its place and a key frame asked for
-//! ([`take_key_frame_request`](runtime::media::video::Decoder::take_key_frame_request)),
-//! not a lost picture. Off, nothing of libva is loaded.
+//! **Hardware decoding is opt-in** ([`Hardware`], off by default): when
+//! requested, a decoder decodes on VAAPI where the device has a decoder for the
+//! stream's profile, and in software where it has not, with the reason kept
+//! for [`status`](runtime::media::video::Decoder::status). What comes back is
+//! still planes in memory (the hardware's surface mapped for reading, in NV12,
+//! P010 or XV30), converted by the same code as software's, so the picture is
+//! the same either way. A hardware failure mid-stream puts a software decoder
+//! in its place and requests a key frame
+//! ([`take_key_frame_request`](runtime::media::video::Decoder::take_key_frame_request))
+//! rather than losing the picture. Off, libva is not loaded.
 //!
 //! **Or left on the GPU**, for a window that draws there and says so
 //! ([`FFmpeg::set_gpu_pictures`]): a caller that asks
 //! ([`decode_picture`](runtime::media::video::Decoder::decode_picture)) is
 //! handed a VAAPI picture in NV12 or P010 as it is, a [`GpuPicture`] holding
 //! the surface, which it exports as DMA-BUFs ([`export`]) and converts on its
-//! GPU; nothing is mapped or converted here, which is most of what a
-//! hardware picture cost.
-//! Read back ([`GpuPicture::read`]), it is mapped and converted as a decode
-//! would have, the same picture to the bit.
+//! GPU; nothing is mapped or converted here, which saves most of a hardware
+//! picture's cost. Read back ([`GpuPicture::read`]), it is mapped and
+//! converted as a decode would have, the same picture to the bit.
 //!
 //! **H.264 stays libavcodec's**, though two decoders without FFmpeg were tried
 //! in its place (October 2026): the `openh264` crate, Cisco's library, and
@@ -84,13 +83,13 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use runtime::media::video::convert::{Frame, Plane};
 use runtime::media::video::{Changes, Codec, Decoded, Decoders, GpuPicture, Output};
-/// How a decoder may decode, which whoever starts a session asks for (a
-/// setting, `--hw-decode`): `runtime`'s, since it is handed to every backend.
+/// How a decoder may decode, chosen when a session starts (a setting,
+/// `--hw-decode`): `runtime`'s, since it is handed to every backend.
 /// Here [`Hardware::On`] is VAAPI, and the modes are named as
 /// [`hardware_name`] says.
 pub use runtime::media::video::Hardware;
 
-/// `cpp/vento_video.h`, declared by hand: the whole of what this crate calls.
+/// `cpp/vento_video.h`, declared by hand: everything this crate calls.
 mod sys {
     use std::ffi::{c_char, c_int};
 
@@ -101,8 +100,9 @@ mod sys {
 
     pub const XV30: i32 = 1;
 
-    /// `struct vento_video_picture`, which [`super::Decoder::new`] checks the
-    /// size of against the C side's before anything is decoded into it.
+    /// `struct vento_video_picture`, whose size
+    /// [`super::Decoder::with_hardware`] checks against the C side's before
+    /// anything is decoded into it.
     #[repr(C)]
     pub struct Picture {
         pub data: [*const u8; 3],
@@ -278,13 +278,13 @@ pub fn device_opened(hardware: Hardware) -> Option<bool> {
     }
 }
 
-/// libavcodec's decoders, as a session is handed them, decoding as
-/// [`Hardware`] says: software unless asked otherwise.
+/// libavcodec's decoders as handed to a session, decoding as [`Hardware`]
+/// says: software unless requested otherwise.
 ///
 /// The mode can be changed under a running session ([`set_hardware`]): a
 /// decoder made from then on decodes the new way, and one already made goes on
 /// as it was, so a session that wants the change at once makes its decoder
-/// again — which it knows to do from [`Decoders::hardware`], the same answer.
+/// again, which it knows to do from [`Decoders::hardware`].
 ///
 /// [`set_hardware`]: FFmpeg::set_hardware
 #[derive(Default)]
@@ -302,8 +302,8 @@ impl FFmpeg {
     }
 
     /// Whether the session's pictures may be left on the GPU (see
-    /// [`Decoders::gpu_pictures`]), which the window says where it can import
-    /// them, and unsays where an import failed. Off by default.
+    /// [`Decoders::gpu_pictures`]), set by the window where it can import
+    /// them and cleared where an import failed. Off by default.
     pub fn set_gpu_pictures(&self, gpu: bool) {
         self.gpu.store(gpu, Ordering::Relaxed);
     }
@@ -397,7 +397,7 @@ pub struct Decoder {
     map_ms: Option<f32>,
     pictures: u64,
     /// The last frame's planes and the vectorised conversion's verdict, which
-    /// between them are how little of this one is converted.
+    /// together keep the conversion of this one to the rows that changed.
     output: Output,
     /// A deeper-than-eight-bit frame's planes, narrowed: kept rather than
     /// allocated per frame, since a stream that is one is one throughout.
@@ -497,10 +497,10 @@ impl Decoder {
             .into_owned()
     }
 
-    /// The device decoded on, or [`Hardware::Off`] for software — which a
-    /// decoder is from the start without a device and from a mid-stream
-    /// fallback on. One on a device whose stream it cannot take is still on
-    /// it, and decodes in software: [`Decoder::hardware`] says which.
+    /// The device decoded on, or [`Hardware::Off`] for software: from the
+    /// start without a device, and after a mid-stream fallback. A decoder on a
+    /// device that cannot take its stream stays on it, and decodes in
+    /// software: [`Decoder::hardware`] says which.
     ///
     /// [`Decoder::hardware`]: runtime::media::video::Decoder::hardware
     pub fn method(&self) -> Hardware {
@@ -540,15 +540,15 @@ impl Decoder {
         }
     }
 
-    /// For tests: the next hardware picture fails as a device that went away
-    /// would, which is what a mid-stream fallback is made of; with
-    /// `software_too`, so does the software decoder that would take its place.
+    /// For tests: the next hardware picture fails as if the device had gone
+    /// away, which causes a mid-stream fallback; with `software_too`, so does
+    /// the software decoder that would take its place.
     pub fn fail_next(&mut self, software_too: bool) {
         unsafe { sys::vento_video_fail_next(self.video, c_int::from(software_too)) };
     }
 
-    /// What the call just made says about how the decoder decodes, logged
-    /// where that changed.
+    /// Records what the last call says about how the decoder decodes, and logs
+    /// it where that changed.
     fn note(&mut self, picture: &sys::Picture, status: c_int) {
         // Below zero is no decoder at all, which `decode_with` says.
         if picture.fell_back > 0 {
@@ -615,7 +615,7 @@ impl Decoder {
     }
 
     /// The decode itself, with what a picture in memory becomes left to
-    /// `picture`, which is handed the decoder's [`Output`] for the
+    /// `picture_to`, which is handed the decoder's [`Output`] for the
     /// conversion where it converts: [`Decoded::Converted`] once it has
     /// been called.
     fn decode_with(
@@ -640,8 +640,8 @@ impl Decoder {
                 format.len(),
             )
         };
-        // Owned from here, whatever else the call said, so that it is let go
-        // of on every way out.
+        // Owned from here, whatever else the call said, so that it is freed on
+        // every return path.
         let held = (!picture.held.is_null()).then(|| Held {
             frame: Mutex::new(FramePtr(picture.held)),
             width: picture.width.max(0) as usize,
@@ -757,8 +757,8 @@ impl runtime::media::video::Decoder for Decoder {
 
     /// `H.264 vaapi map 7.1 ms`, `copy` for a picture copied rather than
     /// mapped (where the driver will not map it), `dmabuf` for one left on
-    /// the GPU, where the time
-    /// is the decode and the wait for it and nothing else.
+    /// the GPU, where the time is the decode and the wait for it and nothing
+    /// else.
     fn status(&self) -> Option<String> {
         let mut line = self.codec.name().to_string();
         match self.hardware {
@@ -898,8 +898,8 @@ impl Held {
         let layers = export.layer[..count]
             .iter()
             .map(|l| DmabufLayer {
-                // SAFETY: a descriptor the export made for the caller, and
-                // nobody else's.
+                // SAFETY: a descriptor the export made for the caller, owned by
+                // nothing else.
                 fd: unsafe { OwnedFd::from_raw_fd(l.fd) },
                 fourcc: l.fourcc,
                 modifier: l.modifier,
@@ -924,8 +924,8 @@ impl Drop for Held {
     }
 }
 
-/// A VAAPI picture's surface as DMA-BUFs, one a plane, each descriptor a new
-/// one of the caller's own: what the window imports into its Vulkan device
+/// A VAAPI picture's surface as DMA-BUFs, one per plane, each descriptor a
+/// new one of the caller's own: what the window imports into its Vulkan device
 /// to draw a picture without reading it back. An error for a picture that
 /// is not one of these decoders' (another platform's, a test's) or that
 /// VAAPI would not export.
@@ -1002,8 +1002,8 @@ fn planes<'a>(
     };
     // Exactly the bytes the picture covers in a plane of `rows` rows of
     // `row_bytes`: every row but the last at its full line size, and the last
-    // only as far as its last sample, since that is all the frame promises is
-    // there.
+    // only as far as its last sample, since that is all the frame
+    // guarantees.
     let plane = |i: usize, rows: usize, row_bytes: usize| -> Option<(&'a [u8], usize)> {
         let stride = usize::try_from(p.stride[i])
             .ok()
@@ -1122,9 +1122,9 @@ fn planes<'a>(
     ))
 }
 
-/// One row of XV30 — a little-endian word a pixel, U in its low ten bits, Y
-/// in the next ten and V in the ten above — into a row each of Y, U and V at
-/// eight bits, rounded as [`narrow`] rounds.
+/// Unpacks one row of XV30 (a little-endian word per pixel, U in its low ten
+/// bits, Y in the next ten and V in the ten above) into a row each of Y, U
+/// and V at eight bits, rounded as [`narrow`] rounds.
 fn unpack_xv30(src: &[u8], [y, u, v]: [&mut [u8]; 3]) {
     let eight = |ten: u32| ((ten + 2) >> 2).min(255) as u8;
     for (i, word) in src.chunks_exact(4).enumerate() {
@@ -1147,7 +1147,7 @@ fn narrow(src: &[u8], depth: u32, out: &mut [u8]) {
     }
 }
 
-/// libavcodec's own words for an error code.
+/// libavcodec's own message for an error code.
 fn error(code: c_int) -> String {
     let mut buf = [0 as c_char; 128];
     unsafe { sys::vento_video_strerror(code, buf.as_mut_ptr(), buf.len()) };

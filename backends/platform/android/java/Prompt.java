@@ -8,11 +8,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /**
  * A question the connection has to have answered before it can continue.
  *
- * <p>These are not optional politeness: with nothing answering them a session
- * against a server that wants a password simply never progresses. The answer
- * may be deferred
- * arbitrarily — that is the point, since answering means showing a dialog and
- * waiting for a person — and may come from any thread.
+ * <p>Every one must be answered: with nothing answering them a session against
+ * a server that wants a password never progresses. The answer may be deferred
+ * arbitrarily, since answering means showing a dialog and waiting for the
+ * user, and may come from any thread.
  *
  * <p>Sealed, so that a handler which compiles has considered every kind. What
  * the RealVNC core can ask is wider than this (a dynamic form for interactive
@@ -24,7 +23,7 @@ public abstract sealed class Prompt {
 
     /**
      * Called on the main thread. Each method receives a prompt that must
-     * eventually be answered or {@link Prompt#cancel cancelled} — exactly once.
+     * eventually be answered or {@link Prompt#cancel cancelled}, exactly once.
      */
     public interface Handler {
 
@@ -53,10 +52,10 @@ public abstract sealed class Prompt {
     public abstract void cancel();
 
     /**
-     * "Who are you?" — a user name, a password, or both, depending on what the
-     * server's authentication scheme wants. Which of the two it wants is not a
-     * detail: VncAuth has no user name at all, so a dialog that shows one is
-     * asking for something nobody can answer.
+     * "Who are you?": a user name, a password, or both, depending on what the
+     * server's authentication scheme wants. Which of the two it wants matters:
+     * VncAuth has no user name at all, so a dialog that shows one is asking for
+     * something that cannot be answered.
      */
     public abstract static non-sealed class Credentials extends Prompt {
 
@@ -98,7 +97,7 @@ public abstract sealed class Prompt {
 
     /**
      * "Is this the machine you meant, and is anyone listening?" One prompt for
-     * both questions because the core asks them together — and because the
+     * both questions because RealVNC's core asks them together, and because the
      * answer to "the identity changed" depends on whether the link is encrypted.
      */
     public abstract static non-sealed class Trust extends Prompt {

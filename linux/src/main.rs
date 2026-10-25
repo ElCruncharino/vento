@@ -5,21 +5,20 @@
 //!
 //! [`main`] parses the command line into a [`Mode`] and dispatches. The
 //! window is the default: nothing on the command line opens the connection
-//! dialog empty, a backend and an address open it filled in — connecting to
-//! somebody else's machine is a click, not a side effect of a typo — and
-//! `--connect` opens straight into the session, which quits the window
-//! when it is disconnected. `--list` prints the
-//! backends and their options, and `--forget` forgets a server
-//! (`known_hosts::forget`) without connecting anywhere. Any of the probe's flags
-//! (`--probe`, `--out`, `--click`, …) selects the headless mode instead — the
-//! spirit of `backends/platform/linux/probe/probe.c`, which is what proved
-//! each C session through the neutral API — which connects, prints every
-//! event, answers the prompts from the flags, writes the framebuffer and a
-//! thumbnail, prints the facts, and leaves with a status that is zero only
-//! if it connected, stayed connected, wrote what `--out` asked for and
-//! closed when told to. Input is sent and not confirmed, since no protocol
-//! confirms it; what can be known — input asked for in view only, a
-//! clipboard the backend says has nowhere to go — fails it.
+//! dialog empty, a backend and an address open it filled in (connecting to
+//! another machine takes a click, so a typo does not start a connection), and
+//! `--connect` opens straight into the session, which quits the window when
+//! it is disconnected. `--list` prints the backends and their options, and
+//! `--forget` forgets a server (`known_hosts::forget`) without connecting
+//! anywhere. Any of the probe's flags (`--probe`, `--out`, `--click`, …)
+//! selects the headless mode instead, modelled on
+//! `backends/platform/linux/probe/probe.c`: it connects, prints every event,
+//! answers the prompts from the flags, writes the framebuffer and a
+//! thumbnail, prints the facts, and exits with a status that is zero only if
+//! it connected, stayed connected, wrote what `--out` asked for and closed
+//! when told to. Input is sent and not confirmed, since no protocol confirms
+//! it; the failures that can be detected (input requested in view only, a
+//! clipboard the backend says has nowhere to go) fail it.
 
 fn main() {
     std::process::exit(host::run(std::env::args().skip(1).collect()));
@@ -77,8 +76,8 @@ mod host {
         /// next turns the switch.
         sound_controls: std::cell::RefCell<Option<Arc<runtime::media::audio::Controls>>>,
         sound_cycle_at: Cell<Option<Instant>>,
-        /// The session's sound as last printed, so that each change is said
-        /// on its own line.
+        /// The session's sound as last printed, so that each change is
+        /// printed on its own line.
         sound: Cell<vento::events::Sound>,
         /// `--layout`: screens to ask for, left to right.
         layout: Option<Vec<(u32, u32)>>,
@@ -278,7 +277,7 @@ headless, any of which selects the probe instead of the window:
         let mut headless = false;
         let mut connect = false;
         // The window's display server, if named; the probe has no window and
-        // takes either without a word.
+        // accepts either silently.
         let mut display_server = None;
         let mut forget = None;
 
@@ -434,8 +433,8 @@ headless, any of which selects the probe instead of the window:
         if clipboard.is_some() && !settings.clipboard_out {
             return Err("--clipboard sends text to the far end, which --no-clipboard-out says not to".into());
         }
-        // Nor can input be asked for in view only, where every backend drops
-        // it without a word: the probe would report a click it never sent.
+        // Nor can input be requested in view only, where every backend drops
+        // it silently: the probe would report a click it never sent.
         if options.bool("ViewOnly") && (click.is_some() || key.is_some() || clipboard.is_some()) {
             return Err("-o ViewOnly=true sends no input or clipboard, so --click, --key and --clipboard cannot happen".into());
         }
@@ -477,14 +476,14 @@ headless, any of which selects the probe instead of the window:
         format!("id={} {}x{}+{}+{}", m.id, m.width, m.height, m.x, m.y)
     }
 
-    /// `--hw-decode=HOW`'s answer.
+    /// Parses `--hw-decode=HOW`.
     fn hw_decode(arg: &str) -> Result<backends::Hardware, String> {
         let how = arg.split_once('=').map_or("", |(_, how)| how);
         backends::hardware_named(how)
             .ok_or_else(|| format!("--hw-decode: {how:?} is not one of vaapi, auto or off"))
     }
 
-    /// `--audio-output=WHERE`'s answer.
+    /// Parses `--audio-output=WHERE`.
     fn audio_output(arg: &str) -> Result<backends::AudioOutput, String> {
         let name = arg.split_once('=').map_or("", |(_, name)| name);
         backends::AudioOutput::from_name(name)
@@ -533,7 +532,7 @@ headless, any of which selects the probe instead of the window:
     }
 
     /// At most `bytes` of `text`, cut where a character starts: the far end's
-    /// clipboard is anybody's text, and a cut through the middle of a
+    /// clipboard can hold any text, and a cut through the middle of a
     /// character is a panic rather than a shorter line.
     fn head(text: &str, bytes: usize) -> &str {
         &text[..text.floor_char_boundary(bytes)]
@@ -803,7 +802,8 @@ headless, any of which selects the probe instead of the window:
                 },
                 Event::TrustNeeded { fingerprint } => {
                     // The known hosts first, as the window has them: read,
-                    // and never written — `--trust` is for this run.
+                    // and never written, since `--trust` applies to this run
+                    // alone.
                     let pinned = backends::pinned_as(self.kind, &self.address, &self.options);
                     let hosts = KnownHosts::in_dir(&self.dirs.config);
                     let (yes, why) = match trust::decide(&trust::ReadOnly(&hosts), &pinned, fingerprint) {

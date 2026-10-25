@@ -6,14 +6,14 @@
 //!
 //! A backend's library is its protocol, its `api::Backend` adapter (the
 //! same one the Linux client holds) and one line naming the adapter to this
-//! module — [`natives!`](crate::natives) — which
-//! writes the `JNI_OnLoad` that registers [`METHODS`] on the module's own
-//! natives class. Registered rather than exported, because the natives are the
-//! same functions in every library: a `Java_…` symbol per backend would need
-//! a copy of them per backend, and one class for all of them would be one
-//! class every library registers on, the last answering for all — which the
-//! RustDesk backend, a separate APK loaded into the app, would make a question
-//! of load order. So each module has a class of its own,
+//! module, [`natives!`](crate::natives), which writes the `JNI_OnLoad` that
+//! registers [`METHODS`] on the module's own natives class. Registered rather
+//! than exported, because the natives are the same functions in every
+//! library: a `Java_…` symbol per backend would need a copy of them per
+//! backend, and one class for all of them would be one class every library
+//! registers on, the last answering for all, which with the RustDesk backend
+//! (a separate APK loaded into the app) would depend on load order. So each
+//! module has a class of its own,
 //! `vento-codegen natives` writes it from [`surface`](crate::surface), and
 //! the library registers on that.
 //!
@@ -21,13 +21,13 @@
 //! library is a `cdylib` of it. For the three in C the protocol is a C
 //! library behind the vtable in `vento/backend.h`, the adapter is
 //! `api::c` and a small crate beside the C, and that crate is a static
-//! library CMake links into the C's own `.so` — whose one export is the
+//! library CMake links into the C's own `.so`, whose one export is the
 //! `JNI_OnLoad` written here. The questions only the C API asks (a question in
 //! the library's words, a message, RealVNC's security prompt) come through
 //! here like any other event.
 //!
-//! What is decided about a session rather than shown is decided here, by the
-//! rules the Linux client keeps too: a far end's identity against the pins
+//! Decisions about a session, as opposed to what is shown, are made here, by
+//! the rules the Linux client uses too: a far end's identity against the pins
 //! (`api::trust`, over the phone's `known_hosts` preferences, which
 //! `NativeBackend` reads and writes for it), and the name an RDP credentials
 //! prompt starts with (`api::credentials`). What crosses to Java is the
@@ -40,12 +40,12 @@
 //! event is still being delivered.
 //!
 //! Events cross as they are taken from the session's [`Mailbox`], on whichever
-//! thread put them there — the protocol thread, nearly always — and in the
-//! order they were put. That is the mailbox's own coalescing, which is the
-//! point of using it here: damage is marked into a list and crosses once per
+//! thread put them there (nearly always the protocol thread), and in the
+//! order they were put. They get the mailbox's own coalescing, which is the
+//! reason for using it here: damage is marked into a list and crosses once per
 //! frame, as one `int[]`, rather than once per rectangle, and a cursor, a
-//! pointer mode or a clipboard that was superseded before anyone read it
-//! never crosses at all.
+//! pointer mode or a clipboard that was superseded before it was read never
+//! crosses at all.
 
 use crate::{bitmap, string};
 pub use runtime::media::audio::Outputs;
@@ -68,8 +68,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
-/// What a library is a library of: the backend [`natives!`](crate::natives)
-/// named.
+/// The backend a library holds, as [`natives!`](crate::natives) named it.
 pub struct Module {
     pub kind: &'static Kind,
     /// What decodes the protocol's video, for the backends that have some:
@@ -79,7 +78,7 @@ pub struct Module {
     /// Where the far end's sound goes, for the backends that have sound:
     /// AAudio for TigerVNC, FreeRDP, IronRDP, SPICE and RustDesk, whose
     /// compressed sound MediaCodec's audio decoders decode; nothing for the
-    /// others. Called once a session, since an output's controls are its
+    /// others. Called once per session, since an output's controls are its
     /// session's.
     ///
     /// What a library links follows from these only for the Rust ones: a
@@ -107,12 +106,12 @@ static MODULE: OnceLock<Module> = OnceLock::new();
 /// ```
 ///
 /// `decoders = <fn() -> Option<Arc<dyn Decoders>>>` hands the session a video
-/// decoder, for the backend that needs one, and `audio = <fn() ->
-/// Option<Arc<dyn Outputs>>>` a sound output likewise. `on_load = <unsafe fn(*mut RawVm)>`
-/// is run first, with the runtime's `JavaVM`, for a library linked into the
-/// same `.so` that wanted a `JNI_OnLoad` of its own: there can be only one,
-/// and FreeRDP's WinPR keeps the `JavaVM` it reads the time zone through
-/// from its.
+/// decoder, for a backend that needs one, and `audio = <fn() ->
+/// Option<Arc<dyn Outputs>>>` a sound output likewise. `on_load = <unsafe
+/// fn(*mut RawVm)>` is run first, with the runtime's `JavaVM`, for a library
+/// linked into the same `.so` that wanted a `JNI_OnLoad` of its own: there can
+/// be only one, and FreeRDP's WinPR takes the `JavaVM` it reads the time zone
+/// through from its own.
 #[macro_export]
 macro_rules! natives {
     (class = $class:expr, kind = $kind:expr $(, decoders = $decoders:expr)? $(, audio = $audio:expr)? $(, on_load = $on_load:expr)? $(,)?) => {
@@ -208,9 +207,9 @@ unsafe fn backend<'a>(h: jlong) -> Option<&'a dyn Backend> {
     unsafe { handle(h) }.map(|h| h.backend.as_ref())
 }
 
-/// The table [`on_load`] registers, in [`surface::NATIVES`]' order. Each entry
-/// is checked against its function when it compiles, and its name and
-/// descriptor against the generated Java by `scripts/check-jni-symbols.sh`.
+/// The table [`on_load`] registers, one entry per [`surface::NATIVES`] entry.
+/// Each entry is checked against its function when it compiles, and its name
+/// and descriptor against the generated Java by `scripts/check-jni-symbols.sh`.
 ///
 /// [`surface::NATIVES`]: crate::surface::NATIVES
 pub const METHODS: &[NativeMethod] = &[
@@ -297,7 +296,7 @@ pub const METHODS: &[NativeMethod] = &[
     },
 ];
 
-/// The one call that proves the whole path: what the library says it is.
+/// The library's version: the one call that proves the whole path works.
 fn version<'local>(env: &mut Env<'local>, _this: JObject<'local>) -> Result<JString<'local>, Error> {
     env.new_string((module().kind.version)())
 }
@@ -305,10 +304,10 @@ fn version<'local>(env: &mut Env<'local>, _this: JObject<'local>) -> Result<JStr
 /// Start a session. Returns a handle at once, or zero where the backend
 /// could not even start; everything after this arrives on `events`.
 ///
-/// `options` is the connection's options as key, value, key, value, over
-/// the catalog's defaults. `lastWidth` × `lastHeight` is the size the far end
-/// was left at last time where the app keeps that note, and zero where it
-/// does not.
+/// `options` is the connection's options as key, value, key, value, with
+/// the catalog's defaults filled in. `lastWidth` × `lastHeight` is the size
+/// the far end was left at last time where the app stores it, and zero where
+/// it does not.
 #[allow(clippy::too_many_arguments)]
 fn create<'local>(
     env: &mut Env<'local>,
@@ -401,10 +400,10 @@ fn create<'local>(
     }
 }
 
-/// A `null` or empty password cancels, which ends the session — the only
-/// answer a prompt has besides a secret. The user name is what was typed, empty for
-/// none; the adapter fills it from the session's and, for RDP, splits a
-/// domain out of it.
+/// A `null` or empty password cancels, which ends the session: the only
+/// answer a prompt has besides a secret. The user name is what was typed,
+/// empty for none; the adapter fills it from the session's and, for RDP,
+/// splits a domain out of it.
 fn answer_credentials<'local>(
     env: &mut Env<'local>,
     _this: JObject<'local>,
@@ -434,9 +433,9 @@ fn answer_trust<'local>(_env: &mut Env<'local>, _this: JObject<'local>, handle: 
     Ok(())
 }
 
-/// A person's answer to a trust question [`Outlet`] put to them: the
-/// session is answered, and the identity pinned where they accepted it and
-/// said to remember it.
+/// The user's answer to a trust question [`Outlet`] asked: the session is
+/// answered, and the identity pinned where the user accepted it and chose to
+/// remember it.
 fn answer_pin<'local>(
     env: &mut Env<'local>,
     _this: JObject<'local>,
@@ -544,8 +543,8 @@ fn clipboard<'local>(env: &mut Env<'local>, _this: JObject<'local>, handle: jlon
     Ok(())
 }
 
-/// One option, changed on the running session. What is live and what is
-/// remembered for next time is the adapter's to say.
+/// One option, changed on the running session. The adapter decides what is
+/// live and what is remembered for next time.
 fn set_option<'local>(
     env: &mut Env<'local>,
     _this: JObject<'local>,
@@ -561,10 +560,10 @@ fn set_option<'local>(
     Ok(())
 }
 
-/// Mutes the session's sound or lets it be heard again, at once: the
-/// output's controls, which every stream of the session plays under and the
-/// device applies as it takes the samples. The session screen's sound
-/// button; logged, since a muted stream is otherwise only silence.
+/// Mutes or unmutes the session's sound at once: the output's controls,
+/// which every stream of the session plays under and the device applies as it
+/// takes the samples. The session screen's sound button; logged, since a
+/// muted stream is otherwise only silence.
 fn set_muted<'local>(_env: &mut Env<'local>, _this: JObject<'local>, handle: jlong, muted: jboolean) -> Result<(), Error> {
     if let Some(audio) = unsafe { self::handle(handle) }.and_then(|h| h.audio.as_ref()) {
         audio.controls().set_muted(muted);
@@ -575,8 +574,9 @@ fn set_muted<'local>(_env: &mut Env<'local>, _this: JObject<'local>, handle: jlo
 
 /// The session's Enable switch: asks the far end to stop sending its sound,
 /// or to send it again, where the backend offered that
-/// (`runtime::media::audio::Switch::Enable`, said through `onSound`). A switch
-/// that asks nothing — a mute, or none — is left alone and says so.
+/// (`runtime::media::audio::Switch::Enable`, reported through `onSound`). A
+/// switch that asks nothing (a mute, or none) is left alone, and that is
+/// logged.
 fn set_sound_enabled<'local>(
     _env: &mut Env<'local>,
     _this: JObject<'local>,
@@ -615,8 +615,8 @@ fn request_display<'local>(_env: &mut Env<'local>, _this: JObject<'local>, handl
 
 /// `api::backend::Facts` as ints, in one crossing: width, height, the
 /// current display, flags (1 can resize, 2 view only, 4 pointer relative),
-/// how many monitors, then four ints per monitor and four per display —
-/// x, y, width, height, `Monitor.fromFlat`'s shape.
+/// how many monitors, then four ints per monitor and four per display:
+/// x, y, width, height, `Monitor.fromFlat`'s format.
 fn facts<'local>(env: &mut Env<'local>, _this: JObject<'local>, handle: jlong) -> Result<JIntArray<'local>, Error> {
     let Some(backend) = (unsafe { backend(handle) }) else {
         return Ok(JIntArray::null());
@@ -668,7 +668,7 @@ fn info<'local>(
     Ok(array)
 }
 
-/// The debug overlay's sound line, in the Linux client's words
+/// The debug overlay's sound line, in the Linux client's format
 /// (`runtime::media::audio::Sound::line`): what plays and how far behind, or
 /// "nothing playing", and DISABLED or MUTED. Null where the session has no
 /// sound switch, which is when an overlay has no such line.
@@ -697,7 +697,7 @@ fn field(field: Field) -> &'static str {
     }
 }
 
-/// Received and sent, in bytes, with -1 for a direction nobody counts; `null`
+/// Received and sent, in bytes, with -1 for an uncounted direction; `null`
 /// while there is nothing to count. Raw counts rather than the row, because
 /// the row is worded in the phone's own number format.
 fn traffic<'local>(env: &mut Env<'local>, _this: JObject<'local>, handle: jlong) -> Result<JLongArray<'local>, Error> {
@@ -711,7 +711,7 @@ fn traffic<'local>(env: &mut Env<'local>, _this: JObject<'local>, handle: jlong)
 }
 
 /// Copy a desktop rectangle into `dst` at `(dst_x, dst_y)`, 1:1, leaving the
-/// rest of `dst` alone — straight into the bitmap's rows, with no buffer in
+/// rest of `dst` alone: straight into the bitmap's rows, with no buffer in
 /// between.
 ///
 /// Called from the drawing thread, concurrently with everything else, which
@@ -818,9 +818,9 @@ struct Outlet {
     /// Held while a thread drains, so that two threads with events never
     /// deliver them out of order.
     draining: Mutex<()>,
-    /// Set by a wake that found somebody else draining, and read by them once
-    /// they have let go, so that what it was woken for is not left waiting
-    /// for the next event.
+    /// Set by a wake that found another thread draining, and read by that
+    /// thread once it has let go, so that what it was woken for is not left
+    /// waiting for the next event.
     requested: AtomicBool,
 }
 
@@ -882,9 +882,9 @@ impl Outlet {
 
     /// The mailbox's wake: deliver everything waiting, on this thread.
     ///
-    /// A wake on a thread that is already delivering — a callback that
+    /// A wake on a thread that is already delivering (a callback that
     /// answers straight back into the session, which can queue another
-    /// event — finds the lock held, and the loop below it takes the new
+    /// event) finds the lock held, and the loop below it takes the new
     /// event on its next turn; so does one on another thread. Nothing here
     /// blocks, which a protocol thread holding its own locks needs.
     fn wake(&self) {
@@ -963,10 +963,10 @@ impl Outlet {
                 }
                 Event::PointerMode { relative } => self.call(env, self.pointer_mode, &[jvalue { z: relative }]),
                 Event::Bell => self.call(env, self.bell, &[]),
-                // What the session screen shows its sound switch by: what it
-                // does (0 none, 1 mute, 2 enable, as `VENTO_AUDIO_SWITCH_*`),
-                // whether the far end is asked for its sound, whether it is
-                // muted here, and whether a stream plays.
+                // The state the session screen shows its sound switch from:
+                // what it does (0 none, 1 mute, 2 enable, as
+                // `VENTO_AUDIO_SWITCH_*`), whether the far end is asked for its
+                // sound, whether it is muted here, and whether a stream plays.
                 Event::Sound(sound) => self.call(
                     env,
                     self.sound,
@@ -1025,7 +1025,7 @@ impl Outlet {
                 // RealVNC's, whose Android half is Java over its core and
                 // never comes this way: Java refuses it, so that a backend
                 // that did ask would not leave its protocol thread parked
-                // behind a question nobody here can put.
+                // behind a question this layer cannot ask.
                 Event::SecurityNeeded { signature, .. } => self.text(env, self.security_needed, &signature),
                 Event::Closed { detail } => self.text(env, self.closed, &detail),
             }
@@ -1074,7 +1074,7 @@ impl Outlet {
         }
     }
 
-    /// The session now exists: an answer decided before it did is its.
+    /// The session now exists: an answer decided before it did goes to it.
     fn started(&self, backend: &Arc<dyn Backend>) {
         let early = {
             let mut started = self.started.lock().unwrap();
@@ -1087,9 +1087,9 @@ impl Outlet {
     }
 
     /// Answers the session's trust question from this side. One asked before
-    /// `create` has returned the session — its thread is already running —
-    /// is kept for [`Outlet::started`] rather than lost, which would leave
-    /// the session waiting on it for good.
+    /// `create` has returned the session (its thread is already running) is
+    /// kept for [`Outlet::started`] rather than lost, which would leave the
+    /// session waiting on it forever.
     fn answer_trust(&self, accept: bool) {
         let backend = {
             let mut started = self.started.lock().unwrap();
@@ -1137,10 +1137,11 @@ fn identity_name(identity: Identity) -> &'static str {
 }
 
 /// The phone's pins, as a [`trust::Store`]: `KnownHosts`' preferences,
-/// through the session's `NativeBackend`, on whatever thread asks — the
-/// protocol thread for a decision, the main one for an answer. The
-/// preferences are the ones the app has always kept, keys and values as
-/// they were, so a pin made before this layer decided is one it matches.
+/// through the session's `NativeBackend`, on whatever thread asks (the
+/// protocol thread for a decision, the main one for an answer). The
+/// preferences are the ones the app has always kept, keys and values
+/// unchanged, so a pin made before this layer took over the decision still
+/// matches.
 struct Pins<'a, 'local> {
     outlet: &'a Outlet,
     env: RefCell<&'a mut Env<'local>>,

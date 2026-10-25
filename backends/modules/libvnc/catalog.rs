@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The libvncclient backend's entry in the catalog: what it is called, where
-//! it goes in a picker, how its identities are pinned, and every option it
-//! takes. Compiled by `remotedesktop-api`, which names this file by path
-//! (`backends/api/src/catalog.rs`), and not by this module's crate: the
+//! The libvncclient backend's catalog entry: its name, its position in a
+//! picker, how its identities are pinned, and its options. Compiled by
+//! `remotedesktop-api`, which includes this file by path
+//! (`backends/api/src/catalog.rs`), and not by this module's crate, so the
 //! Linux client's picker and the phone's generated Java (`vento-codegen`)
-//! read it without building the backend.
+//! can read it without building the backend.
 
 use crate::catalog::About;
 use crate::options::{
@@ -16,13 +16,13 @@ use crate::trust::Pinning;
 
 pub static LIBVNC: About = About {
     id: "libvnc",
-    // The project is LibVNCServer and the library is libvncclient; what
-    // matters is that this row and the two beside it are the same protocol
-    // with a different implementation behind it.
+    // The project is LibVNCServer and the library is libvncclient; the name
+    // shows that this row and the VNC rows beside it are the same protocol
+    // with different implementations.
     name: "VNC (LibVNC)",
     short_name: "LibVNC",
     description: "Usually the best option for typical usage. Has the lowest bandwidth usage for small incremental updates, and is the most CPU efficient.",
-    // After our own client, which is the one that will still be here.
+    // After our own RFB client, the one meant to stay.
     order: 15,
     pinning: Pinning::ADDRESS,
     user_has_domain: false,
@@ -30,25 +30,23 @@ pub static LIBVNC: About = About {
     options: OPTIONS,
 };
 
-/// What the libvncclient backend can be told.
+/// The libvncclient backend's options.
 ///
-/// The option list is the same shape as the RFB one and differs where the two
-/// clients differ, which is the point of having both: **Tight is here**, with
-/// a JPEG quality beside it, and **the encryption choice is not** — this
-/// client does VeNCrypt, but it takes whatever the server offers and there is
-/// no call to prefer, require or refuse it.
+/// The list follows the RFB one and differs where the two clients differ:
+/// **Tight is here**, with a JPEG quality option, and **there is no
+/// encryption choice**. This client does VeNCrypt, but it takes whatever the
+/// server offers and has no call to prefer, require or refuse it.
 ///
-/// The one row about encryption here asks something else: whether a tunnel
-/// with no certificate in it may be taken at all. That is not a preference
-/// between encrypted and not, it is whether a question gets asked or the
-/// session ends, and the same row is on the TigerVNC backend for the same
-/// reason.
+/// The one encryption row here is a different question: whether a tunnel
+/// without a certificate may be used at all. It decides between asking the
+/// user and ending the session, not between encrypted and unencrypted, and
+/// the TigerVNC backend has the same row for the same reason.
 ///
-/// The colour row is the same question the RealVNC and TigerVNC backends ask,
-/// asked in the same words, and it is the only one of the three that cannot
-/// change mid-session: libvncclient sends a pixel format and reallocates
-/// around it with no point at which nothing is in flight, so a change here
-/// would be decoding whatever is already on its way at the wrong width.
+/// The colour row matches the RealVNC and TigerVNC backends' row, and it is
+/// the only one of the three that cannot change mid-session: libvncclient
+/// sends a pixel format and reallocates around it without waiting for the
+/// updates in flight to drain, so a change would decode those at the wrong
+/// width.
 pub static OPTIONS: &[Spec] = &[
     choices(
         "Encoding",
@@ -117,9 +115,9 @@ pub static OPTIONS: &[Spec] = &[
 mod tests {
     use super::*;
 
-    /// The keys it had when the phone's lists became these, in the same
-    /// order: a key is stored in connection records and preference files,
-    /// so one renamed is a setting forgotten.
+    /// The keys the phone's lists had before they moved here, in the same
+    /// order: keys are stored in connection records and preference files,
+    /// so renaming one loses the setting.
     #[test]
     fn the_keys_are_the_ones_records_hold() {
         let keys: Vec<&str> = OPTIONS.iter().map(|s| s.key).collect();

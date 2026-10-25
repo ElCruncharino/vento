@@ -18,9 +18,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * What every dialog in this app needs and none of it is about: the theme they
- * are all built against, the two things that go inside one and have to match
- * its own metrics, and the list that takes them down again.
+ * Shared dialog plumbing: the theme every dialog is built with, the checkbox
+ * and padding that have to match a dialog's own metrics, and a tracker that
+ * dismisses open dialogs.
  */
 final class Dialogs {
 
@@ -28,26 +28,24 @@ final class Dialogs {
     }
 
     /**
-     * A builder against this app's dialog theme, which is not decoration:
-     * {@code ThemeOverlay.RemoteDesktop.Dialog} is what stops an alert arriving
-     * in two tones with a hard edge across it. Named once here because a style
-     * reference repeated at every call site is the kind of thing one of them
-     * silently stops doing.
+     * A builder using this app's dialog theme, which matters:
+     * {@code ThemeOverlay.RemoteDesktop.Dialog} keeps an alert from being drawn
+     * in two tones with a hard edge across it. Named once here so that no call
+     * site can leave it out.
      */
     static MaterialAlertDialogBuilder builder(Context ctx) {
         return new MaterialAlertDialogBuilder(ctx, R.style.ThemeOverlay_RemoteDesktop_Dialog);
     }
 
     /**
-     * A tick box for a dialog, built against the dialog's own theme.
+     * A checkbox for a dialog, built with the dialog's theme.
      *
-     * <p>Both of those matter and neither is decoration. A plain
-     * {@code android.widget.CheckBox} built from an activity is the framework's,
-     * not Material's: different metrics, and a tint from the activity rather
-     * than from the surface it ends up on. And the box is drawn at the view's
-     * left edge with the label after it, so the padding that lines it up with
-     * the dialog's own text belongs on whatever contains it — put here, it
-     * moves the box and leaves the label where it was.
+     * <p>A plain {@code android.widget.CheckBox} built from an activity is the
+     * framework's, not Material's: different metrics, and a tint from the
+     * activity rather than from the dialog surface. The box is drawn at the
+     * view's left edge with the label after it, so the padding that aligns it
+     * with the dialog's text belongs on the container; padding here would move
+     * the box and leave the label where it was.
      */
     static MaterialCheckBox checkBox(Context ctx, int text) {
         final MaterialCheckBox box = new MaterialCheckBox(
@@ -72,8 +70,8 @@ final class Dialogs {
     }
 
     /**
-     * Every dialog a screen has put up, so that its {@code onDestroy} can take
-     * them down: one still showing when its activity goes is a leaked window.
+     * Every dialog a screen has shown, so that its {@code onDestroy} can dismiss
+     * them: one still showing when its activity is destroyed is a leaked window.
      */
     static final class Tracker {
 
@@ -85,9 +83,9 @@ final class Dialogs {
 
         /**
          * A dialog has exactly <em>one</em> dismiss listener, and this method
-         * owns it — so a caller that needs to know when its dialog goes hands
-         * the work in here rather than setting one of its own, which would
-         * silently replace this one or be replaced by it depending on the order.
+         * sets it, so a caller that needs to know when its dialog is dismissed
+         * passes the work in here. Setting its own would replace this one or be
+         * replaced by it, depending on the order.
          */
         AlertDialog track(AlertDialog d, DialogInterface.OnDismissListener also) {
             open.add(d);

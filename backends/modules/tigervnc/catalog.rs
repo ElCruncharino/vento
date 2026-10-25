@@ -28,18 +28,18 @@ pub static TIGERVNC: About = About {
     options: OPTIONS,
 };
 
-/// What the TigerVNC backend can be told.
+/// The TigerVNC backend's options.
 ///
-/// The option list is the libvncclient one with a different meaning under the
+/// The option list is the libvncclient one with a different meaning for the
 /// encoding row: TigerVNC's client always offers every encoding it can decode
 /// and names one of them preferred, so this is a hint rather than a
-/// restriction and there is no "automatic" to choose — the server chooses
-/// either way.
+/// restriction, and there is no "automatic" to choose, since the server
+/// chooses either way.
 ///
-/// Where there *is* an automatic to offer is the picture quality and the
-/// colour depth, and only here: this is the one client in the repository that
-/// measures its own throughput, so it is the one that can move a setting on
-/// somebody's behalf. Both rules are the viewer's own, thresholds included.
+/// Picture quality and colour depth do have an automatic setting, and only in
+/// this backend: TigerVNC's client measures its own throughput, so it can
+/// change these settings itself. Both rules are the viewer's own, thresholds
+/// included.
 pub static OPTIONS: &[Spec] = &[
     choices(
         "Encoding",
@@ -83,7 +83,8 @@ pub static OPTIONS: &[Spec] = &[
             choice("0", "0 (smallest)"),
         ],
     ),
-    // The same key and values as the RealVNC backend's colour row.
+    // The same key and values as the RealVNC backend's colour row, plus
+    // `auto`.
     choices(
         "ColorLevel",
         "Colour depth",
@@ -98,12 +99,12 @@ pub static OPTIONS: &[Spec] = &[
             choice("rgb111", "3-bit (rgb111)"),
         ],
     ),
-    // Their viewer's own parameter. QEMU's audio extension, which only
-    // servers that speak it offer — QEMU's own, and the ones built the same
-    // way — so against anything else this row changes nothing at all. Where
-    // a server has it this is where the session's Enable switch starts: the
-    // extension has a disable and an enable, so the sound can be asked for
-    // later in a session that began without it.
+    // The TigerVNC viewer's own `Audio` parameter. QEMU's audio extension is
+    // offered only by servers that implement it (QEMU's own, and ones built
+    // on the same code), so against anything else this row has no effect.
+    // Where a server has it, this is the initial state of the session's
+    // Enable switch: the extension has a disable and an enable, so sound can
+    // be requested later in a session that began without it.
     bool(
         "Audio",
         "Sound",
@@ -131,9 +132,9 @@ mod tests {
     use super::*;
     use crate::options::Options;
 
-    /// The keys it had when the phone's lists became these, in the same
-    /// order: a key is stored in connection records and preference files,
-    /// so one renamed is a setting forgotten.
+    /// The keys from the app's option lists before they moved here, in the
+    /// same order: keys are stored in connection records and preference
+    /// files, so renaming one loses the setting.
     #[test]
     fn the_keys_are_the_ones_records_hold() {
         let keys: Vec<&str> = OPTIONS.iter().map(|s| s.key).collect();

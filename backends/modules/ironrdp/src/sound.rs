@@ -2,26 +2,25 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The server's sound: IronRDP's rdpsnd channel, with a handler that plays
-//! what it is sent on the session's output (`runtime::media::audio`).
+//! the received sound on the session's output (`runtime::media::audio`).
 //!
-//! Their channel does the protocol — the format exchange, the training, a
-//! confirmation for every wave — and asks its handler for the formats to
-//! offer before it has seen the server's, keeping only those the server
-//! also listed, field for field. What this end can play depends on the
-//! server's list instead (AAC and Opus are offered only where the platform
-//! decodes them, and only as the server describes them), so [`Sound`] stands
-//! in front of the channel and starts a fresh one, with a handler offering
-//! exactly the playable part of the server's list, each time a list arrives.
-//! The channel's state is reset by a new list anyway, which is why that
-//! costs nothing.
+//! IronRDP's channel handles the protocol (the format exchange, the training,
+//! a confirmation for every wave) and asks its handler for the formats to
+//! offer before it has seen the server's, keeping only those the server also
+//! listed, field for field. What this end can play depends on the server's
+//! list instead (AAC and Opus are offered only where the platform decodes
+//! them, and only as the server describes them), so [`Sound`] wraps the
+//! channel and starts a fresh one each time a list arrives, with a handler
+//! offering exactly the playable part of the server's list. A new list resets
+//! the channel's state anyway, so this costs nothing.
 //!
-//! Waves are played as they come: PCM as it is, AAC and Opus through the
+//! Waves are played as they arrive: PCM directly, AAC and Opus through the
 //! platform's decoders (libavcodec on the Linux client, MediaCodec on the
 //! phone), in a [`Player`] the session shares with this handler. Windows
-//! picks AAC when it is offered, as it does from FreeRDP's device. The
-//! server's Close says nothing about when the sound will have been heard, so
-//! the stream is closed instead two seconds after the last wave was
-//! ([`QUIET`]), from the session's loop.
+//! picks AAC when it is offered, as it does with FreeRDP's device. The
+//! server's Close does not indicate when the sound will have been heard, so
+//! instead the session's loop closes the stream two seconds after the last
+//! wave was heard ([`QUIET`]).
 
 use runtime::media::audio::decode::Codec;
 use runtime::media::audio::{Format, Outputs, Player};
@@ -35,32 +34,32 @@ use std::borrow::Cow;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-/// How long a stream stays open after its last wave was heard: the gap
-/// between one sound and the next it rides over, as FreeRDP's device here
-/// waits.
+/// How long a stream stays open after its last wave was heard, to bridge the
+/// gap between one sound and the next; the same wait as FreeRDP's device
+/// here.
 pub const QUIET: Duration = Duration::from_secs(2);
 
 /// `SNDC_FORMATS` and `SNDC_WAVE`, the first byte of the PDUs this has to
-/// tell apart before the channel sees them.
+/// recognise before the channel sees them.
 const SNDC_FORMATS: u8 = 0x07;
 const SNDC_WAVE: u8 = 0x02;
 
-/// The rdpsnd channel as the connector holds it: theirs, made again for each
-/// format list the server sends.
+/// The rdpsnd channel as the connector holds it: IronRDP's, recreated for
+/// each format list the server sends.
 pub struct Sound {
     channel: Rdpsnd,
     player: Arc<Mutex<Player>>,
     /// The session's output, whose switch this offers.
     outputs: Arc<dyn Outputs>,
     /// A pre-version-8 WaveInfo has been passed on, and the next payload is
-    /// its wave, which has no header to read: it must not be mistaken for a
-    /// PDU of its own here.
+    /// its wave, which has no header: it must not be mistaken for a PDU of
+    /// its own here.
     wave_follows: bool,
 }
 
 impl_as_any!(Sound);
 
-// The channel traits ask for `Debug`, and a player has nothing worth
+// The channel traits require `Debug`, and a player has nothing worth
 // printing.
 impl std::fmt::Debug for Sound {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -69,8 +68,8 @@ impl std::fmt::Debug for Sound {
 }
 
 impl Sound {
-    /// The channel, playing on `outputs`; the player is the session's to
-    /// close when it goes quiet ([`Player::close_if_quiet`]).
+    /// The channel, playing on `outputs`; the session closes the player
+    /// when it goes quiet ([`Player::close_if_quiet`]).
     pub fn new(outputs: Arc<dyn Outputs>) -> (Sound, Arc<Mutex<Player>>) {
         let player = Arc::new(Mutex::new(Player::new(Arc::clone(&outputs))));
         let sound = Sound {
@@ -109,10 +108,9 @@ impl SvcProcessor for Sound {
                     let offered = playable(&list.formats, &player);
                     drop(player);
                     // A server that lists a format this end plays may send
-                    // sound from now on, and nothing in rdpsnd asks it to
-                    // stop during a session, so the session's switch is a
-                    // mute, there from this list rather than from the first
-                    // wave.
+                    // sound from now on, and rdpsnd cannot ask it to stop
+                    // during a session, so the session's switch is a mute,
+                    // offered from this list rather than from the first wave.
                     if !offered.is_empty() {
                         self.outputs.controls().offer_mute();
                     }
@@ -120,7 +118,7 @@ impl SvcProcessor for Sound {
                 }
             }
             // The WaveInfo alone, with its wave still to come; a WaveInfo
-            // with its wave appended is finished in the one payload.
+            // with its wave appended is complete in one payload.
             Some(&SNDC_WAVE) => self.wave_follows = payload.len() <= WAVE_INFO,
             _ => {}
         }
@@ -133,9 +131,9 @@ impl SvcClientProcessor for Sound {}
 /// A WaveInfo PDU's length: the four-byte header, then twelve of body.
 const WAVE_INFO: usize = 16;
 
-/// What of the server's list this end plays, in the server's order, each
-/// as the server wrote it so that the channel's match keeps it — and logged,
-/// since which one the server then picks is the thing worth knowing.
+/// The formats in the server's list this end plays, in the server's order,
+/// each exactly as the server wrote it so that the channel's match keeps it.
+/// Logged, since the server's eventual pick is worth knowing.
 fn playable(formats: &[AudioFormat], player: &Player) -> Vec<AudioFormat> {
     let mut offered = Vec::new();
     for f in formats {
@@ -167,14 +165,14 @@ fn kind_of(f: &AudioFormat, player: &Player) -> Option<Kind> {
     let extra = f.data.as_deref().unwrap_or_default();
     match f.format {
         WaveFormat::PCM if f.bits_per_sample == 16 => Some(Kind::Pcm(format)),
-        // Raw AAC LC frames, which is what Windows sends for the format it
-        // describes with no extra bytes; extra bytes would be a
-        // HEAACWAVEINFO, a profile nobody here has been sent.
+        // Raw AAC LC frames, which Windows sends for the format it describes
+        // with no extra bytes; extra bytes would be a HEAACWAVEINFO, a
+        // profile no tested server has sent.
         WaveFormat::AAC_MS if extra.is_empty() && player.decodable(Codec::Aac) => {
             runtime::media::audio::decode::aac_config(format).map(|_| Kind::Coded(Codec::Aac, format, Vec::new()))
         }
-        // Opus packets, set up by an identification header where the server
-        // gives one and by the format alone where not.
+        // Opus packets, set up by an identification header if the server
+        // gives one, and by the format alone if not.
         WaveFormat::OPUS
             if format.channels <= 2
                 && (extra.is_empty() || extra.starts_with(b"OpusHead"))
@@ -203,7 +201,7 @@ fn name_of(format: WaveFormat) -> String {
 struct Waves {
     formats: Vec<AudioFormat>,
     player: Arc<Mutex<Player>>,
-    /// The format the last wave was in, so that the server's choice is said
+    /// The format of the last wave, so that the server's choice is logged
     /// once rather than per wave.
     said: Option<AudioFormat>,
 }
@@ -249,8 +247,8 @@ impl RdpsndClientHandler for Waves {
         }
     }
 
-    /// Linear, a `u16` a channel: the louder is the stream's gain, as
-    /// FreeRDP's device here takes it.
+    /// Linear, a `u16` per channel: the louder of the two becomes the
+    /// stream's gain, as FreeRDP's device here does.
     fn set_volume(&mut self, volume: VolumePdu) {
         let loudest = volume.volume_left.max(volume.volume_right);
         log::info!("sound: the server sets its volume to {loudest} of 65535");
@@ -259,9 +257,9 @@ impl RdpsndClientHandler for Waves {
 
     fn set_pitch(&mut self, _pitch: PitchPdu) {}
 
-    /// The server's Close, a new format list, or the channel going: none of
-    /// them says the sound has been heard, so the stream is left to close
-    /// when it has gone quiet, or with the session.
+    /// The server's Close, a new format list, or the channel closing: none
+    /// of them means the sound has been heard, so the stream is left to
+    /// close when it has gone quiet, or with the session.
     fn close(&mut self) {
         self.said = None;
     }
@@ -318,7 +316,7 @@ mod tests {
     #[test]
     fn what_is_offered_is_the_playable_part_of_the_servers_list() {
         let player = Player::new(Arc::new(Fake(Arc::new(Controls::new()))));
-        // Windows 10's list, in short.
+        // An abridged Windows 10 list.
         let windows = [
             format(WaveFormat::AAC_MS, 44_100, 2, 16, None),
             format(WaveFormat::AAC_MS, 44_100, 2, 16, Some(vec![1, 2])),

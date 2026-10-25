@@ -3,8 +3,8 @@
 package com.realvnc.vncviewer.jni;
 
 /**
- * "Persist these credentials." A notification rather than a question — the core
- * has already authenticated with them — and the only way a client that keeps its
+ * "Persist these credentials." A notification rather than a question (the core
+ * has already authenticated with them), and the only way a client that keeps its
  * own connection records learns what was typed into a prompt the core owned.
  *
  * <p>Required by

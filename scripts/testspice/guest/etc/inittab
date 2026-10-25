@@ -3,9 +3,8 @@
 # X server, and that is a script rather than a dependency graph.
 #
 # The console is ttyS0 and goes to the container's log; ttyS1 is a shell for
-# somebody debugging by hand, and it is a socket the host connects to rather
-# than a file, so a getty with nobody on the other end waits instead of
-# respawning.
+# debugging by hand, and it is a socket the host connects to rather than a
+# file, so a getty with nothing connected waits instead of respawning.
 ::sysinit:/sbin/guest-init
 ::respawn:/sbin/getty -n -l /bin/sh -L 115200 ttyS1 vt100
 ::ctrlaltdel:/sbin/reboot

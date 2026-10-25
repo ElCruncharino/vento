@@ -5,12 +5,12 @@
 
     The connection panel: what the `information` tap region opens.
 
-    One sheet, no nesting. The order is deliberate and is the reverse of the
-    original's information fragment: the controls come first because this is
-    opened to *change* something — picture quality, nearly always — and the
-    facts underneath are what you read after deciding something is wrong. Both
-    lists are generated (the backend's live options, the backend's facts), so
-    what is fixed here is the frame around them.
+    One sheet, no nesting. The order is the reverse of RealVNC Viewer's
+    information screen: the controls come first because this is opened to
+    *change* something (nearly always the picture quality), and the facts
+    below are read after deciding something is wrong. Both lists are generated
+    (the backend's live options and facts), so this file only defines the
+    frame around them.
 -->
 <androidx.core.widget.NestedScrollView
     xmlns:android="http://schemas.android.com/apk/res/android"
@@ -26,9 +26,9 @@
         android:paddingBottom="8dp">
 
         <!--
-            The desktop's own name is the heading, not a row — it is what the
-            whole panel is about. Under it, the state and the size: the one
-            thing that is always known locally and instantly.
+            The desktop's own name is the heading, not a row, since the whole
+            panel is about it. Under it, the state and the size, which are
+            always known locally and immediately.
         -->
         <LinearLayout
             android:layout_width="match_parent"
@@ -77,13 +77,12 @@
         </LinearLayout>
 
         <!--
-            Four groups, held apart by the gap between them rather than by a
-            rule through them: each is a container of rows with large corners,
-            and one that has nothing in it takes its margin with it when it
-            goes.
+            The groups are separated by the gap between them rather than by a
+            divider: each is a container of rows with large corners, and an
+            empty one is hidden along with its margin.
         -->
 
-        <!-- Backends.options(id).filter(live), rendered by ConnectionPanel. -->
+        <!-- The backend's live options, rendered by PanelOptions. -->
         <LinearLayout
             android:id="@+id/controls"
             android:layout_width="match_parent"
@@ -92,9 +91,9 @@
             android:orientation="vertical" />
 
         <!--
-            Which of the far end's screens it is sending, above the size of it
-            for the reason that is the order the two are decided in. Only one
-            protocol here sends one screen at a time, so this is usually gone.
+            Which of the far end's screens it is sending, above the desktop size
+            because the screen determines the size. Only one protocol here
+            sends one screen at a time, so this is usually hidden.
         -->
         <LinearLayout
             android:id="@+id/display"
@@ -106,8 +105,8 @@
         <!--
             The desktop size, which is a control and not an option: whether it
             can be offered at all is a fact about the live connection, so the
-            row appears and disappears while the panel is open and is built by
-            ConnectionPanel out of what the session says it is now.
+            row can appear and disappear while the panel is open, and
+            ConnectionPanel builds it from the session's current state.
         -->
         <LinearLayout
             android:id="@+id/resize"
@@ -117,10 +116,9 @@
             android:orientation="vertical" />
 
         <!--
-            The session's sound switch, Enable audio or Mute audio, there from
-            when the far end may send sound and gone where it never will: a
-            fact about the live session rather than an option, built by
-            ConnectionPanel.
+            The session's sound switch, Enable audio or Mute audio, shown once
+            the far end may send sound and hidden where it never will: live
+            session state rather than an option, built by ConnectionPanel.
         -->
         <LinearLayout
             android:id="@+id/sound"
@@ -137,12 +135,10 @@
             android:orientation="vertical" />
 
         <!--
-            The diagnostics. They used to be behind a chevron, on the grounds
-            that a pixel format is only worth reading when something is wrong.
-            That was backwards: they are how a quality change is *checked* —
-            the viewer format going to `depth 3 (8 bpp) rgb111` is the only
-            proof on screen that the control did anything — and a fold turns
-            the one readout that answers a question into one more tap.
+            The diagnostics, not collapsed: they are how a quality change is
+            *checked*. The viewer format changing to `depth 3 (8 bpp) rgb111` is
+            the only on-screen confirmation that the control did anything, and
+            collapsing it would cost a tap every time.
         -->
         <LinearLayout
             android:id="@+id/diagnostics"
@@ -151,25 +147,20 @@
             android:orientation="vertical" />
 
         <!--
-            Three buttons, in two halves. At the end of the row: Log always, and
-            beside it whichever of Disconnect and Reconnect the session is in a
-            state for — the text and the action are ConnectionPanel's, since no
-            session is ever in both states at once. At the start, alone, the one
-            that takes a picture away rather than doing anything to the session.
+            Three buttons. At the end of the row: Log, always, and beside it
+            Disconnect or Reconnect depending on the session's state
+            (ConnectionPanel sets the text and the action). At the start, alone,
+            the screenshot button, which does not act on the session.
 
-            Disconnect was taken out of this footer once, on the grounds that it
-            was a third way to do what the disconnect tap region and the back
-            gesture already do, in a panel opened to change the picture. It is
-            back because the panel is where somebody looking at a connection
-            looks, and the two ways it duplicates are a corner of the screen
-            nothing labels and a gesture. It asks the same question and leaves
-            the same way.
+            Disconnect duplicates the disconnect tap region and the back
+            gesture, but those are an unlabelled corner of the screen and a
+            gesture, and the panel is where the connection's state is shown. It
+            asks the same confirmation and ends the session the same way.
 
-            The other button that went is still gone: "Connection settings"
-            opened the editor, which edits the *saved* connection — none of
-            which reaches the session in front of you until the next one, so a
-            link to it from a live session's panel says something untrue about
-            what it does.
+            There is no link to the connection editor: it edits the *saved*
+            connection, and no change there reaches the current session until
+            the next one, so offering it from a live session's panel would be
+            misleading.
         -->
         <LinearLayout
             android:id="@+id/action_row"
@@ -182,14 +173,13 @@
             android:paddingEnd="16dp">
 
             <!--
-                The desktop, photographed and handed to the share sheet. Off on
-                its own at the other end of the row because it is the one thing
-                down here that does not act on the session: the other two end it
-                or explain it, and this takes a copy of it away.
+                Captures the desktop and passes it to the share sheet. At the
+                other end of the row because it is the only button here that
+                does not act on the session: the other two end it or explain it.
 
-                Drawn without the outline the editor's pin has, for the reason
-                written there: that container is what a toggle fills in when it
-                is on, and this is an action that has no state to show.
+                Without the outline the editor's pin has, for the reason given
+                there: an outlined icon button is a toggle that fills in when
+                on, and this is an action with no state.
             -->
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/screenshot"

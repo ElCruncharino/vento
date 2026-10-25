@@ -1,12 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Where a session file's log lines go, which is the platform's to say: logcat
-// under the Android adapter, stderr under a desktop one. The session files
-// log through this and nothing else, so that none of them names a platform —
-// and the two library loggers that have to be bridged (libvncclient's two
-// hooks, TigerVNC's `core::Logger`) are bridged in the session files, onto
-// this.
+// Logging for the C session files, implemented by the platform: logcat on
+// Android, stderr on a desktop. The session files log only through this so
+// that none of them is platform-specific. The library loggers that need
+// bridging (libvncclient's two hooks, TigerVNC's `core::Logger`) are bridged
+// onto this in the session files.
 
 #ifndef VENTO_LOG_H
 #define VENTO_LOG_H
@@ -21,7 +20,7 @@ enum {
 };
 
 /* Implemented by the platform, once per process. `tag` is the backend's
-   name, which is what the session scripts filter the log by. */
+   name; the session scripts filter the log by it. */
 void vento_log(int level, const char *tag, const char *fmt, ...)
 #if defined(__GNUC__) || defined(__clang__)
         __attribute__((format(printf, 3, 4)))

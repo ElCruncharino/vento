@@ -1,17 +1,17 @@
 # What every protocol here is written against and no protocol owns: the
 # `Client` a protocol implements, the `Handler` its thread calls, the
-# `Callbacks` a platform answers it with, the `Runner` that runs one on a
-# thread of its own and the `Bridge` between them, the dial a hang-up can
-# interrupt, the pinned TLS of the protocols that reach it — and the address
-# parser, which is the one thing every client does before any of that. And
-# what a platform is written to: the picture and the sound a session carries
-# (`src/media/`), whose video decoders and sound outputs a platform supplies
-# by implementing `media::video::Decoders` and `media::audio::Outputs`, and
-# what is done with their planes and samples, the same on both platforms.
+# `Callbacks` a platform answers it with, the `Runner` that runs one on its own
+# thread and the `Bridge` between them, the dial a hang-up can interrupt, the
+# pinned TLS of the protocols that use it, and the address parser, which every
+# client runs before any of that. And what a platform implements: the picture
+# and the sound a session carries (`src/media/`), whose video decoders and
+# sound outputs a platform supplies by implementing `media::video::Decoders`
+# and `media::audio::Outputs`, and the processing of their planes and samples,
+# the same on both platforms.
 #
-# Nothing in here knows what a phone is. The Android half of a backend is
+# Nothing here is Android-specific. The Android half of a backend is
 # `remotedesktop-platform-android`, which depends on this crate and not the
-# other way round, so a desktop client can be built on this layer without a
+# other way round, so a desktop client can be built on this layer without
 # `jni` anywhere in its graph.
 [package]
 name = "remotedesktop-runtime"
@@ -31,13 +31,13 @@ log.workspace = true
 # under most of what is here.
 socket2 = "0.6"
 libc = "0.2"
-# TLS as the protocols that reach it speak it (`src/tls/`): the pin, which is
-# a SHA-256 of the certificate, and the connection two threads share. `ring`
-# because aws-lc-rs wants cmake and bindgen for Android. No `webpki-roots`:
-# what replaces an authority here is a pin.
+# TLS for the protocols that use it (`src/tls/`): the pin, which is a SHA-256
+# of the certificate, and the connection two threads share. `ring` because
+# aws-lc-rs needs cmake and bindgen for Android. No `webpki-roots`: a pin
+# takes the place of a certificate authority here.
 #
-# Here for every crate that depends on this one, a protocol that reaches no
-# TLS included, and named on each such artefact's licence page, since the
+# A dependency of every crate that depends on this one, including protocols
+# that use no TLS, and named on each such artefact's licence page, since the
 # page is generated from the dependency graph and not from what the linker
 # kept: a library that never calls into `tls` carries none of it.
 sha2 = "0.11"

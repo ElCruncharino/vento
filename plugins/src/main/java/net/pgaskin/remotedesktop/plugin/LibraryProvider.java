@@ -18,14 +18,15 @@ import java.io.FileNotFoundException;
 import java.util.List;
 
 /**
- * The one way anything of the add-on's leaves its uid: a read-only descriptor on
- * a file it has already verified.
+ * The only way data leaves the add-on's uid: a read-only descriptor for a file
+ * it has already verified.
  *
  * <p>An add-on subclasses this and declares it with the authority
- * {@code ${applicationId}.libraries}. It is exported, because the app is another
- * uid and there is no other way to reach it, and it answers nobody who is not
- * signed with our key — a permission would have been an ordering problem, since
- * whichever of the two is installed first would be declaring it.
+ * {@code ${applicationId}.libraries}. It is exported, because the app runs as
+ * another uid and cannot reach it otherwise, and it rejects any caller not
+ * signed with our key. A custom permission would have an ordering problem,
+ * since whichever of the two packages is installed first would have to
+ * declare it.
  */
 public abstract class LibraryProvider extends ContentProvider {
 
@@ -43,7 +44,7 @@ public abstract class LibraryProvider extends ContentProvider {
         }
     }
 
-    /** {@code content://<add-on>.libraries/<name>}, read-only, nothing else. */
+    /** {@code content://<add-on>.libraries/<name>}, read-only; nothing else is served. */
     @Override
     public ParcelFileDescriptor openFile(Uri uri, String mode) throws FileNotFoundException {
         requireOurCaller();
@@ -55,7 +56,7 @@ public abstract class LibraryProvider extends ContentProvider {
             throw new FileNotFoundException(uri.toString());
         }
         final String name = path.get(0);
-        // A name is a file in one directory and never a path into another.
+        // A name is a file in the store's directory, never a path elsewhere.
         if (name.isEmpty() || name.indexOf('/') >= 0 || name.contains("..")) {
             throw new FileNotFoundException(uri.toString());
         }
@@ -67,10 +68,9 @@ public abstract class LibraryProvider extends ContentProvider {
     }
 
     /**
-     * Whether this add-on has everything it needs, which is what the app's
-     * "needs setting up" comes down to. The caller names what it wants and the
-     * hashes it wants them at, so the answer is about the same pin both sides
-     * were built with.
+     * Whether this add-on has every library it needs, which decides whether the
+     * app shows it as needing setup. The caller passes the names and hashes it
+     * wants, so the answer refers to the pin the caller was built with.
      */
     @Override
     public Bundle call(String method, String arg, Bundle extras) {
@@ -90,8 +90,8 @@ public abstract class LibraryProvider extends ContentProvider {
         return answer;
     }
 
-    // Not a database. Everything below is the part of the interface that has no
-    // meaning here, and says so rather than pretending.
+    // Not a database: the methods below have no meaning here, and return null
+    // or throw rather than emulate one.
 
     @Override
     public Cursor query(Uri uri, String[] projection, String selection, String[] args,

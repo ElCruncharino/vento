@@ -9,8 +9,8 @@ package net.pgaskin.remotedesktop.control.input;
  * <p>An RFB {@code PointerEvent} carries a <em>mask</em> of these, so the two
  * representations both exist and mean different things: a {@code Button} is one
  * button, which is what the gesture layer presses and releases, and an
- * {@code int} is the set currently held, which is what goes on the wire. The
- * mask never leaves {@link #mask()} / {@link #in(int)} / {@link #maskName(int)}.
+ * {@code int} is a set of them, which is what {@link MouseSink} takes and what
+ * goes on the wire.
  */
 public enum Button {
     LEFT(1),
@@ -21,29 +21,28 @@ public enum Button {
     WHEEL_LEFT(32),
     WHEEL_RIGHT(64),
     /**
-     * Buttons 8 and 9 — the side buttons of a real mouse, which no touch gesture
-     * can produce and the original has no concept of. X11 numbers them this way
-     * and both desktops agree.
+     * Buttons 8 and 9: the side buttons of a real mouse, which no touch gesture
+     * can produce and the original has no concept of. X11 numbers them this
+     * way.
      *
-     * <p>{@link #FORWARD} is the one place this vocabulary is wider than a
-     * protocol: an RFB {@code PointerEvent}'s mask is a single <em>byte</em>, so
-     * button 9 needs the {@code ExtendedMouseButtons} pseudo-encoding, which our
-     * client does not speak. The RFB backend drops it and says so; RDP sends
-     * both as X1/X2.
+     * <p>An RFB {@code PointerEvent}'s mask is a single <em>byte</em>, so
+     * {@link #FORWARD} (button 9) needs the {@code ExtendedMouseButtons}
+     * pseudo-encoding. The RFB backend drops it when the server has not
+     * acknowledged that encoding; RDP sends both as X1/X2.
      */
     BACK(128),
     FORWARD(256);
 
     /**
-     * Buttons that can hold a drag — the three under the hand, not the wheel
+     * Buttons that can hold a drag: the three main buttons, not the wheel
      * pseudo-buttons and not {@link #BACK} / {@link #FORWARD}, which are
-     * shortcuts rather than something anybody drags with.
+     * shortcuts.
      */
     public static final int DRAG_MASK = LEFT.mask | MIDDLE.mask | RIGHT.mask;
 
     /**
-     * Buttons somebody clicks with: everything but the wheel, whose four are an
-     * axis reported as presses rather than something anybody holds down.
+     * Buttons that click: everything but the wheel, whose four are an axis
+     * reported as presses rather than buttons held down.
      */
     public static final int CLICK_MASK = DRAG_MASK | BACK.mask | FORWARD.mask;
 
@@ -90,8 +89,8 @@ public enum Button {
                 sb.append(b);
             }
         }
-        // RFB allows buttons 8 and up; nothing here emits them, but a backend
-        // reading a mask off the wire could hand one back.
+        // Buttons 10 and up: nothing here emits them, but a backend reading a
+        // mask off the wire could hand one back.
         final int unknown = mask & ~KNOWN_MASK;
         if (unknown != 0) {
             if (sb.length() > 0) {

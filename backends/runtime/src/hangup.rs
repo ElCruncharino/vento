@@ -1,27 +1,26 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The sockets a session is blocked on, for whoever ends it from another
-//! thread.
+//! The sockets a session is blocked on, for ending it from another thread.
 //!
-//! A protocol thread spends its life inside a socket call — a read, or before
-//! there is anything to read, the dial — and nothing reaches into one of those
-//! but the socket itself: shut it down and the call returns. Every client here
-//! did that for the connected socket and none of them for the dial, because
-//! `TcpStream::connect_timeout` makes its socket where nobody else can see it.
-//! A disconnect pressed while a black-holed address was being dialled was
-//! therefore a session that sat out the whole connect timeout, and a `destroy`
-//! behind it was the window's thread joined on that for twenty seconds.
+//! A protocol thread spends most of its time in a socket call (a read, or,
+//! before there is anything to read, the dial), and only the socket itself can
+//! interrupt one: shut it down and the call returns. Every client here did
+//! that for the connected socket and none of them for the dial, because
+//! `TcpStream::connect_timeout` creates its socket internally and gives no
+//! handle to it. A disconnect while a black-holed address was being dialled
+//! therefore waited out the whole connect timeout, and a `destroy` after it
+//! blocked the window's thread, joined on the session's, for twenty seconds.
 //!
 //! So the dial is done here instead, on a socket that is held from the moment
 //! its connect has begun, and [`Hangup::hang_up`] shuts down whatever is held
 //! at the time. Shutting down a socket whose connect is still in flight aborts
 //! the connect (Linux's `inet_shutdown` disconnects a `SYN_SENT` socket and
-//! wakes whoever is waiting on it), which is what makes one mechanism enough
-//! for both halves of a session's life.
+//! wakes the threads waiting on it), so one mechanism covers both the dial and
+//! the connected session.
 //!
-//! What is not interruptible is name resolution, which is the C library's and
-//! has no handle to break: an address that takes a resolver twenty seconds to
+//! Name resolution is not interruptible: the C library does it and has no
+//! handle to interrupt, so an address the resolver takes twenty seconds to
 //! fail still takes twenty seconds. A literal address resolves at once.
 
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
@@ -67,7 +66,7 @@ impl Hangup {
     }
 
     /// Ends whatever is held, and refuses anything held from now on. Safe to
-    /// call from any thread, as often as anyone likes.
+    /// call from any thread, any number of times.
     pub fn hang_up(&self) {
         // The flag before the lock, and `hold` tests it under the lock: a
         // socket is either held in time to be shut down here or refused there,
@@ -105,8 +104,8 @@ impl Hangup {
         self.dial_from(socket, addr, timeout)
     }
 
-    /// [`Hangup::dial`] on a socket the caller has already set up — bound to a
-    /// particular port, say, which is what a hole punch is.
+    /// [`Hangup::dial`] on a socket the caller has already set up, such as one
+    /// bound to a particular port for a hole punch.
     pub fn dial_from(&self, socket: Socket, addr: SocketAddr, timeout: Duration) -> io::Result<TcpStream> {
         socket.set_nonblocking(true)?;
         match socket.connect(&SockAddr::from(addr)) {
@@ -115,8 +114,8 @@ impl Hangup {
             Err(e) => return Err(e),
         }
         let stream = TcpStream::from(socket);
-        // Held only now that the connect has begun: a socket shut down before
-        // it has been asked to connect is one `connect` goes on to use anyway.
+        // Held only now that the connect has begun: shutting down a socket
+        // before `connect` is called does not stop `connect` from using it.
         let holding = self.hold(&stream)?;
         let waited = wait_connected(&stream, timeout);
         drop(holding);

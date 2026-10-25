@@ -3,30 +3,30 @@
 
 //! X11 keysyms in, PC/AT scancodes out.
 //!
-//! The one place the protocol does not match the stack. Everything above
-//! `CursorController` speaks keysyms, because that is RFB's vocabulary and the
-//! extension keyboard was built against it; RDP's keyboard is
-//! **scancodes** — set 1, with an `E0` prefix for the keys the original PC
+//! The only place the protocol does not match the rest of the input stack.
+//! Everything above `CursorController` uses keysyms, because that is RFB's
+//! vocabulary and the extension keyboard was built on it; RDP's keyboard uses
+//! **scancodes**: set 1, with an `E0` prefix for the keys the original PC
 //! keyboard did not have.
 //!
-//! Three things follow from that, and each is a decision rather than a detail:
+//! Three deliberate decisions follow from that:
 //!
 //! 1. **A scancode is a position, not a character.** `0x1E` is "the key left of
 //!    S", which is `a` on a US layout and `q` on a French one. So this table is
-//!    a US layout and says so, and the server's own layout is what turns a
-//!    position back into a character. That is how every RDP client works, and
-//!    it is why [`scancode`] is allowed to fail.
-//! 2. **What it cannot place goes as Unicode.** RDP has a keyboard event that
-//!    carries a UTF-16 code unit instead of a position ([`Key::Unicode`]), which
-//!    is what makes `é` and `→` arrive from a phone's IME without a layout
-//!    between them. It is the fallback and not the rule, because a Unicode
-//!    event carries no modifier state — `Ctrl` plus one is not a shortcut on
-//!    the far end, and a modifier held on one keyboard while a letter arrives
-//!    from another is exactly what this stack lets happen.
-//! 3. **Shift is part of the answer.** `!` is not a key; it is `1` with Shift
+//!    explicitly a US layout, and the server's own layout turns a position
+//!    back into a character. Every RDP client works this way, and it is why
+//!    [`scancode`] can fail.
+//! 2. **Unplaceable characters go as Unicode.** RDP has a keyboard event that
+//!    carries a UTF-16 code unit instead of a position ([`Key::Unicode`]),
+//!    which lets `é` and `→` arrive from a phone's IME without a layout in
+//!    between. It is the fallback, not the rule, because a Unicode event
+//!    carries no modifier state: `Ctrl` plus one is not a shortcut on the far
+//!    end, and this stack allows a modifier held on one keyboard while a
+//!    letter arrives from another.
+//! 3. **Shift is part of the mapping.** `!` is not a key; it is `1` with Shift
 //!    held. So a mapping is a scancode *and* whether the layout needs Shift for
-//!    it, and the caller synthesises the modifier — see `Client::key_down`, which
-//!    also has to know not to synthesise one that is already down.
+//!    it, and the caller synthesises the modifier (see `Client::key_down`,
+//!    which also avoids synthesising one that is already down).
 
 use ironrdp_input::Scancode;
 
@@ -39,7 +39,7 @@ pub enum Key {
     /// A character with no position: sent as a Unicode keyboard event, which
     /// the server turns into text without consulting a layout.
     Unicode(char),
-    /// Pause, which is not a scancode at all — see [`named`].
+    /// Pause, which is not a scancode at all; see [`named`].
     Pause,
 }
 
@@ -55,13 +55,13 @@ const fn plain(code: u8) -> Scancode {
 
 /// The named keys: modifiers, editing, navigation, function keys, the keypad.
 ///
-/// Both hands, since a physical keyboard's right Shift is a keysym of its own
-/// and the extension row's is the left one.
+/// Both left and right modifiers, since a physical keyboard's right Shift is
+/// a separate keysym and the extension keyboard's is the left one.
 ///
 /// **Pause is not in here**, because it is not a scancode: the key never had
-/// one of its own, and what a keyboard puts on the wire for it is the `E1`
-/// sequence `1D 45`. Both RDP clients here send what mstsc sends instead, which
-/// is a Ctrl marked `E1` around a Num Lock — see `Client::key_down`.
+/// one of its own, and a keyboard sends the `E1` sequence `1D 45` for it. Both
+/// RDP clients here send what mstsc sends instead, a Ctrl marked `E1` around
+/// a Num Lock (see `Client::send_pause`).
 fn named(keysym: u32) -> Option<Scancode> {
     Some(match keysym {
         0xffe1 => plain(0x2a),        // Shift_L
@@ -69,7 +69,7 @@ fn named(keysym: u32) -> Option<Scancode> {
         0xffe3 => plain(0x1d),        // Control_L
         0xffe4 => ext(0x1d),          // Control_R
         0xffe9 => plain(0x38),        // Alt_L
-        0xffea | 0xfe03 => ext(0x38), // Alt_R, ISO_Level3_Shift — both AltGr
+        0xffea | 0xfe03 => ext(0x38), // Alt_R, ISO_Level3_Shift: both AltGr
         0xffeb => ext(0x5b),          // Super_L
         0xffec => ext(0x5c),          // Super_R
         0xff67 => ext(0x5d),          // Menu
@@ -98,19 +98,19 @@ fn named(keysym: u32) -> Option<Scancode> {
         0xffbe..=0xffc7 => plain(0x3b + (keysym - 0xffbe) as u8),
         0xffc8 => plain(0x57), // F11
         0xffc9 => plain(0x58), // F12
-        // F13–F24, which no PC keyboard has and every layout still carries a
-        // position for. F13–F23 run from 0x64; F24 does not follow them, and a
-        // Windows far end resolves the position that would be F24 by counting
-        // to VK_OEM_PA3 instead — which is what every keyboard type has there.
+        // F13–F24, which no PC keyboard has but every layout still has a
+        // position for. F13–F23 run from 0x64; F24 does not follow them,
+        // because a Windows far end maps the next position (0x6f) to
+        // VK_OEM_PA3 on every keyboard type.
         0xffca..=0xffd4 => plain(0x64 + (keysym - 0xffca) as u8),
         0xffd5 => plain(0x76), // F24
 
         // The keypad. Each key appears twice, once under each Num Lock state,
-        // and both spellings are the same position — which is the whole of what
-        // RDP can say. Which of the two the far end produces is decided by the
-        // far end's own Num Lock and not by ours, so this is the one place
-        // where the phone owning the lock does not carry: with the lock off
-        // here and on there, `KP_Home` arrives as `7`.
+        // and both keysyms map to the same position, since RDP can only send
+        // positions. Which of the two the far end produces depends on its own
+        // Num Lock, not the local one, so here the local Num Lock state does
+        // not apply: with the lock off here and on there, `KP_Home` arrives as
+        // `7`.
         0xffb7 | 0xff95 => plain(0x47), // KP_7, KP_Home
         0xffb8 | 0xff97 => plain(0x48), // KP_8, KP_Up
         0xffb9 | 0xff9a => plain(0x49), // KP_9, KP_Prior
@@ -129,7 +129,7 @@ fn named(keysym: u32) -> Option<Scancode> {
         0xff8d => ext(0x1c),            // KP_Enter
         0xffac => plain(0x7e),          // KP_Separator, the Brazilian keypad comma
 
-        // The unambiguous three of a Japanese board's conversion keys, which
+        // The three unambiguous conversion keys of a Japanese keyboard, which
         // are the three `Keysym` sends.
         0xff27 => plain(0x70), // Hiragana_Katakana
         0xff23 => plain(0x79), // Henkan_Mode
@@ -142,8 +142,8 @@ fn named(keysym: u32) -> Option<Scancode> {
 /// The printable half of a US layout: the character a keysym names, and the key
 /// it sits on.
 ///
-/// Written as the rows of the keyboard rather than as a sorted table, because
-/// that is what it is, and a wrong entry is visible as a wrong neighbour.
+/// Written as the rows of the keyboard rather than as a sorted table, so that
+/// a wrong entry shows up as a wrong neighbour.
 const US_LAYOUT: &[(u8, char, char)] = &[
     // (scancode, unshifted, shifted)
     (0x29, '`', '~'),
@@ -196,7 +196,7 @@ const US_LAYOUT: &[(u8, char, char)] = &[
     (0x39, ' ', ' '),
 ];
 
-/// What to send for a keysym, or `None` for one that means nothing here.
+/// What to send for a keysym, or `None` for one with no mapping.
 pub fn scancode(keysym: u32) -> Option<Key> {
     if keysym == 0xff13 {
         return Some(Key::Pause);
@@ -204,8 +204,9 @@ pub fn scancode(keysym: u32) -> Option<Key> {
     if let Some(code) = named(keysym) {
         return Some(Key::Scancode { code, shift: false });
     }
-    // The one keypad key a PC has no position for — FreeRDP's own xkb table
-    // has `KP_Equal` as unknown — and it names a character, so it goes as one.
+    // The only keypad key a PC has no position for (FreeRDP's own xkb table
+    // has `KP_Equal` as unknown), and it names a character, so it is sent as
+    // one.
     if keysym == 0xffbd {
         return Some(Key::Unicode('='));
     }
@@ -251,8 +252,8 @@ mod tests {
         }
     }
 
-    /// The three that are easy to get wrong by one: F11 is not after F10, the
-    /// arrows are extended, and a left modifier is not an extended one.
+    /// The three easy off-by-one mistakes: F11 is not after F10, the arrows
+    /// are extended, and a left modifier is not.
     #[test]
     fn the_named_keys_land_where_the_keyboard_has_them() {
         assert_eq!(code_of(0xffbe), (0x3b, false), "F1");
@@ -268,8 +269,8 @@ mod tests {
     }
 
     /// The keypad is one set of positions under two sets of keysyms, and the
-    /// pairs have to line up: a Num-Lock-off keysym landing on the wrong
-    /// position is a navigation key that moves the wrong way.
+    /// pairs have to line up: a Num-Lock-off keysym on the wrong position is
+    /// a navigation key that moves the wrong way.
     #[test]
     fn both_halves_of_the_keypad_are_the_same_keys() {
         for (digit, navigation, code) in [
@@ -298,8 +299,8 @@ mod tests {
         );
     }
 
-    /// The function row runs past where a keyboard stops, and F13 is nowhere
-    /// near F12 in either numbering.
+    /// The function row continues past where a keyboard stops, and F13 is
+    /// nowhere near F12 in either numbering.
     #[test]
     fn the_function_row_runs_to_twenty_four() {
         assert_eq!(code_of(0xffca), (0x64, false), "F13");
@@ -310,7 +311,7 @@ mod tests {
         assert_eq!(code_of(0xffd5), (0x76, false), "F24");
     }
 
-    /// Pause is the one key that is not a position at all.
+    /// Pause is the only key that is not a position at all.
     #[test]
     fn pause_is_not_a_scancode() {
         assert_eq!(scancode(0xff13), Some(Key::Pause));
@@ -330,8 +331,8 @@ mod tests {
         assert_eq!(code_of('?' as u32), (0x35, true));
     }
 
-    /// Anything the layout has no position for is a Unicode event rather than
-    /// nothing at all — which is what lets an IME's own text through.
+    /// Anything the layout has no position for is sent as a Unicode event
+    /// rather than dropped, which lets an IME's own text through.
     #[test]
     fn what_the_layout_cannot_place_goes_as_unicode() {
         assert_eq!(scancode(0xe9), Some(Key::Unicode('é')), "Latin-1 is itself");

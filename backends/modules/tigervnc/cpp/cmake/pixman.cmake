@@ -1,7 +1,6 @@
-# pixman, which TigerVNC's core::Region is a wrapper over and which is the only
-# thing in this build that has no CMake of its own — upstream is meson, and a
-# meson build under the NDK would be a second toolchain in a build that has
-# three already.
+# pixman, which TigerVNC's core::Region wraps, and the only thing in this build
+# with no CMake of its own: upstream uses meson, and a meson build under the
+# NDK would add another build system to a build that already has several.
 #
 # The generic C is all of it: the SIMD sources are separate translation units
 # with their own compile flags, and every one of them is a fast path for
@@ -21,9 +20,9 @@ set(PIXMAN_VERSION_MINOR ${CMAKE_MATCH_2})
 set(PIXMAN_VERSION_MICRO ${CMAKE_MATCH_3})
 configure_file("${PIXMAN_DIR}/pixman-version.h.in" "${PIXMAN_GEN}/pixman-version.h" @ONLY)
 
-# meson writes this one from its feature tests. Ours says the two things the
-# sources actually stop for: a package name, and how the compiler spells thread
-# local storage — without which pixman-compiler.h fails the build rather than
+# meson writes this one from its feature tests. Ours sets the two things the
+# sources actually require: a package name, and how the compiler spells thread
+# local storage, without which pixman-compiler.h fails the build rather than
 # quietly building something that is not thread-safe.
 file(WRITE "${PIXMAN_GEN}/pixman-config.h"
         "#define PACKAGE \"pixman\"\n"

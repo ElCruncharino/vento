@@ -3,8 +3,8 @@
 
 //! Hardware decoding off, which is the default, opens nothing: after every
 //! clip has been decoded with it off, no device has been asked for and
-//! libva is not in the process. A binary of its own, since a
-//! test of `hardware.rs` beside it would open the device this says is not.
+//! libva is not in the process. A binary of its own, since a test of
+//! `hardware.rs` beside it would open the device this checks is unopened.
 
 #![cfg(not(target_os = "android"))]
 

@@ -5,7 +5,7 @@
 //! the wire of a protocol whose far end is Windows' idea of text (RDP's, and
 //! TigerVNC's extended clipboard). The C session files keep the same rule in
 //! `vento/text.h` (`vento_text_to_lf`, `vento_text_to_crlf`), and both are
-//! held to the same cases.
+//! tested against the same cases.
 
 /// CRLF, and a lone CR, to LF: what text is everywhere above a protocol.
 pub fn to_lf(text: &str) -> String {

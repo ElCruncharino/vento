@@ -1,34 +1,34 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// vento_video.h over libavcodec. See the header for what crosses; this file
-// is the only one that includes FFmpeg's.
+// vento_video.h over libavcodec. See the header for the interface; this file
+// is the only one that includes FFmpeg's headers.
 //
-// The choices that are libavcodec's to make are made here:
+// The libavcodec settings chosen here:
 //
 // - **Low delay, and slice threads only.** A decoder with frame threads holds
 //   one frame per thread before the first comes out, and H.264 without
-//   `LOW_DELAY` holds frames back to reorder them — a desktop that lags the
-//   finger on it, for a stream that has nothing to reorder. dav1d reads the
-//   same flag as a frame delay of one.
+//   `LOW_DELAY` holds frames back to reorder them: input lag on a desktop, for
+//   a stream that has nothing to reorder. dav1d reads the same flag as a frame
+//   delay of one.
 // - **AV1 by name.** libavcodec's own `av1` decoder is a front for hardware
 //   acceleration and decodes nothing without it, so AV1 in software is
 //   dav1d's wrapper, which the build links in, rather than a decoder that
 //   opens and then fails every frame; `av1` is what decodes on hardware.
-// - **Only the last picture.** Each that comes out of one packet is a whole
-//   picture, and one the next overwrites before anybody sees it is a
-//   conversion for nothing, so the others are counted and dropped.
+// - **Only the last picture.** Each picture out of one packet is a whole
+//   picture, and converting one that the next overwrites before it is shown
+//   is wasted work, so the others are dropped.
 //
-// And the hardware's, when it is asked for:
+// And for hardware decoding, when requested:
 //
 // - **One device, for the process.** Opening a VAAPI device is tens of
 //   milliseconds (the driver loads and initialises), and a session makes a
 //   decoder on every resize and codec switch, on whichever protocol thread it
-//   runs on. So the first decoder to ask opens it, under a lock, and every
-//   later one takes a reference to the same; it is kept until the process
-//   ends. A device that failed to open is not tried again: a machine without
-//   one does not grow one mid-session, and a retry per decoder would be the
-//   same delay and the same log line every time.
+//   runs on. So the first decoder to request it opens it, under a lock, and
+//   every later one takes a reference to the same; it is kept until the
+//   process ends. A device that failed to open is not tried again: a
+//   machine without one does not grow one mid-session, and a retry per
+//   decoder would be the same delay and the same log line every time.
 // - **The stream's profile decides, through `get_format`.** libavcodec offers
 //   the hardware's format when it has a hardware decoder for the codec, and
 //   when the driver then has no decoder for the profile (iHD has none for
@@ -48,8 +48,8 @@
 //   direct map (`vaDeriveImage`) skips that copy, which on Lunar Lake's iHD
 //   was 4.5 ms of a 1080p H.264 frame's 7.4 against 2 ms, plus 1.5 ms to
 //   unmap and reads half as fast: about 8% off a frame's decode and
-//   conversion and 10% of its CPU. Which way is faster is the machine's
-//   (and the picture size's: at 128x128 the image was), so each decoder
+//   conversion and 10% of its CPU. Which way is faster depends on the machine
+//   (and the picture size: at 128x128 the image was), so each decoder
 //   measures both, on alternate pictures (the map, a read of every plane,
 //   the unmap), and maps the faster way from then on.
 // - **Held, where the caller draws on the GPU.** Asked to `hold`, a VAAPI
@@ -88,8 +88,9 @@
 #include <libavutil/hwcontext.h>
 #include <libavutil/pixdesc.h>
 
-// libva's declarations as `va_shim.c` defines them, hidden: the two calls
-// made here, to sync and export a held picture's surface, are the shim's.
+// libva's declarations as `va_shim.c` defines them, hidden: the calls made
+// here (to sync and export a held picture's surface, and `vaErrorStr`) are the
+// shim's.
 #pragma GCC visibility push(hidden)
 #include <libavutil/hwcontext_vaapi.h>
 #include <va/va_drmcommon.h>
@@ -97,17 +98,17 @@
 
 #include "va_shim.h"
 
-// What one packet's decode came to when the hardware failed it, which the
-// caller never sees: the decoder falls back and decodes the packet again.
+// The internal status of a packet the hardware failed to decode, never
+// returned to the caller: the decoder falls back and decodes the packet again.
 #define HARDWARE_FAILED (-100)
 
 // How a decoder maps VAAPI surfaces for reading: not known yet, as an image
 // the driver copies into, or in place.
 enum { MAP_UNKNOWN, MAP_IMAGE, MAP_DIRECT };
-// The trial pictures of each way, alternating, which are compared by their
+// The number of trial pictures of each way, alternating, compared by their
 // medians, since one picture's wait for the GPU can be twice another's; and
-// the pictures before the first, which are the device setting up its
-// surfaces and not a frame's cost.
+// the number of pictures before the first trial, while the device sets up its
+// surfaces.
 #define MAP_TRIALS 8
 #define MAP_TRIALS_FROM 2
 
@@ -117,8 +118,8 @@ struct vento_video {
     int height;
     AVCodecContext *context;
     AVPacket *packet;
-    // The picture last described, and the one a newer is received into
-    // while it waits: two, so that only the last of several is read.
+    // The picture last described, and the next one, received while it waits:
+    // two, so that only the last of several is read.
     AVFrame *frame;
     AVFrame *newer;
     // A hardware picture's planes, mapped (or copied) for reading.
@@ -135,8 +136,8 @@ struct vento_video {
     int copy;
     // Pictures out of the device; how VAAPI's are mapped for reading (a
     // MAP_ verdict); and until that is known the trials of each way so far,
-    // what each cost (image's, direct's), and which way the mapping held was
-    // made as a trial (or -1), whose unmap is part of its cost.
+    // what each cost (image's, direct's), and which way the mapping held now
+    // was a trial of (or -1), since its unmap is part of that trial's cost.
     uint64_t hw_pictures;
     int map_verdict;
     int trials;
@@ -148,8 +149,8 @@ struct vento_video {
     int fail_next;
     int fail_software;
     // The decoder failed on the device mid-stream and no software decoder
-    // opened in its place: the libavcodec error that said so, which every
-    // packet from then on is refused with, untried. 0 while it decodes.
+    // opened in its place: the libavcodec error that said so, with which every
+    // later packet is refused without being decoded. 0 while it decodes.
     int dead;
     // Why the decoder is not on hardware, if anything stands in its way.
     char reason[256];
@@ -180,7 +181,7 @@ size_t vento_video_export_size(void) {
 }
 
 // The software decoder for the codec, or (`hardware`) the one libavcodec
-// decodes on a device with, which is the same one but for AV1.
+// uses on a device, which differs only for AV1.
 static const AVCodec *find(int codec, int hardware) {
     switch (codec) {
     case VENTO_VIDEO_H264:
@@ -198,7 +199,7 @@ static const AVCodec *find(int codec, int hardware) {
     }
 }
 
-// The codec as a person reads it, for a reason.
+// The codec's display name, for a reason string.
 static const char *codec_name(int codec) {
     switch (codec) {
     case VENTO_VIDEO_H264:
@@ -250,7 +251,7 @@ static uint64_t now_us(void) {
 // The shared VAAPI device.
 static struct {
     AVBufferRef *ref;
-    // 0 not tried, 1 open, -1 failed (why says why).
+    // 0 not tried, 1 open, -1 failed (`why` holds the reason).
     int state;
     char why[128];
 } vaapi;
@@ -266,8 +267,8 @@ int vento_video_device_state(int method) {
     return state;
 }
 
-// A reference to the VAAPI device, opening it if nobody has, or NULL with
-// "vaapi: <why>" in `why`.
+// A reference to the VAAPI device, opening it on first use, or NULL with
+// "vaapi: <reason>" in `why`.
 static AVBufferRef *device(char *why, size_t why_len) {
     pthread_mutex_lock(&device_lock);
     if (vaapi.state == 0) {
@@ -281,9 +282,8 @@ static AVBufferRef *device(char *why, size_t why_len) {
             if (!vento_va_loaded(&missing)) {
                 snprintf(vaapi.why, sizeof(vaapi.why), "no libva (%s)", missing);
             } else if (made == AVERROR_EXTERNAL) {
-                // Which is all libavcodec says when there is no render node
-                // or the driver would not initialise; what it logged said
-                // which.
+                // libavcodec returns only this when there is no render node
+                // or the driver does not initialise; its log says which.
                 snprintf(vaapi.why, sizeof(vaapi.why), "no device");
             } else {
                 char error[64];
@@ -299,7 +299,7 @@ static AVBufferRef *device(char *why, size_t why_len) {
     return ref;
 }
 
-// Why the decoder is not decoding the stream on the device.
+// Sets the reason the decoder is not decoding the stream on the device.
 static void say(vento_video *video, const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
@@ -307,7 +307,7 @@ static void say(vento_video *video, const char *fmt, ...) {
     va_end(ap);
 }
 
-// libavcodec's choice of format, made the hardware's where it is offered and
+// libavcodec's format callback: the hardware's format where it is offered, and
 // the software's where it is not, which is also where a hardware decoder that
 // failed to start for this stream's profile ends up: libavcodec asks again
 // without it. Called again on every change of the stream's parameters.
@@ -375,10 +375,10 @@ static int open_context(vento_video *video, int method, AVBufferRef *device) {
     return 0;
 }
 
-// A decoder on the VAAPI device where it was asked for and has not been
+// A decoder on the VAAPI device where it was requested and has not been
 // tried, if the device opens and so does a decoder on it; else the software
-// decoder, with why the device would not added to the decoder's reason. A
-// libavcodec error where not even software opens.
+// decoder, with the device's failure as the decoder's reason. A libavcodec
+// error where not even software opens.
 static int open_decoder(vento_video *video) {
     if (video->untried) {
         video->untried = 0;
@@ -442,8 +442,8 @@ vento_video *vento_video_open(int codec, int width, int height, int hardware, ch
     }
 
     // The VAAPI device where it opens, and a decoder on it that opens;
-    // anything else is the software decoder, with why. `auto` is the same,
-    // VAAPI and then software: the one device there is to try.
+    // anything else is the software decoder, with the reason kept. `auto` is
+    // the same, VAAPI and then software: the only device to try.
     video->untried = hardware == VENTO_VIDEO_HW_VAAPI || hardware == VENTO_VIDEO_HW_AUTO;
     int opened = open_decoder(video);
     if (opened < 0) {
@@ -477,12 +477,11 @@ void vento_video_fail_next(vento_video *video, int software_too) {
     video->fail_software = software_too != 0;
 }
 
-// The frame's colour, as `describe` and an export say it.
+// The frame's matrix and range, for `describe` and an export.
 static void colour(const AVFrame *f, int32_t *bt709, int32_t *full_range) {
-    // BT.601 for BT.601, and for a stream that says nothing — which is what
-    // the encoders met so far produce untagged, and what libavcodec's own
-    // scaler takes silence for — and BT.709 for anything else that names
-    // itself.
+    // BT.601 for BT.601 and for an untagged stream (the encoders seen so far
+    // produce BT.601 untagged, and libavcodec's own scaler assumes it for
+    // untagged input); BT.709 for any other tagged colour space.
     *bt709 = !(f->colorspace == AVCOL_SPC_BT470BG || f->colorspace == AVCOL_SPC_SMPTE170M ||
                f->colorspace == AVCOL_SPC_UNSPECIFIED);
     // The YUVJ formats are full range whatever the frame's range says.
@@ -494,7 +493,7 @@ static void colour(const AVFrame *f, int32_t *bt709, int32_t *full_range) {
 // YUV of eight to sixteen bits a sample with Y in a plane of its own and U and
 // V in planes of their own or interleaved in one (or packed as XV30): RGB, a
 // palette, big-endian samples (which no decoder on a little-endian machine
-// hands back), hardware surfaces, packed formats but that one, or chroma
+// hands back), hardware surfaces, packed formats other than XV30, or chroma
 // subsampled other than 4:2:0, 4:2:2, 4:4:0 or 4:4:4. An alpha plane after
 // the three is not read.
 static int describe(const AVFrame *f, struct vento_video_picture *out) {
@@ -506,8 +505,8 @@ static int describe(const AVFrame *f, struct vento_video_picture *out) {
     out->width = f->width;
     out->height = f->height;
 
-    // The one packed format read, which VAAPI decodes HEVC 4:4:4 at ten bits
-    // into, and which no descriptor of planes can say.
+    // The only packed format read, which VAAPI decodes 10-bit HEVC 4:4:4
+    // into, and which no descriptor of planes can describe.
     if (f->format == AV_PIX_FMT_XV30LE) {
         if (!f->data[0] || f->linesize[0] < f->width * 4)
             return 0;
@@ -571,10 +570,10 @@ static int describe(const AVFrame *f, struct vento_video_picture *out) {
     return 1;
 }
 
-// `video->reason` as "<method>: <what> (<error>)", for a hardware failure —
-// unless `get_format` has already said why the stream is not the hardware's,
-// which is the better reason: `av1` fails its first frame for want of a
-// device that can take the stream, and that is what is worth reading.
+// Sets `video->reason` to "<method>: <what> (<error>)" for a hardware failure,
+// unless `get_format` already set a reason (the device does not support the
+// stream), which is more useful: `av1` fails its first frame when no device
+// can take the stream.
 static int hardware_failed(vento_video *video, const char *what, int error) {
     if (video->reason[0])
         return HARDWARE_FAILED;
@@ -599,7 +598,7 @@ static int compare_us(const void *a, const void *b) {
     return (x > y) - (x < y);
 }
 
-// The median of one way's trials (sorting them).
+// The median of one way's trials (sorts them in place).
 static uint64_t median(uint64_t trials[MAP_TRIALS]) {
     qsort(trials, MAP_TRIALS, sizeof(trials[0]), compare_us);
     return (trials[MAP_TRIALS / 2 - 1] + trials[MAP_TRIALS / 2]) / 2;
@@ -642,8 +641,9 @@ static int hold_picture(vento_video *video, const AVFrame *f, struct vento_video
     const AVHWFramesContext *frames = (const AVHWFramesContext *)f->hw_frames_ctx->data;
     const AVVAAPIDeviceContext *device = frames->device_ctx->hwctx;
     VASurfaceID surface = (VASurfaceID)(uintptr_t)f->data[3];
-    // Decoded into memory before anybody is told it is there: the caller's
-    // GPU reads the DMA-BUF with no fence of the decoder's to wait on.
+    // Wait for the decode to finish before handing the surface out: the
+    // caller's GPU reads the DMA-BUF with no fence from the decoder to wait
+    // on.
     VAStatus synced = vaSyncSurface(device->display, surface);
     if (synced != VA_STATUS_SUCCESS)
         return AVERROR(EIO);
@@ -839,10 +839,9 @@ int vento_video_decode(vento_video *video, const uint8_t *data, size_t len, int 
         int opened = open_decoder(video);
         out->fell_back = opened < 0 ? -1 : 1;
         if (opened < 0) {
-            // Not even software: the decoder is no decoder now, and every
-            // packet from here on is refused. The context on the device goes
-            // with it, rather than staying to fail, and the software decoder
-            // to be tried again, on every packet after this one.
+            // Not even software: every packet from here on is refused. The
+            // context on the device is freed rather than left to fail again,
+            // and the software decoder is not retried on later packets.
             avcodec_free_context(&video->context);
             video->method = VENTO_VIDEO_HW_OFF;
             video->hw_format = AV_PIX_FMT_NONE;

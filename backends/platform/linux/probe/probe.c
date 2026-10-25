@@ -356,8 +356,8 @@ static bool waitFor(Probe *p, const bool *flag, int seconds) {
     return set;
 }
 
-/* Rows of R, G, B, A as a binary PPM, which is the one picture format that
-   needs no library and that every viewer and `magick` reads. */
+/* Writes rows of R, G, B, A as a binary PPM, a picture format that needs no
+   library and that every viewer and `magick` reads. */
 static bool writePpm(const char *path, const uint8_t *rgba, int width, int height) {
     FILE *f = fopen(path, "wb");
     if (!f) {
@@ -513,8 +513,8 @@ int vento_probe_run(const vento_probe *o, vento_probe_create create, void *confi
     } else {
         /* A second for the first frame to land, so that a click or a key
            goes to a desktop that is drawn rather than one that is loading;
-           then the rest of the time asked for. Both are waits on `closed`
-           with a deadline, which is what a flag that never sets makes them. */
+           then the rest of the time asked for. Both wait on `closed` with a
+           deadline, by waiting on a flag that is never set. */
         const bool never = false;
         waitFor(&p, &never, 1);
         if (!p.closed) {

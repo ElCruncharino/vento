@@ -22,8 +22,8 @@
 //!   reason ([`Why`]): the focus coming back, whose answer the session
 //!   offers to the far end, or a Ctrl+V, whose answer is pasted. One asked
 //!   for while another is going is started once that one ends, and takes
-//!   over its reasons, so only the newest text is given, to everyone who
-//!   asked.
+//!   over its reasons, so only the newest text is given, for every reason
+//!   it was asked.
 //! - **Setting** the text makes this process the owner, served from the
 //!   same thread in every format in `text.rs`, until another client takes
 //!   it over.

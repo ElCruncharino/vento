@@ -2,32 +2,32 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // RealVNC's viewer core as a `vento_session`: `RealVncBackend`, `RealVncCore`,
-// `RealVncPrompts` and `RealVncTraffic` said again in C++, against the seam
-// in `HostedCore.h` instead of the core's Java surface, so that the phone's
-// Java and this file are two clients of the same core with the same rules.
-// Those rules are the library's, and the Java files are where each was
-// found; what is here is the shape they force:
+// `RealVncPrompts` and `RealVncTraffic` reimplemented in C++, against the
+// seam in `HostedCore.h` instead of the core's Java surface, so that the
+// phone's Java and this file are two clients of the same core with the same
+// rules. Those rules come from the library, and the Java files are where each
+// was found; this file has the structure they force:
 //
 //   1. One thread, for the process, owns every call into the core and
-//      delivers every callback — the core registers its sockets on the looper
+//      delivers every callback: the core registers its sockets on the looper
 //      of the thread that called `createSession`, and its own Android layer
 //      funnels everything through one such thread that is never torn down.
 //      `CoreThread` below is that thread: started by the first session, kept
 //      for the rest, pumping the host's looper between the tasks posted to it.
 //   2. `copyScaledRegion` is called from the drawing thread, as the original
 //      calls it from its renderer, and `setScaleBufferSize` must not race it:
-//      the scaler takes a native mutex, the allocator does not, and the pair
-//      is a use-after-free inside the library without `pixels_` on our side.
+//      the scaler takes a native mutex, the allocator does not, and without
+//      `pixels_` on this side the pair is a use-after-free inside the library.
 //   3. Nothing is ever freed. `destroySession` on a session the core has
 //      closed is a SIGSEGV inside the core, and so is a second `closeSession`;
 //      the core tears a session down in `sessionClosed` and the handle may
-//      only be dropped, which is what the original does too. So `destroy`
-//      here retires the session from the thread and returns once nothing of
-//      it can run; the host's session object, the listener the core still
-//      holds and the core's own registry entry stay, by design, for as long
-//      as the process does.
-//   4. A connection that fails reports nothing — no callback, no message, no
-//      close — so there is a connect timeout, paused while a prompt is up.
+//      only be dropped, as the original does too. So `destroy` here retires
+//      the session from the thread and returns once nothing of it can run;
+//      the host's session object, the listener the core still holds and the
+//      core's own registry entry stay, by design, for as long as the process
+//      does.
+//   4. A connection that fails reports nothing (no callback, no message, no
+//      close), so there is a connect timeout, paused while a prompt is up.
 //   5. A prompt is a cookie and a later `*Result` call, which must come from
 //      the core's thread and from outside the callback that asked: answers
 //      are queued even when they arrive on that thread, since the probe
@@ -86,9 +86,10 @@ constexpr const char *PIN_CXX = VENTO_REALVNC_SHA256_ARM64_V8A_LIBCXX_SHARED;
 #error "Library.java pins the viewer core for arm64-v8a and x86_64 only"
 #endif
 
-/* SHA-256, FIPS 180-4, written out rather than borrowed because this file is
-   the neutral layer and has no library under it: the one job is to say
-   whether a file is the pinned one, before anything in it runs. */
+/* SHA-256 (FIPS 180-4), implemented here rather than taken from a library
+   because this file is the neutral layer and has no library under it. Its
+   only job is to check whether a file is the pinned one, before anything in
+   it runs. */
 class Sha256 {
 public:
     Sha256() {
@@ -219,8 +220,8 @@ std::string sha256Of(const std::string &path) {
     return sha.hex();
 }
 
-/* Both libraries against their pins; false, having said which, where either
-   is missing or is some other build. */
+/* Checks both libraries against their pins; logs which and returns false
+   where either is missing or is a different build. */
 bool verifyLibraries(const std::string &dir) {
     const struct {
         const char *name;
@@ -244,10 +245,10 @@ bool verifyLibraries(const std::string &dir) {
 
 // ---- the core thread ----------------------------------------------------------
 
-/* `RealVncCore`: the one thread, its queue, and the core it brought up. A
-   task posted from the thread itself is still queued — see rule 5 above —
-   and only `runBlocking` runs inline there, because waiting for oneself is
-   a deadlock. */
+/* As `RealVncCore`: the core thread, its queue, and the core it brought up.
+   A task posted from the thread itself is still queued (rule 5 above); only
+   `runBlocking` runs inline there, because waiting on the current thread
+   would deadlock. */
 class CoreThread {
 public:
     static CoreThread &instance() {
@@ -255,8 +256,8 @@ public:
         return *the;
     }
 
-    /* Idempotent. Brings the core up on the thread, blocking until it has,
-       and says why not where it could not. */
+    /* Idempotent. Brings the core up on the thread, blocking until done, and
+       sets `*why` on failure. */
     bool start(const std::string &libraryDir, const Bootstrap &bootstrap, std::string *why) {
         const std::lock_guard<std::mutex> guard(startLock_);
         if (core_) {
@@ -314,7 +315,7 @@ public:
         core_->wake();
     }
 
-    /* A delayed task, by an id `cancel` takes. */
+    /* Posts a delayed task; returns an id for `cancel`. */
     uint64_t postDelayed(Task task, int delayMs) {
         uint64_t id;
         {
@@ -367,7 +368,7 @@ private:
     void run() {
         threadId_ = std::this_thread::get_id();
         for (;;) {
-            // Everything due, then however long until the next thing is.
+            // Runs everything due, then polls until the next delayed task.
             std::deque<Task> ready;
             int timeout = -1;
             {
@@ -408,10 +409,10 @@ private:
 
 class Session;
 
-/* What the core is given to call. Its own object rather than the session,
-   because the core holds it for ever (rule 3) and the session is freed by
-   `destroy`: after that, every call finds no session and returns. Written and
-   read on the core thread only. */
+/* The listener given to the core. A separate object from the session,
+   because the core holds it forever (rule 3) and `destroy` frees the session:
+   after that, every call finds no session and returns. Written and read on
+   the core thread only. */
 class Bridge : public Listener {
 public:
     explicit Bridge(Session *session) : session_(session) {}
@@ -450,8 +451,8 @@ private:
     Session *session_;
 };
 
-/* The bridges the core still holds, kept so that it holds something. Core
-   thread only. */
+/* The bridges the core still holds, kept alive so that its pointers stay
+   valid. Core thread only. */
 std::vector<std::shared_ptr<Bridge>> &graveyard() {
     static auto *the = new std::vector<std::shared_ptr<Bridge>>;
     return *the;
@@ -502,11 +503,11 @@ public:
             if (dead_.load()) {
                 return;
             }
-            // Kept before the core is handed it, on the thread the graveyard
-            // is only ever touched on.
+            // Kept before the core is given it, on the only thread that
+            // touches the graveyard.
             graveyard().push_back(bridge_);
-            // Armed here rather than by the caller, so that the clock is only
-            // ever touched on the core thread.
+            // Armed here rather than by the caller, so that only the core
+            // thread touches the timeout.
             connectTimeout_ = CoreThread::instance().postDelayed([this] { onConnectTimeout(); },
                                                                  connectTimeoutMs_);
             const auto t0 = std::chrono::steady_clock::now();
@@ -536,7 +537,7 @@ public:
 
     const vento_callbacks &cb() const { return cb_; }
 
-    /* `closed` has gone out. */
+    /* Whether `closed` has been sent. */
     bool over() {
         const std::lock_guard<std::mutex> guard(lock_);
         return closedSent_;
@@ -564,9 +565,9 @@ public:
         onSession([=](HostedSession *hs) { hs->pointerEvent(x, y, buttonMask); });
     }
 
-    /* Which keys are down at the far end, kept here as well as in the core —
-       whose surface has no "let go of everything" — so that `release_all_keys`
-       can do what every other backend does. Core thread only. */
+    /* The keys held down at the far end are tracked here as well as in the
+       core (whose surface has no "release everything" call), so that
+       `release_all_keys` works as in every other backend. Core thread only. */
     void keyDown(uint32_t keysym, int64_t keyId) {
         onSession([=](HostedSession *hs) {
             held_.insert((int) keyId);
@@ -594,12 +595,12 @@ public:
         onSession([=](HostedSession *hs) { hs->focusEvent(focused); });
     }
 
-    /* The core pulls ours through `getClipboard` rather than being pushed —
-       at `createSession`, at `connSuccess`, and when the focus comes back —
-       so there is nothing to send: remember it and answer when asked. The
-       focus is bounced so that a text handed over mid-session reaches the far
-       end then rather than at the next real focus change, which on a desktop
-       may be never. */
+    /* The core pulls the local clipboard through `getClipboard` (at
+       `createSession`, at `connSuccess`, and when focus returns) rather than
+       having it pushed, so there is nothing to send: it is stored and returned
+       when asked for. The focus is toggled so that text set mid-session
+       reaches the far end immediately rather than at the next real focus
+       change, which on a desktop may never come. */
     void clipboard(const char *utf8) {
         {
             const std::lock_guard<std::mutex> guard(lock_);
@@ -612,17 +613,17 @@ public:
         });
     }
 
-    /* `RealVncBackend.setOption`: which keys need the second call is a fact
-       about this library, and the quality group goes over as a group,
-       colour depth first and quality last, the order the pair was seen to
-       work in. */
+    /* As `RealVncBackend.setOption`: which keys need the second call
+       (`applyOptions`) is a fact about this library, and the quality group is
+       sent together, colour depth first and quality last, the order found to
+       work. */
     void setOption(const std::string &key, const std::string &value) {
         Options alsoSet;
         {
             const std::lock_guard<std::mutex> guard(lock_);
             put(&options_, key, value);
-            // Same rule as the constructor's: a depth somebody has set is
-            // theirs, whether they set it before the session or during it.
+            // Same rule as the constructor's: a depth set explicitly, before
+            // the session or during it, is kept.
             colorLevelPinned_ = colorLevelPinned_ || key == "ColorLevel";
             if (needsApply(key)) {
                 if (!colorLevelPinned_ && key == "Quality") {
@@ -647,9 +648,9 @@ public:
         });
     }
 
-    /* Everything `ConnectionInfoBindings` knows, gathered on the core thread.
-       Two of the strings move on their own, which is what makes a panel's
-       poll worth having rather than a snapshot. */
+    /* Everything `ConnectionInfoBindings` reports, gathered on the core
+       thread. Two of the strings change over time, so a panel polls rather
+       than taking one snapshot. */
     bool info(vento_strings *out) {
         bool ok = false;
         CoreThread::instance().runBlocking([&] {
@@ -687,11 +688,11 @@ public:
 
     // ---- pixels, from the drawing thread --------------------------------------
 
-    /* Everything this library gives us goes through `copyScaledRegion`, which
+    /* All pixels from this library come through `copyScaledRegion`, which
        writes the region to the front of a buffer the core owns, at that
-       buffer's row stride — so the buffer is kept exactly the region's width,
+       buffer's row stride. So the buffer is kept exactly the region's width,
        and the rows are copied out into place, with the alpha byte filled in
-       as the seam promises. */
+       as the seam requires. */
     bool readRegion(int x, int y, int w, int h, void *dst, size_t stride, int dstX, int dstY) {
         if (w <= 0 || h <= 0 || x < 0 || y < 0 || dstX < 0 || dstY < 0) {
             return false;
@@ -716,12 +717,12 @@ public:
     }
 
     /* The core's scaler at `1/step`: its step is `(int)(1/scale)`, and the
-       float handed over is chosen so that both a float and a double
-       reciprocal truncate to exactly `step` — 1/3 as a float is 0.33333334,
-       whose reciprocal is 2.9999999 and a step of two, which walks the source
-       at half the stride the buffer was sized for and is a native crash on
-       the way out; the Android backend sidesteps this by using powers of two
-       only, and this one nudges the float down until the arithmetic agrees. */
+       float passed is chosen so that both a float and a double reciprocal
+       truncate to exactly `step`. 1/3 as a float is 0.33333334, whose
+       reciprocal is 2.9999999, a step of two, which walks the source at half
+       the stride the buffer was sized for and crashes in native code on the
+       way out. The Android backend avoids this by using only powers of two;
+       this one nudges the float down until the arithmetic agrees. */
     bool readThumbnail(int step, void *dst, size_t stride, int dstW, int dstH) {
         if (step < 1) {
             return false;
@@ -814,8 +815,8 @@ public:
 
     // ---- lifecycle ---------------------------------------------------------
 
-    /* `RealVncBackend.disconnect`: close it *and* retire the handle, which is
-       what stops the close happening twice. */
+    /* As `RealVncBackend.disconnect`: closes the session *and* retires the
+       handle, which prevents a second close. */
     void disconnect() {
         asked_.store(true);
         if (hs_.load()) {
@@ -827,18 +828,18 @@ public:
 
     /* Retires the session from the core thread and returns once nothing of
        it can run there: the handle is dropped, the close is sent if the core
-       has not already said it is closed, a `closed` nobody has heard yet is
-       delivered — it is the last callback, and this is the last chance — and
-       the bridge the core still holds is cut. The thread itself is not
-       stopped: it is the core's, shared, and the core keeps the session; what
-       is leaked is theirs (rule 3). */
+       has not already reported it closed, a `closed` not yet sent is
+       delivered (it is the last callback, and this is the last chance), and
+       the bridge the core still holds is cut off. The thread itself is not
+       stopped: it is the core's and shared, and the core keeps the session;
+       what is leaked is the core's (rule 3). */
     void destroy() {
         dead_.store(true);
         asked_.store(true);
         reap(true);
-        // A moment for the core's own `sessionClosed` to follow the close, so
-        // that the usual ending is the usual one; the platform's own wait for
-        // `closed` is before this, as the probe's is.
+        // A short wait for the core's own `sessionClosed` to follow the
+        // close, so that the session ends the usual way; the platform's own
+        // wait for `closed` comes before this, as the probe's does.
         {
             std::unique_lock<std::mutex> guard(lock_);
             closedCv_.wait_for(guard, std::chrono::seconds(2), [this] { return closedSent_; });
@@ -847,8 +848,8 @@ public:
             closed("");
             bridge_->retire();
             // Last, where nothing can arm it again: a prompt answered while
-            // this was on its way could have, and a clock left running would
-            // fire into a session that is gone.
+            // this task was queued could have re-armed it, and a timeout left
+            // running would fire into a session that is gone.
             CoreThread::instance().cancel(connectTimeout_);
         });
     }
@@ -858,8 +859,8 @@ public:
     void onConnSuccess() {
         LOGI("connSuccess");
         CoreThread::instance().cancel(connectTimeout_);
-        // An error the core showed before it got here — a wrong password
-        // asked again — is not why the session ends later.
+        // An error the core showed before this point (a wrong password,
+        // asked again) is not the reason the session ends later.
         lastError_.clear();
         int w, h;
         {
@@ -880,7 +881,7 @@ public:
             height_ = height;
             connected = state_ == State::Connected;
         }
-        // Before `connSuccess` the size is `connected`'s to carry.
+        // Before `connSuccess`, the size is reported by `connected`.
         if (connected) {
             cb_.desktop_size(cb_.user, width, height);
         }
@@ -891,10 +892,10 @@ public:
     }
 
     void onFrameEnd() {
-        // Where the received count is sampled, because this is the edge that
+        // The received count is sampled here, because this is the edge that
         // moves it: the estimator's window is the update this call ends. Once
-        // a second is enough — the mark is cumulative, so a skipped update
-        // costs nothing at all.
+        // a second is enough: the mark is cumulative, so a skipped update
+        // loses nothing.
         const int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
                                     std::chrono::steady_clock::now().time_since_epoch())
                                     .count();
@@ -908,9 +909,9 @@ public:
     }
 
     void onCursor(const uint32_t *pixels, int width, int height, int negHotX, int negHotY) {
-        // The two ints are the negated hotspot: their RFB parser rewrites a
-        // cursor rectangle to Rect(-hot, size - hot) on arrival and this
-        // callback forwards that rectangle's origin.
+        // The two ints are the negated hotspot: the core's RFB parser
+        // rewrites a cursor rectangle to Rect(-hot, size - hot) on arrival
+        // and this callback forwards that rectangle's origin.
         if (!pixels || width <= 0 || height <= 0) {
             cb_.cursor(cb_.user, nullptr, 0, 0, 0, 0);
             return;
@@ -937,13 +938,13 @@ public:
 
     void onSessionClosed() {
         LOGI("sessionClosed");
-        // Already closed by definition, so do not close it again — nor let a
-        // close that is still queued do so.
+        // Already closed, so it must not be closed again, either here or by
+        // a close still queued.
         coreClosed_ = true;
         reap(false);
-        // A close that was asked for says nothing, whatever the core showed
-        // on the way out: the error a disconnect's own close brings about,
-        // or one from earlier in the session, is not a reason.
+        // A requested close reports no reason, whatever the core showed on
+        // the way out: an error caused by the disconnect's own close, or one
+        // from earlier in the session, is not the reason.
         closed(asked_.load() ? "" : lastError_);
     }
 
@@ -959,7 +960,7 @@ public:
             LOGI("  %s", instructions.c_str());
         }
         if (passwdCookie_ != 0) {
-            // Two at once is not something the core does; the older one is
+            // The core is not known to ask two at once; the older one is
             // declined rather than lost.
             CoreThread::instance().core()->passwdResult(passwdCookie_, false, nullptr, nullptr);
             promptAnswered();
@@ -974,8 +975,8 @@ public:
                           const std::string &signature, const std::string &catchphrase,
                           const std::string &name, const std::string &matchingName) {
         // The identity is the first argument and the encryption the second,
-        // which is the opposite of what their names in a decompiled signature
-        // suggest — see SecurityDlgBindings. The numbers are the seam's.
+        // the opposite of what the names in a decompiled signature suggest
+        // (see SecurityDlgBindings). The numbers are the seam's.
         LOGI("promptSecurity id=%d enc=%d name=%s", identityState, encryptionState,
              name.c_str());
         const int identity = identityState >= VENTO_IDENTITY_OK && identityState <= VENTO_IDENTITY_ARD
@@ -1003,9 +1004,9 @@ public:
             default: severity = VENTO_SEVERITY_INFORMATION; break;
         }
         LOGI("message (flags %d): %s", flags, message.c_str());
-        // What `closed` will say, if this is why: a refused port, a wrong
-        // password and a server that went away all arrive as one of these
-        // and then a `sessionClosed` that says nothing.
+        // The reason `closed` reports, if this is the cause: a refused port,
+        // a wrong password and a server that went away all arrive as one of
+        // these, followed by a `sessionClosed` with no reason.
         if (severity == VENTO_SEVERITY_ERROR && !question) {
             lastError_ = message;
         }
@@ -1024,16 +1025,15 @@ public:
     void onReconnected() { LOGI("reconnected"); }
 
     void onSaveCredentials(const std::string &userName, const std::string &password) {
-        // A connection store is where these belong, and nothing here has a
-        // way to reach one: saying so is better than silently dropping them.
+        // These belong in a connection store, which this file cannot reach;
+        // logging the request is better than dropping it silently.
         (void) password;
         LOGI("server asked to save credentials for %s", userName.c_str());
     }
 
     void onSaveIdentity(const std::string &identity) {
-        // Answering the prompt with "remember" is what makes the core send
-        // this; handing it back next time is what makes that connection
-        // silent.
+        // The core sends this when the prompt is answered with "remember";
+        // passing it back next time skips the prompt for that server.
         const std::lock_guard<std::mutex> guard(lock_);
         identity_ = identity;
     }
@@ -1076,16 +1076,17 @@ private:
         return fallback;
     }
 
-    /* Stop the clock: something is being asked of a person. Counted rather
-       than a flag because the security prompt and the password prompt both
-       arrive before `connSuccess`, and the second can open while the first is
-       still up. Core thread only. */
+    /* Pauses the connect timeout while a prompt waits for the user. A count
+       rather than a flag because the security prompt and the password prompt
+       both arrive before `connSuccess`, and the second can open while the
+       first is still up. Core thread only. */
     void promptShown() {
         outstandingPrompts_++;
         CoreThread::instance().cancel(connectTimeout_);
     }
 
-    /* Start it again, from the top, once the last dialog is gone. */
+    /* Restarts the connect timeout from the beginning once the last prompt
+       is answered. */
     void promptAnswered() {
         outstandingPrompts_ = std::max(0, outstandingPrompts_ - 1);
         if (outstandingPrompts_ == 0 && state() == State::Connecting && !dead_.load()) {
@@ -1094,11 +1095,11 @@ private:
         }
     }
 
-    /* A task of the core thread's, and not a callback of the core's, so the
-       handle is retired and the close made here rather than queued: queued,
-       it would wait out another turn of the core's loop, whose callbacks
-       would reach the platform after `closed`. `closed` goes first, so that
-       a `sessionClosed` the close brings about finds it already said. */
+    /* A core thread task, not a core callback, so the handle is retired and
+       the close made here rather than queued: if queued, it would wait out
+       another turn of the core's loop, whose callbacks would reach the
+       platform after `closed`. `closed` goes first, so that a `sessionClosed`
+       caused by the close finds it already sent. */
     void onConnectTimeout() {
         if (state() == State::Connecting) {
             LOGW("no connSuccess within %d ms", connectTimeoutMs_);
@@ -1109,7 +1110,7 @@ private:
         }
     }
 
-    /* Retire the handle: nothing new can be posted for it, and what is
+    /* Retires the handle: nothing new can be posted for it, and what is
        already queued is skipped by `onSession`'s identity check. From any
        thread; the rest is done on the core thread. */
     void reap(bool close) {
@@ -1120,25 +1121,27 @@ private:
         CoreThread::instance().post([this, hs, close] { drop(hs, close); });
     }
 
-    /* The core thread's half of retiring a handle: the clock stopped, the
-       buffer dropped, and the close sent if asked for. The pixel lock as
-       well as the core thread: a fetch in flight on the drawing thread must
-       not be looking at the buffer this drops. */
+    /* The core thread's part of retiring a handle: the connect timeout
+       cancelled, the buffer dropped, and the close sent if requested. Holds
+       the pixel lock as well as running on the core thread: a read in
+       progress on the drawing thread must not be using the buffer this
+       drops. */
     void drop(HostedSession *hs, bool close) {
         CoreThread::instance().cancel(connectTimeout_);
         const std::lock_guard<std::mutex> guard(pixels_);
         buffer_ = nullptr;
         bufferW_ = bufferH_ = 0;
-        // Not once the core has said it is closed: it tears the session down
-        // in `sessionClosed`, and a close after that faults in the same place
-        // a second one does. Asked of the core's own word and not of `state_`,
-        // which `closed` sets before the core has been told anything.
+        // Not after the core has reported it closed: it tears the session
+        // down in `sessionClosed`, and a close after that faults in the same
+        // place a second one does. Decided by the core's own report
+        // (`coreClosed_`) rather than by `state_`, which `closed` sets before
+        // the core has been told anything.
         if (close && !coreClosed_) {
             hs->closeSession();
         }
     }
 
-    /* Once, and on the core thread. */
+    /* Sends `closed` once; core thread only. */
     void closed(const std::string &detail) {
         {
             const std::lock_guard<std::mutex> guard(lock_);
@@ -1187,9 +1190,9 @@ private:
         }
     }
 
-    /* `RealVncTraffic.sample`, core thread only: the estimator's words,
-       checked against the line speed the core publishes before a byte of
-       them is believed, and retired after three disagreements in a row. */
+    /* As `RealVncTraffic.sample`, core thread only: the estimator's words are
+       checked against the line speed the core publishes before any of them is
+       used, and the count is retired after three disagreements in a row. */
     void sampleTraffic(HostedSession *hs) {
         if (trafficGaveUp_) {
             return;
@@ -1210,10 +1213,10 @@ private:
         memcpy(&rtt, est + EST_RTT, sizeof rtt);
         memcpy(&mark, est + EST_MARK, sizeof mark);
 
-        // Their arithmetic, both of it: a kilobit total over an elapsed time
-        // in 100 ns units, and a division that truncates towards zero. The
-        // divisor is zero until the first window closes, where their aarch64
-        // sdiv answers zero.
+        // The core's arithmetic, both parts: a kilobit total over an elapsed
+        // time in 100 ns units, and a division that truncates towards zero.
+        // The divisor is zero until the first window closes, where the core's
+        // aarch64 sdiv returns zero.
         const int speed = elapsed == 0 ? 0 : (int) (kilobits * 10000000LL / elapsed);
         const int rttMs = (int) (rtt / 10000);
         const std::string published = hs->info(Info::LineSpeed);
@@ -1243,10 +1246,10 @@ private:
         }
     }
 
-    /* Does a string the core formatted say these two numbers? Their template
-       is "%1$D kbit/s (RTT ~%2$Dms)" in one locale and reworded in others, so
-       what is compared is the two integers in it rather than its shape — with
-       whatever groups the digits skipped. */
+    /* Whether a string formatted by the core states these two numbers. The
+       core's template is "%1$D kbit/s (RTT ~%2$Dms)" in one locale and
+       reworded in others, so the comparison is of the two integers in it
+       rather than its shape, skipping digit group separators. */
     static bool states(const std::string &published, int speed, int rttMs) {
         if (published.empty()) {
             return false;
@@ -1276,8 +1279,8 @@ private:
 
     static bool isDigit(char c) { return c >= '0' && c <= '9'; }
 
-    /* Comma, full stop and the three spaces a number can be grouped with —
-       the two non-ASCII ones as the UTF-8 they are here. */
+    /* Comma, full stop and the three spaces a number can be grouped with,
+       the two non-ASCII ones in UTF-8. */
     static bool isGroupSeparator(const std::string &s, size_t i) {
         const char c = s[i];
         if (c == ',' || c == '.' || c == ' ') {
@@ -1305,7 +1308,7 @@ private:
 
     std::atomic<HostedSession *> hs_{nullptr};
     std::atomic<bool> dead_{false};
-    std::atomic<bool> asked_{false}; // disconnect or destroy: the ending is ours
+    std::atomic<bool> asked_{false}; // disconnect or destroy: the close was requested
 
     std::mutex pixels_;            // the scale buffer, against a concurrent resize
     uint8_t *buffer_ = nullptr;    // the core's
@@ -1313,7 +1316,7 @@ private:
 
     // Core thread only.
     uint64_t connectTimeout_ = 0;
-    bool coreClosed_ = false;      // the core has said `sessionClosed`
+    bool coreClosed_ = false;      // the core has called `sessionClosed`
     int outstandingPrompts_ = 0;
     int64_t passwdCookie_ = 0;
     std::string proposedUser_;
@@ -1326,25 +1329,25 @@ private:
 
     std::mutex trafficLock_;
     int64_t trafficTotal_ = 0;
-    int64_t trafficMark_ = -1;     // no sample yet, which is not a mark of zero
+    int64_t trafficMark_ = -1;     // no sample yet, as distinct from a mark of zero
     bool trafficAgreed_ = false;
     bool trafficGaveUp_ = false;
 };
 
 // ---- the bridge ---------------------------------------------------------------
 
-/* Whether a call of the core's still reaches the session: not once it is
-   retired, and not once `closed` has gone out either. The core can call back
-   between being told to close and saying it has — a `connSuccess`, a prompt,
-   a paint, after the connect timeout's close — and `closed` is the last
-   callback a session makes. Only `sessionClosed` passes after it, which
-   says nothing more and lets a close still queued know not to be sent. */
+/* Whether a call from the core still reaches the session: not after it is
+   retired, and not after `closed` has been sent. The core can call back
+   between being told to close and reporting that it has (a `connSuccess`, a
+   prompt or a paint after the connect timeout's close), and `closed` is the
+   last callback a session makes. Only `sessionClosed` passes after it; it
+   reports nothing more, and tells a close still queued not to be sent. */
 bool Bridge::live() const {
     return session_ && !session_->over();
 }
 
-/* A question nobody will answer, declined — and posted, never answered from
-   inside the call that asked it (rule 5). */
+/* Declines a question that will not be answered, posted rather than
+   answered from inside the asking call (rule 5). */
 static void decline(std::function<void(HostedCore *)> answer) {
     CoreThread::instance().post([answer = std::move(answer)] {
         answer(CoreThread::instance().core());
@@ -1422,7 +1425,7 @@ void Bridge::saveCredentials(const std::string &userName, const std::string &pas
     if (live()) session_->onSaveCredentials(userName, password);
 }
 void Bridge::saveIdentity(const std::string &identity) {
-    // Kept, not delivered: the identity is read out after the end.
+    // Not gated on `live()`: the identity is read out after the session ends.
     if (session_) session_->onSaveIdentity(identity);
 }
 void Bridge::securityBanner(const std::string &text, const std::string &background, int flags) {
@@ -1459,9 +1462,9 @@ void op_view_only(vento_session *base, bool viewOnly) {
     sessionOf(base)->setOption("ViewOnly", viewOnly ? "true" : "false");
 }
 
-/* The size and the view-only answer, and nothing else: this library exposes
-   no monitor layout, offers no second display, and its resize support is not
-   reachable through the binding surface this backend has. */
+/* No resizing and no monitors: this library exposes no monitor layout,
+   offers no second display, and its resize support is not reachable through
+   this backend's bindings. */
 bool op_can_resize(vento_session * /*base*/) {
     return false;
 }
@@ -1534,34 +1537,35 @@ const vento_session_ops OPS = {
         op_answer_trust,
         op_disconnect,
         op_destroy,
-        // The optional three, none of which their core offers: no layout to
-        // number (`op_monitors` has none to report), no call that places
-        // screens, and a picture it decodes itself rather than through the
-        // platform's decoders. NULL, as the table says for each.
+        // The three optional entries, none of which the core supports: no
+        // layout to number (`op_monitors` has none to report), no call that
+        // places screens, and the core decodes the picture itself rather than
+        // through the platform's decoders. NULL, as `vento/backend.h` allows
+        // for each.
         nullptr, // screens
         nullptr, // request_layout
         nullptr, // decoder_status
 };
 
-/* The core's own `Log` parameter, `RealVncCore.CORE_LOG` word for word.
-   `LogMode.LOG_DEBUG` sets it to `*:android:110` — every category, to
-   liblog, down to the core's level 110, which it writes at VERBOSE — and
-   three categories write a line there per event: `CKeyboard` and `CConn`
-   one per key going down and up, naming the keysym (the typed key, which
-   no log should hold), and `LineSpeedEstimator` one per estimate, a run
-   of them with every burst of updates. Those three are held at level 100,
-   which drops their VERBOSE lines, and in a session those are the only
-   ones: what each says at DEBUG and up (`CConn`'s "sending client cut
-   text", any warning or error) still comes through, and every other
-   category is as it was. Parameters given to `initApp` are set after the
-   log mode's, at the same priority, so this one is what the core logs by.
-   Keyed on the category, not the text, so it survives a reworded line. */
+/* The core's own `Log` parameter, identical to `RealVncCore.CORE_LOG`.
+   `LogMode.LOG_DEBUG` sets it to `*:android:110` (every category, to liblog,
+   down to the core's level 110, which it writes at VERBOSE), and three
+   categories write a line there per event: `CKeyboard` and `CConn` one per
+   key press and release, naming the keysym (the typed key, which no log
+   should hold), and `LineSpeedEstimator` one per estimate, a run of them
+   with every burst of updates. Those three are held at level 100, which
+   drops their VERBOSE lines, and in a session those are the only lines
+   dropped: what each writes at DEBUG and above (`CConn`'s "sending client
+   cut text", any warning or error) still comes through, and every other
+   category is unchanged. Parameters given to `initApp` are set after the log
+   mode's, at the same priority, so this one takes effect. Keyed on the
+   category, not the text, so it still applies if a line is reworded. */
 constexpr const char *CORE_LOG =
         "*:android:110,CKeyboard:android:100,CConn:android:100,LineSpeedEstimator:android:100";
 
-/* `RealVncCore`'s bootstrap: our own namespace rather than theirs, which
-   would inherit any policy file already on the machine, and the four global
-   parameters that class sets and says why. */
+/* `RealVncCore`'s bootstrap: this app's own namespace rather than
+   RealVNC's, which would pick up any RealVNC policy file already on the
+   machine, and the four global parameters that class sets and explains. */
 Bootstrap bootstrapFor(const std::string &stateDir) {
     Bootstrap b;
     b.appName = "net.pgaskin.remotedesktop";
@@ -1571,9 +1575,9 @@ Bootstrap bootstrapFor(const std::string &stateDir) {
     b.logName = "vncviewer";
     b.fileLogging = true;
     b.logMode = 1; // LogMode.LOG_DEBUG
-    // The cursor is ours to draw, at our own scale, over a desktop the
-    // viewport may be magnifying — which is the whole premise of the control
-    // stack, and so is not offered as a setting.
+    // The client draws the cursor, at its own scale, over a desktop the
+    // viewport may be magnifying. The control stack depends on that, so it
+    // is not offered as a setting.
     b.global = {{"UseLocalCursor", "true"}, {"Locale", "en_US"}, {"SctpMaxMtu", "1200"},
                 {"Log", CORE_LOG}};
     return b;
@@ -1591,8 +1595,8 @@ Options optionsFor(const vento_realvnc_config &cfg) {
     const std::string quality = cfg.quality ? cfg.quality : "Auto";
     o.emplace_back("Quality", quality);
     o.emplace_back("PreferredEncoding", cfg.preferred_encoding ? cfg.preferred_encoding : "ZRLE2");
-    // Whether the colour depth is this connection's own choice: a depth
-    // somebody set must not be moved out from under them by the quality.
+    // A colour depth set explicitly is used as given; otherwise it follows
+    // the quality, which never overrides a chosen depth.
     o.emplace_back("ColorLevel", cfg.color_level ? cfg.color_level
                                                  : (quality == "Low" ? "rgb111" : "full"));
     o.emplace_back("ViewOnly", asBool(cfg.view_only));

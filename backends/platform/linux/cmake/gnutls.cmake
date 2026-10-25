@@ -6,40 +6,39 @@
 # (`platform/android/ports/{gnutls,nettle}`) build: the same versions, nettle
 # with mini-gmp as there, as static position-independent archives that the
 # libvnc and TigerVNC libraries link in (`vento_linux.cmake` keeps their
-# symbols out of the exports). The system's would tie a built tree to its
-# distribution's sonames: nettle's changes with nearly every release
+# symbols out of the exports). The system's libraries would tie a built tree to
+# its distribution's sonames: nettle's changes with nearly every release
 # (libnettle.so.6 on Ubuntu 18.04, .so.8 on current ones, .so.9 from 4.0),
 # and an older distribution has no GnuTLS that a newer one's tree can run
 # against.
 #
 # The phone's ports compile the sources from CMake with configure's answers
-# committed in their gen/, since an app build must not run configure. A
-# host build may, so this runs upstream's own build, autotools and all,
-# through ExternalProject: configure, make and install into the build tree,
-# once, at build time, with nothing committed. It is redone when its command
-# line changes (a compiler, a flag) and when a tarball's version does, since
-# the version names the directory everything is built in. Unlike the phone's,
-# the assembly is on: nettle's (m4 input, so where `m4` is installed; without
-# it, nettle is built in C with a note saying so) and GnuTLS's x86-64 AES,
-# GHASH and SHA, which is assembler source in the tarball.
+# committed in their gen/, since an app build must not run configure. A host
+# build may, so this runs upstream's own autotools build through
+# ExternalProject: configure, make and install into the build tree, once, at
+# build time, with nothing committed. It is redone when its command line
+# changes (a compiler, a flag) and when a tarball's version does, since the
+# version names the build directory. Unlike the phone's build, the assembly is
+# on: nettle's (m4 input, so only where `m4` is installed; without it, nettle
+# is built in C with a note saying so) and GnuTLS's x86-64 AES, GHASH and SHA,
+# which are assembler sources in the tarball.
 #
-# Neither reads anything of the build machine's at run time but two paths:
-# the CA bundle GnuTLS loads as the system's trust store, which the
-# backends hand every certificate past anyway (both libraries are patched to
-# ask the client about one that verified too, so the known hosts decide),
-# at the path Debian, Ubuntu and Fedora all have it at; and the system
-# priority file, at the path Debian's GnuTLS reads, rather than the
-# crypto-policies file Fedora's reads, whose contents follow Fedora's own
-# GnuTLS version.
+# At run time neither reads any file of the system's except two: the CA bundle
+# GnuTLS loads as the system trust store, at the path Debian, Ubuntu and
+# Fedora all use (the backends pass every certificate to the client anyway:
+# both libraries are patched to ask about one that verified too, so the known
+# hosts decide); and the system priority file, at the path Debian's GnuTLS
+# reads rather than the crypto-policies file Fedora's reads, whose contents
+# follow Fedora's own GnuTLS version.
 #
 # The tarballs are downloaded and unpacked at configure time when a tree is
 # missing or is not the pinned release (`vento_crypto_source` below), so
 # that ExternalProject finds the sources and a host build needs no Gradle.
 #
-# The result is three imported targets named as the phone's ports name
-# theirs, `gnutls`, `hogweed` and `nettle`, each carrying its include
-# directory and what it links after it, and VENTO_GNUTLS_VERSION for
-# libvncserver's version check.
+# The result is three imported targets with the phone's ports' names,
+# `gnutls`, `hogweed` and `nettle`, each carrying its include directory and the
+# libraries it links after it, and VENTO_GNUTLS_VERSION for libvncserver's
+# version check.
 
 # The hash in `<tree>/.pin`, or nothing.
 function(vento_crypto_source_pin tree out)
@@ -56,11 +55,11 @@ endfunction()
 # Gradle: downloaded from the first mirror that answers, checked against
 # the pinned SHA-256 before anything is unpacked, unpacked without the
 # tarball's top directory, with a `.pin` file holding the hash. A tree
-# whose `.pin` holds the pinned hash is kept as it is; any other is
-# replaced. The tree is unpacked under `third_party/.fetch/` and renamed
-# into place with its `.pin`, so an interrupted download or unpack leaves
-# the previous tree or none, never part of one. A lock there serialises
-# the configures of several build trees.
+# whose `.pin` holds the pinned hash is kept; any other is replaced. The
+# tree is unpacked under `third_party/.fetch/` and renamed into place with
+# its `.pin`, so an interrupted download or unpack leaves the previous tree
+# or none, never part of one. A lock there serialises the configures of
+# several build trees.
 function(vento_crypto_source third_party name)
     unset(version)
     unset(sha256)
@@ -179,8 +178,8 @@ block(SCOPE_FOR VARIABLES PROPAGATE VENTO_GNUTLS_VERSION)
     set(prefix "${root}/prefix")
     string(TOUPPER "${CMAKE_BUILD_TYPE}" type)
     set(cflags "${CMAKE_C_FLAGS} ${CMAKE_C_FLAGS_${type}} -fPIC")
-    # The environment of whatever runs the build (cargo's, a shell's) is not
-    # the one either configure is meant to see.
+    # Neither configure is meant to see the environment of the process
+    # running the build (cargo's, a shell's).
     set(env ${CMAKE_COMMAND} -E env
             "CC=${CMAKE_C_COMPILER}" "CFLAGS=${cflags}" "LDFLAGS=" "LIBS="
             "PKG_CONFIG_LIBDIR=${prefix}/lib/pkgconfig" "PKG_CONFIG_PATH=")
@@ -205,8 +204,8 @@ block(SCOPE_FOR VARIABLES PROPAGATE VENTO_GNUTLS_VERSION)
             INSTALL_BYPRODUCTS "${prefix}/lib/libnettle.a" "${prefix}/lib/libhogweed.a"
             LOG_CONFIGURE ON LOG_BUILD ON LOG_INSTALL ON LOG_OUTPUT_ON_FAILURE ON)
 
-    # The phone port's configuration (its gen.sh says why each), but for the
-    # trust store, the priority file and the hardware acceleration above.
+    # The phone port's configuration (its gen.sh gives the reason for each),
+    # except for the trust store, the priority file and the assembly above.
     ExternalProject_Add(vento_gnutls_build
             DEPENDS vento_nettle_build
             PREFIX "${root}"

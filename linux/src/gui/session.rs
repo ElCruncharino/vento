@@ -24,7 +24,7 @@
 //!
 //! The cursor is the one place the two pointer modes differ on screen. In
 //! absolute mode the far end sends its cursor's shape and this makes it the
-//! window's own pointer (`cursor.rs`) — or, with the software cursor
+//! window's own pointer (`cursor.rs`), or, with the software cursor
 //! setting, draws it under the local pointer, hiding the OS cursor over the
 //! desktop, as the Android app does. In relative mode the far end draws
 //! its own cursor into the picture and owns the motion, so the local
@@ -39,16 +39,15 @@
 //! phone has (`settings.rs`), with its rule: the last text seen crossing
 //! either way is remembered, and is never sent back where it came from.
 //!
-//! The debug overlay (`hud.rs`) is the phone's `SessionHud`: every
-//! collaborator's state, in a corner, from the connection panel or
+//! The debug overlay (`hud.rs`) is the phone's `SessionHud`: the state of
+//! each part of the session, in a corner, from the connection panel or
 //! Ctrl+Alt+D.
 //!
 //! What is here is the same in every window the session is shown in: the
 //! backend and its mailbox, the desktop, the follower, the prompts and the
 //! trust stores, the far end's cursor, the keys held, the capture, the
-//! clipboard.
-//! What one window has of its own — its view, its monitor, its toolbar,
-//! the pointer over it — is its [`Pane`] (`pane.rs`).
+//! clipboard. What one window has of its own (its view, its monitor, its
+//! toolbar, the pointer over it) is its [`Pane`] (`pane.rs`).
 //!
 //! A session with a far end of several monitors can be shown in several
 //! windows, one monitor in each: the main window's toolbar pops one out
@@ -207,17 +206,17 @@ pub struct Session {
     /// hardware decoding setting is switched on it.
     decoders: Arc<backends::FFmpeg>,
     /// Where the session's sound plays, also handed to the backend: the
-    /// sound switch is set on its controls — a mute, which every stream of
+    /// sound switch is set on its controls (a mute, which every stream of
     /// the session plays under, at once and without the backend hearing of
-    /// it, or an enable, which the backend asks the far end.
+    /// it, or an enable, which the backend asks the far end for).
     audio: Arc<backends::Audio>,
     /// The session's sound as it last said it (`Event::Sound`): whether
     /// there is a switch and what it does, and whether anything plays.
     pub sound: Sound,
     /// Whether a hardware picture the backend leaves on the GPU is drawn
-    /// from there (`zerocopy.rs`): `Ok` while it can be, or why not — the
+    /// from there (`zerocopy.rs`): `Ok` while it can be, or why not (the
     /// device cannot, or an import failed, after which the session's
-    /// pictures are read back to the end of it.
+    /// pictures are read back to the end of it).
     zero_copy: Result<(), String>,
     mailbox: Arc<Mailbox>,
     desktop: Option<Desktop>,
@@ -410,9 +409,9 @@ impl Session {
     /// Turns the session's sound switch, which is the session's in every
     /// window it is shown in: an Enable switch asks the far end to send its
     /// sound (`on`) or to stop, and a Mute switch mutes it here (`on`) or
-    /// lets it be heard again — at once, since the device takes the samples
-    /// through the controls, so what is queued keeps draining under the mute
-    /// and unmuting is the sound as it is now. Not saved: the next session
+    /// lets it be heard again, at once: the device takes the samples through
+    /// the controls, so what is queued keeps draining under the mute and
+    /// unmuting is the sound as it is now. Not saved: the next session
     /// starts as its connection's option (Audio, Sound) says.
     pub fn set_sound(&mut self, on: bool) {
         let controls = self.audio.controls();
@@ -457,8 +456,8 @@ impl Session {
     /// Whether the window should hold the compositor's or the window
     /// manager's shortcuts off: while input has somewhere to go, and not
     /// while the pointer is on the toolbar. The toolbar is this end's, so
-    /// while it is being used the keyboard is too — Alt+Tab included, which
-    /// is how a grabbed window is otherwise left only with the mouse.
+    /// while it is being used the keyboard is too (Alt+Tab included, which
+    /// is how a grabbed window is otherwise left only with the mouse).
     /// Never with the grab keyboard setting off. `pane` is the window that
     /// has the focus, whose toolbar it is.
     pub fn holds_shortcuts(&self, pane: PaneId) -> bool {
@@ -657,7 +656,7 @@ impl Session {
 
     fn set_cursor(&mut self, ctx: &egui::Context, shape: Option<Cursor>) {
         self.cursor = shape.map(|c| {
-            // Straight alpha, as the seam has it (see `events::Cursor`).
+            // Straight alpha, as `events::Cursor` has it.
             let image = egui::ColorImage::from_rgba_unmultiplied([c.width, c.height], &c.rgba);
             CursorShape {
                 texture: ctx.load_texture("cursor", image, TextureOptions::NEAREST),
@@ -805,10 +804,10 @@ impl Session {
     // ---- focus, capture and the clipboard ----------------------------------
 
     /// Whether the window can be seen: the backend's `focus`, which is what
-    /// lets it pause. Not the keyboard focus, which it was: a window left
-    /// visible beside the one being typed in froze, since the RFB backends
-    /// stop reading, FreeRDP suppresses output and RustDesk drops to a frame
-    /// a second, all for a picture still on screen. The window says when it
+    /// lets it pause. Not the keyboard focus: a window left visible beside
+    /// the one being typed in would freeze, since the RFB backends stop
+    /// reading, FreeRDP suppresses output and RustDesk drops to a frame a
+    /// second, all for a picture still on screen. The window says when it
     /// is minimised or covered (see `App::sync_shown`).
     pub fn shown(&mut self, shown: bool) {
         if shown != self.shown {
@@ -841,9 +840,9 @@ impl Session {
     /// turning sending on later offers the next copy and not an old one.
     /// A read that comes while input has nowhere to go (a prompt up, view
     /// only, not yet connected) is kept and offered when it has
-    /// (`frame_shared`); it was dropped, so a copy made before a trust
-    /// prompt never reached the far end. `None` is a clipboard with no
-    /// text, or one that could not be read in time (see `clipboard/`).
+    /// (`frame_shared`), so that a copy made before a trust prompt still
+    /// reaches the far end. `None` is a clipboard with no text, or one that
+    /// could not be read in time (see `clipboard/`).
     pub fn local_clipboard(&mut self, text: Option<String>) {
         if let Some(text) = text
             && let Some(text) = self.clipboard.local(text, self.accepts_input())
@@ -941,7 +940,7 @@ impl Session {
 
     /// The focus moved from one of our windows to another: the capture,
     /// held in `from`, let go of there and taken in `to` in the same step,
-    /// with the buttons held through it still held — nothing left the
+    /// with the buttons held through it still held: nothing left the
     /// process, so nothing at the far end is let go of. The pointer is not
     /// put back where it was before the capture, which was a place in the
     /// other window; letting go in `to` later puts it back where it was in
@@ -1004,9 +1003,9 @@ impl Session {
 
     /// The frame just drawn went to the screen at `at`, or was not drawn
     /// (`None`: the window is minimised, or its surface had to be made
-    /// again), in which case nothing is measured: a picture nobody could
-    /// see has no latency worth the name, and the next one will be timed
-    /// from its own frame.
+    /// again), in which case nothing is measured: a picture not shown has
+    /// no latency worth the name, and the next one will be timed from its
+    /// own frame.
     pub fn presented(&mut self, pane: PaneId, at: Option<Instant>) {
         let ended = self.pane_mut(pane).and_then(|p| p.unpresented.take());
         if let (Some(ended), Some(at)) = (ended, at) {
@@ -1128,8 +1127,8 @@ impl Session {
         );
         // Taken by every backend that decodes through these at its next
         // picture (RustDesk, which asks for a key frame to start the new
-        // decoder on, and TigerVNC's and FreeRDP's H.264, which ask the
-        // table's mode).
+        // decoder on, and TigerVNC's and FreeRDP's H.264, which ask
+        // `Decoders::hardware`).
         if settings.hw_decode != self.settings.hw_decode {
             self.decoders.set_hardware(settings.hw_decode);
         }
@@ -1200,11 +1199,12 @@ impl Session {
                 }
             }
         }
-        // Whatever stopped input going to the far end — a prompt arriving,
-        // view only, a disconnect — the keys it has down are let go of
+        // Whatever stopped input going to the far end (a prompt arriving,
+        // view only, a disconnect), the keys it has down are let go of
         // there, since their releases will now be egui's. View only and the
-        // disconnect did this already; a prompt that came up mid-press left
-        // the key down at the far end until the focus moved.
+        // disconnect do this themselves; this is for a prompt that comes up
+        // mid-press, which would leave the key down at the far end until
+        // the focus moved.
         if !self.accepts_input() {
             self.release_keys();
         } else if let Some(text) = self.clipboard.allowed() {
@@ -1473,7 +1473,7 @@ impl Session {
     /// A certificate, against what this address was accepted with before,
     /// as `api::trust` decides on the phone too: a match is silent, a
     /// RustDesk key never seen is pinned without asking, and anything else
-    /// is put to the person with why.
+    /// is put to the user with why.
     fn trust_needed(&mut self, fingerprint: String) {
         let key = &self.pinned.key;
         match trust::decide(&self.known_hosts, &self.pinned, &fingerprint) {
@@ -1563,12 +1563,12 @@ impl Session {
 /// A backend's `destroy`, on a thread of its own.
 ///
 /// `destroy` joins the protocol thread, so it is as quick as the backend is
-/// to let go — and one that is not, still dialling or stuck in a handshake
-/// or simply past `DISCONNECT_PATIENCE` without a close, held the window's
+/// to let go, and one that is not (still dialling, stuck in a handshake, or
+/// past `DISCONNECT_PATIENCE` without a close) would hold the window's
 /// thread for as long: the window would not close, nor the dialog come
-/// back. Every backend now ends its dial when asked, so this is the second
-/// line rather than the first; the window keeps the handle so that it can
-/// give whatever is still going a moment before the process exits.
+/// back. Every backend ends its dial when asked, so this is a fallback; the
+/// window keeps the handle so that it can give whatever is still going a
+/// moment before the process exits.
 pub struct Teardown(Option<std::thread::JoinHandle<()>>);
 
 impl Teardown {
@@ -1677,7 +1677,7 @@ mod tests {
         // Held there but no longer wanted (the escape chord, view only):
         // let go of, not moved.
         assert_eq!(handover(Some(main), main, false), Handover::Release);
-        // Held elsewhere, or nowhere: the move is none of its business.
+        // Held elsewhere, or nowhere: the move leaves it alone.
         assert_eq!(handover(Some(other), main, true), Handover::Nothing);
         assert_eq!(handover(None, main, true), Handover::Nothing);
     }

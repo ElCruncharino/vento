@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The IronRDP client as a [`Backend`](api::backend::Backend), with this
-//! backend's option handling and its rows: what the Linux client holds, and
-//! what the phone reaches through `platform_android`'s JNI layer.
+//! backend's option handling and its info rows, used by the Linux client
+//! directly and by the phone through `platform_android`'s JNI layer.
 
 use crate::{Client, Config, Nla, Platform};
 use runtime::{Bridge, Runner};
@@ -68,8 +68,8 @@ fn create(c: &Connect) -> Result<Arc<dyn Backend>, String> {
         },
         keyboard_layout: KEYBOARD_LAYOUT,
         connect_timeout: Duration::from_millis(CONNECT_TIMEOUT_MS as u64),
-        // FreeRDP's row and its words: "local" plays it here, where there is
-        // somewhere to play it.
+        // The same option as FreeRDP's: "local" plays the sound here, if
+        // there is an output.
         audio: c.audio.clone().filter(|_| o.get("Sound") == "local"),
     };
     log::info!(
@@ -123,8 +123,8 @@ impl Backend for IronRdp {
         self.session.client.release_all_keys();
     }
 
-    /// Unlike RFB's "stop asking", this is a Suppress Output PDU — RDP's
-    /// server sends what it likes until told not to.
+    /// Unlike RFB, where the client just stops requesting updates, this sends
+    /// a Suppress Output PDU: an RDP server sends updates until told not to.
     fn focus(&self, focused: bool) {
         self.session.client.set_focused(focused);
     }
@@ -143,8 +143,8 @@ impl Backend for IronRdp {
             .request_desktop_size(width.min(65535) as u16, height.min(65535) as u16);
     }
 
-    /// RDP's ids are the monitors' places in the list, which is the order a
-    /// layout is sent in: the first is the primary. The desktop's size is the
+    /// RDP's monitor ids are their positions in the list, the order a layout
+    /// is sent in; the first is the primary. The desktop's size is the
     /// layout's bounding box.
     fn request_layout(&self, _width: u32, _height: u32, screens: &[Monitor]) {
         let screens: Vec<(i32, i32, u32, u32)> = screens
@@ -154,9 +154,9 @@ impl Backend for IronRdp {
         self.session.client.request_layout(&screens);
     }
 
-    /// Nothing but view-only and the monitor count is live: RDP negotiates
-    /// its codecs once. The count is remembered rather than acted on — it is
-    /// what the *next* layout asks for.
+    /// Only view-only and the monitor count are live: RDP negotiates its
+    /// codecs once. The count is stored rather than acted on: it applies to
+    /// the *next* layout request.
     fn set_option(&self, key: &str, value: &str) {
         let mut options = self.options.lock().unwrap();
         options.set(key, value);
@@ -172,8 +172,8 @@ impl Backend for IronRdp {
         let client = &self.session.client;
         let monitors = Monitor::from_flat(&client.monitors());
         // A single size over several monitors would be divided evenly
-        // between them whatever their shapes, so it is offered over one; a
-        // layout says each.
+        // between them regardless of their shapes, so it is only offered for
+        // one monitor; a layout specifies each.
         let takes = self.mailbox.connected() && client.can_resize();
         Facts {
             width,
@@ -188,9 +188,9 @@ impl Backend for IronRdp {
         }
     }
 
-    /// Two of the panel's rows are simply not here — RDP has no desktop name
-    /// and no encoding anybody can name from outside the codec negotiation —
-    /// and they are omitted always, not when they happen to be empty.
+    /// Two of the panel's rows are missing: RDP has no desktop name, and no
+    /// encoding that can be named outside the codec negotiation. They are
+    /// always omitted, not only when empty.
     fn info(&self) -> Vec<ConnectionFact> {
         if !self.mailbox.connected() {
             return Vec::new();
@@ -251,8 +251,8 @@ impl Backend for IronRdp {
         Some(Picture::from_words(w, h, &words))
     }
 
-    /// A typed `DOMAIN\user` is split here, for every client's prompt;
-    /// an empty name is the one the session was created with, and a bare one
+    /// A typed `DOMAIN\user` is split here, for every client's prompt; an
+    /// empty name means the one the session was created with, and a bare one
     /// keeps the session's domain (see [`rdp_identity`]).
     fn answer_credentials(&self, credentials: Option<Credentials>) {
         self.session.answer_credentials(credentials.map(|c| {

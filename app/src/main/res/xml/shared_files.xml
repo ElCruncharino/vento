@@ -3,11 +3,10 @@
     SPDX-FileCopyrightText: 2026 Patrick Gaskin
     SPDX-License-Identifier: GPL-3.0-or-later
 
-    What the provider will hand out, which is one directory and nothing else.
-    Everything this app keeps that matters — the connections, the sealed
-    passwords, the previews — is under files/, and none of it is named here: a
-    provider that could reach it would be one misrouted URI away from serving
-    it to whatever asked.
+    The provider serves this one cache directory and nothing else. The data
+    that matters (the connections and sealed passwords in shared preferences,
+    the previews under files/) is deliberately not reachable: a provider that
+    could reach it would be one misrouted URI away from serving it.
 -->
 <paths>
     <cache-path

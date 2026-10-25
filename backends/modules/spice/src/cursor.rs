@@ -5,11 +5,11 @@
 //! own.
 //!
 //! It is a channel rather than a message because SPICE keeps the pointer's
-//! picture apart from the screen's — the cursor moves without the desktop
-//! changing, and a client that owns the pointer draws it here rather than
-//! waiting for a frame. What this end needs of it is the shape and the hotspot;
-//! where the cursor is is the guest's business in server mouse mode and this
-//! end's in client mode, and neither of them is this channel's.
+//! picture apart from the screen's: the cursor moves without the desktop
+//! changing, and a client that owns the pointer draws it locally rather than
+//! waiting for a frame. This end needs only the shape and the hotspot from it.
+//! The cursor's position is set by the guest in server mouse mode and by this
+//! end in client mode, and is not carried on this channel.
 
 use crate::error::Result;
 use runtime::Handler;
@@ -41,8 +41,8 @@ struct Shape {
     height: usize,
     hot_x: i32,
     hot_y: i32,
-    /// The framebuffer's own word order, which is what the callback into Java
-    /// takes: it does the swap to `Color`'s `0xAARRGGBB` itself.
+    /// The framebuffer's own word order, which `Handler::cursor` takes; each
+    /// platform converts on its side of that call.
     pixels: Vec<u32>,
 }
 
@@ -128,12 +128,12 @@ impl Default for Cursors {
 }
 
 /// A cursor's pixels as `R, G, B, A` words, which is the framebuffer's order
-/// and what the callback into Java expects.
+/// and what `Handler::cursor` expects.
 ///
-/// Three of SPICE's cursor types are 32 bits or 24 and are the ones a guest
-/// with a driver sends; the monochrome ones belong to a text-mode guest and
-/// are two bitplanes rather than pixels, which is a different shape of work
-/// for a cursor nothing here has produced.
+/// Three of SPICE's cursor types are 32 or 24 bits, and are the ones a guest
+/// with a driver sends. The monochrome ones come from a text-mode guest and
+/// are two bitplanes rather than pixels; they are not decoded, since no guest
+/// tested has sent one.
 fn pixels(header: &SpiceCursorHeader, data: &[u8]) -> Option<Vec<u32>> {
     let (width, height) = (header.width as usize, header.height as usize);
     if width > MAX_SIDE || height > MAX_SIDE {
@@ -196,8 +196,8 @@ mod tests {
         }
     }
 
-    /// The colour order is the one thing here that is silently wrong when it is
-    /// wrong: a red cursor comes out blue and nothing else changes.
+    /// A wrong colour order fails silently: a red cursor comes out blue and
+    /// nothing else changes.
     #[test]
     fn an_alpha_cursor_comes_out_in_the_framebuffers_order() {
         // One pixel, BGRA on the wire: blue 0x11, green 0x22, red 0x33.
@@ -211,8 +211,8 @@ mod tests {
         assert_eq!(pixels[0].to_le_bytes(), [0x33, 0x22, 0x11, 0xff]);
     }
 
-    /// A truncated cursor is refused rather than read past — the header's size
-    /// is the server's word and the body is what actually arrived.
+    /// A truncated cursor is refused rather than read past: the header's size
+    /// is what the server claims, and the body is what actually arrived.
     #[test]
     fn a_cursor_shorter_than_its_header_says_is_refused() {
         assert!(pixels(&header(0, 4, 4), &[0; 8]).is_none());

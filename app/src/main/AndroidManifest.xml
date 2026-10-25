@@ -15,39 +15,35 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!--
-        A session has to survive the screen showing it going away, and about
-        five seconds in the background is all it takes for Android to freeze a
-        cached process and drop its sockets. A foreground service is the only
-        answer, and its notification is the
-        price: POST_NOTIFICATIONS is what makes that notification visible and
-        therefore dismissible-by-disconnecting.
+        A session has to outlive its activity, and Android freezes a cached
+        process and drops its sockets after about five seconds in the
+        background. A foreground service prevents that. POST_NOTIFICATIONS
+        makes the service's notification visible, and its disconnect action
+        usable.
     -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!--
-        The lock screen in front of an export that carries the saved passwords
-        in the clear. Not about biometrics: what is asked for is a device
-        credential, and a fingerprint is only the quick way to give one.
+        The lock screen shown before an export that includes the saved
+        passwords in the clear. It asks for a device credential; a fingerprint
+        is one way to give it.
     -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 
     <!--
-        The uninstall on an add-on's card, which is one of the two things that
-        card is for. Nothing here deletes anything: this is permission to ask,
-        and what it asks is the system's own uninstaller, which shows its own
-        dialog and takes its own answer. Without it that screen opens and closes
-        again having decided the caller is not allowed to ask — no dialog, no
-        error, a button that does nothing.
+        The uninstall button on an add-on's card. This only allows starting
+        the system uninstaller, which shows its own confirmation dialog.
+        Without it the uninstaller opens and closes again immediately with no
+        dialog and no error.
     -->
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
 
     <!--
-        Add-ons: a package is visible here if it declares this action, and
-        nothing in this manifest names one. An app that named a package, or
-        asked for QUERY_ALL_PACKAGES, would be saying which add-on it is for —
-        which is the thing keeping them separate is for.
+        Add-ons: a package is visible if it declares this action. No package
+        is named here and QUERY_ALL_PACKAGES is not requested, so the app does
+        not depend on any particular add-on.
     -->
     <queries>
         <intent>
@@ -56,9 +52,8 @@
     </queries>
 
     <!--
-        Mirroring is switched on because every layout here is written in start
-        and end and none in left and right, so it is what they already describe.
-        The session screen is unaffected: a desktop is drawn, not laid out.
+        RTL mirroring is enabled because every layout uses start and end, never
+        left and right. The session screen draws the desktop and is unaffected.
     -->
     <application
         android:name=".RemoteDesktopApp"
@@ -72,7 +67,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.RemoteDesktop">
 
-        <!-- The saved connections, and the way in to everything else. -->
+        <!-- The saved connections, and the entry point to everything else. -->
         <activity
             android:name=".HomeActivity"
             android:exported="true">
@@ -87,28 +82,23 @@
             android:exported="false" />
 
         <!--
-            "Manage space", in the system's own storage page for this app.
-            Declaring it replaces the platform's "Clear storage" button, which is
-            the trade: that button deletes everything at once with no idea what
-            any of it is, and this one lands on the screen where each store — the
+            "Manage space" in the system's storage page for this app. Declaring
+            it replaces the platform's "Clear storage" button, which deletes
+            everything at once, with the settings section where each store (the
             settings, the connections, the accepted servers, the plugin
-            libraries, the recordings — is deleted knowing what it is.
+            libraries, the recordings) is deleted separately.
 
-            An alias rather than a screen of its own, because it *is* that
-            screen: `manageSpaceActivity` can only name a component and cannot
-            carry an extra, so which section it means is said here, in the
-            meta-data SettingsActivity falls back to. Exported because the system
-            settings app is the one starting it — so any app on the phone can
-            open this screen too, which is a screen where nothing happens
-            without somebody answering a dialog on it.
+            An alias of SettingsActivity because `manageSpaceActivity` can only
+            name a component and cannot carry an extra, so the section is given
+            in the meta-data SettingsActivity falls back to. Exported because
+            the system settings app starts it, so any app can open this screen
+            too; nothing on it happens without confirming a dialog.
 
-            The attribute above spells the class out, where every other name here
-            is written against the package. Nothing expands that one at build
-            time, so it is the *installed* package a leading dot is resolved
-            against — and this build has a debug variant whose applicationId is
-            not the namespace these classes are in. A relative name there is a
-            button that opens nothing, in the one variant nobody would think to
-            check.
+            The attribute above spells the class out, unlike every other name
+            here. It is not expanded at build time, so a leading dot would be
+            resolved against the installed package, and the debug variant's
+            applicationId is not the namespace these classes are in. A relative
+            name there would open nothing in the debug build.
         -->
         <activity-alias
             android:name=".ManageSpaceActivity"
@@ -120,21 +110,18 @@
                 android:value="transfer" />
         </activity-alias>
 
-        <!-- The licence page the build generates into the assets. -->
+        <!-- Shows the licence page the build generates into the assets. -->
         <activity
             android:name=".LicensesActivity"
             android:exported="false" />
 
         <!--
-            The fake desktop the input stack was built against — the whole
-            app before there was a protocol to speak, and now a screen
-            reachable from settings.
+            The fake desktop the input stack was built against, reachable from
+            settings.
 
-            Unlike the original we keep configChanges, so rotating resizes the
-            view in place instead of recreating the activity: the cursor
-            position, the option squares and an armed fixture recording all
-            survive a rotation, which they must for this to be usable as a test
-            harness.
+            configChanges makes rotation resize the view in place instead of
+            recreating the activity, so the cursor position, the option squares
+            and an armed fixture recording survive it, as a test harness needs.
         -->
         <activity
             android:name=".PlaygroundActivity"
@@ -143,25 +130,23 @@
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|density" />
 
         <!--
-            One connection, on screen. Launched from the home screen with a
-            connection id, or straight from adb with an address (session.sh).
+            One connection on screen. Launched from the home screen with a
+            connection id, or from adb with an address (scripts/session.sh).
             A rotation must not drop a live connection, hence configChanges.
 
-            A window per session, which is what documentLaunchMode buys: the
-            home screen gives each launch the connection's own URI, so a second
-            machine opens beside the first and both are live, while opening one
-            that is already running — from the list or from its notification —
-            lands in the window it already has. `intoExisting` rather than
-            `always` is the whole of that rule. autoRemoveFromRecents because a
-            session deliberately ended has no window left to go back to; one
-            that ended by itself keeps its window, and the reason on it.
+            documentLaunchMode gives each session its own window: the home
+            screen gives each launch the connection's own URI, so a second
+            machine opens beside the first and both stay live, while opening
+            one that is already running (from the list or its notification)
+            returns to its existing window. That is `intoExisting` rather than
+            `always`. autoRemoveFromRecents because a session ended by the user
+            has no window left to return to; one that ended by itself keeps its
+            window and the reason shown on it.
 
-            Exported for that second way in, and the trade is worth stating:
-            any app on the phone can make this one open a session to an address
-            of its choosing. It cannot reach a saved connection's password
-            without its id, which it would have to guess, and it cannot see what
-            arrives — but it can start a connection, and that is the cost of
-            being drivable from a script.
+            Exported for the adb entry point, which means any app can make this
+            open a session to an address of its choice. It cannot use a saved
+            connection's password without guessing its id, and cannot see the
+            session, but it can start a connection.
         -->
         <activity
             android:name=".SessionActivity"
@@ -172,11 +157,10 @@
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|density" />
 
         <!--
-            The session's keeper. `specialUse` because none of the defined types
-            is this: it is not a data sync (which Android 15 caps at six hours,
-            and a session is as long as somebody is working), not a connected
-            device, not media. The subtype below is the declaration that goes
-            with it.
+            Keeps sessions alive. `specialUse` because no defined type fits: it
+            is not a data sync (which Android 15 caps at six hours, while a
+            session lasts as long as it is in use), not a connected device, not
+            media. The subtype below is the declaration it requires.
         -->
         <service
             android:name=".SessionService"
@@ -188,26 +172,26 @@
         </service>
 
         <!--
-            Where a session's timeout alarm comes back, which is the app's own
-            process and nobody else's business.
+            Receives a session's timeout alarm, which the app sets for itself,
+            so it is not exported.
         -->
         <receiver
             android:name=".Session$Timeout"
             android:exported="false" />
 
         <!--
-            How a screenshot leaves: a file in this app's own cache, handed to
-            whichever app the share sheet lands on as a read grant for that one
-            URI. Not shared storage — a picture of somebody's desktop has no
-            business in the gallery, and this way nothing outside the chosen app
-            can read it and even that ends with the task.
+            Shares screenshots: a file in this app's cache, passed to the app
+            chosen in the share sheet as a read grant for that one URI. Not
+            shared storage, so a desktop screenshot does not end up in the
+            gallery, nothing outside the chosen app can read it, and the grant
+            ends with the task.
 
-            `exported` false and no permission of its own: the grant travelling
-            with the intent is the whole of the access, so nothing that was not
-            handed a URI can ask for one. The authority is written against
-            ${applicationId} rather than the namespace, because the debug
-            variant's package is not the namespace and two authorities that are
-            the same string cannot both be installed on one phone.
+            Not exported and no permission of its own: the grant sent with the
+            intent is the only access, so an app without a granted URI cannot
+            request one. The authority uses ${applicationId} rather than the
+            namespace because the debug variant's package differs from the
+            namespace, and two installed packages cannot declare the same
+            authority.
         -->
         <provider
             android:name="androidx.core.content.FileProvider"

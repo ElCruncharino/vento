@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! What `build.rs` tells FFmpeg's configure and dav1d's Meson when the
-//! machine the libraries are for is not the one building them: pure
-//! functions of the target and its tools, in a file of their own so that the
-//! library's tests can run them (a build script's own tests never run).
+//! The arguments `build.rs` gives FFmpeg's configure and dav1d's Meson when
+//! cross-compiling: pure functions of the target and its tools, in a file of
+//! their own so that the library's tests can run them (a build script's own
+//! tests never run).
 //!
 //! FFmpeg's configure and Meson both take the build machine for the target
 //! unless told: FFmpeg would build for the arch its compiler's defaults
@@ -15,8 +15,8 @@
 //! arch and OS, the compiler cc-rs chose for the target (with the flags
 //! that make it the target's, such as clang's `--target=`), its archiver and
 //! the prefix of its tools; and dav1d is given a cross file. A native build
-//! is given none of it, so its configure line, and the stamp made of it,
-//! are what they were.
+//! is given none of this, so its configure line and the stamp made of it have
+//! no cross arguments.
 
 use std::path::{Path, PathBuf};
 
@@ -74,7 +74,7 @@ const TARGET_M: &[&str] = &[
     "-marm", "-mlittle-endian", "-mbig-endian",
 ];
 
-/// Of a compiler's arguments, those that say what it compiles for:
+/// The compiler arguments that select what it compiles for:
 /// clang's `--target=`/`-target`, `--sysroot`, `--gcc-toolchain`, the
 /// linker (`-fuse-ld=`), and the `-m` flags of `TARGET_M`.
 pub fn target_flags(args: &[String]) -> Vec<String> {
@@ -115,8 +115,8 @@ pub fn cross_prefix(cc: &Path) -> Option<String> {
     })
 }
 
-/// What FFmpeg's configure is told beyond the native line: nothing for a
-/// native build.
+/// The configure arguments FFmpeg gets for a cross build; empty for a native
+/// build.
 pub fn ffmpeg_args(target: &Target, tools: &Tools) -> Vec<String> {
     if !target.is_cross() {
         return Vec::new();
@@ -126,9 +126,9 @@ pub fn ffmpeg_args(target: &Target, tools: &Tools) -> Vec<String> {
         format!("--arch={}", target.arch),
         format!("--target-os={}", target.os),
         format!("--ar={}", tools.ar.display()),
-        // Not `<prefix>pkg-config`, which FFmpeg would look for with a
-        // prefix: the only pkg-config files it reads are the prefix's own,
-        // which are no machine's.
+        // Not `<prefix>pkg-config`, which FFmpeg would look for with a cross
+        // prefix: it reads only the prefix's own pkg-config files, which
+        // belong to no particular machine.
         "--pkg-config=pkg-config".to_string(),
     ];
     if let Some(prefix) = cross_prefix(&tools.cc) {
@@ -164,8 +164,8 @@ pub fn meson_cross_file(target: &Target, tools: &Tools) -> Option<String> {
         .chain(tools.target_flags.iter())
         .map(|s| quote(s))
         .collect();
-    // The CPU is the triple's first part, which is more than the family
-    // where it says more (`armv7`, `i686`).
+    // The CPU is the triple's first part, which can be more specific than
+    // the family (`armv7`, `i686`).
     let cpu = target.target.split('-').next().unwrap_or(target.arch);
     Some(format!(
         "[binaries]\nc = [{}]\nar = {}\n\n[host_machine]\nsystem = {}\ncpu_family = {}\ncpu = {}\nendian = {}\n",

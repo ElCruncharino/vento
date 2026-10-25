@@ -4,10 +4,10 @@
 //! `vento/tigervnc.h`, this backend's own header (`cpp/include`), as
 //! Rust, for the `ffi` module in `src/lib.rs`.
 //!
-//! Only its own items, the `vento_tigervnc_` ones. What they are written
-//! against — `vento_session`, `vento_callbacks` — is the `api` crate's,
-//! which generates the shared headers, and the module brings those into
-//! scope, so that the session this creates is the type the adapter drives.
+//! Only its own items, the `vento_tigervnc_` ones. The types they use
+//! (`vento_session`, `vento_callbacks`) come from the `api` crate, which
+//! generates the shared headers, and the module brings those into scope, so
+//! that the session this creates is the type the adapter drives.
 
 use std::env;
 use std::path::PathBuf;
@@ -29,16 +29,16 @@ fn main() {
         .derive_default(true)
         .layout_tests(false);
     // On the Linux client the library is opened at run time
-    // (`api::c::library`), so its functions are a table looked up in it
-    // rather than extern declarations a link has to satisfy, every one of them
-    // required; on the phone the C is linked into the same library as this
+    // (`api::c::library`), so its functions are a table looked up in it, all
+    // of them required, rather than extern declarations a link has to
+    // satisfy. On Android the C is linked into the same library as this
     // crate.
     let builder = if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
         builder
             .dynamic_library_name("Library")
             .dynamic_link_require_all(true)
-            // The table's calls in `unsafe` blocks of their own, which
-            // edition 2024 asks of an `unsafe fn`'s body.
+            // The table's calls in `unsafe` blocks of their own, as edition
+            // 2024 requires in an `unsafe fn`'s body.
             .wrap_unsafe_ops(true)
     } else {
         builder

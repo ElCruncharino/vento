@@ -1,15 +1,16 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The one Wayland protocol winit does not speak for us: the keyboard
+//! A Wayland protocol winit does not speak for us (the clipboard's
+//! `wl_data_device`, in `clipboard/wayland.rs`, is the other): the keyboard
 //! shortcuts inhibitor, so that Alt+Tab and the compositor's other chords
 //! reach the far end while the window has focus and a session takes input
 //! (and the pointer is not on the toolbar).
 //!
 //! winit owns the connection and the surface; this module borrows both
-//! through the window's raw handles — the `wl_display` and `wl_surface`
+//! through the window's raw handles (the `wl_display` and `wl_surface`
 //! pointers are wrapped as a foreign `wayland_client::Connection` and a
-//! proxy on it — and binds what it needs from the registry on an event queue
+//! proxy on it) and binds what it needs from the registry on an event queue
 //! of its own. Nothing here blocks: the registry is asked for its globals and
 //! the answer arrives on later frames, read by winit's own socket read and
 //! dispatched by [`Shortcuts::pump`], so the inhibitor appears a frame or two

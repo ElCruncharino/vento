@@ -7,11 +7,11 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <!--
-        Everything this add-on holds is somebody else's binary, acquired on the
-        phone it is for. Backing it up would send it off the device by a route
-        nobody chose, and restoring it would put a build for one ABI on another
-        — which the hash refuses, so the only thing a backup could achieve here
-        is the part that is not wanted.
+        Everything this add-on stores is a third-party binary, acquired on the
+        phone it is for. Backing it up would send it off the device by an
+        unintended route, and restoring it could put a build for one ABI on
+        another, which the hash check refuses; so a backup could only do the
+        part that is not wanted.
     -->
     <!-- No icon, because there is no launcher entry to put one on. -->
     <application
@@ -22,14 +22,13 @@
         android:theme="@style/Theme.Plugin">
 
         <!--
-            The one thing this package says about itself that is for the app to
-            read: where a build of it for the app's version is, and what the
-            file there is signed with. Both values are in this module's
-            build.gradle, which is where the reasoning about them is.
+            Read by the app: where a build of this package for the app's
+            version is, and the key the file there is signed with. Both values
+            are set in this module's build.gradle, which explains them.
 
-            Meta-data because this is read out of a package whose dex the app
-            has refused to load — being built for another version of the app is
-            the whole reason anybody is asking.
+            Meta-data because the app reads this from a package whose dex it
+            has refused to load: the app only reads it because this package
+            was built for another version of the app.
         -->
         <meta-data
             android:name="net.pgaskin.remotedesktop.plugin.updateUrl"
@@ -53,7 +52,7 @@
         </activity>
 
         <!--
-            The one way anything of this add-on's leaves its uid. The authority
+            The only way data leaves this add-on's uid. The authority
             carries the applicationId so that a debug build and a release one
             can be installed side by side.
         -->

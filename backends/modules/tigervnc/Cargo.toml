@@ -1,10 +1,9 @@
-# The TigerVNC backend as the clients hold it: its `Kind`, over the one
-# adapter for the C backends (`remotedesktop-api`'s `c` feature), with
-# this backend's own config, live options and info rows. The library is the
-# shim in `cpp/` over TigerVNC's viewer core, built by CMake, which the Linux client
-# opens at run time (`api::c::library`) and the phone's library links
-# together with this crate: nothing here links it, which is why there is no
-# test binary.
+# The TigerVNC backend's `Kind`, over the shared adapter for the C backends
+# (`remotedesktop-api`'s `c` feature), with this backend's own config, live
+# options and info rows. The library is the shim in `cpp/` over TigerVNC's
+# viewer core, built by CMake. The Linux client opens it at run time
+# (`api::c::library`), and on Android it is linked together with this crate.
+# This crate never links it, so there is no test binary.
 [package]
 name = "remotedesktop-tigervnc"
 version.workspace = true
@@ -21,13 +20,13 @@ doctest = false
 log.workspace = true
 remotedesktop-api = { workspace = true, features = ["c"] }
 
-# On Linux, what the table build.rs generates over the header's functions
-# is written over: dlopen and dlsym, and an error that says which. Already in
-# the graph through bindgen's libclang.
+# On Linux, the function table build.rs generates from the header uses this
+# for dlopen and dlsym, and for errors that say which call failed. Already a
+# dependency through bindgen's libclang.
 [target.'cfg(target_os = "linux")'.dependencies]
 libloading = "0.8"
 
-# The phone's half: the one JNI layer, registered on this module's generated
+# The Android half: the JNI layer, registered on this module's generated
 # natives class from the `JNI_OnLoad` in `src/lib.rs`. The library the app
 # loads is still the one CMake links; this crate goes into it as a static
 # library (`CargoBuildTask` with `crateType = 'staticlib'`).

@@ -13,8 +13,8 @@ use super::Codec;
 /// end for another.
 ///
 /// H.264 and H.265: an access unit with a sequence parameter set and an IDR
-/// (H.265: IRAP) slice in it, which is how every encoder this has met sends
-/// a key frame. VP8 and VP9: the frame header's key frame flag. AV1 is never
+/// (H.265: IRAP) slice in it, which is how every encoder tested sends a key
+/// frame. VP8 and VP9: the frame header's key frame flag. AV1 is never
 /// one here, since its key frame is a field deep in a frame header, behind a
 /// sequence header that decides how to read it; a caller that gets false
 /// asks for a key frame, which costs a round trip rather than a picture.

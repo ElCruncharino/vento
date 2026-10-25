@@ -4,18 +4,17 @@
 //! The TLS the RDP connection sequence upgrades into, and the two threads that
 //! share it.
 //!
-//! RDP has no unencrypted mode worth having — the legacy "standard RDP
-//! security" is RC4 with a key the protocol hands over — so unlike VeNCrypt
-//! this is not an option, it is the transport. What is the same as the RFB
-//! client is everything around it: the certificate is pinned rather than
-//! verified (`runtime::tls::pinning`), the question is asked on the protocol
-//! thread after the handshake and before anything secret goes out, and one
-//! TLS session has to be reachable from a reader and a writer at once.
+//! RDP has no usable mode without TLS (the legacy "standard RDP security" is
+//! RC4 with a key exchanged by the protocol itself), so unlike VeNCrypt this
+//! is not an option but the transport. Everything around it matches the RFB
+//! client: the certificate is pinned rather than verified
+//! (`runtime::tls::pinning`), the user is asked on the protocol thread after
+//! the handshake and before anything secret is sent, and one TLS session has
+//! to be shared by a reader and a writer.
 //!
-//! That last part is not this protocol's problem to solve: sharing one
-//! session between a reader and a writer is `runtime::tls::stream`, which is
-//! where the locking argument is written down. What is left here is the
-//! handshake and what it yields.
+//! Sharing one session between a reader and a writer is handled by
+//! `runtime::tls::stream`, which documents the locking. This module does only
+//! the handshake and returns its results.
 
 use crate::error::{Error, Result};
 use rustls::ClientConnection;
@@ -23,36 +22,35 @@ use rustls::pki_types::CertificateDer;
 use std::net::TcpStream;
 use std::sync::Arc;
 
-/// What the far end turned out to be, once the handshake is done.
+/// The far end's identity, from the completed handshake.
 pub struct Peer {
     /// SHA-256 of the leaf certificate, in `openssl x509 -fingerprint`'s form.
     pub fingerprint: String,
     /// For the connection panel: `TLSv1_3 · TLS13_AES_256_GCM_SHA384`.
     pub description: String,
-    /// The leaf certificate's SubjectPublicKeyInfo bit string, which is what
-    /// CredSSP binds its authentication to. Empty when it could not be parsed —
-    /// which only matters if the server asks for CredSSP, and is a better
-    /// failure there than here.
+    /// The leaf certificate's SubjectPublicKeyInfo bit string, which CredSSP
+    /// binds its authentication to. Empty when it could not be parsed, which
+    /// only matters if the server asks for CredSSP, and is better reported as
+    /// a failure there than here.
     pub public_key: Vec<u8>,
 }
 
-/// One thread's view of the TLS session, which is `runtime::tls::stream`' —
-/// the shape is the same in both protocols and the argument for it is
-/// written down there.
+/// One thread's handle on the TLS session, from `runtime::tls::stream`: the
+/// same in both protocols, and documented there.
 pub use runtime::tls::stream::Handle;
 
 /// Do the handshake on `socket`, which must have nothing outstanding on it.
 ///
-/// `server_name` is only what rustls insists on having: nothing checks it,
-/// because the pin is the identity (`runtime::tls::pinning`).
+/// `server_name` is only required by rustls: nothing checks it, because the
+/// pin is the identity (`runtime::tls::pinning`).
 pub fn connect(socket: &TcpStream, server_name: &str) -> Result<(Handle, Peer)> {
     let (config, verifier) = runtime::tls::pinning::client_config().map_err(tls_error)?;
     let name = runtime::tls::pinning::server_name(server_name);
     let mut conn = ClientConnection::new(Arc::new(config), name).map_err(tls_error)?;
 
-    // The handshake runs on the raw socket, which still carries the connect
-    // deadline: a server that opens a TCP connection and then says nothing must
-    // not be a session that hangs for ever.
+    // The handshake runs on the raw socket, which still has the connect
+    // deadline: a server that accepts a TCP connection and then sends nothing
+    // must not leave the session hanging forever.
     let mut raw = socket.try_clone()?;
     conn.complete_io(&mut raw)?;
 
@@ -68,9 +66,9 @@ pub fn connect(socket: &TcpStream, server_name: &str) -> Result<(Handle, Peer)> 
     Ok((Handle::new(conn, socket)?, peer))
 }
 
-/// The SubjectPublicKeyInfo's bit string, which is what CredSSP's `pubKeyAuth`
-/// is computed over — the binding that stops a proxy relaying an
-/// authentication it cannot decrypt to a server it does not own.
+/// The SubjectPublicKeyInfo's bit string, which CredSSP's `pubKeyAuth` is
+/// computed over: the binding that stops a proxy relaying an authentication
+/// it cannot decrypt to a server it does not own.
 fn public_key(cert: &CertificateDer<'_>) -> Vec<u8> {
     use x509_cert::der::Decode as _;
     match x509_cert::Certificate::from_der(cert.as_ref()) {

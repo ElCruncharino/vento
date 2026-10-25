@@ -1,9 +1,9 @@
 # The host build's find_package(OpenSSL): the OpenSSL the host root builds
-# from the submodule (platform/linux/cmake/openssl.cmake), rather than the
-# host's. It sets what FreeRDP reads, as the phone's shim one directory up
-# does for the port, with the include directory named as well: the archives
-# and headers are only there once the root's build of them has run, which
-# FreeRDP's targets wait for through the ones named here.
+# from the submodule (platform/linux/cmake/openssl.cmake), not the host's. It
+# sets what FreeRDP reads, like the Android version one directory up does for
+# the port, plus the include directory. The archives and headers only exist
+# once the root's build of them has run, which FreeRDP's targets wait for
+# through the targets named here.
 
 set(OPENSSL_FOUND TRUE)
 set(OpenSSL_FOUND TRUE)

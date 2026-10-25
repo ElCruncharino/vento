@@ -12,13 +12,13 @@ import androidx.appcompat.widget.AppCompatImageView;
  * The desktop preview on a home card: as wide as the column, and a fixed
  * fraction of that tall.
  *
- * <p>The cards are a grid now, so the picture cannot have a height in dp — the
- * column width depends on how many columns fit, which depends on the screen.
- * What it can have is a ratio, chosen so that the picture plus the two lines of
- * text under it comes out roughly square whatever the column is.
+ * <p>The cards are in a grid, so the picture cannot have a height in dp: the
+ * column width depends on how many columns fit on the screen. It has a ratio
+ * instead, chosen so that the picture plus the two lines of text under it is
+ * roughly square at any column width.
  *
- * <p>Not the desktop's own aspect ratio, deliberately: a 16:10 card beside a 4:3
- * one reads as two sizes of card rather than as two desktops.
+ * <p>Deliberately not the desktop's own aspect ratio: a 16:10 card beside a 4:3
+ * one would look like two sizes of card rather than two desktops.
  */
 public final class PreviewImageView extends AppCompatImageView {
 

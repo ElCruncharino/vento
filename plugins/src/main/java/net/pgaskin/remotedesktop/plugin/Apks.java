@@ -16,19 +16,19 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
 /**
- * Taking pinned libraries out of somebody else's APK.
+ * Extracts pinned libraries from a third-party APK.
  *
- * <p>Both routes an add-on offers end here, with an archive and a list of what
- * has to be in it. A name is looked for at {@code lib/<abi>/<name>} and kept
- * only if it hashes to what was asked for, so where the archive came from — a
- * download, or a file somebody picked — decides nothing.
+ * <p>Both routes an add-on offers end here, with an archive and a list of the
+ * libraries it must contain. Each name is looked up at {@code lib/<abi>/<name>}
+ * and kept only if it matches the pinned hash, so the archive's source (a
+ * download, or a file the user picked) does not matter.
  */
 public final class Apks {
 
     private Apks() {
     }
 
-    /** Which library is coming out, for a screen to name. */
+    /** Reports the library being extracted, for the screen to show. */
     public interface Taking {
         void library(String name);
     }
@@ -55,13 +55,12 @@ public final class Apks {
             try {
                 zip = new ZipFile(apk);
             } catch (IOException x) {
-                last = x; // a split that is not a zip is not the end of it
+                last = x; // a split that is not a zip does not stop the others
                 continue;
             }
-            // Whereas a library that is there and does not verify is: it is
-            // the archive answering the question, and the entry after it is
-            // out of the same archive. Its message is also the only useful
-            // thing anybody is going to be told.
+            // A library that is present but does not verify does stop it: the
+            // archive has the wrong build, and the remaining entries come from
+            // the same archive. Its error is also the most useful one to show.
             try (zip) {
                 for (Map.Entry<String, String> e : new ArrayList<>(missing.entrySet())) {
                     final ZipEntry entry = zip.getEntry("lib/" + abi + "/" + e.getKey());

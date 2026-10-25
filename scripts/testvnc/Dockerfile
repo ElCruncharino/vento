@@ -1,9 +1,9 @@
-# A throwaway remote desktop to point the prototype at.
+# A throwaway remote desktop to point the app at.
 #
 # A real RFB server at the far end is the only thing that answers "what does
 # the library actually do when a session connects"; a fake desktop cannot.
-# Deliberately *not* RealVNC's own server — that needs a licence and, more to
-# the point, a stock TigerVNC exercises the paths a third-party server takes:
+# Deliberately *not* RealVNC's own server: that needs a licence, and a stock
+# TigerVNC exercises the paths a third-party server takes:
 # VncAuth rather than their identity check, and an unencrypted session, which
 # is what makes the SecurityDlg prompt fire.
 #

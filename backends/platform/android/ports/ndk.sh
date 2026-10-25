@@ -1,10 +1,10 @@
-# Sourced by the ports' gen.sh scripts: the cross toolchain they configure
-# somebody else's autotools build with, for one ABI named as $1.
+# Sourced by the ports' gen.sh scripts: the cross toolchain they configure an
+# upstream autotools build with, for one ABI named as $1.
 #
 # Both pins are read out of backends/build.gradle rather than repeated here. A
 # generated config.h describes the platform it was probed on, so a gen/ made
-# against a different NDK or API level is a lie the compiler cannot catch — and
-# a copy that has to be kept in step by hand is how that lie gets written.
+# against a different NDK or API level is wrong in a way the compiler cannot
+# catch, and a copy kept in step by hand is how that happens.
 gradle=$(cd "$(dirname "${BASH_SOURCE:-$0}")/../../.." && pwd)/build.gradle
 ndk_version=$(sed -n "s/.*nativeNdkVersion *= *'\([^']*\)'.*/\1/p" "$gradle" | head -1)
 api=$(sed -n "s/^ *minSdk *\([0-9]*\).*/\1/p" "$gradle" | head -1)
@@ -15,11 +15,11 @@ api=$(sed -n "s/^ *minSdk *\([0-9]*\).*/\1/p" "$gradle" | head -1)
 # and ANDROID_HOME are the current names; ANDROID_NDK_HOME and ANDROID_SDK_ROOT
 # are what older tooling sets and are tried after them.
 #
-# The `..` and `*` forms are the ones that earn their keep: a machine whose
-# environment points at some other NDK still finds the pinned one beside it,
-# and an SDK with several installed is searched rather than guessed at. Every
-# candidate is checked against the pin, so the first one found is not the
-# answer — the first one that *is* this NDK is.
+# The `..` and `*` forms matter most: a machine whose environment points at
+# some other NDK still finds the pinned one beside it, and an SDK with several
+# installed is searched rather than guessed at. Every candidate is checked
+# against the pin, so the answer is not the first one found but the first one
+# that *is* this NDK.
 ndk_candidates() {
     printf '%s\n' \
         "${ANDROID_NDK_ROOT:-}" \

@@ -5,9 +5,9 @@
 # that the phone's port (`platform/android/ports/openssl`) builds: the same
 # version, as two static position-independent archives that the FreeRDP
 # library links in (`vento_linux.cmake` keeps their symbols out of its
-# exports). The system's would tie a built tree to its distribution's
-# soname: libssl.so.1.1 on Ubuntu 18.04 and libssl.so.3 on current
-# distributions, neither of which the other has.
+# exports). The system's libraries would tie a built tree to its
+# distribution's soname: libssl.so.1.1 on Ubuntu 18.04 and libssl.so.3 on
+# current distributions, neither of which the other has.
 #
 # The phone's port compiles the sources from CMake with Configure's output
 # committed in its gen/, since an app build must not run Configure. A host
@@ -42,8 +42,8 @@
 #   whose contents follow Fedora's OpenSSL version and patches. This build
 #   behaves the same everywhere instead.
 #
-# The result is three imported targets named as the phone's port names its
-# own, `openssl_crypto`, `openssl_ssl` and `openssl` (both, with the include
+# The result is three imported targets with the phone's port's names,
+# `openssl_crypto`, `openssl_ssl` and `openssl` (both, with the include
 # directory), and VENTO_OPENSSL_VERSION.
 
 block(SCOPE_FOR VARIABLES PROPAGATE VENTO_OPENSSL_VERSION)
@@ -68,8 +68,8 @@ block(SCOPE_FOR VARIABLES PROPAGATE VENTO_OPENSSL_VERSION)
     endforeach()
     list(JOIN parts "." VENTO_OPENSSL_VERSION)
 
-    # Configure is perl with a few modules a minimal perl lacks; said here,
-    # rather than as a missing module halfway through the build.
+    # Configure is perl with a few modules a minimal perl lacks; checked here
+    # rather than failing on a missing module halfway through the build.
     find_program(VENTO_PERL perl REQUIRED)
     execute_process(COMMAND "${VENTO_PERL}" -e "use FindBin; use IPC::Cmd; use File::Compare; use Time::Piece;"
             RESULT_VARIABLE missing OUTPUT_QUIET ERROR_QUIET)

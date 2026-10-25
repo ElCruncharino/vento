@@ -3,12 +3,12 @@
 package com.realvnc.vncviewer.jni;
 
 /**
- * The core's global parameter registry — every parameter it has, including the
+ * The core's global parameter registry: every parameter it has, including the
  * ones no viewer UI exposes.
  *
  * <p>Required by {@code Java_com_realvnc_vncviewer_jni_ConfigurationBindings_set}.
- * The registry's getters are declared by the library too and are not here: a
- * parameter this side sets is a parameter this side already knows.
+ * The library also exports the registry's getters, which are not declared here:
+ * every parameter this side sets is one whose value it already knows.
  */
 public final class ConfigurationBindings {
 

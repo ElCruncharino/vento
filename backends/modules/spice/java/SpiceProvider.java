@@ -14,16 +14,15 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * This module's entry in a build's list of backends. What the SPICE backend is
- * called and what it can be told are the catalog's, which the Linux client
- * reads too: {@link SpiceCatalog}, generated from {@code backends/api} at
- * build time, holds the words and the option keys.
+ * This module's entry in a build's list of backends. The SPICE backend's name
+ * and options come from the catalog, which the Linux client reads too:
+ * {@link SpiceCatalog}, generated from {@code backends/api} at build time,
+ * holds the strings and the option keys.
  *
- * <p>A session is a {@link NativeBackend} on {@link SpiceNatives}, generated
- * too: the client in the module's crate as an {@code api::Backend}.
- * Nothing about SPICE on this side of the boundary needs a hook — a ticket
- * prompt has no user name because the session says so, and a pin exists only
- * for a TLS session because only a TLS session asks.
+ * <p>A session is a {@link NativeBackend} on {@link SpiceNatives}, also
+ * generated, which binds the module crate's {@code api::Backend}. No
+ * SPICE-specific hooks are needed: the session reports that a ticket prompt
+ * has no user name, and asks about a certificate only on a TLS connection.
  */
 public final class SpiceProvider implements BackendProvider {
 

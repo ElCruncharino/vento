@@ -1,14 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The far end's sound as a Rust protocol receives it — PCM in some format,
-//! or packets of a codec — played on the session's [`Outputs`].
+//! The far end's sound as a Rust protocol receives it (PCM in some format,
+//! or packets of a codec), played on the session's [`Outputs`].
 //!
 //! What a C backend does with `vento/audio.h`'s table, opening a stream for
 //! each format the far end changes to and a decoder for each codec, three
 //! Rust protocols (SPICE's playback channel, RustDesk's audio frames,
 //! IronRDP's rdpsnd) would otherwise each do again: so it is here once, with
-//! the two things every one of them needs beyond the table — the codec said
+//! the two things every one of them needs beyond the table: the codec said
 //! to the session's [`Controls`] while a decoder is open, for the facts row,
 //! and a stream closed once its sound has been heard and nothing more has
 //! come, since none of those protocols says reliably that its sound has
@@ -35,8 +35,8 @@ pub struct Player {
     /// When the last sound written will have been heard: the write, and the
     /// stream's latency at that moment.
     heard_by: Option<Instant>,
-    /// A codec and format no decoder would take, so that a stream of packets
-    /// nobody can decode is one warning rather than one a packet.
+    /// A codec and format no decoder would take, so that a stream of
+    /// undecodable packets is one warning rather than one a packet.
     refused: Option<(Codec, Format)>,
 }
 
@@ -162,7 +162,7 @@ impl Player {
     /// The stream closed if everything written to it has been heard and
     /// nothing more has come for `after` beyond that; true if it closed.
     /// Called now and then by a protocol whose far end does not say when its
-    /// sound ends — `after` long enough to ride over the gaps between one
+    /// sound ends, with `after` long enough to bridge the gaps between one
     /// sound and the next, which the backends with sound before these took
     /// as two seconds.
     pub fn close_if_quiet(&mut self, after: Duration) -> bool {

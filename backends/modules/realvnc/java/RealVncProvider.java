@@ -16,24 +16,23 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * This module's entry in a build's list of backends. What the RealVNC backend
- * is called and what it can be told are the catalog's, which the Linux client
- * reads too: {@link RealVncCatalog}, generated from {@code backends/api} at
- * build time, holds the words and the option keys.
+ * This module's entry in a build's list of backends. The RealVNC backend's name
+ * and options come from the catalog, which the Linux client reads too:
+ * {@link RealVncCatalog}, generated from {@code backends/api} at build time,
+ * holds the strings and the option keys.
  *
  * <p>On the phone the backend is this module's Java over RealVNC's own core,
- * and the catalog's rows are what it hands that core as parameters.
+ * and the catalog's rows are the parameters it passes to that core.
  */
 public final class RealVncProvider implements BackendProvider {
 
     /**
-     * What Low means here, when nobody has said otherwise: the one quality this
-     * app gives a colour depth of its own.
+     * The colour depth a quality gets when no depth has been chosen: Low is the
+     * only quality this app gives a depth of its own.
      *
-     * <p>Only Low, because only Low and Custom reach the parameter at all — a
-     * Medium that asked for {@code rgb222} was asking for something the core
-     * throws away — and not Custom, because Custom is the value that hands the
-     * choice back to whoever set it. A connection that has chosen a depth
+     * <p>Only Low, because only Low and Custom read the parameter at all (the
+     * core ignores {@code rgb222} at Medium), and not Custom, because Custom
+     * leaves the choice to the user. A connection that has chosen a depth
      * explicitly keeps it (see {@code RealVncBackend}).
      */
     static String colorLevelFor(String quality) {
@@ -88,8 +87,8 @@ public final class RealVncProvider implements BackendProvider {
     }
 
     /**
-     * The one backend that is not ready the moment it is installed: its library
-     * is RealVNC's, is in no build, and arrives on the device.
+     * The only backend not ready as soon as it is installed: its library is
+     * RealVNC's, is in no build, and is acquired on the device.
      */
     @Override
     public boolean isSetup(Context context) {

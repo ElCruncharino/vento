@@ -1,7 +1,7 @@
 #!/bin/bash
 # Build (if needed) and run the RDP test desktop, then print the address to put
-# in the prototype. testvnc/run.sh's pattern exactly, because the point of this
-# container is that the same desktop is reachable two ways.
+# in the app. testvnc/run.sh's pattern exactly, because this container exists so
+# that the same desktop is reachable two ways.
 set -e
 cd "$(dirname "$0")"
 

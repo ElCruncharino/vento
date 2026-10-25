@@ -4,13 +4,12 @@
 //! The debug readout: the phone's `Hud` and `SessionHud`, as a translucent
 //! box of monospace lines in the bottom left of the desktop.
 //!
-//! What is here is the box and the counters — a rate off a running total,
-//! averaged over a window so it does not flicker — and the lines are the
-//! session's, built where every collaborator is in reach. The box is drawn
-//! only while it is on, and costs a handful of labels a frame then; the
-//! counters it reads are kept whether it is on or not, since a count that
-//! only starts when somebody looks has nothing to say about the frame they
-//! wondered about.
+//! What is here is the box and the counters (a rate off a running total,
+//! averaged over a window so it does not flicker); the lines are built by
+//! the session, which has everything they report on. The box is drawn only
+//! while it is on, and costs a handful of labels a frame then; the counters
+//! it reads are kept whether it is on or not, since a count that only
+//! starts when the box is turned on says nothing about the frames before.
 
 use egui::{Align2, Color32, CornerRadius, Frame, Id, Margin, Order, RichText, TextWrapMode, vec2};
 use std::time::{Duration, Instant};
@@ -54,8 +53,8 @@ pub const SAMPLES: usize = 32;
 
 /// A delay, measured as it happens: the last one, and the mean and the
 /// worst of the last [`SAMPLES`]. A count of samples rather than a window
-/// of time, as a delay is measured only when something happens — a still
-/// desktop sends no frames, a still mouse no moves — and a window of time
+/// of time, as a delay is measured only when something happens (a still
+/// desktop sends no frames, a still mouse no moves), and a window of time
 /// would empty out and say nothing about the last thing that did. Taking a
 /// sample is a store into a ring; the summary is worked out only when the
 /// box asks for it.

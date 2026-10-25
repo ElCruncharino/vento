@@ -15,16 +15,16 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * This module's entry in a build's list of backends. What the libvncclient
- * backend is called and what it can be told are the catalog's, which the Linux
- * client reads too: {@link LibVncCatalog}, generated from {@code
- * backends/api} at build time, holds the words and the option keys.
+ * This module's entry in a build's list of backends. The libvncclient
+ * backend's name and options come from the catalog, which the Linux client
+ * reads too: {@link LibVncCatalog}, generated from {@code backends/api} at
+ * build time, holds the text and the option keys.
  *
- * <p>A session is a {@link NativeBackend} on {@link LibVncNatives}, generated
- * too: the shim over libvncclient in {@code cpp/}, with the module's crate
- * linked into the same library as the backend over it —
- * which turns the options into the library's encodings string and levels, and
- * words the panel's rows. What is left on this side is {@link VncHooks}.
+ * <p>A session is a {@link NativeBackend} on {@link LibVncNatives}, also
+ * generated. The native library holds the shim over libvncclient in {@code
+ * cpp/} and the module's crate, which converts the options into the library's
+ * encodings string and levels and writes the panel's rows. The only
+ * Java-side behaviour is {@link VncHooks}.
  */
 public final class LibVncProvider implements BackendProvider {
 

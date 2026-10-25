@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The desktop as pixels, and the one thing two threads share.
+//! The desktop as pixels, shared by the session thread and the drawing thread.
 
 /// A framebuffer of `R, G, B, A` words, so a read is a row copy into an Android
 /// `ARGB_8888` bitmap.
@@ -9,9 +9,9 @@
 /// Written by the protocol thread under a write lock and read by the drawing
 /// thread under a read lock. Every decoder here produces a whole image in
 /// scratch space of its own before the lock is taken, so what the drawing
-/// thread waits for is a blit and never a decode — which for a desktop that
-/// arrives as one 1024×768 LZ image is the difference between a millisecond
-/// and a frame.
+/// thread waits for is a blit and never a decode. For a desktop that arrives
+/// as one 1024×768 LZ image, that is the difference between a millisecond and
+/// a frame.
 pub struct Framebuffer {
     width: usize,
     height: usize,
@@ -35,8 +35,8 @@ impl Framebuffer {
         self.height
     }
 
-    /// Nothing is preserved: a surface that changes size is a surface the
-    /// server is about to draw the whole of. The caller has held the size to
+    /// Nothing is preserved: the server redraws the whole of a surface that
+    /// changes size. The caller has held the size to
     /// [`runtime::MAX_DESKTOP_PIXELS`]; this allocates whatever it is given.
     pub fn resize(&mut self, width: usize, height: usize) {
         self.width = width;
@@ -48,10 +48,10 @@ impl Framebuffer {
     /// `src` is `w × h` pixels of `R, G, B, A` bytes, row-major, clipped to the
     /// framebuffer.
     ///
-    /// Bytes rather than words because that is what every decoder in the
-    /// compression crate hands back, and a `Vec<u8>` is not a `Vec<u32>` at any
-    /// alignment: taking the bytes here makes the packing this loop's job and
-    /// saves the whole image being copied into a second buffer to have it done.
+    /// Bytes rather than words because every decoder in the compression crate
+    /// returns bytes, and a `Vec<u8>` cannot be used as a `Vec<u32>` at any
+    /// alignment: packing the words in this loop saves copying the whole image
+    /// into a second buffer first.
     pub fn blit(&mut self, x: usize, y: usize, w: usize, h: usize, src: &[u8]) {
         if w.checked_mul(h).and_then(|n| n.checked_mul(4)).is_none_or(|n| src.len() < n) {
             return;
@@ -88,8 +88,8 @@ impl Framebuffer {
 
     /// `COPY_BITS`: the one draw that reads the framebuffer as well as writing
     /// it, so it is the one that cannot be done in scratch space. Overlapping
-    /// rectangles are the normal case — it is what a scroll is — so the row
-    /// order follows the direction of the move.
+    /// rectangles are the normal case (a scroll), so the row order follows the
+    /// direction of the move.
     pub fn copy(&mut self, src_x: usize, src_y: usize, dst_x: usize, dst_y: usize,
                 w: usize, h: usize) {
         let w = w.min(self.width.saturating_sub(src_x)).min(self.width.saturating_sub(dst_x));
@@ -112,8 +112,8 @@ impl Framebuffer {
 
     /// Copy a desktop rectangle out as `R, G, B, A` bytes, one row at a time
     /// into a destination of its own stride. False if there is nothing to read
-    /// or the rectangle is not wholly inside the desktop — a partial answer
-    /// would be a half-drawn tile on screen.
+    /// or the rectangle is not wholly inside the desktop, since a partial
+    /// answer would be a half-drawn tile on screen.
     pub fn read_rgba(&self, x: usize, y: usize, w: usize, h: usize,
                      dst: &mut [u8], dst_stride: usize) -> bool {
         if self.width == 0 || w == 0 || h == 0 {
@@ -217,9 +217,9 @@ mod tests {
         assert!(!fb.read_rgba(3, 0, 2, 1, &mut out, 8));
     }
 
-    /// The destination offset `nativeReadRegion` takes is a slice offset and
-    /// nothing else, which is what lets it promise that the rest of the
-    /// destination is left as it was.
+    /// The destination offset `Backend::read_region` takes is only a slice
+    /// offset, which is what lets it leave the rest of the destination as it
+    /// was.
     #[test]
     fn a_read_into_the_middle_leaves_the_rest_alone() {
         let mut fb = Framebuffer::new();
@@ -249,8 +249,8 @@ mod tests {
     }
 
     /// A downward move must copy from the bottom up, or every row is the first
-    /// one — the classic overlapping-`memcpy` bug, and the one a scrolled
-    /// window hits every time.
+    /// one: the classic overlapping-`memcpy` bug, which a scrolled window hits
+    /// every time.
     #[test]
     fn overlapping_copy_downwards() {
         let mut fb = Framebuffer::new();

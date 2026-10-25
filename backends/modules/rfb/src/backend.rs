@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The RFB client as a [`Backend`](api::backend::Backend), with this
-//! backend's option handling and its rows: what the Linux client holds, and
-//! what the phone reaches through `platform_android`'s JNI layer.
+//! backend's option handling and info rows. The Linux client uses it directly;
+//! Android reaches it through `platform_android`'s JNI layer.
 
 use crate::client::Screen;
 use crate::{Client, Config, Security};
@@ -30,9 +30,8 @@ struct Rfb {
     user: String,
 }
 
-/// The `Encoding` option's value, as `RfbProvider` writes it: one encoding,
-/// or for "auto" and anything else all of them, best first, and the server
-/// picks.
+/// The `Encoding` option's value: one encoding, or for "auto" and anything
+/// else all of them, best first, for the server to pick from.
 fn encodings(name: &str) -> Vec<i32> {
     match name {
         "raw" => vec![crate::ENC_RAW],
@@ -47,7 +46,7 @@ fn encodings(name: &str) -> Vec<i32> {
     }
 }
 
-/// The compression option as the client wants it: 0–9, or none.
+/// The compression option as the client takes it: 0–9, or none.
 fn compress_level(value: &str) -> Option<u8> {
     value.parse::<i32>().ok().filter(|n| (0..=9).contains(n)).map(|n| n as u8)
 }
@@ -91,8 +90,8 @@ fn create(c: &Connect) -> Result<Arc<dyn Backend>, String> {
 
 impl Backend for Rfb {
     fn pointer(&self, x: i32, y: i32, button_mask: i32) {
-        // Nine buttons go across, and how many arrive is the client's
-        // business: it drops the ninth on a server that never agreed to one.
+        // All nine buttons are passed on; the client drops the ninth on a
+        // server that never agreed to it.
         self.session.client.pointer(
             x.clamp(0, 65535) as u16,
             y.clamp(0, 65535) as u16,
@@ -136,8 +135,8 @@ impl Backend for Rfb {
             .request_desktop_size(width.min(65535) as u16, height.min(65535) as u16);
     }
 
-    /// A screen outside RFB's sixteen bits cannot be said at all, and a
-    /// layout with one in it is not sent rather than sent wrapped.
+    /// A screen outside RFB's 16-bit range can't be expressed, so a layout
+    /// containing one is not sent rather than sent wrapped.
     fn request_layout(&self, width: u32, height: u32, screens: &[Monitor]) {
         let u16 = |v: i64| u16::try_from(v).ok();
         let screens: Option<Vec<Screen>> = screens
@@ -159,10 +158,10 @@ impl Backend for Rfb {
         }
     }
 
-    /// The picture-quality controls are live: RFB lets `SetEncodings` be
-    /// sent at any time, so this really does act on the session in front of
-    /// you. Shared is decided at ClientInit and the bell is read where the
-    /// bell arrives; neither is a call.
+    /// The picture-quality options apply live: RFB allows `SetEncodings` at
+    /// any time, so this changes the current session. Shared is decided at
+    /// ClientInit and the bell option is read when a bell arrives; neither
+    /// needs a call.
     fn set_option(&self, key: &str, value: &str) {
         let mut options = self.options.lock().unwrap();
         options.set(key, value);
@@ -180,9 +179,9 @@ impl Backend for Rfb {
         let (width, height) = self.mailbox.size();
         let connected = self.mailbox.connected();
         let client = &self.session.client;
-        // Live rather than connected, which is what the layout used to be
-        // asked under: a rectangle can arrive before the state does.
-        // With the server's ids, which a layout asked for hands back.
+        // Read whether or not the state is connected yet: a rectangle can
+        // arrive before the state changes. Includes the server's ids, which a
+        // layout request sends back.
         let flat: Vec<i32> = client
             .screens()
             .iter()
@@ -209,8 +208,6 @@ impl Backend for Rfb {
         let mut facts = vec![
             ConnectionFact::of(Field::DesktopName, "Desktop", &i.desktop_name),
             ConnectionFact::of(Field::Protocol, "Protocol", &i.protocol),
-            // Worth a row only because there are two transports — a socket,
-            // and a socket inside TLS.
             ConnectionFact::of(Field::Connection, "Connection", &i.connection),
             ConnectionFact::of(Field::Security, "Security", &i.security),
             ConnectionFact::of(Field::Encoding, "Encoding", &i.encoding),

@@ -16,18 +16,18 @@ import java.util.Map;
  *
  * <p>A remote desktop server's certificate is one it made for itself on first
  * start, and no authority vouches for it, so the identity is the key, as it is
- * over SSH: the fingerprint is pinned against the address the first time
- * somebody accepts it, and after that a connection is silent while it matches
- * and loud when it does not. That rule — the key an address is filed under,
- * how two fingerprints compare, what is asked when they do not, and when an
- * answer is pinned — is {@code api::trust} in {@code backends/api},
- * which the Linux client decides by too; {@link NativeBackend}'s JNI layer
- * applies it, and reads and writes this store to do so.
+ * over SSH: the fingerprint is pinned against the address the first time the
+ * user accepts it, and after that a connection is silent while it matches and
+ * warns when it does not. That rule (the key an address is filed under, how
+ * two fingerprints compare, what is asked when they do not, and when an
+ * answer is pinned) is {@code api::trust} in {@code backends/api}, which the
+ * Linux client uses too; {@link NativeBackend}'s JNI layer applies it, and
+ * reads and writes this store to do so.
  *
  * <p>One preference per pin, the key as filed (the address folded for case, or
  * a RustDesk id with its network) to the fingerprint as the backend handed it
- * over. That is the format every pin made on this phone is already in, which
- * is why it is kept as it is.
+ * over. Every pin made on this phone is already in that format, so it is
+ * kept.
  */
 public final class KnownHosts {
 
@@ -61,12 +61,12 @@ public final class KnownHosts {
     }
 
     /**
-     * Every pin here, gone: the next connection to each of them asks again, as
+     * Remove every pin here: the next connection to each of them asks again, as
      * a first one does.
      *
      * <p>Only this store. A backend whose library keeps its own is reached
-     * through {@link BackendProvider#forgetHosts}, which is what
-     * {@link Backends#forgetHosts} exists to call alongside this.
+     * through {@link BackendProvider#forgetHosts}, which
+     * {@link Backends#forgetHosts} calls alongside this.
      */
     public static void clear(Context ctx) {
         prefs(ctx).edit().clear().apply();

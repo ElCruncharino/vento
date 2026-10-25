@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// `vento_log` for the phone: logcat, under the backend's tag. The one thing a
-// C backend's session file asks of Android that the Rust half linked beside
-// it cannot answer, because it is variadic — so it is C, and it is all of the
-// C this platform has; `platform/linux/cpp/vento_log.c` is its twin on stderr.
+// `vento_log` for the phone: logcat, under the backend's tag. It is in C
+// because it is variadic, which the Rust half linked beside it cannot
+// implement, and it is the only C in this platform;
+// `platform/linux/cpp/vento_log.c` is the stderr equivalent.
 
 #include <stdarg.h>
 

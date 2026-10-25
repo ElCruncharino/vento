@@ -1,6 +1,6 @@
 #!/bin/bash
 # Build (if needed) and run the test desktop, then print the address to put in
-# the prototype. The phone connects over the LAN, so the port is published on
+# the app. The phone connects over the LAN, so the port is published on
 # every interface and the address printed is the one the phone can reach.
 set -e
 cd "$(dirname "$0")"

@@ -33,9 +33,9 @@ case "$1" in
     # Their own binary, because the id is in the config in their obfuscated
     # form and nothing else can read it. Once, and not while the server is
     # starting: it is a second process against the same config, and one racing
-    # the server rewrote the file with the permanent password gone — which
+    # the server rewrote the file with the permanent password gone, which
     # looks from a client like a peer that has started refusing a password
-    # nobody changed.
+    # that did not change.
     id)      exec docker exec "$NAME" rustdesk --get-id ;;
     shot)    # what the far end currently looks like, without a viewer
              out="${2:-/tmp/$NAME.png}"
@@ -52,7 +52,7 @@ docker rm -f "$NAME" >/dev/null 2>&1 || true
 # The host's GPU, where there is one: their server asks VA-API what it can
 # encode, and with nothing to ask it settles for VP9, VP8 and AV1 in software.
 # It is the only far end here that can be made to send H.264 or H.265, so the
-# codec row has something to be checked against — and it is the host's hardware
+# codec row has something to be checked against. The hardware is the host's
 # rather than the rig's, which is why a run says which machine it was on.
 DRI=()
 [ -e /dev/dri ] && DRI=(--device /dev/dri)

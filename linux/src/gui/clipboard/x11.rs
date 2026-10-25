@@ -48,8 +48,8 @@ use x11rb::{CURRENT_TIME, NONE};
 /// The most text put in one property; more goes by `INCR`.
 const ONE_PROPERTY: usize = 1 << 20;
 
-/// How long an `INCR` transfer to a requestor may wait for it to take the
-/// last chunk before it is dropped.
+/// How long an `INCR` transfer may wait for its requestor to take the chunk
+/// last written before it is dropped.
 const SEND_IDLE: Duration = Duration::from_secs(10);
 
 /// The atoms this side uses, by name; the text formats are in `text.rs`.
@@ -523,7 +523,7 @@ impl Worker {
         let Some(owned) = &self.owned else {
             return false;
         };
-        // A request from before we took it is for somebody else's.
+        // A request from before we took it is for the previous owner's.
         if e.selection != self.atoms.get("CLIPBOARD") || (e.time != CURRENT_TIME && e.time < owned.time) {
             return false;
         }

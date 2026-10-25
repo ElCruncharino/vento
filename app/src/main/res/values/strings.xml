@@ -29,13 +29,13 @@
 
     <!-- launcher shortcuts: the menu behind the app icon, and icons on the home screen -->
     <string name="shortcut_label">%1$s (%2$s)</string>
-    <!-- What a home screen icon says when pressed once its connection has gone. Not
-         "deleted": it is also what a phone restored without it would say. -->
+    <!-- Shown when a home screen icon's connection no longer exists. Not
+         "deleted": it is also shown on a phone restored without it. -->
     <string name="shortcut_deleted">This connection no longer exists.</string>
 
     <!-- plugins: cards on the home screen, and one dialog wherever a backend of theirs is used -->
     <string name="plugin_needs_setup">The %1$s backend requires additional setup.</string>
-    <!-- Both reasons a plugin can be refused before it is loaded, since the line under it says which. -->
+    <!-- Why a plugin was not loaded. Kept general, since the detail line under it gives the specifics. -->
     <string name="plugin_incompatible">This plugin does not work with this build of the app.</string>
     <string name="plugin_failed">This plugin did not load.</string>
     <string name="plugin_restart_title">Plugins changed</string>
@@ -43,8 +43,8 @@
     <string name="plugin_restart_action">Restart</string>
     <string name="plugin_set_up">Set up</string>
     <string name="plugin_uninstall">Uninstall</string>
-    <!-- Opens a download of the plugin built for this version of the app, where the plugin says
-         where one is. Only ever beside the line above about an incompatible one. -->
+    <!-- Opens a download of the plugin built for this version of the app, if the plugin
+         provides one. Only shown on an incompatible plugin's card. -->
     <string name="plugin_update">Update</string>
 
     <!-- editor -->
@@ -80,7 +80,7 @@
     <string name="settings_group_app">App</string>
     <!-- Shown on a backend that came from an add-on, with the package as its summary. -->
     <string name="settings_plugin">Plugin</string>
-    <!-- On the row of a backend whose plugin is waiting for something, in place of its settings. -->
+    <!-- On the row of a backend whose plugin needs setup, in place of its settings. -->
     <string name="settings_backend_setup">Not set up</string>
     <string name="settings_general">General</string>
     <string name="settings_general_summary">Keyboard, clipboard, and controls.</string>
@@ -93,8 +93,8 @@
     <string name="settings_source">Source code</string>
     <string name="settings_source_summary">github.com/pgaskin/vento</string>
     <string name="settings_version">Version</string>
-    <!-- Ten taps on the version row, as in Android's own developer options. Said
-         only for the last three, so nobody arrives here by mistake. -->
+    <!-- Ten taps on the version row, as in Android's own developer options. The
+         countdown is only shown for the last three, so it is not found by accident. -->
     <string name="settings_developer_on">You are now a developer!</string>
     <string name="settings_developer_already">No need, you are already a developer.</string>
     <plurals name="settings_developer_steps">
@@ -212,8 +212,8 @@
         <item quantity="one">Exported %1$d setting</item>
         <item quantity="other">Exported %1$d settings</item>
     </plurals>
-    <!-- Counted on the total rather than on how many of it landed: the noun the
-         wording has to agree with is the second number. -->
+    <!-- Pluralised on the total rather than the imported count, since the noun
+         follows the second number. -->
     <plurals name="transfer_imported_connections">
         <item quantity="one">Imported %1$d of %2$d connection</item>
         <item quantity="other">Imported %1$d of %2$d connections</item>
@@ -253,26 +253,24 @@
     <string name="option_follow_window">Follow local window size changes</string>
     <string name="option_follow_window_summary">When local resolution is supported and enabled, update it whenever the orientation or size of the window changes.</string>
     <string name="panel_connected_size">Connected · %1$s · %2$d × %3$d</string>
-    <!-- Not a plural: the line above it is what one monitor says, and this one is
-         reached only from two. -->
+    <!-- Not a plural: the line above is used for one monitor, and this one only
+         for two or more. -->
     <string name="panel_connected_monitors" tools:ignore="PluralsCandidate">Connected · %1$s · %2$d × %3$d · %4$d monitors</string>
     <string name="panel_display">Display</string>
     <string name="panel_display_value">%1$d · %2$d × %3$d</string>
     <string name="panel_desktop_size">Desktop size</string>
-    <!-- The session's sound switch, in the desktop client's words. Enable where
-         the far end can be asked to stop sending its sound; Mute where it
+    <!-- The session's sound switch, worded as in the desktop client. Enable
+         where the far end can be asked to stop sending sound; Mute where it
          cannot, and the sound is silenced on this phone instead. -->
     <string name="panel_sound_enable">Enable audio</string>
     <string name="panel_sound_mute">Mute audio</string>
     <string name="panel_desktop_size_value">%1$d × %2$d</string>
     <string name="panel_desktop_size_device">%1$d × %2$d (this phone)</string>
 
-    <!-- The camera button, as its tooltip and to anything reading the screen
-         aloud. What it shares is the desktop, whole, at whatever size the far
-         end is — not what this phone happens to be looking at. -->
+    <!-- The screenshot button's tooltip and content description. It shares the
+         whole desktop at the far end's size, not the part shown on this phone. -->
     <string name="panel_screenshot">Screenshot the desktop</string>
-    <!-- Both ways it can fail: nothing to photograph, or nothing to write it
-         to. Neither is worth two sentences. -->
+    <!-- Covers both failures: no frame to capture, or nowhere to write it. -->
     <string name="screenshot_failed">The desktop could not be captured.</string>
 
     <string name="panel_log">View log</string>

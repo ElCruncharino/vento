@@ -3,48 +3,46 @@
 
 //! The extended clipboard: UTF-8 both ways, where plain RFB has Latin-1.
 //!
-//! Plain `ServerCutText` and `ClientCutText` carry ISO 8859-1 and nothing
-//! else, so anything past it — a dash, a euro sign, every script but a few —
-//! crossed as `?`. The extension (pseudo-encoding `0xC0A1E5CE`, TigerVNC's and
-//! RealVNC's) rides the same two messages with a negative length, and
-//! inside them a word of flags: an action and the formats it is about. This
-//! client speaks text and only text, as TigerVNC's own viewer does, and
-//! follows its `CConnection` turn for turn, since that is the implementation
-//! servers are tested against:
+//! Plain `ServerCutText` and `ClientCutText` carry only ISO 8859-1, so
+//! anything outside it (a dash, a euro sign, most scripts) arrived as `?`. The
+//! extension (pseudo-encoding `0xC0A1E5CE`, from TigerVNC and RealVNC) uses the
+//! same two messages with a negative length, and inside them a word of flags:
+//! an action and the formats it applies to. This client handles only text, as
+//! TigerVNC's own viewer does, and follows its `CConnection` step for step,
+//! since that is the implementation servers are tested against:
 //!
-//! - The server announces its **caps** first (which actions it takes, and up
-//!   to how much of each format it will take unasked). This end answers with
+//! - The server announces its **caps** first (which actions it supports, and
+//!   how much of each format it accepts unrequested). This end answers with
 //!   its own: text, every action, and a size of 0 for text, which asks the
-//!   server always to *notify* rather than send unasked.
+//!   server to always *notify* rather than send unrequested.
 //! - A **notify** says the server's clipboard changed; this end **requests**
-//!   the text straight away, as the TigerVNC backend does, and the
-//!   **provide** that answers is zlib-compressed and delivered.
-//! - Locally copied text is announced with a notify, or provided at once
-//!   where the server said it takes that much unasked; a request for it is
-//!   answered with a provide, and a **peek** with a notify of whether there
-//!   is any.
+//!   the text immediately, as the TigerVNC backend does, and the **provide**
+//!   that answers is inflated and delivered.
+//! - Locally copied text is announced with a notify, or provided immediately
+//!   if the server accepts that much unrequested; a request for it is
+//!   answered with a provide, and a **peek** with a notify saying whether
+//!   there is any.
 //!
-//! The text is UTF-8 with CRLF line ends on the wire and LF here, which is
-//! what TigerVNC converts between, and what RFB's plain messages say lines
-//! end in. A server that never announces caps gets the plain messages, as
-//! before.
+//! The text is UTF-8 with CRLF line ends on the wire and LF here, which
+//! TigerVNC converts between, and LF is also the line end of RFB's plain
+//! messages. A server that never announces caps gets the plain messages.
 //!
-//! Everything here is pure — a message in, a message or a text out — so the
+//! Everything here is pure (a message in, a message or a text out), so the
 //! encodings are tested byte for byte; `client.rs` holds the state.
 
 use crate::zlib::ZlibStream;
 use flate2::{Compress, Compression, FlushCompress};
 
-/// CRLF, and a lone CR, to LF (TigerVNC's `convertLF`, the form text has
-/// here and in a plain `ServerCutText`), and every line end to CRLF for a
-/// provide (its `convertCRLF`): runtime's, which both RDP backends keep too.
+/// CRLF and a lone CR to LF (TigerVNC's `convertLF`; the form text has here
+/// and in a plain `ServerCutText`), and every line end to CRLF for a provide
+/// (its `convertCRLF`): from runtime, which both RDP backends also use.
 pub use runtime::text::{to_crlf, to_lf};
 
-/// The pseudo-encoding that says this client speaks the extension.
+/// The pseudo-encoding that says this client supports the extension.
 pub const ENC_EXTENDED_CLIPBOARD: i32 = 0xC0A1_E5CE_u32 as i32;
 
-/// Formats: the low sixteen bits. Only text is spoken here; the rest are
-/// RTF, HTML, DIB and files.
+/// Formats: the low sixteen bits. Only text is supported here; the others
+/// are RTF, HTML, DIB and files.
 pub const UTF8: u32 = 1 << 0;
 const FORMAT_MASK: u32 = 0x0000_ffff;
 
@@ -59,8 +57,8 @@ const ACTION_MASK: u32 = 0xff00_0000;
 /// One extended clipboard message from the server.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Message {
-    /// What the server takes: its action bits, and for each format it
-    /// names, the most it accepts unasked (0: only a notify).
+    /// The server's capabilities: its action bits, and for each format it
+    /// names, the most it accepts unrequested (0: only a notify).
     Caps { flags: u32, utf8_size: Option<u32> },
     /// The server wants these formats of ours.
     Request(u32),
@@ -68,7 +66,7 @@ pub enum Message {
     Peek,
     /// The server's clipboard now has these formats (none: it is empty).
     Notify(u32),
-    /// The server's text, or `None` where it provided none this end takes
+    /// The server's text, or `None` if it provided none this end accepts
     /// (another format, too much of it, or not UTF-8).
     Provide(Option<String>),
 }
@@ -76,10 +74,10 @@ pub enum Message {
 /// Reads one message's body: everything after the length, which the caller
 /// has already bounded and read whole.
 ///
-/// `max` bounds the text once inflated, as the length bounds it on the wire:
-/// a megabyte of zlib inflates to a gigabyte. A provide past it is dropped,
-/// with the stream still in step, since each provide is a zlib stream of its
-/// own and the caller read all of this one.
+/// `max` limits the inflated text, as the length limits it on the wire: a
+/// megabyte of zlib inflates to a gigabyte. A provide over it is dropped, with
+/// the stream still in sync, since each provide is its own zlib stream and the
+/// caller has read all of this one.
 pub fn parse(body: &[u8], max: usize) -> Result<Message, String> {
     let Some(flags) = body.get(..4) else {
         return Err("an extended clipboard message without its flags".into());
@@ -109,9 +107,9 @@ pub fn parse(body: &[u8], max: usize) -> Result<Message, String> {
     }
 }
 
-/// The text out of a provide: inflated, the formats walked in bit order to
-/// the first (text is bit 0), cut at its terminating NUL, and refused unless
-/// it is UTF-8, as TigerVNC refuses it.
+/// The text from a provide: inflated, the formats walked in bit order to the
+/// first (text is bit 0), cut at its terminating NUL, and refused unless it is
+/// UTF-8, as TigerVNC does.
 fn provided_text(flags: u32, deflated: &[u8], max: usize) -> Option<String> {
     if flags & UTF8 == 0 {
         log::debug!("extended clipboard: a provide of formats {:#x}, none of them text", flags & FORMAT_MASK);
@@ -158,8 +156,8 @@ fn message(flags: u32, payload: &[u8]) -> Vec<u8> {
     msg
 }
 
-/// Our caps, TigerVNC's: text, every action, and text's size 0, so the
-/// server notifies rather than sending what nobody asked for.
+/// Our caps, the same as TigerVNC's: text, every action, and text's size 0,
+/// so the server notifies rather than sending unrequested text.
 pub fn caps() -> Vec<u8> {
     message(UTF8 | CAPS | REQUEST | PEEK | NOTIFY | PROVIDE, &0u32.to_be_bytes())
 }
@@ -181,9 +179,9 @@ pub fn wire_text(text: &str) -> Vec<u8> {
     bytes
 }
 
-/// A provide of `wire` (see [`wire_text`]): its length and its bytes in one
-/// zlib stream of their own, sync-flushed, which is what TigerVNC's
-/// `ZlibOutStream::flush` leaves and its reader expects.
+/// A provide of `wire` (see [`wire_text`]): its length and its bytes in their
+/// own zlib stream, sync-flushed, which is what TigerVNC's
+/// `ZlibOutStream::flush` produces and its reader expects.
 pub fn provide(wire: &[u8]) -> Vec<u8> {
     let mut plain = Vec::with_capacity(4 + wire.len());
     plain.extend_from_slice(&(wire.len() as u32).to_be_bytes());
@@ -195,8 +193,8 @@ pub fn provide(wire: &[u8]) -> Vec<u8> {
         deflate
             .compress_vec(&plain[consumed..], &mut out, FlushCompress::Sync)
             .expect("deflating into memory");
-        // zlib's word for a finished flush: all the input taken and room
-        // left over in the output. Otherwise there is more to come out.
+        // A finished flush in zlib's terms: all the input consumed and room
+        // left in the output. Otherwise there is more output to come.
         if deflate.total_in() as usize == plain.len() && out.len() < out.capacity() {
             break;
         }
@@ -211,7 +209,7 @@ mod tests {
     use flate2::{Decompress, FlushDecompress};
 
     /// A server message as it arrives: the flags and their payload, which
-    /// is what `parse` is handed once the length has been read.
+    /// is what `parse` receives once the length has been read.
     fn body(flags: u32, payload: &[u8]) -> Vec<u8> {
         let mut b = flags.to_be_bytes().to_vec();
         b.extend_from_slice(payload);
@@ -278,8 +276,8 @@ mod tests {
         assert!(parse(&body(1 << 29, &[]), 64).is_err());
     }
 
-    /// The far end's text: inflated, the NUL dropped, CRLF made LF, and the
-    /// formats after text (here HTML) left alone.
+    /// The far end's text: inflated, the NUL dropped, CRLF converted to LF,
+    /// and the formats after text (here HTML) ignored.
     #[test]
     fn a_provide_is_inflated_to_text() {
         let text = "caf\u{e9} \u{2014} x\r\nline two\0".as_bytes();
@@ -307,7 +305,7 @@ mod tests {
         assert_eq!(parse(&body(PROVIDE | UTF8, b"nonsense"), 1024), Ok(Message::Provide(None)));
     }
 
-    /// Our provide, read back the way Xvnc reads it: the negative length
+    /// Our provide, read back as Xvnc reads it: the negative length
     /// covers the flags and the stream, which inflates to the length word,
     /// the text with CRLF line ends and the NUL.
     #[test]
@@ -324,14 +322,14 @@ mod tests {
         let expected = "caf\u{e9} \u{2014} utf8 \u{1f600}\r\nnext\r\nlast\0".as_bytes();
         assert_eq!(&plain[..4], &(expected.len() as u32).to_be_bytes());
         assert_eq!(&plain[4..], expected);
-        // And it is what our own parser makes of a provide.
+        // Our own parser reads it back the same way.
         assert_eq!(
             parse(&msg[8..], 1 << 20),
             Ok(Message::Provide(Some("caf\u{e9} \u{2014} utf8 \u{1f600}\nnext\nlast".into())))
         );
     }
 
-    /// A text bigger than one deflate output buffer still goes in whole.
+    /// A text larger than one deflate output buffer is still sent whole.
     #[test]
     fn a_large_provide_is_deflated_whole() {
         let text: String = (0..200_000).map(|i| char::from(b'a' + (i * 7 % 26) as u8)).collect();

@@ -4,14 +4,14 @@
 //! The playback channel: the guest's sound, as PCM or Opus, onto the
 //! session's output (`runtime::media::audio`).
 //!
-//! The server says what it sends before it sends it — a `MODE` for the
-//! codec, a `START` for the rate and channels — and says when the guest has
+//! The server announces what it sends before sending it (a `MODE` for the
+//! codec, a `START` for the rate and channels) and says when the guest has
 //! stopped (`STOP`), so this is a small state machine in front of a
-//! [`Player`], which owns the stream and the decoder. Their renderer has a
+//! [`Player`], which owns the stream and the decoder. ryll's renderer has a
 //! channel of its own for this, with cpal and libopus behind it; this one
 //! plays where every other backend here plays, and decodes Opus with the
-//! platform's decoder (libavcodec on the Linux client, MediaCodec on the
-//! phone), which is why Opus is offered only where that decodes it.
+//! platform's decoder (libavcodec on the Linux client, MediaCodec on
+//! Android), which is why Opus is offered only where that decoder handles it.
 
 use runtime::media::audio::decode::Codec;
 use runtime::media::audio::{Format, Outputs, Player};
@@ -28,17 +28,16 @@ mod message {
     pub const MUTE: u16 = 106;
 }
 
-/// `SPICE_AUDIO_DATA_MODE_*`: what `DATA` carries. CELT (2) is offered by
-/// nothing that still builds.
+/// `SPICE_AUDIO_DATA_MODE_*`: what `DATA` carries. CELT (2) is obsolete and
+/// not offered.
 const MODE_RAW: u16 = 1;
 const MODE_OPUS: u16 = 3;
 
 /// `SPICE_AUDIO_FMT_S16`, the one sample format the protocol has.
 const FORMAT_S16: u16 = 1;
 
-/// How long a stream stays open after its sound was heard: the gap between
-/// one sound and the next it rides over, as TigerVNC's and FreeRDP's
-/// streams do.
+/// How long a stream stays open after its sound was heard, to bridge the gap
+/// between one sound and the next, as TigerVNC's and FreeRDP's streams do.
 pub const QUIET: Duration = Duration::from_secs(2);
 
 /// One session's playback channel, past its link.
@@ -103,10 +102,10 @@ impl Playback {
             }
             message::DATA => {
                 // The multimedia time, then the samples or the packet. The
-                // time is when the server would have the guest heard, which
-                // a client that keeps the picture in step with its sound
-                // would use; nothing here delays the picture, and the sound
-                // is played as soon as the queue has its share of it.
+                // time is when the server intends the sound to be heard, for
+                // a client that keeps the picture in step with its sound;
+                // nothing here delays the picture, and the sound is played as
+                // soon as the queue has its share of it.
                 let (Some(format), Some(data)) = (self.format, body.get(4..)) else {
                     return;
                 };
@@ -128,9 +127,9 @@ impl Playback {
                 // stream's gain, as RDP's volume is taken here. Linear, with
                 // full scale at 65535, as spice-gtk reads it and as QEMU sends
                 // it (its guest's 0-255 times 257), and only from a guest
-                // whose sound card has a mixer: the rig's has none, and a
-                // guest that has one and never set it is muted at 0, which
-                // is the guest's silence and is played as such.
+                // whose sound card has a mixer. A guest with a mixer it never
+                // set sends 0, which is the guest's own silence and is played
+                // as such.
                 let Some(&count) = body.first() else { return };
                 let loudest = (0..count as usize).filter_map(|i| u16_at(body, 1 + i * 2)).max();
                 if let Some(loudest) = loudest {

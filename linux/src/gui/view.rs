@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Where the desktop lands in the window: the scale modes, the pan, and the
-//! two conversions that follow from them — a pointer position into desktop
+//! two conversions that follow from them: a pointer position into desktop
 //! coordinates, and a pointer near an edge into a pan velocity.
 //!
 //! Nothing here touches egui's state or the backend. The window hands over
-//! two rectangles in points — the part of the desktop being shown (the whole
-//! of it, or one monitor) and the area it may use — and gets back a
+//! two rectangles in points (the part of the desktop being shown, the whole
+//! of it or one monitor, and the area it may use) and gets back a
 //! [`Layout`] it draws from and asks questions of. The unit is the egui point
 //! rather than the device pixel, so the arithmetic is the same whatever the
 //! scale factor. Pixels matter in two places. `Original` asks for a desktop
@@ -102,10 +102,9 @@ pub struct Layout {
     /// The area the desktop may use.
     pub window: Rect,
     /// How much of `rect` is past `window` in each axis, zero where the
-    /// desktop fits — which is what says whether a pan means anything.
+    /// desktop fits, which is what says whether a pan means anything.
     pub overflow: Vec2,
-    /// The pan, clamped: between zero and `overflow`, and exactly one of
-    /// them at a limit.
+    /// The pan, clamped between zero and `overflow`.
     pub pan: Vec2,
     /// Device pixels per point, which `rect` was put on.
     pub pixels_per_point: f32,
@@ -164,13 +163,13 @@ impl Layout {
     ///
     /// By the device pixel the point is in, and that pixel's centre, through
     /// `rect` as drawn: the centre is where the GPU samples the picture, so
-    /// the pixel named is the one drawn there. From the pixel's corner, as it
-    /// was, a downscaled desktop's last column and row could not be reached
-    /// at all (at 1920 in 1280 the window's last pixel was desktop 1918),
-    /// which is where an auto-hiding taskbar or a hot corner waits. The
-    /// first and last device pixels always name the first and last desktop
-    /// pixels, since past twice smaller the centre of the first is already
-    /// beyond the desktop's first column.
+    /// the pixel named is the one drawn there. From the pixel's corner
+    /// instead, a downscaled desktop's last column and row could not be
+    /// reached at all (at 1920 in 1280 the window's last pixel would be
+    /// desktop 1918), which is where an auto-hiding taskbar or a hot corner
+    /// waits. The first and last device pixels always name the first and last
+    /// desktop pixels, since past twice smaller the centre of the first is
+    /// already beyond the desktop's first column.
     pub fn desktop_at(&self, pos: Pos2) -> (i32, i32) {
         let ppp = self.pixels_per_point;
         let axis = |pos: f32, min: f32, len: f32, source_min: f32, source_len: f32| -> i32 {

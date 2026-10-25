@@ -1,18 +1,18 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! `vento/realvnc.h`, this backend's own header (`cpp/include`), as Rust,
-//! for the `ffi` module in `src/lib.rs`.
+//! Generates Rust bindings for `vento/realvnc.h`, this backend's header
+//! (`cpp/include`), for the `ffi` module in `src/lib.rs`.
 //!
-//! Only its own items, the `vento_realvnc_` ones, over the `api` crate's
-//! shared declarations, as each C backend's crate reads its header — but its
-//! functions as a loader rather than as `extern` declarations: a `Library`
-//! that opens the shared library and looks every one of them up, so that
-//! nothing here links against a library the client's build may not have made.
-//! Every function is required: a library without one of them is not one this
-//! header describes.
+//! Only the header's own `vento_realvnc_` items are generated, on top of the
+//! `api` crate's shared declarations, as in each C backend's crate. The
+//! functions are generated as a loader rather than as `extern` declarations:
+//! a `Library` that opens the shared library and looks up each function, so
+//! nothing here links against a library the client's build may not have
+//! made. Every function is required: a library missing one of them is not
+//! the one this header describes.
 //!
-//! Nothing on a target other than Linux, where the crate is empty.
+//! Does nothing on targets other than Linux, where the crate is empty.
 
 use std::env;
 use std::path::PathBuf;
@@ -38,8 +38,8 @@ fn main() {
         .layout_tests(false)
         .dynamic_library_name("Library")
         .dynamic_link_require_all(true)
-        // The loader's calls in `unsafe` blocks of their own, which edition
-        // 2024 asks of an `unsafe fn`'s body.
+        // Wraps the loader's calls in their own `unsafe` blocks, as edition
+        // 2024 expects in the body of an `unsafe fn`.
         .wrap_unsafe_ops(true)
         .generate()
         .expect("bindgen over vento/realvnc.h")

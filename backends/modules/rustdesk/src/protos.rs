@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Their message definitions, generated at build time from the submodule.
+//! RustDesk's message definitions, generated at build time from the submodule.
 //!
-//! Sibling modules rather than nested, because one generated file names the
-//! other by module path where a `.proto` imports one.
+//! Sibling modules rather than nested, because a generated file refers to
+//! another by module path where its `.proto` imports one.
 
 #[allow(clippy::all, dead_code, unused_mut, unused_results, trivial_casts)]
 #[allow(non_camel_case_types, non_snake_case, non_upper_case_globals)]

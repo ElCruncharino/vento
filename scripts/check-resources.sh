@@ -4,8 +4,8 @@
 # Nothing warns when the last reference to a resource goes: a screen that is
 # replaced leaves its strings and its icons behind, and every build afterwards
 # compiles them in. The question has to be *reachability* rather than "named
-# somewhere" — a drawable named only by a layout nobody inflates is as dead as
-# one named by nothing at all — so this walks out from the code and the
+# somewhere" (a drawable named only by a layout that is never inflated is as
+# dead as one named by nothing at all), so this walks out from the code and the
 # manifest, follows every reference it finds, and reports what it never arrives
 # at.
 #
@@ -28,7 +28,7 @@ mapfile -t files < <(git ls-files src/main/AndroidManifest.xml 'src/*.java' src/
 report=$(awk '
     # A file under res/ is itself a resource, and is the owner of every
     # reference in it; values/ files hold many, so ownership there is per
-    # element and tracked below. Anything else — the Java, the manifest — is a
+    # element and tracked below. Anything else (the Java, the manifest) is a
     # root, whose owner is the empty string.
     function typeOf(elem) {
         if (elem ~ /^(string|plurals|style|color|dimen|bool|integer|fraction|attr)$/) return elem
@@ -55,7 +55,7 @@ report=$(awk '
     }
 
     # A style whose name is A.B inherits from A unless it says otherwise, and
-    # the parent attribute is often on the next line — hence the open-tag state
+    # the parent attribute is often on the next line, hence the open-tag state
     # rather than a per-line test.
     values && open {
         if (match($0, /parent="/)) parent = 1
@@ -87,8 +87,8 @@ report=$(awk '
         }
     }
 
-    # @type/name, ?attr/name. A package qualifier means somebody else owns it,
-    # and @+id/name is a definition rather than a use.
+    # @type/name, ?attr/name. A package qualifier means another package owns
+    # it, and @+id/name is a definition rather than a use.
     {
         s = $0
         while (match(s, /[@?]\+?([A-Za-z_][A-Za-z0-9_]*:)?[a-z]+\/[A-Za-z0-9_.]+/)) {

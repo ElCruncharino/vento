@@ -3,17 +3,15 @@
 #
 # Two builds from one file. Under Gradle this is a root, configured by the NDK
 # toolchain, and makes `libremotedesktop_tigervnc.so`: the session, with the
-# module's Rust crate linked in as the JNI layer over it (and with it the
-# phone's MediaCodec and AAudio, which decode its H.264 and play its sound),
-# with the vendored libjpeg-turbo and pixman and the nettle and GnuTLS ports
-# linked in, since a phone has none of them. Under `backends/CMakeLists.txt`
-# it is a subdirectory on a Linux host and makes `vento_tigervnc`, the
-# session, with the same libjpeg-turbo and pixman and the host root's nettle
-# and GnuTLS (built from the ports' tarballs), with a probe in front of it.
-# What is shared is the middle — how
-# TigerVNC's `common/` itself is configured — and the two halves around it
-# are `if(ANDROID)` and `else()`, so that the Android build is the same
-# sequence of statements it was.
+# module's Rust crate linked in as the JNI layer over it (and with it
+# MediaCodec and AAudio, which decode its H.264 and play its sound), and the
+# vendored libjpeg-turbo and pixman and the nettle and GnuTLS ports linked in,
+# since a phone has none of them. Under `backends/CMakeLists.txt` it is a
+# subdirectory on a Linux host and makes `vento_tigervnc`, the session, with
+# the same libjpeg-turbo and pixman and the host root's nettle and GnuTLS
+# (built from the ports' tarballs), and a probe. The middle (how TigerVNC's
+# `common/` itself is configured) is shared, and the parts around it are
+# `if(ANDROID)` and `else()`.
 
 cmake_minimum_required(VERSION 3.30)
 project(remotedesktop_tigervnc CXX C)
@@ -47,13 +45,13 @@ endif()
 
 # One shared library per protocol, as every other backend module does, so a
 # build that drops this protocol drops the whole of it. Everything below is
-# linked into it statically — and into the host's static library the same way.
+# linked into it statically, and into the host's library the same way.
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# We import these projects for their static libraries only; neutering
-# install/export stops them warning about targets nobody will install.
+# These projects are imported for their static libraries only; neutering
+# install/export stops them warning about targets that are never installed.
 macro(install)
 endmacro()
 macro(export)
@@ -61,7 +59,7 @@ endmacro()
 
 if(ANDROID)
     # AGP configures the debug variant at -O0, which for a JPEG and zlib decoder is
-    # several times the CPU of a release one — and the hot-path measurements are
+    # several times the CPU of a release one, and the hot-path measurements are
     # taken on debug builds. A trailing -O2 wins over the toolchain's earlier -O0.
     # -DNDEBUG goes with it deliberately: upstream's asserts are invariant checks
     # that abort the app, and a measurement build is not where they should fire.
@@ -72,7 +70,7 @@ if(ANDROID)
 
     # libjpeg-turbo, for Tight and for the JPEG rectangles TigerVNC's own encoder
     # sends. The SIMD path on x86 needs NASM, which is a host tool this build does
-    # not require; on arm64, the one ABI a phone uses, it is Neon intrinsics in C.
+    # not require; on arm64, the ABI phones use, it is Neon intrinsics in C.
     set(ENABLE_SHARED OFF CACHE BOOL "" FORCE)
     set(ENABLE_STATIC ON CACHE BOOL "" FORCE)
     set(WITH_TURBOJPEG OFF CACHE BOOL "" FORCE)
@@ -83,28 +81,28 @@ if(ANDROID)
     add_subdirectory("${THIRD_PARTY}/libjpeg-turbo" libjpeg-turbo EXCLUDE_FROM_ALL)
 endif()
 
-# TigerVNC's own root CMakeLists is not usable here — it requires X11 on
+# TigerVNC's own root CMakeLists is not usable here: it requires X11 on
 # anything that is UNIX and not APPLE, which Android is and a probe has no use
-# for, and it builds a viewer and a server this build has no use for either —
-# so this build takes `common/` on its own, answers the variables its
-# sub-projects read, and writes the config.h their sources include. That is
-# the whole adaptation: their build files need no patch, and the one source
-# line of theirs that does is the branch that picks an H.264 decoder context.
+# for, and it builds a viewer and a server this build does not need. So this
+# build takes `common/` on its own, sets the variables its sub-projects read,
+# and writes the config.h their sources include. Their build files need no
+# patch, and the only source change the build itself needs is the branch that
+# picks an H.264 decoder context (`patches/tigervnc/0001-*`).
 set(VERSION "unknown")
 file(READ "${THIRD_PARTY}/tigervnc/CMakeLists.txt" _tigervnc_cmake)
 if(_tigervnc_cmake MATCHES "set\\(VERSION ([0-9][0-9.]*)\\)")
     set(VERSION ${CMAKE_MATCH_1})
 endif()
-# Theirs defaults to the time of the build, which nothing in `common/` prints
+# TigerVNC's defaults to the time of the build, which nothing in `common/` prints
 # but config.h still carries into every translation unit; the same fixed value
 # as libjpeg-turbo's, for the same reason.
 set(BUILD_TIMESTAMP "0")
 
 if(ANDROID)
-    # Nettle, which is what their RSA-AES security types are written against and
-    # the one thing no other client here can do. Their own build finds it with
+    # Nettle, which TigerVNC's RSA-AES security types (supported by no other
+    # client here) are written against. Their own build finds it with
     # find_package, which sets the four variables below, and then HAVE_NETTLE for
-    # config.h; this build has it as a subdirectory, so it answers all five
+    # config.h; this build has it as a subdirectory, so it sets all five
     # directly and skips the search.
     add_subdirectory("${VENTO_BACKENDS}/platform/android/ports/nettle" nettle)
     set(NETTLE_FOUND TRUE)
@@ -113,9 +111,9 @@ if(ANDROID)
     set(NETTLE_INCLUDE_DIRS "")
     set(HAVE_NETTLE 1)
 
-    # GnuTLS, which is the only thing their VeNCrypt is written against, answered
-    # the same way. Their find module also sets GNUTLS_INCLUDE_DIR, which the
-    # target carries for us.
+    # GnuTLS, which their VeNCrypt is written against, set the same way. Their
+    # find module also sets GNUTLS_INCLUDE_DIR, which the target carries
+    # instead.
     add_subdirectory("${VENTO_BACKENDS}/platform/android/ports/gnutls" gnutls)
     set(GNUTLS_FOUND TRUE)
     set(GNUTLS_LIBRARIES gnutls)
@@ -129,12 +127,12 @@ if(ANDROID)
     set(PIXMAN_INCLUDE_DIRS "${THIRD_PARTY}/pixman/pixman" "${CMAKE_CURRENT_BINARY_DIR}/pixman-gen")
 else()
     # zlib from the host, found by CMake's module as their own root finds it.
-    # The rest are the phone's libraries, so that a built tree carries them
-    # rather than needing a distribution's (whose libjpeg and nettle sonames
-    # differ from one to the next): nettle and GnuTLS as the host root builds
-    # them from the ports' tarballs, under the ports' target names, and so
-    # answered as the phone's branch answers them; the host root's
-    # libjpeg-turbo; and pixman built by the same file as on the phone.
+    # The rest are the Android build's libraries, so that a built tree carries
+    # them rather than needing a distribution's (whose libjpeg and nettle
+    # sonames vary between distributions): nettle and GnuTLS as the host root
+    # builds them from the ports' tarballs, under the ports' target names, and
+    # so set as in the Android branch; the host root's libjpeg-turbo; and
+    # pixman built by the same file as on Android.
     set(NETTLE_FOUND TRUE)
     set(NETTLE_LIBRARIES nettle)
     set(HOGWEED_LIBRARIES hogweed)
@@ -152,18 +150,18 @@ else()
     set(PIXMAN_INCLUDE_DIRS "${THIRD_PARTY}/pixman/pixman" "${CMAKE_CURRENT_BINARY_DIR}/pixman-gen")
 endif()
 
-# H.264, which their build has two implementations of — FFmpeg's libavcodec and
-# Windows' Media Foundation — and this one has a third, on both platforms: the
+# H.264, which their build has two implementations of (FFmpeg's libavcodec and
+# Windows' Media Foundation), and this one has a third, on both platforms: the
 # context beside this file, which hands each rectangle to vento's own video
-# decoders (the platform's, through `vento/video.h`: MediaCodec on the phone,
+# decoders (the platform's, through `vento/video.h`: MediaCodec on Android,
 # the Linux client's FFmpeg with its opt-in hardware decoding on a desktop).
 # Their `common/rfb/CMakeLists.txt` compiles the decoder itself whenever
 # ENABLE_H264 is on and adds either of theirs only where it found FFmpeg or is
-# building for Windows, neither of which is asked for here; H264_VENTO is what
-# selects ours, and the six lines that do are the one patch it takes.
-# HAVE_LIBAV stays unset, since that is what would compile FFmpeg's — and
-# with it a second FFmpeg into this library — and so do the three results
-# their build compiles the libav context on, whatever a cache left behind.
+# building for Windows, neither of which applies here; H264_VENTO selects
+# ours, and the six lines that do so are the one patch it needs. HAVE_LIBAV
+# stays unset, since it would compile FFmpeg's context (and with it a second
+# FFmpeg into this library), and so do the three results their build
+# compiles the libav context on, whatever a cache left behind.
 set(ENABLE_H264 ON)
 set(HAVE_H264 1)
 add_definitions(-DH264_VENTO)
@@ -171,14 +169,13 @@ foreach(lib AVCODEC AVUTIL SWSCALE)
     set(${lib}_FOUND FALSE)
 endforeach()
 
-# Neither of the other things config.h can say is true of this build: gettext
+# Neither of the other things config.h can say is true of this build. gettext
 # is not in bionic, so every message stays in English and their no-NLS branch
-# makes `_()` the identity — and the host build says the same so that the two
-# differ in nothing a comparison would see; and audio is their viewer's own
-# PulseAudio or waveOut sink, which is not compiled here — the protocol half
-# of it is in `common/` whatever this says, and the sound is played on the
-# platform's output, handed to the session as `vento/audio.h`'s table
-# (`VentoAudio.h`).
+# makes `_()` the identity; the host build does the same, so that the two
+# builds do not differ. And audio is their viewer's own PulseAudio or waveOut
+# sink, which is not compiled here: the protocol half of it is in `common/`
+# regardless, and the sound is played on the platform's output, passed to the
+# session as `vento/audio.h`'s table (`VentoAudio.h`).
 configure_file("${THIRD_PARTY}/tigervnc/config.h.in" "${CMAKE_CURRENT_BINARY_DIR}/config.h")
 add_definitions(-DHAVE_CONFIG_H)
 
@@ -191,12 +188,12 @@ if(ANDROID)
 endif()
 
 # Their sub-projects put their own tree on the include path as
-# `${CMAKE_SOURCE_DIR}/common`, which under the Gradle build and the host
-# root alike is a directory that does not exist — a stale -I and nothing
-# worse, as long as the real one is here. This directory goes on the path too, for the H.264
-# branch of theirs that includes our context by name, and the neutral headers
-# for the table it calls through. libtool control files are for the autotools
-# half of their build, of which there is none here.
+# `${CMAKE_SOURCE_DIR}/common`, which under both the Gradle build and the host
+# root is a directory that does not exist: a stale -I and nothing worse, as
+# long as the real one is here. This directory goes on the path too, for the
+# H.264 branch of theirs that includes our context by name, and the neutral
+# headers for the table it calls through. libtool control files are for the
+# autotools half of their build, which is not used here.
 include_directories("${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}"
         "${VENTO_BACKENDS}/api/include")
 include_directories(SYSTEM "${THIRD_PARTY}/tigervnc/common")
@@ -205,12 +202,12 @@ endmacro()
 add_subdirectory("${THIRD_PARTY}/tigervnc/common" tigervnc-common EXCLUDE_FROM_ALL)
 remotedesktop_vendored_warnings("${THIRD_PARTY}/tigervnc/common")
 
-# The H.264 context goes into their library, beside their own two, because it
-# is their factory that names it: inside `rfbclient`, the reference resolves
-# however the library ends up linked — the phone's shared library, the Linux
-# client's, or the static one a probe is built on, where an object of ours
-# that only their archive refers to would be dropped before it was looked
-# for. Compiled as a target of ours, with our warnings, and only its objects
+# The H.264 context goes into their library, beside their own two, because
+# their factory names it: inside `rfbclient`, the reference resolves however
+# the library ends up linked (the Android shared library, the Linux client's,
+# or the static one a probe is built on, where an object of ours that only
+# their archive refers to would be dropped before it was looked for).
+# Compiled as a target of ours, with our warnings, and only its objects
 # handed over.
 add_library(vento_tigervnc_h264 OBJECT H264VentoDecoderContext.cxx)
 remotedesktop_warnings(vento_tigervnc_h264)
@@ -218,26 +215,27 @@ target_sources(rfbclient PRIVATE $<TARGET_OBJECTS:vento_tigervnc_h264>)
 
 if(ANDROID)
     # The session, which is the shim over TigerVNC's client and names no
-    # platform; the Rust crate at the module's root, which is the
-    # backend over the session and the JNI layer every backend shares — and
-    # MediaCodec's decoder and AAudio's output, which the session's H.264 is
-    # decoded by and its sound played on, through the tables the crate hands
-    # it (vento_android_library links both).
+    # platform; the Rust crate at the module's root, which is the backend over
+    # the session and the JNI layer every backend shares; and MediaCodec's
+    # decoder and AAudio's output, which decode the session's H.264 and play
+    # its sound, through the tables the crate passes it (vento_android_library
+    # links both).
     add_library(remotedesktop_tigervnc SHARED tigervnc_session.cxx)
     vento_android_library(remotedesktop_tigervnc remotedesktop_tigervnc)
     remotedesktop_warnings(remotedesktop_tigervnc)
-    # gnutls by name as well as through theirs: the certificate check is the
-    # shim's now, and it calls the known-hosts functions itself.
+    # gnutls by name as well as through theirs: the shim does the certificate
+    # check, and calls gnutls itself to describe a verification status and to
+    # fingerprint the certificate.
     target_link_libraries(remotedesktop_tigervnc PRIVATE rfbclient rfb network rdr core gnutls)
 else()
     # The session, for whatever desktop process links it: the neutral include
-    # directory is the interface, and `vento_log` is left to the platform —
-    # the probe's `vento_linux`, or the library's own copy of it under
-    # VENTO_SHARED (vento_linux.cmake). The H.264 context is inside
-    # `rfbclient`, and decodes with whatever the process hands the session —
-    # the Linux client's FFmpeg — and the sound plays on whatever output it
-    # hands over: the Linux client's ALSA. The probe, which is C and hands it
-    # neither, never offers H.264 and never asks for sound.
+    # directory is the interface, and `vento_log` is left to the platform (the
+    # probe's `vento_linux`, or the library's own copy of it under
+    # VENTO_SHARED; see vento_linux.cmake). The H.264 context is inside
+    # `rfbclient`, and decodes with whatever decoders the process passes the
+    # session (the Linux client's FFmpeg), and the sound plays on whatever
+    # output it passes (the Linux client's PipeWire or ALSA). The probe passes
+    # neither, so it never offers H.264 and never asks for sound.
     vento_backend_library(vento_tigervnc tigervnc_session.cxx)
     target_link_libraries(vento_tigervnc ${VENTO_BACKEND_LINK} rfbclient rfb network rdr core
             ${GNUTLS_LIBRARIES})

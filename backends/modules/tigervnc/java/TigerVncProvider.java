@@ -17,21 +17,21 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * This module's entry in a build's list of backends. What the TigerVNC backend
- * is called and what it can be told are the catalog's, which the Linux client
- * reads too: {@link TigerVncCatalog}, generated from {@code backends/api}
- * at build time, holds the words and the option keys.
+ * This module's entry in a build's list of backends. The TigerVNC backend's
+ * name and options come from the catalog, which the Linux client reads too:
+ * {@link TigerVncCatalog}, generated from {@code backends/api} at build time,
+ * holds the strings and the option keys.
  *
- * <p>A session is a {@link NativeBackend} on {@link TigerVncNatives}, generated
- * too: the shim over TigerVNC's client in {@code cpp/}, with the module's
- * crate linked into the same library as the backend over it
- * — which turns the options into the RFB encoding the client prefers and its
- * levels, and words the panel's rows. A certificate meets {@code KnownHosts}
- * as every other backend's does, and one an authority vouches for goes there
- * too, where their viewer would take it without a word; an RSA-AES server key,
- * which only this client speaks, is asked about in their viewer's words every
- * time, since their viewer keeps nothing of one either. What is left on this
- * side is {@link VncHooks}, and the file below.
+ * <p>A session is a {@link NativeBackend} on {@link TigerVncNatives}, also
+ * generated: the shim over TigerVNC's client in {@code cpp/}, linked into one
+ * library with the module's crate, the backend over it, which turns the
+ * options into the RFB encoding the client prefers and its levels, and writes
+ * the panel's rows. A certificate is checked against {@code KnownHosts} as
+ * every other backend's is, including one a certificate authority vouches
+ * for, which TigerVNC's own viewer would accept silently. An RSA-AES server
+ * key, which only this client supports, is asked about in TigerVNC's viewer's
+ * words every time, since that viewer does not store one either. What remains
+ * on this side is {@link VncHooks} and the file below.
  */
 public final class TigerVncProvider implements BackendProvider {
 
@@ -79,11 +79,11 @@ public final class TigerVncProvider implements BackendProvider {
     }
 
     /**
-     * The known-hosts file of TigerVNC's own that builds before this one kept
-     * under the app's files directory, deleted. Nothing reads it any more —
-     * certificates are pinned in {@code KnownHosts} — but it is still a list
-     * of the machines this phone has been to, written without anybody asking,
-     * and "forget every server" that left it behind would be a half-truth.
+     * Deletes the TigerVNC known-hosts file that earlier builds kept under the
+     * app's files directory. It is unused (certificates are pinned in
+     * {@code KnownHosts}), but it still lists the machines this device has
+     * connected to, written without the user being asked, so "forget every
+     * server" would be incomplete if it left the file behind.
      */
     @Override
     public void forgetHosts(Context context) {

@@ -10,28 +10,28 @@ import com.realvnc.vncviewer.jni.SessionBindings;
 
 /**
  * How much this session has received, accumulated from a counter the viewer
- * core keeps and does not publish. The walk itself is
- * {@code cpp/realvnc_traffic.c}; what is here is everything the walk
- * must not decide for itself.
+ * core keeps but does not publish. The pointer walk is in
+ * {@code cpp/realvnc_traffic.h}, called through {@code cpp/realvnc_traffic.c};
+ * this class makes every decision the walk must not make itself.
  *
  * <p><b>The number is checked against a published one on every sample.</b> The
  * same six words produce the line speed and the round-trip time, and
- * {@code getLineSpeed} formats both through a supported call — so computing
- * them from the walk and matching them against that string is the running app
- * asking, once a second, whether the memory it is reading is still the
- * estimator. Nothing is accumulated from a sample that disagrees, and three in
- * a row retire the counter for the rest of the session: an offset that has
- * moved must lose the row, not fill it with a plausible number.
+ * {@code getLineSpeed} formats both through a supported call, so computing
+ * them from the walk and matching them against that string checks, once a
+ * second, that the memory being read is still the estimator. Nothing is
+ * accumulated from a sample that disagrees, and three in a row retire the
+ * counter for the rest of the session: if an offset has moved, the row must
+ * disappear rather than show a plausible number.
  *
- * <p>The mark is 32 bits and the total is 64, so what is accumulated is deltas.
- * A sample is skipped whenever the walk fails — the connection object is null
- * until there is a connection — and skipping costs nothing, because the mark is
- * a stream position rather than an increment.
+ * <p>The mark is 32 bits and the total is 64, so the total is accumulated from
+ * deltas. A sample is skipped whenever the walk fails (the connection object is
+ * null until there is a connection), and skipping loses nothing, because the
+ * mark is a stream position rather than an increment.
  *
- * <p>Session thread only, and it has to be: the estimator is written by the
- * same thread that handles framebuffer updates, so a sample taken there cannot
- * see it half-written, and the string it is checked against is read one call
- * later with nothing in between.
+ * <p>Session thread only, necessarily: the estimator is written by the thread
+ * that handles framebuffer updates, so a sample taken there cannot see it
+ * half-written, and the string it is checked against is read one call later
+ * with nothing in between.
  */
 final class RealVncTraffic {
 
@@ -49,7 +49,7 @@ final class RealVncTraffic {
     private final long[] fields = new long[4];
 
     private long total;
-    private long mark = -1; // no sample yet, which is not a mark of zero
+    private long mark = -1; // no sample yet, as distinct from a mark of zero
     private int mismatches;
     private boolean agreed;
     private boolean gaveUp;
@@ -69,10 +69,10 @@ final class RealVncTraffic {
         }
         final long elapsed = fields[0], kilobits = fields[1], rtt = fields[2], position = fields[3];
 
-        // Their arithmetic, both of it: a kilobit total over an elapsed time in
-        // 100 ns units, and a division that truncates towards zero. The divisor
-        // is zero until the first window closes, where their aarch64 sdiv
-        // answers zero and Java would throw.
+        // The core's arithmetic, both parts: a kilobit total over an elapsed
+        // time in 100 ns units, and a division that truncates towards zero. The
+        // divisor is zero until the first window closes, where the core's
+        // aarch64 sdiv returns zero and Java would throw.
         final int speed = elapsed == 0 ? 0 : (int) (kilobits * 10_000_000L / elapsed);
         final int rttMs = (int) (rtt / 10_000);
         final String published = ConnectionInfoBindings.getLineSpeed(session);
@@ -100,11 +100,11 @@ final class RealVncTraffic {
     }
 
     /**
-     * Does a string the core formatted say these two numbers? Their template is
-     * {@code "%1$D kbit/s (RTT ~%2$Dms)"} in one locale and reworded in others,
-     * so what is compared is the two integers in it rather than its shape —
-     * with whatever groups the digits skipped, since {@code %D} is their own
-     * conversion and puts a separator in.
+     * Whether a string formatted by the core states these two numbers. The
+     * core's template is {@code "%1$D kbit/s (RTT ~%2$Dms)"} in one locale and
+     * reworded in others, so the comparison is of the two integers in it rather
+     * than its shape, skipping digit group separators, since {@code %D} is the
+     * core's own conversion and inserts them.
      */
     private static boolean states(String published, int speed, int rttMs) {
         if (published == null || published.isEmpty()) {

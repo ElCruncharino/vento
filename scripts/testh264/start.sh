@@ -12,7 +12,7 @@ export LIBVA_DRIVER_NAME="${LIBVA_DRIVER_NAME:-iHD}"
 chmod 700 "$XDG_RUNTIME_DIR"
 
 # Nested rather than headless, and it has to be. neatvnc will only encode a
-# frame that arrived as a GBM buffer object — "h264 is useless for sw frames" —
+# frame that arrived as a GBM buffer object ("h264 is useless for sw frames"),
 # so wayvnc has to capture into a DMA-BUF, which needs a DRM file descriptor
 # from the compositor's backend. wlroots' headless backend has no such
 # descriptor at all and its linux-dmabuf global fails to start; its Wayland
@@ -41,8 +41,8 @@ cat > /root/.config/sway/config <<EOF
 # allocates GBM buffers with and so what makes any output of it capturable as a
 # DMA-BUF; the headless output is what gives this rig a size of its own, since
 # the compositor the window lives in decides how big a window is and a tiling
-# one will not be told. Its own window stays blank on purpose — nothing is ever
-# put on that output — and it can be ignored.
+# one will not be told. Its own window stays blank on purpose (nothing is ever
+# put on that output) and it can be ignored.
 output HEADLESS-1 resolution ${GEOMETRY/x/ } position 0 0
 output WL-1 position 4000 0
 output HEADLESS-1 bg /usr/share/wallpaper.png fill
@@ -51,7 +51,7 @@ xwayland enable
 
 # The same four clients scripts/testvnc runs, for the same reasons: text to
 # select, a document to scroll, small targets, and one region that repaints on
-# its own while nothing else does — which is the worst case for a codec that
+# its own while nothing else does, which is the worst case for a codec that
 # sends whole frames and the reason this rig has a clock at all.
 exec xterm -geometry 100x30+60+80 -fa 'DejaVu Sans Mono' -fs 11 \
      -bg '#101418' -fg '#e8f0ff' -sb -sl 5000
@@ -72,8 +72,8 @@ for _ in $(seq 100); do
 done
 
 # --gpu is what makes wayvnc capture into a DMA-BUF rather than shared memory,
-# and so the whole of why this rig exists. Without it the server is a perfectly
-# ordinary Tight one.
+# which is what this rig exists for. Without it the server is an ordinary Tight
+# one.
 wayvnc --gpu --verbose -o HEADLESS-1 0.0.0.0 5900 &
 WAYVNC_PID=$!
 

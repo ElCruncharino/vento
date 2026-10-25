@@ -145,8 +145,8 @@ public final class Harness implements ZoomSink, CursorController.PointerSink, Mo
 
     /**
      * Add the mouse overlay, visible, claiming touches that land on it. Its
-     * presses go to their own {@link CursorController} button source — the same
-     * wiring the playground uses — and are logged to {@link #mouse} with an
+     * presses go to their own {@link CursorController} button source (the same
+     * wiring the playground uses) and are logged to {@link #mouse} with an
      * {@code ovl} prefix so they can be told apart from the gesture layer's.
      */
     public Harness withOverlay() {
@@ -198,9 +198,9 @@ public final class Harness implements ZoomSink, CursorController.PointerSink, Mo
             /**
              * The far end's own bookkeeping, which is the point of the key id:
              * a release names a key and lets go of the keysym that key went down
-             * with. Modelling it here rather than
-             * logging the raw id keeps the assertions readable <em>and</em> makes
-             * a mispaired id show up, as {@code key up ?}.
+             * with. Modelling it here rather than logging the raw id keeps the
+             * assertions readable <em>and</em> makes a mispaired id show up, as
+             * {@code key up ?}.
              */
             @Override
             public void keyDown(int keysym, int keyId) {
@@ -285,8 +285,8 @@ public final class Harness implements ZoomSink, CursorController.PointerSink, Mo
      * Add a physical mouse, on its own {@link CursorController} button source
      * exactly as the two real screens wire it. Its output is logged to
      * {@link #mouse} with a {@code phys} prefix, so a mouse button and a
-     * gesture-layer button can be told apart in one list — which is the point of
-     * the union: a tap during a mouse-held drag must not release it.
+     * gesture-layer button can be told apart in one list. That matters for the
+     * union of the two: a tap during a mouse-held drag must not release it.
      */
     public Harness withMouse() {
         final MouseSink source = cursor.newButtonSource();
@@ -320,8 +320,8 @@ public final class Harness implements ZoomSink, CursorController.PointerSink, Mo
 
     /**
      * Add a physical keyboard, sharing {@link #keys} and {@link #held} with the
-     * extension row — which is the arrangement being tested as much as it is a
-     * convenience: the two keyboards are one keyboard at the far end.
+     * extension row. The sharing is part of what is tested: the two keyboards
+     * are one keyboard at the far end.
      */
     public Harness withPhysicalKeys() {
         physicalKeys = new PhysicalKeyboard(new KeySink() {
@@ -408,10 +408,9 @@ public final class Harness implements ZoomSink, CursorController.PointerSink, Mo
 
     /**
      * The session leaving the screen: the three calls a host makes on its way
-     * out, in the same order. Kept here so
-     * the sequence is exercised as a whole rather than one class at a time —
-     * what it is for is "the remote is holding nothing", and no single class can
-     * answer that.
+     * out, in the same order. Kept here so the sequence is exercised as a whole
+     * rather than one class at a time: its purpose is "the remote is holding
+     * nothing", and no single class can answer that.
      */
     public Harness suspend() {
         clock.advance(step);
@@ -556,7 +555,7 @@ public final class Harness implements ZoomSink, CursorController.PointerSink, Mo
 
     /**
      * Recorded whatever the mode, since it is what the recognizer emitted, but
-     * acted on only where a host would act on it — see {@link ZoomSink}.
+     * acted on only where a host would act on it; see {@link ZoomSink}.
      */
     @Override
     public void zoomPanned(float screenDx, float screenDy) {

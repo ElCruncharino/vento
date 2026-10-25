@@ -1,32 +1,30 @@
-# What a backend needs of Linux and no protocol owns, for the Linux client
-# (`linux/`) and for the probes and tests: a video decoder, which on a phone
-# is the hardware's and here is libavcodec's, so that a protocol whose picture
-# is video — RustDesk's — can be shown, probed and tested on the machine it is
-# developed on with the picture in; and a sound output,
-# which on a phone is AAudio and here is a PipeWire stream of its own
+# The Linux parts of a backend that belong to no protocol, for the Linux
+# client (`linux/`) and for the probes and tests: a video decoder (libavcodec,
+# where the phone has the hardware's), so that a protocol sending video
+# (RustDesk) can be shown, probed and tested on the development machine; and a
+# sound output (where the phone has AAudio): a PipeWire stream
 # (`src/pipewire.rs`, libpipewire-0.3 declared by hand and loaded at run time,
 # never linked) or, without PipeWire, ALSA's default device (`src/alsa.rs`,
-# libasound declared by hand and loaded at run time the same way, as
-# libasound.so.2), with libavcodec's AAC and Opus decoders for the sound that
-# arrives compressed. Neither is needed to build or to start: without either,
-# the far end's sound is dropped and the log says why.
+# libasound.so.2, declared and loaded the same way), with libavcodec's AAC and
+# Opus decoders for compressed sound. Neither is needed to build or to start:
+# without them the far end's sound is dropped and the log says why.
 #
-# The mirror of `remotedesktop-platform-android`, cfg for cfg: on Android the
-# crate is empty and has no dependencies, which is what keeps FFmpeg out of
-# every APK and out of the licence page generated from the Android graph. A
-# protocol crate reaches it only as an optional dependency under
-# `cfg(not(target_os = "android"))`, behind its `probe` feature.
+# The counterpart of `remotedesktop-platform-android`. On Android this crate is
+# empty and has no dependencies, which keeps FFmpeg out of every APK and out of
+# the licence page generated from the Android graph. A protocol crate depends
+# on it only optionally, under `cfg(not(target_os = "android"))`, behind its
+# `probe` feature.
 #
-# FFmpeg is the build's own: `build.rs` builds dav1d and a minimal FFmpeg from
+# FFmpeg is built here: `build.rs` builds dav1d and a minimal FFmpeg from
 # `third_party/` into OUT_DIR, statically, and the Linux client's C backends
-# link the same build (the `links` key is how `linux/build.rs` hears where).
-# Building it needs Meson, Ninja, make, pkg-config and a C compiler, and NASM on
-# x86 for the decoders' assembly; nothing of a system FFmpeg.
+# link the same build (`linux/build.rs` gets its location through the `links`
+# key). Building it needs Meson, Ninja, make, pkg-config, a C compiler, and NASM
+# on x86 for the decoders' assembly; no system FFmpeg.
 #
-# Beside the crate is the rest of the Linux platform: `cpp/`, the C the Rust
-# decoders call into and the stderr `vento_log` a C backend links;
+# The rest of the Linux platform is beside the crate: `cpp/`, the C called by
+# the Rust decoders and the stderr `vento_log` linked into each C backend;
 # `cmake/vento_linux.cmake`, a C backend's host half; and `probe/`, the
-# development tools — the C probes' shared body and the two sound rigs.
+# development tools (the C probes' shared body and the two sound rigs).
 [package]
 name = "remotedesktop-platform-linux"
 version.workspace = true
@@ -41,20 +39,19 @@ name = "platform_linux"
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
 log.workspace = true
-# For `runtime::media`, whose two traits the decoders and the outputs here
-# implement (`video::Decoders`, `audio::Outputs`).
+# For `runtime::media`: the decoders and outputs here implement its
+# `video::Decoders` and `audio::Outputs`.
 remotedesktop-runtime.workspace = true
-# Nothing of FFmpeg's own API: `src/ffmpeg.rs` and `src/ffmpeg_audio.rs` call
+# No bindings to FFmpeg's API: `src/ffmpeg.rs` and `src/ffmpeg_audio.rs` call
 # the functions of `cpp/vento_video.h` and `cpp/vento_ffaudio.h`, declared by
-# hand, and only those C files include FFmpeg's headers. No bindgen, no
-# generated bindings, and nothing on the Rust side that changes with an
-# FFmpeg release.
+# hand, and only those C files include FFmpeg's headers, so nothing on the Rust
+# side changes with an FFmpeg release.
 
 # The two sound rigs in `probe/` (`scripts/testaudio/`), development tools
-# built only when asked for: `cargo build --features probe --example
-# audio_rig`. Examples by path, since they are with the C probe's body rather
-# than in `examples/`. Without the feature `cargo test` and `clippy
-# --all-targets` leave them alone.
+# built only on request: `cargo build --features probe --example audio_rig`.
+# Examples by path, since they live beside the C probe's body rather than in
+# `examples/`. Without the feature, `cargo test` and `clippy --all-targets`
+# skip them.
 [features]
 probe = []
 
@@ -70,5 +67,5 @@ required-features = ["probe"]
 
 [build-dependencies]
 # For the wrapper. Unconditional, since a build script is one program for
-# every target; on Android it returns before it uses it.
+# every target; on Android it returns before using it.
 cc = "1"

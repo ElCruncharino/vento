@@ -1,18 +1,18 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The persistent inflate stream ZRLE is carried in.
+//! The persistent inflate stream ZRLE uses.
 
 use crate::error::{Error, Result};
 use flate2::{Decompress, FlushDecompress, Status};
 
 /// One zlib stream, kept across rectangles.
 ///
-/// That persistence is the point and the trap: the server compresses every ZRLE
-/// rectangle into the *same* stream, flushing between them, so its dictionary
-/// carries over and a rectangle decoded out of a fresh `Decompress` is
-/// gibberish. There is exactly one of these per session, and it lives as long
-/// as the connection does.
+/// That persistence is essential and easy to get wrong: the server compresses
+/// every ZRLE rectangle into the *same* stream, flushing between them, so its
+/// dictionary carries over and a rectangle decoded with a fresh `Decompress` is
+/// garbage. There is exactly one per session, and it lives as long as the
+/// connection.
 pub struct ZlibStream {
     inflate: Decompress,
     out: Vec<u8>,
@@ -29,16 +29,16 @@ impl ZlibStream {
         }
     }
 
-    /// Inflate one rectangle's worth of input, whole.
+    /// Inflates one rectangle's input, whole.
     ///
-    /// The decompressed length is not on the wire — it is implied by the tiles
-    /// — so this runs until the input is spent and nothing more comes out,
-    /// which is well-defined only because the server ends each rectangle with a
-    /// sync flush.
+    /// The decompressed length is not on the wire (the tiles imply it), so this
+    /// runs until the input is consumed and nothing more comes out, which is
+    /// well-defined only because the server ends each rectangle with a sync
+    /// flush.
     ///
-    /// `limit` is the most the caller could possibly consume. Bounding the
-    /// input is not enough to bound this: sixty-four megabytes of zeros inflate
-    /// to about sixty-four gigabytes, and the allocation that fails aborts.
+    /// `limit` is the most the caller could consume. Bounding the input is not
+    /// enough to bound this: sixty-four megabytes of zeros inflate to about
+    /// sixty-four gigabytes, and a failed allocation aborts.
     pub fn inflate(&mut self, input: &[u8], limit: usize) -> Result<&[u8]> {
         self.out.clear();
         let mut consumed = 0usize;

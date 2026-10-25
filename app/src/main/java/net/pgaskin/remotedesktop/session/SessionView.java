@@ -64,14 +64,14 @@ import java.util.Set;
  * </pre>
  *
  * <p>The framebuffer is mirrored into a grid of tiles ({@link Mirror}), of
- * which only the ones that changed are re-read and only the ones on screen are
- * read at all, and drawn through the viewport transform. Why it is a grid and
- * not the one desktop-sized bitmap it used to be is a measurement rather than a
- * preference: hwui re-uploads a whole bitmap whenever any of it changes, which
- * put the size of the desktop into the cost of every frame.
+ * which only changed tiles are re-read and only visible ones are read at all,
+ * and drawn through the viewport transform. It is a grid rather than one
+ * desktop-sized bitmap because of a measurement: hwui re-uploads a whole bitmap
+ * whenever any of it changes, which made the cost of every frame depend on the
+ * desktop size.
  */
-// No (Context, AttributeSet) constructor: a session view is given its host and
-// its backend, and there is no state of either an XML attribute could carry.
+// No (Context, AttributeSet) constructor: the view takes its host and backend,
+// which an XML attribute cannot provide.
 @SuppressLint("ViewConstructor")
 public final class SessionView extends View implements ZoomSink, CursorController.Listener,
         CursorController.PointerSink, RegionSink, Backend.Listener, KeySink,
@@ -86,71 +86,68 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
         void informationRequested();
 
         /**
-         * The connection came up. The one piece of backend state the activity
-         * needs for itself: credentials typed into a prompt are only known to
-         * be right at this moment, and that is when they may be saved.
+         * The connection is established. The activity needs this for itself:
+         * credentials entered at a prompt are only known to be correct now,
+         * and can be saved.
          */
         void connected();
 
-        /** ... and it is over, for whatever reason. Terminal. */
+        /** The connection ended, for any reason. Terminal. */
         void disconnected();
 
         /**
-         * The paste key, with something worth asking about first. Run
-         * {@code proceed} if the answer is yes; what makes it worth asking is
-         * {@link PasteTyper}'s question rather than this screen's.
+         * The paste key was pressed and needs confirmation. Run
+         * {@code proceed} if confirmed; {@link PasteTyper} decides when to
+         * ask.
          *
          * @param heldModifiers the locked ones, "Ctrl + Shift", or empty
          */
         void confirmPaste(int characters, String heldModifiers, Runnable proceed);
 
-        /** The paste key, with an empty clipboard. Worth saying so. */
+        /** The paste key was pressed with an empty clipboard. */
         void nothingToPaste();
 
         /**
-         * The pair the backend reports itself with, unrendered: what a session
-         * has to say for itself is one policy and it is the app's, not this
-         * view's.
+         * The backend's state and detail, as reported: how a session's status
+         * is shown is decided by the app, not this view.
          *
-         * <p>Reported rather than drawn here because it is the one thing on this
-         * screen a person may need to <em>act</em> on — read a failure, try
-         * again, look at the log — and an action needs a real button with a real
-         * touch target, which a canvas does not have.
+         * <p>Reported rather than drawn here because the user may need to
+         * <em>act</em> on it (read a failure, reconnect, open the log), which
+         * needs real buttons with real touch targets that a canvas lacks.
          */
         void status(Backend.State state, String detail);
 
         /**
          * The first frame of this session's desktop is on screen.
          *
-         * <p>Which is the earliest moment there is anything to point at, and so
-         * the moment the tap regions can be explained: before it there is a
-         * black screen, and possibly a password dialog over it.
+         * <p>The earliest moment the tap regions can be explained over the
+         * desktop: before it there is a black screen, possibly with a password
+         * dialog over it.
          */
         void firstFrame();
 
         /**
-         * The session's sound switch changed: offered, withdrawn, turned, or
-         * its sound started or stopped. The switch itself is on the
-         * connection panel, which is the activity's and may be open while it
-         * happens; this view has nothing to show for it but the overlay's
-         * line, which is redrawn every frame anyway.
+         * The session's sound switch changed: offered, withdrawn, toggled, or
+         * its sound started or stopped. The switch is on the connection panel,
+         * which belongs to the activity and may be open at the time; this view
+         * only shows it in the HUD line, which is redrawn every frame anyway.
          */
         void soundChanged();
     }
 
     /**
-     * How often the live session is asked the two things it cannot announce:
-     * how its desktop is divided, and — where this connection has asked for it
-     * — whether it will now take the shape of this window.
+     * How often the session is polled for the two things it cannot announce:
+     * its monitor layout, and (if this connection follows the window size)
+     * whether it accepts a resize.
      */
     private static final long SESSION_POLL_MS = 1000;
 
     /**
-     * Where the pointer went and when a shape came back, which together are the
-     * round trip between the two — the interval a cursor change is late by, and
-     * so how far past a boundary the pointer already is when the far end says
-     * there was one. Silent unless {@code setprop log.tag.HoverLag VERBOSE},
-     * and what set the threshold hover assist arms below.
+     * Logs pointer moves and cursor shape changes with timestamps, which give
+     * the round trip between them: how late a cursor change arrives, and so how
+     * far past a boundary the pointer already is when the far end reports it.
+     * Silent unless {@code setprop log.tag.HoverLag VERBOSE}. The hover assist
+     * threshold was set from these measurements.
      */
     private static final String LAG_TAG = "HoverLag";
 
@@ -171,38 +168,35 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
     private final SessionClipboard clipboard;
     private final Host host;
 
-    // The pieces of this screen that are not routing input, forwarding backend
-    // events or drawing, and are small machines of their own. The fourth, the
-    // HUD, is below with the switch that turns it on.
+    // Helpers for the parts of this screen that are not input routing, backend
+    // event forwarding or drawing. The fourth, the HUD, is below with its
+    // visibility flag.
     private final SoftInput softInput;
     private final PasteTyper paste;
     private final WindowFollower follower;
 
-    private final boolean subtleHaptics;      // or only a buzz
+    private final boolean subtleHaptics;      // whether the vibrator supports tick primitives
 
     /**
-     * What each edge of this window costs the desktop drawn under it, left, top,
-     * right, bottom — the system bars, the display cutout, and the rounded
-     * corners, which is what the pan margin is measured from.
+     * How much of each edge of this window (left, top, right, bottom) is covered
+     * by the system bars, the display cutout and the rounded corners. The pan
+     * margin is measured from this.
      *
-     * <p>Not an inset: none of it stops the desktop being drawn there, and a
-     * session is meant to run edge to edge. It is the answer to "how far in from
-     * this edge is the picture actually square, unclipped and clickable", which
-     * is a different number and is only used when the margin is asked for.
+     * <p>Not an inset: the desktop is still drawn there, edge to edge. It is how
+     * far in from each edge the picture is unobstructed and clickable, and is
+     * only used when the pan margin setting is on.
      *
-     * <p>Starts at "not measured", which costs nothing and is not a measurement
-     * either — a window whose edges really do cost nothing must still differ
-     * from this, or the first insets would look like no news and the margin
-     * would never be set at all.
+     * <p>Starts at -1 ("not measured") rather than 0, so that a window whose
+     * edges really are all 0 still differs from it, and the first insets are
+     * applied.
      */
     private int[] windowEdges = {-1, -1, -1, -1};
     /** The toolbar's box, handed back to the system: see {@link #applyGestureExclusion}. */
     private final android.graphics.Rect exclusion = new android.graphics.Rect();
     private final List<android.graphics.Rect> exclusions = new ArrayList<>(1);
 
-    // Volatile because damaged() is the one thing here that arrives on the
-    // protocol's thread; everything that replaces the mirror is the main
-    // thread's, which is also the thread onDraw runs on.
+    // Volatile because damaged() is called on the protocol thread; the mirror
+    // is only replaced on the main thread, which is also where onDraw runs.
     private volatile Mirror mirror;
     private int tileSize; // 0 is Mirror.DEFAULT_TILE
 
@@ -213,46 +207,44 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
 
     private float baseScale = 1.0f;
     private boolean placed;
-    // Whether the far end has said how big it is. Not the same question as
+    // Whether the far end has reported its size. Not the same as
     // viewport.desktopWidth() == 0, which is never true: Viewport starts at 1×1
-    // so that nothing divides by zero, and placing against that sentinel opens
-    // every session at maxScale on the desktop's top-left corner.
+    // so that nothing divides by zero, and placing against that opened every
+    // session at maxScale on the desktop's top-left corner.
     private boolean desktopKnown;
     private Backend.State backendState = Backend.State.IDLE;
 
     /**
-     * How the far end says its desktop is divided, last time it was asked.
-     * Polled rather than announced, because that is what the seam offers and
-     * why is written there; kept so the ladder is not rebuilt every second for
-     * a layout that has not moved.
+     * The far end's monitor layout as of the last poll. Polled rather than
+     * announced, as {@link Backend.Facts} explains; kept so the zoom ladder is
+     * not rebuilt every second for an unchanged layout.
      */
     private List<Monitor> monitors = List.of();
 
-    // The HUD, off unless asked for: the switch is in the settings tree, and an
-    // intent extra overrides it for one session (SessionActivity).
+    // The HUD, off unless enabled in the settings or, for one session, by an
+    // intent extra (SessionActivity).
     private final SessionHud hud;
     private boolean hudVisible;
 
     /**
-     * What each tap region is called, while the hints are up; null when they
-     * are not. The words are the app's, because {@code control} names its
-     * regions and says nothing about what they are for.
+     * The label of each tap region while the hints are shown, or null. The
+     * labels come from the app, because {@code control} only names its regions
+     * and does not describe what they do.
      */
     private Map<String, String> regionHints;
     private boolean firstFrameSeen;
     /**
-     * What is behind a desktop that has not arrived yet. Black is the letterbox
-     * around one that has, and the two are different questions: an empty window
-     * during a connection is a screen of this app rather than the edges of
-     * somebody else's picture. Black until the app says otherwise.
+     * The background before the desktop arrives. Once it has, the letterbox
+     * around it is black, but an empty window while connecting is an app screen
+     * rather than the edges of the remote picture. Black unless the app sets
+     * another color.
      */
     private int emptyColor = 0xff000000;
     private String lastRegion = "-";
 
     /**
      * @param cfg the input stack's settings, which the app builds from its
-     *            preferences ({@link InputSettings}) rather than this view
-     *            deciding anything about the feel.
+     *            preferences ({@link InputSettings})
      */
     public SessionView(Context ctx, Backend backend, Host host, Config cfg) {
         super(ctx);
@@ -271,10 +263,10 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
         router.addClaim(overlay);
         keyboard = new ExtensionKeyboard(cfg, this, scheduler, keyList(ctx));
         router.addClaim(keyboard);
-        // The three small machines the callbacks below hand their work to,
-        // built before either of those two is listened to: measuring the row
-        // counts as a change to it, and Chrome does that on the way in — so a
-        // notification really does arrive during this constructor.
+        // The three helpers the callbacks below delegate to, built before the
+        // overlay and keyboard listeners are set: measuring the row counts as a
+        // change to it, and Chrome measures it when attached, so a change
+        // notification arrives during this constructor.
         softInput = new SoftInput(this, keyboard, overlay, () -> {
             syncToolbarState();
             applyInsets();
@@ -287,17 +279,17 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
         toolbar.setItems(Toolbar.standard());
         toolbar.setPosition(AppSettings.toolbarPosition(ctx));
         router.addClaim(toolbar);
-        // A third button source, for the same reason the overlay has the second:
-        // a mouse holding LEFT while a finger taps the touchpad must not have
-        // its button released by the tap's own 250 ms window.
+        // A third button source, for the same reason the overlay has its own: a
+        // mouse holding LEFT while a finger taps the touchpad must not have its
+        // button released by the tap's 250 ms click window.
         mouse = new PhysicalMouse(cfg, cursor.newButtonSource());
         mouse.setListener(this);
         keys = new PhysicalKeyboard(this);
         keys.setListener(this);
         chrome = new Chrome(cfg);
         chrome.attach(keyboard);
-        // Listening only now: a change notification asks the chrome for a
-        // ripple, and the chrome does not exist above this line.
+        // Only now: a change notification asks the chrome for a ripple, and the
+        // chrome is created just above.
         toolbar.setListener(this);
         applyControls();
         clipboard = new SessionClipboard(ctx, backend::clipboardToRemote);
@@ -313,22 +305,21 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
     }
 
     /**
-     * The input stack's settings, as they are now: they are edited on a screen
-     * of their own, and a session still connected underneath it would otherwise
-     * go on running on the ones it opened with until it was reconnected.
+     * Apply the current input settings. They are edited on another screen, and
+     * a session still connected would otherwise keep the ones it opened with
+     * until it reconnected.
      *
-     * <p>Into the live config rather than in place of it, because every piece
-     * of this stack holds <em>this</em> object and reads its fields as it goes
-     * — which is what makes a swap possible at all, and is why the values are
-     * nearly all of the work. What is left is whatever does not follow from a
-     * field being read later: a capture is a request to the system rather than
-     * a value, and the insets are computed from several of these and cached in
-     * the viewport. Both are redone unconditionally rather than against a list
-     * of which setting implies which, since such a list is one somebody has to
-     * remember to add to and nothing fails when they do not.
+     * <p>Copied into the live config rather than replacing it, because every
+     * part of the input stack holds <em>this</em> object and reads its fields
+     * as needed, so copying the values does nearly all of the work. The rest
+     * does not follow from reading a field later: pointer capture is a request
+     * to the system rather than a value, and the insets are computed from
+     * several settings and cached in the viewport. Both are redone
+     * unconditionally rather than based on which settings changed, since such a
+     * mapping would be easy to forget to update and nothing would fail.
      *
-     * <p>Called between gestures — the settings screen is another activity, so
-     * {@code onStop} has already let go of every touch, key and button this
+     * <p>Called between gestures: the settings screen is another activity, so
+     * {@code onStop} has already released every touch, key and button this
      * session was holding.
      */
     public void applySettings(Config now) {
@@ -338,13 +329,13 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
     }
 
     /**
-     * Which keys the extension row offers, from this phone's preferences: the
-     * one scrolling line this app has always had, or the two-line grouping, and
-     * either of them without the two modifiers that are only for a Mac.
+     * The extension row's keys, from the preferences: the single scrolling line
+     * or the two-line grouping, either optionally without the two Mac-only
+     * modifiers.
      *
-     * <p>The filter is here rather than in {@code control}, which has no idea
-     * what a Mac is: the labels are that package's own, and what they mean to
-     * somebody's far end is the app's question.
+     * <p>The filter is here rather than in {@code control}, which knows nothing
+     * about platforms: the labels are that package's, but what they mean on the
+     * far end is the app's concern.
      */
     private static List<ExtensionKeyboard.Key> keyList(Context ctx) {
         final List<ExtensionKeyboard.Key> keys = new ArrayList<>(AppSettings.twoLineKeys(ctx)
@@ -357,12 +348,12 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
     }
 
     /**
-     * The key list, as the preferences have it now. Separate from
-     * {@link #applySettings}, which is about the input stack's own file.
+     * Apply the key list from the current preferences. Separate from
+     * {@link #applySettings}, which covers the input stack's own preferences.
      *
-     * <p>Only when it differs: a swap lets go of every modifier held at the far
-     * end, so making one for a settings screen that was opened and closed again
-     * would drop a chord somebody had armed.
+     * <p>Only when it differs: replacing the keys releases every modifier held
+     * at the far end, so doing it after merely opening and closing the settings
+     * would drop a chord the user had armed.
      */
     public void applyKeyList() {
         final List<ExtensionKeyboard.Key> want = keyList(getContext());
@@ -392,8 +383,8 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
     }
 
     /**
-     * Override {@link Mirror#DEFAULT_TILE} for this session, so the tile size can
-     * be swept from the command line rather than by rebuilding.
+     * Override {@link Mirror#DEFAULT_TILE} for this session, so tile sizes can
+     * be tested from the command line without rebuilding.
      */
     public void setTileSize(int px) {
         tileSize = px;
@@ -412,7 +403,7 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
         if (state == Backend.State.CLOSED && !wasClosed) {
             host.disconnected();
         }
-        // A connection saved view-only arrives that way rather than being
+        // A connection saved as view-only starts that way rather than being
         // switched to it, and a screen re-attaching to one has to catch up.
         if (state == Backend.State.CONNECTED) {
             optionsChanged();
@@ -428,8 +419,8 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
         if (mirror != null) {
             mirror.release();
         }
-        // Every tile starts dirty, so the far end having been drawing since
-        // before we knew how big it was needs no damage of its own here.
+        // Every tile starts dirty, so damage sent before the size was known
+        // does not need to be replayed.
         mirror = new Mirror(width, height,
                 tileSize > 0 ? tileSize : Mirror.DEFAULT_TILE);
         viewport.setDesktopSize(width, height);
@@ -458,10 +449,10 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
                 Log.v(LAG_TAG, "cursor " + SystemClock.uptimeMillis()
                         + (shape == null ? " hidden" : " " + shape.getWidth() + "x" + shape.getHeight()));
             }
-            // A reference comparison, and it is one because CursorCache hands
-            // back the same bitmap for a shape it has seen before — so a
-            // pointer crossing a window's edge between two shapes it already
-            // had is two changes rather than a pixel comparison each way.
+            // A reference comparison, which works because CursorCache returns
+            // the same bitmap for a shape it has seen before, so a pointer
+            // crossing between two known shapes is two changes without
+            // comparing pixels.
             gestures.remoteCursorChanged(SystemClock.uptimeMillis());
         }
         cursorShape = shape;
@@ -471,10 +462,10 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
     }
 
     /**
-     * The far end has taken the cursor over, or given it back. Both halves stop
-     * at once: the controller stops integrating deltas into a position, and
-     * nothing is drawn here for a pointer whose position is unknown — the
-     * picture arriving from the far end has one drawn into it.
+     * The far end has taken over the cursor, or given it back. In relative
+     * mode the controller stops integrating deltas into a position, and no
+     * cursor is drawn here, since its position is unknown and the far end draws
+     * it into the picture.
      */
     @Override
     public void pointerMode(boolean relative) {
@@ -499,8 +490,8 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
     }
 
     /**
-     * Called inline on the protocol's thread, so it answers from the cache the
-     * main thread keeps filled — see {@link SessionClipboard}.
+     * Called inline on the protocol thread, so it answers from the cache the
+     * main thread keeps filled (see {@link SessionClipboard}).
      */
     @Override
     public String clipboardForRemote() {
@@ -523,7 +514,7 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
         backend.pointerRelative(dx, dy, buttons);
     }
 
-    // ---- the view ----------------------------------------------------------
+    // ---- View -------------------------------------------------------------
 
     @Override
     protected void onAttachedToWindow() {
@@ -540,23 +531,22 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
     }
 
     /**
-     * The two things on this screen that have to be asked for rather than
-     * waited for, on one timer because they are the same kind of question. A
-     * monitor layout arrives in a rectangle that may carry no size change with
-     * it, so there is no callback to hang it on; and whether the far end will
-     * take a size becomes true some time after the connection, so a one-shot
-     * that fired too early would never fire again. The connection panel polls
-     * the same class of fact at the same rate.
+     * Polls the two things this screen cannot be notified of, on one timer. A
+     * monitor layout arrives in a rectangle that may not change the desktop
+     * size, so there is no callback for it; and the far end may only accept a
+     * resize some time after connecting, so a one-shot request sent too early
+     * would never be retried. The connection panel polls the same facts at the
+     * same rate.
      */
     private final Runnable sessionTick = new Runnable() {
         @Override
         public void run() {
-            // One crossing for both questions, and one answer they agree on.
+            // One backend call for both, so they come from the same snapshot.
             final Backend.Facts facts = backend.facts();
-            // The layout on its own, not the whole snapshot: a zoom ladder
-            // rebuilt every second for a desktop that has not moved would snap
-            // the scale under a pinch, and canResize turning true is not news
-            // about how the far end is divided.
+            // Compare the layout alone, not the whole snapshot: rebuilding the
+            // zoom ladder every second for an unchanged layout would snap the
+            // scale during a pinch, and canResize changing does not change the
+            // layout.
             if (!facts.monitors().equals(monitors)) {
                 monitors = facts.monitors();
                 viewport.setFitSizes(fitSizes(monitors));
@@ -567,9 +557,9 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
     };
 
     /**
-     * One zoom rung per monitor <em>size</em>, so a pair of matched screens is
-     * one step rather than two that stop in the same place. Nothing at all for
-     * a desktop that is one screen, which is not a layout.
+     * One zoom step per distinct monitor <em>size</em>, so two identical
+     * monitors give one step rather than two at the same scale. None for a
+     * single-monitor desktop.
      */
     private static int[] fitSizes(List<Monitor> monitors) {
         if (monitors.size() < 2) {
@@ -594,11 +584,11 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
     }
 
     /**
-     * The clipboard is only readable while we have focus, so a copy made in
-     * another app is picked up on the way back rather than when it happened —
-     * and the core asks for ours the moment it is told about the focus, so this
-     * has to run <em>before</em> {@code Backend.focus(true)}. That ordering is
-     * why the activity calls it rather than this view overriding
+     * The clipboard is only readable while this window has focus, so a copy
+     * made in another app is picked up on return rather than when it happened.
+     * The core requests the local clipboard as soon as it gets the focus, so
+     * this has to run <em>before</em> {@code Backend.focus(true)}, which is why
+     * the activity calls it rather than this view's
      * {@code onWindowFocusChanged}.
      */
     public void refreshClipboard() {
@@ -606,13 +596,12 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
     }
 
     /**
-     * The session has left the screen. Everything we are holding the remote to
-     * is let go of first, because "held" here means held <em>there</em>: a
-     * finger down when the app is switched away never gets an up, the click
-     * window's button and a locked Ctrl are real state at the far end, and a
-     * glide would keep moving somebody's cursor around a desktop they are no
-     * longer looking at. The original does none of this, which is why switching
-     * away from it mid-drag leaves the button down.
+     * The session has left the screen. Everything held is released first,
+     * because it is held at the far end: a finger down when the app is switched
+     * away never gets an up event, the click window's button and a locked Ctrl
+     * are real state at the far end, and a glide would keep moving the cursor
+     * on a desktop that is not being viewed. The original does none of this,
+     * which is why switching away from it mid-drag leaves the button down.
      */
     public void suspendInput() {
         paste.cancel();
@@ -620,8 +609,8 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
         router.cancel(now);
         gestures.cancelAll(now);
         keyboard.clearModifiers();
-        // The two that are not touches: a mouse button and a key held when the
-        // session leaves the screen never get their edge either.
+        // Not touches, but the same problem: a mouse button or key held when
+        // the session leaves the screen never gets its release either.
         mouse.cancel();
         keys.releaseAll();
     }
@@ -635,12 +624,11 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
         keyboard.setViewSize(w, h);
         toolbar.setViewSize(w, h);
         place();
-        // The window changing shape rather than the orientation changing: a
-        // split screen dragged about asks the same question, and this activity
-        // handles its own configuration changes so there is no recreation to
-        // hang it on either.
-        // Bringing the tick forward rather than starting a second timer, so
-        // there is one place the question is asked.
+        // On any window size change rather than only orientation changes: a
+        // split screen being resized needs the same, and this activity handles
+        // its own configuration changes, so it is not recreated.
+        // Rescheduling the existing tick rather than starting a second timer,
+        // so the request is made in one place.
         if (follower.enabled()) {
             scheduler.removeCallbacks(sessionTick);
             scheduler.postDelayed(sessionTick, WindowFollower.DEBOUNCE_MS);
@@ -659,8 +647,8 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
     /**
      * First fit, or a re-fit after a rotation. The remote desktop does not
      * rotate with the phone, so the cursor keeps its desktop position and only
-     * the window onto the desktop changes — but the fit-the-desktop minimum
-     * moves with the aspect ratio, so the scale is re-snapped either way.
+     * the view onto the desktop changes; but the fit-the-desktop minimum scale
+     * depends on the aspect ratio, so the scale is re-snapped either way.
      */
     private void place() {
         if (getWidth() == 0 || !desktopKnown) {
@@ -690,7 +678,7 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
         return router.onTouchEvent(ev);
     }
 
-    // ---- the physical mouse ------------------------------------------------
+    // ---- physical mouse -----------------------------------------------------
 
     /** An uncaptured mouse: hovering, and its wheel. */
     @Override
@@ -698,7 +686,7 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
         return mouse.onGenericMotionEvent(ev) || super.onGenericMotionEvent(ev);
     }
 
-    /** A captured one, where the coordinates are already the deltas. */
+    /** A captured mouse, where the coordinates are already deltas. */
     @Override
     public boolean onCapturedPointerEvent(MotionEvent ev) {
         return mouse.onCapturedPointerEvent(ev) || super.onCapturedPointerEvent(ev);
@@ -708,20 +696,20 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
     public void onPointerCaptureChange(boolean hasCapture) {
         super.onPointerCaptureChange(hasCapture);
         if (!hasCapture) {
-            // The pointer went back to the system with a button held down, and
-            // the far end is the one holding it.
+            // The pointer may have returned to the system with a button down,
+            // which the far end would keep holding.
             mouse.cancel();
         }
         invalidate();
     }
 
     /**
-     * Capture, and the two things that go with losing focus.
+     * Pointer capture on focus gain, and releasing held input on focus loss.
      *
-     * <p>Asked on every focus gain rather than once: capture ends whenever the
-     * window loses focus — a sheet, a dialog, the notification shade — and
-     * nothing says "and now you may have it back". Asking when there is no
-     * mouse costs nothing.
+     * <p>Capture is requested on every focus gain rather than once: it ends
+     * whenever the window loses focus (a sheet, a dialog, the notification
+     * shade), and nothing signals that it can be requested again. Requesting it
+     * without a mouse costs nothing.
      */
     @Override
     public void onWindowFocusChanged(boolean hasWindowFocus) {
@@ -731,7 +719,7 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
             syncPointerCapture();
             softInput.sync();
         } else {
-            // Held there, not here — the same argument as suspendInput().
+            // Held at the far end, as in suspendInput().
             mouse.cancel();
             keys.releaseAll();
         }
@@ -750,14 +738,14 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
         invalidate();
     }
 
-    // ---- the physical keyboard ---------------------------------------------
+    // ---- physical keyboard --------------------------------------------------
 
     /**
-     * Every key event the focused session sees. {@link PhysicalKeyboard} refuses
-     * the ones this client keeps for itself — Back above all, since it is how a
-     * session is left — and those fall through to Android. Here rather than on
-     * the activity, which is dispatched first and would take the keys belonging
-     * to whatever sheet is open over this screen.
+     * Every key event the focused session gets. {@link PhysicalKeyboard} refuses
+     * the ones this client handles itself (mainly Back, which leaves the
+     * session), and those fall through to Android. Here rather than in the
+     * activity, which is dispatched first and would also take the keys meant
+     * for a sheet open over this screen.
      */
     @Override
     public boolean dispatchKeyEvent(KeyEvent ev) {
@@ -773,9 +761,9 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
     }
 
     /**
-     * A key from somewhere other than the extension row — the system IME or a
-     * real keyboard. The row is told so that a one-shot modifier armed on it is
-     * consumed by it and its info bar has something to read.
+     * A key from somewhere other than the extension row (the system IME or a
+     * physical keyboard). The row is notified so that a one-shot modifier armed
+     * on it is consumed and its info bar is updated.
      */
     private void externalKeyTyped(int keysym) {
         keyboard.externalKey(keysym);
@@ -799,11 +787,11 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
     }
 
     /**
-     * A pinch pans as well, and only where the far end owns the cursor: there
-     * is no centre-follow there, so a desktop bigger than the window is
-     * otherwise navigated blind. With the cursor ours the desktop is already
-     * wherever the cursor is, and a pan there would drag the pointer across
-     * somebody's desktop for a gesture that is about looking.
+     * A pinch also pans, but only when the far end owns the cursor: there is no
+     * centre-follow then, so a desktop bigger than the window could not
+     * otherwise be navigated. When the cursor is local the view already follows
+     * it, and a pan would drag the pointer across the desktop during a gesture
+     * meant only for viewing.
      */
     @Override
     public void zoomPanned(float screenDx, float screenDy) {
@@ -829,9 +817,9 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
     }
 
     /**
-     * A click is a key as far as the extension row is concerned: a one-shot
-     * modifier armed on it is what makes Ctrl+click, and it has to let go
-     * afterwards or the next click carries it too.
+     * The extension row treats a click like a key: a one-shot modifier armed on
+     * it makes Ctrl+click, and has to be released afterwards or the next click
+     * would carry it too.
      */
     @Override
     public void onButtonsReleased() {
@@ -841,9 +829,9 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
     // ---- KeySink -----------------------------------------------------------
 
     /**
-     * Straight through: {@link KeySink} and {@link Backend} agree on what a key
-     * event is, and for the same reason — a release is tied to its press by the
-     * id rather than by the keysym ({@code KeySink} §"the key id").
+     * Passed straight through: {@link KeySink} and {@link Backend} use the same
+     * key event model, where a release is tied to its press by the id rather
+     * than the keysym ({@code KeySink} §"The key id").
      */
     @Override
     public void keyDown(int keysym, int keyId) {
@@ -855,7 +843,7 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
         backend.keyUp(keyId);
     }
 
-    // ---- the system IME ----------------------------------------------------
+    // ---- system IME ---------------------------------------------------------
 
     @Override
     public boolean onCheckIsTextEditor() {
@@ -865,14 +853,13 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
     /**
      * {@code TYPE_NULL} with no extract UI: there is no text field here, only a
      * remote machine to send keys to, and declaring that makes an IME send key
-     * events rather than trying to manage a document.
+     * events rather than editing a document.
      *
-     * <p>And, unless the preference says otherwise, a password field as well.
-     * {@code TYPE_NULL} does not stop a keyboard learning the words, offering
-     * them back as suggestions, or shipping them off to improve itself — and
-     * this field is a whole remote machine, so a password typed at it looks like
-     * everything else. There is no way to mark only part of it, which is the
-     * argument for marking all of it.
+     * <p>With the private IME preference on, a password field instead.
+     * {@code TYPE_NULL} does not stop a keyboard from learning the words,
+     * suggesting them, or uploading them to improve itself, and since this
+     * field covers the whole remote machine, a password typed into it looks
+     * like any other text. Part of it cannot be marked, so all of it is.
      */
     @Override
     public InputConnection onCreateInputConnection(EditorInfo out) {
@@ -903,18 +890,18 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
     }
 
     /**
-     * This window's own shape, which changes for a rotation or a split screen
-     * rather than for anything anybody did here, and then whatever the system
-     * keyboard is doing under the extension row ({@link SoftInput}). Both, and
-     * then one re-inset: the first would not catch the second, since neither a
-     * rotation nor a split screen moves the IME.
+     * The window's edges, which change on a rotation or a split screen resize,
+     * and the system keyboard under the extension row ({@link SoftInput}). Both
+     * are checked, then the insets are applied once: checking only the edges
+     * would miss IME changes, since neither a rotation nor a split screen
+     * moves the IME.
      */
     @Override
     public WindowInsets onApplyWindowInsets(WindowInsets insets) {
         final int[] edges = windowEdges(insets);
         boolean changed = !Arrays.equals(edges, windowEdges);
         windowEdges = edges;
-        // Not short-circuiting: the IME is asked whatever the edges said.
+        // Not short-circuiting: the IME is checked whatever the edges did.
         changed |= softInput.imeInsets(insets);
         if (changed) {
             applyInsets();
@@ -924,15 +911,15 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
     }
 
     /**
-     * What the far edges of this window are lost to. The bars and the cutout are
-     * an inset and arrive as one; the rounded corners are not an inset at all —
-     * they are a radius per corner, of which each side takes the larger of the
-     * two it has, since a picture pulled that far in from an edge clears the arc
-     * at both of its ends.
+     * How much of each edge of this window is obstructed. The bars and the
+     * cutout are insets; the rounded corners are a radius per corner, and each
+     * side takes the larger of its two corners, since a picture that far in
+     * from the edge clears the arc at both ends.
      *
-     * <p>Ignoring visibility, for the reason {@link #deviceSize} gives: a bar
-     * hidden this instant comes back, and limits that moved every time sticky
-     * immersive flashed one up would drag the picture about with them.
+     * <p>Ignoring visibility, for the reason
+     * {@link WindowFollower#deviceSize} gives: a hidden bar comes back, and
+     * limits that changed every time sticky immersive showed one would move the
+     * picture with them.
      */
     private static int[] windowEdges(WindowInsets insets) {
         final android.graphics.Insets bars = insets.getInsetsIgnoringVisibility(
@@ -950,8 +937,8 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
     }
 
     /**
-     * A corner this window has not got — a square display, or the half of a
-     * split screen that does not reach it — costs it nothing.
+     * Zero for a corner this window does not have (a square display, or a
+     * split screen half that does not reach it).
      */
     private static int cornerRadius(WindowInsets insets, int position) {
         final RoundedCorner corner = insets.getRoundedCorner(position);
@@ -963,7 +950,7 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
     @Override
     public void overlayChanged() {
         // Bump scroll arms for a drag started while the overlay holds a button,
-        // the same as it does inside the 250 ms click window.
+        // as it does inside the 250 ms click window.
         gestures.setExternalButtonHeld((overlay.heldMask() & Button.DRAG_MASK) != 0);
         softInput.overlayChanged();
         invalidate();
@@ -979,14 +966,14 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
     }
 
     /**
-     * Send the soft keyboard back to its letters, which is what the original
-     * does and what makes the two rows feel like one keyboard: a chord is a
-     * modifier here and a letter down there, and reaching for Ctrl while the
-     * IME is showing symbols otherwise means going back for the letters by hand.
+     * Return the soft keyboard to its letters, as the original does, which
+     * makes the two rows feel like one keyboard: a chord is a modifier on the
+     * row plus a letter on the IME, and pressing Ctrl while the IME shows
+     * symbols would otherwise mean switching back to letters by hand.
      *
-     * <p>{@code restartInput} is the whole of it: there is no API for "show the
-     * alphabetic page", only a way to tell the IME its target has changed, which
-     * every IME answers by starting again at its default page.
+     * <p>{@code restartInput} is the only way: there is no API to show the
+     * alphabetic page, only one to tell the IME its target has changed, which
+     * every IME handles by returning to its default page.
      */
     @Override
     public void modifierPressed(ExtensionKeyboard.Key key) {
@@ -1011,8 +998,8 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
     }
 
     /**
-     * The row's one action key, which types the clipboard out rather than
-     * sending a Ctrl+V ({@link PasteTyper}).
+     * The row's only action key, which types the clipboard rather than sending
+     * Ctrl+V ({@link PasteTyper}).
      */
     @Override
     public void keyAction(String name) {
@@ -1023,9 +1010,9 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
     }
 
     /**
-     * Type the clipboard out. Two things ask for this: the row's own Paste key,
-     * and an IME with a clipboard key of its own, which asks the editor to paste
-     * rather than committing any text ({@link TextInput#performContextMenuAction}).
+     * Type the clipboard. Called for the row's Paste key, and for an IME's own
+     * clipboard key, which asks the editor to paste rather than committing text
+     * ({@link TextInput#performContextMenuAction}).
      */
     private void pasteClipboard() {
         clipboard.read();
@@ -1043,31 +1030,30 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
     }
 
     /**
-     * What the viewport clamps inside: whatever the overlay or the keyboard is
-     * covering. Through the cursor rather than the viewport directly, because
-     * the desktop must not jump when a widget appears over it — see
-     * {@link CursorController#setInsets}.
+     * Set the area the viewport clamps to, excluding whatever the overlay or the
+     * keyboard covers. Through the cursor rather than the viewport directly,
+     * because the desktop must not jump when a widget appears over it (see
+     * {@link CursorController#setInsets}).
      */
     private void applyInsets() {
         final int right = (int) overlay.insetRightPx();
         int bottom = (int) Math.max(overlay.insetBottomPx(), keyboard.insetBottomPx());
-        // The IME on its own, in case it outlives the row that asked for it.
+        // The IME on its own, in case it outlives the row that requested it.
         bottom = Math.max(bottom, softInput.imeHeight());
-        // Nothing insets the left or the top, so there those margins are the
-        // whole of what the edge costs. Before the insets rather than after, so
-        // that the re-clamp the insets end with is the one that has the last
-        // word; a margin that changed alone re-clamps itself.
+        // Nothing insets the left or the top, so those margins are the full
+        // edge size. Set before the insets so that the re-clamp setInsets ends
+        // with comes last; a margin that changed alone re-clamps by itself.
         viewport.setPanMargins(panMargin(windowEdges[0], 0), panMargin(windowEdges[1], 0),
                 panMargin(windowEdges[2], right), panMargin(windowEdges[3], bottom));
         cursor.setInsets(0, 0, right, bottom);
-        // Not one of those: the toolbar floats over the picture. What it needs
-        // is the band it may be dragged in — inside this window's own edges, and
-        // clear of what the keyboard *occupies*, which is a bigger number than
-        // what the keyboard insets by.
-        // Flush to the left edge, whatever that edge costs: this is a widget
-        // over the picture rather than part of it, and a column indented by a
-        // corner radius reads as a panel that has come loose. Only the vertical
-        // ends are held off, since those are where a bar or a cutout is.
+        // The toolbar floats over the picture, so it is not inset like the
+        // desktop. It needs the band it may be dragged in: inside this window's
+        // edges, and clear of the keyboard's full height, which is larger than
+        // the keyboard's inset.
+        // Flush to the left edge regardless of what covers it: the toolbar is
+        // a widget over the picture, and a column indented by a corner radius
+        // looks detached. Only the top and bottom are kept clear, since that is
+        // where the bars and cutouts are.
         toolbar.setInsets(0, windowEdges[1],
                 Math.max(windowEdges[3], keyboard.heightPx()));
         baseScale = viewport.getScale();
@@ -1075,16 +1061,14 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
     }
 
     /**
-     * How far in from one edge of the window a pan may bring the desktop's edge:
-     * the two settings, which are two reasons to want the same thing and are
-     * added rather than gated on each other, so either alone is a margin.
+     * How far in from one window edge a pan may bring the desktop's edge: the
+     * two settings added together, so either alone gives a margin.
      *
-     * <p>What this edge costs, if that setting is on — less whatever an inset
-     * has already moved the picture clear of it, since the extension keyboard
-     * stands on the navigation bar and the desktop above the keyboard is already
-     * above the bar. Plus the flat margin, if there is one, which is about where
-     * an edge is comfortable rather than what is over it and so is not something
-     * an inset answers.
+     * <p>The edge's obstructed size, if that setting is on, minus the inset
+     * already clearing it, since the extension keyboard sits on the navigation
+     * bar and the desktop above the keyboard is already clear of the bar. Plus
+     * the fixed margin, if set, which is for comfort rather than obstruction and
+     * so is not reduced by an inset.
      */
     private int panMargin(int edge, int inset) {
         return (cfg.panMarginInsets ? Math.max(edge - inset, 0) : 0) + (int) cfg.panMarginPx;
@@ -1099,14 +1083,15 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
     }
 
     /**
-     * What either affordance does, in the one place both go through, so the two
-     * cannot drift apart in what they do — only in how they are reached.
+     * The action for a tap region or toolbar button, in one place so that both
+     * do the same thing.
      *
-     * @return whether it was done. The two input actions are not there at all on
-     * a view-only session: refused rather than consumed, so a tap in a region
-     * clicks as usual and does visibly nothing, like a tap anywhere else on a
-     * view-only desktop ({@code TapRegions} §"the handler decides"). The toolbar
-     * does not need the answer, since it simply does not offer those two.
+     * @return whether it was handled. The two input actions do not exist on a
+     * view-only session: they are refused rather than consumed, so a tap in
+     * their region is passed on as a click and visibly does nothing, like a tap
+     * anywhere else on a view-only desktop ({@code TapRegions} §"the handler
+     * decides"). The toolbar ignores the result, since it does not offer those
+     * two.
      */
     private boolean controlAction(String name) {
         switch (name) {
@@ -1152,12 +1137,11 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
     }
 
     /**
-     * The left edge is where the system's back gesture is, and a claimed pointer
-     * does not change that: the platform decides before this view sees the
-     * stream. So the box the toolbar occupies is handed back through the one
-     * mechanism there is for it, and handed back again every time it moves —
-     * which is why this hangs off the change notification rather than the
-     * layout.
+     * The left edge has the system back gesture, and claiming the pointer does
+     * not prevent it: the platform decides before this view gets the events. So
+     * the toolbar's box is excluded from system gestures, and updated every time
+     * it moves, which is why this runs on the change notification rather than
+     * on layout.
      */
     private void applyGestureExclusion() {
         exclusions.clear();
@@ -1170,10 +1154,9 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
     }
 
     /**
-     * Which affordance this session offers, from this phone's preferences, and
-     * what the toolbar has to say about the two widgets that have a state.
-     * Applied to a running session, since it is answered on the first frame's
-     * dialog with the session already underneath it.
+     * Apply the controls preference (toolbar, tap regions, or both), and the
+     * toolbar's state for the two toggles. Applied to a running session, since
+     * the choice is made in the first-frame dialog with the session underneath.
      */
     public void applyControls() {
         final Context ctx = getContext();
@@ -1184,10 +1167,10 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
     }
 
     /**
-     * A view-only session gets a shorter column rather than two dead buttons:
-     * the keyboard and the mouse overlay are not inactive there, they are
-     * absent. And the two that remain report what they are showing, the way the
-     * info bar reports an armed modifier.
+     * A view-only session gets a shorter toolbar rather than two disabled
+     * buttons, since the keyboard and the mouse overlay are not available. The
+     * keyboard and mouse buttons show whether their widget is visible, as the
+     * info bar shows an armed modifier.
      */
     private void syncToolbarState() {
         toolbar.setItems(backend.viewOnly()
@@ -1198,11 +1181,10 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
     }
 
     /**
-     * Something about the connection changed that this screen shows — today,
-     * only whether it is view-only, which is a control on the connection panel
-     * and so can be turned on with the keyboard and the overlay already open.
-     * Both are put away rather than left inert: a row of keys that types nothing
-     * is indistinguishable from a session that has stopped answering.
+     * A connection option this screen depends on changed. Currently only
+     * view-only, which is a control on the connection panel and so can be
+     * turned on with the keyboard and the overlay open; both are then hidden
+     * ({@link SoftInput#hideAll}).
      */
     public void optionsChanged() {
         if (backend.viewOnly()) {
@@ -1219,9 +1201,9 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
         c.drawColor(mirror != null ? 0xff000000 : emptyColor);
 
         if (mirror != null) {
-            // Pull whatever changed where we are looking, on the drawing thread,
-            // because a fetch must never queue behind connection work. What is
-            // off screen keeps its damage until it is looked at.
+            // Read the visible changed tiles on the drawing thread, because a
+            // fetch must never queue behind connection work. Off-screen tiles
+            // stay dirty until they are visible.
             mirror.update(backend,
                     viewport.toDesktopX(0), viewport.toDesktopY(0),
                     viewport.toDesktopX(getWidth()), viewport.toDesktopY(getHeight()));
@@ -1232,8 +1214,8 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
             c.restoreToCount(save);
             drawCursor(c);
             // Here rather than on the backend's frame notification, which is
-            // also sent for the desktop size arriving — before there are any
-            // pixels. "On screen" is this line having run.
+            // also sent when the desktop size arrives, before there are any
+            // pixels.
             if (!firstFrameSeen) {
                 firstFrameSeen = true;
                 post(host::firstFrame);
@@ -1251,35 +1233,36 @@ public final class SessionView extends View implements ZoomSink, CursorControlle
             postInvalidateOnAnimation();
         }
 
-        // Over the desktop, and under the status panel, which is a view rather
-        // than ink and is above everything here.
+        // Over the desktop, and under the status panel, which is a separate
+        // view above this one.
         if (regionHints != null) {
             chrome.drawRegionHints(c, tapRegions, getWidth(), getHeight(), 1f, regionHints::get);
         }
         if (hudVisible) {
             hud.draw(c, getWidth(), getHeight(), mirror, backendState, lastRegion,
                     softInput.imeHeight(), hasPointerCapture());
-            // The rates are only meaningful if there is a next frame to compare
-            // against, and a still desktop produces none.
+            // The rates need a next frame to compare against, and a still
+            // desktop produces none.
             postInvalidateOnAnimation();
         }
     }
 
     /**
-     * The remote cursor, capped at 32 logical pixels as the original caps it,
-     * with the hotspot already un-negated by the backend.
+     * The remote cursor, capped at 32 logical pixels as in the original, with
+     * the hotspot already un-negated by the backend.
      */
     private void drawCursor(Canvas c) {
         if (cursor.isRelative()) {
-            // Drawing a shape at a position nobody knows would put a second,
-            // wrong pointer on a picture that already has the real one in it.
+            // The position is unknown, and the far end already draws the cursor
+            // into the picture, so drawing one here would add a second, wrong
+            // pointer.
             return;
         }
         chrome.drawCursor(c, cursorShape, cursorHotX, cursorHotY,
                 cursor.screenX(), cursor.screenY(), bitmapPaint);
     }
 
-    /** Let go of the bitmaps; the backend outlives the view only briefly. */
+    /** Release the mirror's bitmaps. The backend outlives the view. */
     public void release() {
         if (mirror != null) {
             mirror.release();

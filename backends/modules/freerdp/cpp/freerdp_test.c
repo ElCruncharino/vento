@@ -3,17 +3,16 @@
 
 // Tests of the session file's pure parts, built with the probes
 // (`-DVENTO_PROBES=ON`) and run by `ctest` in that build tree or as
-// `freerdp/vento_freerdp_test`: the address, the keysym tables, the
-// monitor layouts both ways, the command ring when it is full, the keys a
-// press and its release send, what the display-control channel's
-// capabilities do to a layout, the H.264 subsystem's way out of a decoder
-// that will not open, and the sound switch as the rdpsnd devices come and
-// go.
+// `freerdp/vento_freerdp_test`: the address, the keysym tables, the monitor
+// layouts in both directions, the full command ring, the keys sent for a
+// press and its release, the effect of the display-control channel's
+// capabilities on a layout, the H.264 subsystem's handling of a decoder that
+// won't open, and the sound switch as rdpsnd devices come and go.
 //
-// The three sources are included rather than linked, which is what reaches
-// their static functions; nothing in them connects anywhere. The two input
-// calls the keys go through are the library's, so the build wraps them
-// (`--wrap`) and the wrappers here record what would have gone on the wire.
+// The three sources are included rather than linked, to reach their static
+// functions; nothing in them connects anywhere. The two input calls used for
+// keys are the library's, so the build wraps them (`--wrap`) and the
+// wrappers here record what would have been sent.
 
 #include "freerdp_session.c"
 #include "h264_vento.c"
@@ -60,8 +59,8 @@ BOOL __wrap_freerdp_input_send_unicode_keyboard_event(rdpInput *input, UINT16 fl
     return TRUE;
 }
 
-/* A session with nothing behind it but its locks, and an instance and a
-   context whose only use is to be there. */
+/* A session with only its locks set up, and a placeholder instance and
+   context. */
 static freerdp fakeInstance;
 static rdpContext fakeContext;
 
@@ -164,12 +163,12 @@ static void testKeysyms(void) {
     key(0xffd5, 0x76, 0, 0);          /* F24 */
     key(0xff13, KEY_PAUSE, 0, 0);
     key(0xff95, 0x47, 0, 0); /* KP_Home */
-    key(0xffb7, 0x47, 0, 0); /* KP_7, the same position */
-    key(0xffbd, KEY_NONE, 0, '=');      /* KP_Equal: no position */
+    key(0xffb7, 0x47, 0, 0); /* KP_7, the same scancode */
+    key(0xffbd, KEY_NONE, 0, '=');      /* KP_Equal: no scancode */
     key(0xe9, KEY_NONE, 0, 0xe9);       /* eacute, Latin-1 as itself */
     key(0x10020ac, KEY_NONE, 0, 0x20ac); /* the euro sign */
     key(0x101f600, KEY_NONE, 0, 0);     /* past the BMP: nothing to send */
-    key(0xfe50, KEY_NONE, 0, 0);        /* dead_grave: no position, no character */
+    key(0xfe50, KEY_NONE, 0, 0);        /* dead_grave: no scancode, no character */
     CHECK(namedScancode('a') == KEY_NONE);
 }
 
@@ -178,7 +177,7 @@ static void testKeysyms(void) {
 static void testKeysSent(void) {
     Session *s = testSession();
 
-    /* A character with no position goes as Unicode, down and then up. */
+    /* A character with no scancode is sent as Unicode, down and then up. */
     nsent = 0;
     doKeyDown(s, 0xe9, 1);
     doKeyUp(s, 1);
@@ -196,7 +195,8 @@ static void testKeysSent(void) {
     CHECK(sent[2].unicode && sent[2].flags == KBD_FLAGS_RELEASE);
     CHECK(s->nkeys == 0);
 
-    /* A capital with no Shift held is wrapped in one, let go after it. */
+    /* A capital typed without Shift held gets a synthesised Shift, released
+       after it. */
     nsent = 0;
     doKeyDown(s, 'A', 3);
     doKeyUp(s, 3);
@@ -206,7 +206,7 @@ static void testKeysSent(void) {
     CHECK(sent[2].code == 0x1e && sent[2].flags == KBD_FLAGS_RELEASE);
     CHECK(sent[3].code == 0x2a && sent[3].flags == KBD_FLAGS_RELEASE);
 
-    /* With Shift held by the person, it is not. */
+    /* With Shift held by the user, it doesn't. */
     nsent = 0;
     doKeyDown(s, 0xffe1, 4);
     doKeyDown(s, 'A', 5);
@@ -244,8 +244,8 @@ static int queued(const Session *s) {
 }
 
 static void testRing(void) {
-    /* Presses and releases past the ring's room: every release stays, in
-       order, and the presses go from the oldest. */
+    /* More presses and releases than the ring holds: every release stays, in
+       order, and presses are dropped oldest first. */
     Session *s = testSession();
     for (int i = 0; i < 400; i++) {
         Cmd down = {CMD_KEY_DOWN, 'a', 0, i, NULL, 0};
@@ -267,9 +267,9 @@ static void testRing(void) {
     CHECK(s->dropped == 289);
     freeTestSession(s);
 
-    /* A ring of pointer changes between two clipboards, and a release: the
-       oldest command a later one restates goes — the first clipboard, with
-       its text — and the release is last. */
+    /* A ring of pointer changes between two clipboards, then a release: the
+       oldest command restated by a later one (the first clipboard, with its
+       text) is dropped, and the release is last. */
     s = testSession();
     WCHAR *text = calloc(4, sizeof(WCHAR));
     Cmd clip = {CMD_CLIPBOARD, 0, 0, 0, text, 3};
@@ -289,8 +289,8 @@ static void testRing(void) {
     CHECK(s->ring[s->tail].type == CMD_POINTER);
     freeTestSession(s);
 
-    /* A ring of nothing but releases: a press has no room, a release takes
-       the oldest's. */
+    /* A ring of only releases: a press is dropped, and a release replaces
+       the oldest. */
     s = testSession();
     for (int i = 0; i < CMD_RING - 1; i++) {
         Cmd r = {CMD_KEY_UP, 0, 0, i, NULL, 0};
@@ -315,7 +315,8 @@ static void testCovers(void) {
     CHECK(!covers(two, 0, 0, 0));
     const int32_t negative[] = {-1, 0, 100, 100};
     CHECK(!covers(negative, 1, 99, 100));
-    /* An edge past 32 bits is not a desktop of 100: wrapped, it was. */
+    /* An edge past 32 bits does not cover a desktop of 100 (it did when the
+       sum wrapped). */
     const int32_t wraps[] = {0, 0, 100, 100, INT32_MAX - 10, 0, 20, 100};
     CHECK(!covers(wraps, 2, 100, 100));
 }
@@ -338,7 +339,7 @@ static void testFlatten(void) {
     const MONITOR_DEF widest[] = {{0, 0, MAX_DESKTOP_SIDE - 1, 99, 0}};
     CHECK(flattenLayout(widest, 1, flat) && flat[2] == MAX_DESKTOP_SIDE);
 
-    /* And heard: an absurd one is set aside, a good one kept. */
+    /* heardLayout ignores an invalid layout and keeps a valid one. */
     Session *s = testSession();
     heardLayout(s, two, 2, "test");
     CHECK(s->serverCount == 2);
@@ -351,7 +352,7 @@ static void testBuildLayout(void) {
     DISPLAY_CONTROL_MONITOR_LAYOUT out[VENTO_MAX_MONITORS];
     int32_t asked[4 * VENTO_MAX_MONITORS];
     /* Too narrow and odd, too wide, too short: clamped, and the screen to the
-       right of the widened one moves along by as much. */
+       right of the widened one moves by the same amount. */
     const int32_t rects[] = {0, 0, 151, 300, 151, 0, 9000, 100};
     CHECK(buildLayout(rects, 2, 150, out, asked) == 2);
     CHECK(out[0].Width == 200 && out[0].Height == 300 && out[0].Left == 0 && out[0].Top == 0);
@@ -360,7 +361,7 @@ static void testBuildLayout(void) {
     CHECK(out[0].DesktopScaleFactor == 150 && out[1].DeviceScaleFactor == 150);
     CHECK(asked[4] == 200 && asked[6] == 8192);
 
-    /* The primary is the origin, whatever is left of it. */
+    /* The primary is the origin, even with a screen to its left. */
     const int32_t left[] = {1920, 0, 1920, 1080, 0, 0, 1920, 1080};
     CHECK(buildLayout(left, 2, 100, out, asked) == 2);
     CHECK(out[0].Left == 0 && out[1].Left == -1920);
@@ -389,8 +390,8 @@ static void testDisplayControl(void) {
     disp.custom = s;
     const int32_t two[] = {0, 0, 1920, 1080, 1920, 0, 1920, 1080};
 
-    /* Before the capabilities, nothing: the desktop cannot be resized yet,
-       and a size asked for waits for them, the latest one. */
+    /* Before the capabilities, nothing is sent: the desktop cannot be
+       resized yet, and the latest requested size waits for them. */
     layouts = 0;
     sendLayout(s, two, 2);
     CHECK(layouts == 0);
@@ -403,7 +404,7 @@ static void testDisplayControl(void) {
     drainCommands(s);
     CHECK(layouts == 1 && sentMonitors == 1 && sentLayout[0].Width == 1600);
 
-    /* And a layout, likewise. */
+    /* The same for a layout. */
     s->canResize = 0;
     memcpy(s->wantLayout, two, sizeof(two));
     s->wantCount = 2;
@@ -414,8 +415,8 @@ static void testDisplayControl(void) {
     CHECK(layouts == 2 && sentMonitors == 2 && s->wantCount == 0);
     layouts = 0;
 
-    /* A server of one monitor: a layout of two is cut to one, and a resize
-       of a session set to two monitors asks for one of the whole size. */
+    /* A single-monitor server: a layout of two is cut to one, and a resize
+       of a session set to two monitors requests one of the whole size. */
     CHECK(onDisplayControlCaps(&disp, 1, 8192, 8192) == CHANNEL_RC_OK);
     CHECK(op_can_resize(&s->base));
     sendLayout(s, two, 2);
@@ -433,7 +434,7 @@ static void testDisplayControl(void) {
     CHECK(layouts == 3);
     CHECK(queued(s) == 0);
 
-    /* A server of none is one that cannot be resized. */
+    /* A server allowing no monitors cannot be resized. */
     CHECK(onDisplayControlCaps(&disp, 0, 8192, 8192) == CHANNEL_RC_OK);
     CHECK(!op_can_resize(&s->base));
     freeTestSession(s);
@@ -488,7 +489,7 @@ static void testH264(void) {
     vento_h264_leave();
     Context *c = h264.pSystemData;
 
-    /* No hardware decoder: software at once, on the same frame. */
+    /* No hardware decoder: software immediately, on the same frame. */
     hardwareOpensFail = true;
     opens = hardwareOpens = 0;
     decompress(&h264, 1920, 1080);
@@ -498,8 +499,8 @@ static void testH264(void) {
     decompress(&h264, 1920, 1080);
     CHECK(opens == 2);
 
-    /* No decoder at all: said once, not asked again at the size, asked
-       again at another. */
+    /* No decoder at all: logged once, not retried at the same size, retried
+       at another. */
     everyOpenFails = true;
     opens = 0;
     CHECK(decompress(&h264, 4096, 2160) < 0);
@@ -570,8 +571,8 @@ static void testSoundSwitch(void) {
                               .nSamplesPerSec = 4000,
                               .wBitsPerSample = 16};
 
-    /* The static channel and the dynamic one, both offering: the switch
-       stays until the second of them is gone. */
+    /* The static and the dynamic channel, both offering: the switch stays
+       until both are gone. */
     Device *a = testDevice(&sound), *b = testDevice(&sound);
     CHECK(serverFormatAnnounce(&a->device, &pcm, 1) == CHANNEL_RC_OK);
     CHECK(serverFormatAnnounce(&b->device, &pcm, 1) == CHANNEL_RC_OK);
@@ -582,8 +583,8 @@ static void testSoundSwitch(void) {
     free_(&b->device);
     CHECK(withdrawals == 1);
 
-    /* A server that lists nothing playable after all takes it away; one that
-       never offered withdraws nothing as it goes. */
+    /* A server that then lists nothing playable withdraws it; a device that
+       never offered withdraws nothing when freed. */
     Device *c = testDevice(&sound), *d = testDevice(&sound);
     CHECK(serverFormatAnnounce(&c->device, &pcm, 1) == CHANNEL_RC_OK);
     CHECK(serverFormatAnnounce(&c->device, &odd, 1) == CHANNEL_RC_OK);

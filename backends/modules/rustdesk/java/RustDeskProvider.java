@@ -14,21 +14,21 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * This module's entry in a build's list of backends. What the RustDesk backend
- * is called and what it can be told are the catalog's, which the Linux client
- * reads too: {@link RustDeskCatalog}, generated from {@code backends/api}
- * at build time, holds the words and the option keys.
+ * This module's entry in a build's list of backends. The RustDesk backend's
+ * name and options come from the catalog, which the Linux client reads too:
+ * {@link RustDeskCatalog}, generated from {@code backends/api} at build time,
+ * holds the text and the option keys.
  *
- * <p>A session is a {@link NativeBackend} on {@link RustDeskNatives}, generated
- * too: the client in the module's crate as an {@code api::Backend},
- * decoding with the phone's MediaCodec. Nothing is left on this side: how
- * its pin is filed — under the id and the network it means something on — and
- * that a first sight of it is pinned without asking are {@code api::trust}'s,
- * applied in the JNI layer as the Linux client applies them.
+ * <p>A session is a {@link NativeBackend} on {@link RustDeskNatives}, also
+ * generated: the client in the module's crate as an {@code api::Backend},
+ * decoding with the phone's MediaCodec. There is no Java-side behaviour: the
+ * pin's key (the id and its network) and pinning a first key without asking
+ * are handled by {@code api::trust}, applied in the JNI layer as in the Linux
+ * client.
  */
 public final class RustDeskProvider implements BackendProvider {
 
-    /** {@code ConnectBy}'s two values, which decide what the address means. */
+    /** The two {@code ConnectBy} values, which decide what the address means. */
     public static final String BY_ID = "id";
     public static final String BY_ADDRESS = "address";
 
@@ -63,9 +63,9 @@ public final class RustDeskProvider implements BackendProvider {
     }
 
     /**
-     * What the address field holds by id: nine digits somebody reads off the
-     * other machine. Dialled by address it is an address, which is what the app
-     * calls it anyway.
+     * Labels the address field "ID" when connecting by id: the nine digits
+     * shown on the other machine. When connecting by address, the app's
+     * default label applies.
      */
     @Override
     public String addressLabel(Map<String, String> options) {

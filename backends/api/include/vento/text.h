@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// The text rules the session files share: what to make of bytes a server
-// chose, and a clipboard's line ends and size. Header-only, since the neutral
-// layer has no library of its own in C.
+// Text helpers shared by the session files: decoding strings chosen by a
+// server, and clipboard line ends and size. Header-only, since the shared
+// layer has no C library of its own.
 
 #ifndef VENTO_TEXT_H
 #define VENTO_TEXT_H
@@ -18,8 +18,7 @@
 extern "C" {
 #endif
 
-/* Whether `bytes` decodes as UTF-8 all the way to its terminator. Only
-   answerable by decoding it, which this does and throws away. */
+/* Whether `bytes` is valid UTF-8 up to its terminator. */
 static inline bool vento_utf8_valid(const char *bytes) {
     const size_t n = strlen(bytes);
     for (size_t i = 0; i < n;) {
@@ -43,12 +42,11 @@ static inline bool vento_utf8_valid(const char *bytes) {
     return true;
 }
 
-/* A string a *server* chose, as UTF-8: valid UTF-8 as itself, and anything
-   else as Latin-1, which is the rule TigerVNC's reader applies to the desktop
-   name — RFB 3.8 says that field is Latin-1 and every server written since
-   sends UTF-8, so the bytes alone have to say which they are. A server's own
-   bytes are whatever it decided, and a name that is not UTF-8 is still a
-   name. Returns a copy the caller frees, or NULL out of memory. */
+/* A string chosen by a server, as UTF-8: valid UTF-8 is copied as is, and
+   anything else is read as Latin-1. TigerVNC's reader applies the same rule
+   to the desktop name: RFB 3.8 says that field is Latin-1, but servers
+   written since send UTF-8, so only the bytes can tell which it is. Returns
+   a copy the caller frees, or NULL when out of memory. */
 static inline char *vento_utf8_from_bytes(const char *bytes) {
     if (!bytes) {
         bytes = "";
@@ -61,7 +59,7 @@ static inline char *vento_utf8_from_bytes(const char *bytes) {
         }
         return copy;
     }
-    /* One code point a byte, which is at most two bytes of UTF-8 each. */
+    /* One code point per byte, each at most two bytes of UTF-8. */
     char *out = (char *) malloc(2 * n + 1);
     if (!out) {
         return NULL;
@@ -80,15 +78,15 @@ static inline char *vento_utf8_from_bytes(const char *bytes) {
     return out;
 }
 
-/* The most of a clipboard a session takes from the far end or offers it, in
-   bytes of its text as UTF-8 with LF line ends: `runtime::MAX_CLIPBOARD`,
-   which the Rust side holds this equal to (`api::c`). Past it a clipboard
-   is skipped whole rather than cut short. */
+/* The largest clipboard a session takes from or offers to the far end, in
+   bytes of UTF-8 text with LF line ends. Equal to `runtime::MAX_CLIPBOARD`,
+   which `api::c` asserts. A larger clipboard is skipped whole rather than
+   truncated. */
 #define VENTO_MAX_CLIPBOARD (1 << 20)
 
-/* CRLF, and a lone CR, to LF, in place: what text is on this side of the
-   seam, from a protocol whose far end writes Windows' line ends. Never
-   longer than it was. `runtime::text::to_lf`, held to the same cases. */
+/* Converts CRLF and lone CR to LF in place, for text from a far end that
+   uses Windows line ends. The result is never longer than the input. Same
+   as `runtime::text::to_lf`, and tested against the same cases. */
 static inline void vento_text_to_lf(char *utf8) {
     if (!utf8) {
         return;
@@ -107,10 +105,10 @@ static inline void vento_text_to_lf(char *utf8) {
     utf8[w] = '\0';
 }
 
-/* Every line end, whichever it was, to CRLF, for a protocol whose far end
-   expects Windows' line ends on its clipboard. Bytes of UTF-8 are never CR
-   or LF but as themselves, so this works byte by byte. Returns a copy the
-   caller frees, or NULL out of memory. `runtime::text::to_crlf`. */
+/* Converts every line end to CRLF, for a far end that expects Windows line
+   ends on its clipboard. A multi-byte UTF-8 sequence never contains a CR or
+   LF byte, so this works byte by byte. Returns a copy the caller frees, or
+   NULL when out of memory. Same as `runtime::text::to_crlf`. */
 static inline char *vento_text_to_crlf(const char *utf8) {
     if (!utf8) {
         utf8 = "";

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The toolbar's geometry: where along the window's top edge it sits, where
-//! a drag puts it, and which strip of that edge brings it out. The session
+//! a drag puts it, and which strip of that edge brings it out. `pane.rs`
 //! draws it and asks these; nothing here touches egui's state, so it is
 //! tested here. The unit is the egui point, as in `view.rs`.
 
@@ -46,8 +46,8 @@ pub fn hidden_y(height: f32, peeks: bool) -> f32 {
 /// window leaves it its left edge is, 0 flush left, 1 flush right.
 ///
 /// A fraction of the room rather than a position, so that a resize keeps
-/// it where it was put relative to the edges — centred stays centred, and
-/// one dragged against the right edge stays against it — and so that it is
+/// it where it was put relative to the edges (centred stays centred, and
+/// one dragged against the right edge stays against it), and so that it is
 /// inside the window whatever the window's size. The window keeps one for
 /// the life of the process and hands it to each session, so that the next
 /// session's toolbar is where the last one was left; it is not saved.
@@ -88,9 +88,8 @@ impl Placement {
 
 /// Whether a pointer at `pointer` brings the toolbar out: within the
 /// toolbar's own span, which is where it would appear, and within reach of
-/// the top edge — [`WINDOWED_REACH`] in a window, the top row of device
-/// pixels in fullscreen. Half-open, so that a reach of one pixel is one row
-/// and not two.
+/// the top edge: [`WINDOWED_REACH`] in a window, the top row of device
+/// pixels in fullscreen.
 pub fn reveals(window: Rect, left: f32, width: f32, fullscreen: bool, pixels_per_point: f32, pointer: Pos2) -> bool {
     let reach = if fullscreen { 1.0 / pixels_per_point } else { WINDOWED_REACH };
     (left..left + width).contains(&pointer.x) && within_reach(window, reach, pointer)

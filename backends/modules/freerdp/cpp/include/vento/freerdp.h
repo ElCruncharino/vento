@@ -1,11 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// FreeRDP's own client as a `vento_session`. The config is filled in from the
-// backend's options by `backends/modules/freerdp`, the adapter
-// both clients hold it through, and each field is explained below. Its
-// credentials carry a domain, which is the one
-// place the shape of what is sent *back* differs between the protocols.
+// FreeRDP's client as a `vento_session`. The config is filled in from the
+// backend's options by the crate in `backends/modules/freerdp`, which both
+// clients use. Its credentials include a domain, the only place where the
+// credentials sent back differ between the protocols.
 
 #ifndef VENTO_FREERDP_H
 #define VENTO_FREERDP_H
@@ -22,7 +21,7 @@ extern "C" {
 
 typedef struct vento_freerdp_config {
     /* `host`, `host:port`, `[literal]` or `[literal]:port`; no display
-       numbers, which RDP has never had. */
+       numbers, since RDP has none. */
     const char *address;
     const char *user_name;   /* NULL for none */
     const char *domain;      /* NULL for none */
@@ -38,41 +37,42 @@ typedef struct vento_freerdp_config {
     int monitors;
     int keyboard_layout;
     const char *client_name;
-    /* What this end runs on, for the general capability set's major type:
-       "android" or "linux"; NULL, or anything else, sends unspecified. */
+    /* The near end's platform, for the general capability set's major type:
+       "android" or "linux"; NULL or anything else sends unspecified. */
     const char *platform;
-    /* A writable directory: the library sets its certificate store up there,
+    /* A writable directory: the library sets up its certificate store there
        and fails to connect without one, though the store is never read or
-       written — every certificate goes to `trust_needed` and nowhere else.
-       Also becomes the process's HOME where there is none, which is an
-       Android app's process: WinPR reads it, and cannot start a session
-       without one. A HOME already set is left as it is. */
+       written (every certificate goes to `trust_needed`). Also becomes the
+       process's HOME if none is set, as in an Android app's process: WinPR
+       reads it and cannot start a session without it. An existing HOME is
+       left unchanged. */
     const char *config_path;
     int connect_timeout_ms;  /* 0 or less for the library's default */
-    /* What decodes the graphics pipeline's H.264: the platform's decoders
-       (vento/video.h), the session's from the call on, released when it
-       ends or at once where it does not start. They carry the person's
-       hardware decoding. NULL for none, and the session then offers no
-       H.264. */
+    /* The decoders for the graphics pipeline's H.264: the platform's
+       (vento/video.h), owned by the session after the call and released when
+       it ends, or immediately if it fails to start. They apply the user's
+       hardware decoding setting. NULL for none, and the session then offers
+       no H.264. */
     const vento_video_decoders *video;
-    /* What "local" sound plays on: the platform's output (vento/audio.h),
-       the session's from the call on, released when it ends or at once
-       where it does not start. It carries the session's gain and mute. NULL
-       for none, and the session then does not ask the server for its sound
-       whatever `sound` says. */
+    /* The output for "local" sound: the platform's (vento/audio.h), owned by
+       the session after the call and released when it ends, or immediately
+       if it fails to start. It applies the session's gain and mute. NULL for
+       none, and the session then doesn't ask the server for sound regardless
+       of `sound`. */
     const vento_audio *audio;
 } vento_freerdp_config;
 
-/* "FreeRDP x.y.z" — the one call that proves the whole path. */
+/* "FreeRDP x.y.z". Also a check that the library loads and links. */
 const char *vento_freerdp_version(void);
 
-/* Starts connecting and returns at once; everything after arrives through
-   `callbacks`, which is copied. NULL where the session could not be set up. */
+/* Starts connecting and returns immediately; everything after that arrives
+   through `callbacks`, which is copied. NULL if the session could not be set
+   up. */
 vento_session *vento_freerdp_create(const vento_freerdp_config *config,
                                     const vento_callbacks *callbacks);
 
-/* How many monitors the *next* layout asks for; a desktop somebody is working
-   on is not rearranged as a side effect of a settings row moving. */
+/* Sets the monitor count for the *next* layout request, so changing the
+   setting does not rearrange the desktop in use. */
 void vento_freerdp_set_monitor_count(vento_session *s, int count);
 
 #ifdef __cplusplus

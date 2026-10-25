@@ -1,21 +1,21 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// The seam between the RealVNC session and whatever is hosting the viewer
-// core: `realvnc_session.cxx` is written against this and nothing below it,
-// and `host/` beside it is the one implementation so far,
-// which runs the Android library in a glibc process. It is the core's JNI
-// surface (`realvnc/src/main/java/com/realvnc/vncviewer/jni`) said in C++,
-// method for method where the session needs one, with the Java objects the
-// core resolves by name turned into a listener the host calls.
+// The seam between the RealVNC session and the code hosting the viewer core:
+// `realvnc_session.cxx` is written against this and nothing below it, and
+// `host/` beside it is the only implementation so far, which runs the Android
+// library in a glibc process. It is the core's JNI surface
+// (`realvnc/src/main/java/com/realvnc/vncviewer/jni`) in C++, method for
+// method where the session needs one, with the Java objects the core resolves
+// by name replaced by a listener the host calls.
 //
-// Threads are the core's rule, not this file's: every call on `HostedCore`
-// and `HostedSession` is made from the thread that opened the core, and every
-// listener call arrives on it, with the one documented exception —
-// `setScaleBufferSize` and `copyScaledRegion` are called from whichever
-// thread is drawing, under a lock the session holds (RealVncBackend's class
-// comment says why the pair needs one). A prompt carries a cookie, and the
-// answer is the matching `*Result` call later, from the core's thread.
+// The threading rule is the core's, not this file's: every call on
+// `HostedCore` and `HostedSession` is made from the thread that opened the
+// core, and every listener call arrives on it, with one documented exception:
+// `setScaleBufferSize` and `copyScaledRegion` are called from the drawing
+// thread, under a lock the session holds (RealVncBackend's class comment says
+// why the pair needs one). A prompt carries a cookie, and the answer is the
+// matching `*Result` call later, from the core's thread.
 
 #ifndef VENTO_REALVNC_HOSTED_CORE_H
 #define VENTO_REALVNC_HOSTED_CORE_H
@@ -30,10 +30,10 @@ namespace vento_realvnc {
 /* The option map `createSession` and `initApp` take, in order. */
 using Options = std::vector<std::pair<std::string, std::string>>;
 
-/* What the core tells a session: `SessionBindings.DesktopCallback` and
+/* Calls from the core to a session: `SessionBindings.DesktopCallback` and
    `SessionCallback`, the three prompt families and the notifications that
-   `RealVncPrompts` bridges. Strings are UTF-8 and the host's; copy what
-   outlives the call. */
+   `RealVncPrompts` bridges. Strings are UTF-8 and owned by the host; copy any
+   that must outlive the call. */
 class Listener {
 public:
     virtual ~Listener() = default;
@@ -48,14 +48,14 @@ public:
     virtual void setCursor(const uint32_t *pixels, int width, int height, int negHotX,
                            int negHotY) = 0;
     virtual void bell() = 0;
-    /* Our clipboard, for the server: false for none. */
+    /* The local clipboard, for the server: false for none. */
     virtual bool getClipboard(std::string *out) = 0;
     virtual void setClipboard(const std::string &text) = 0;
     /* The session ended, for any reason. The last call about it. */
     virtual void sessionClosed() = 0;
 
-    /* `PasswdDlg.getUserPasswd`, with the arguments in the order that
-       class's javadoc says they really are. `userName` is null for a scheme
+    /* `PasswdDlg.getUserPasswd`, with the arguments as that class's javadoc
+       identifies them. `userName` is null for a scheme
        with no notion of one. Answered with `HostedCore::passwdResult`. */
     virtual void promptPasswd(int64_t cookie, const std::string &serverName,
                               const char *userName, bool wantsPassword,
@@ -94,8 +94,8 @@ enum class Info {
     ViewerPixelFormat,
 };
 
-/* One `SessionBindings.Session`, as the natives that take one. Never freed by
-   the session file, and never `destroySession`ed by anybody: see
+/* One `SessionBindings.Session`, with the natives that take one. Never freed
+   by the session file, and `destroySession` is never called on it: see
    `RealVncBackend.reap`. */
 class HostedSession {
 public:
@@ -113,8 +113,9 @@ public:
     virtual void closeSession() = 0;
     virtual std::string info(Info which) = 0;
 
-    /* The drawing thread's pair. The buffer is the core's, `width * height
-       * 4` bytes, valid until the next call; nullptr where the core refused. */
+    /* The pair called from the drawing thread. The buffer is the core's,
+       `width * height * 4` bytes, valid until the next call; nullptr where the
+       core refused. */
     virtual uint8_t *setScaleBufferSize(int width, int height) = 0;
     virtual bool copyScaledRegion(int x, int y, int width, int height, float scale) = 0;
 };
@@ -132,7 +133,7 @@ public:
     virtual void wake() = 0;
 
     /* `SessionBindings.createSession`; nullptr where the core refused. The
-       listener must outlive the core's interest in it, which is for ever. */
+       listener must outlive the core's use of it, which never ends. */
     virtual HostedSession *createSession(Listener *listener, const std::string &address,
                                          const char *password, const Options &options) = 0;
 
@@ -143,9 +144,9 @@ public:
     virtual void msgBoxResult(int64_t cookie, bool ok) = 0;
 };
 
-/* `Bindings.initApp`'s parameters, decided by the session file the way
-   `RealVncCore` decides them, since they are about this backend and not
-   about where it runs. */
+/* `Bindings.initApp`'s parameters, chosen by the session file as
+   `RealVncCore` chooses them, since they depend on this backend and not on
+   where it runs. */
 struct Bootstrap {
     std::string appName;   /* the parameter namespace, and the data directory's name */
     std::string version;
@@ -157,10 +158,10 @@ struct Bootstrap {
     Options global;        /* parameters applied at init */
 };
 
-/* The platform's: load the two libraries out of `libraryDir`, which the
-   caller has already verified, bring the core up as `bootstrap` says, and
-   register the prompt factories. Called once, on the thread that becomes the
-   core's; nullptr with `*why` set where the host could not. */
+/* Implemented by the host: loads the two libraries from `libraryDir`, which
+   the caller has already verified, brings the core up as `bootstrap` says,
+   and registers the prompt factories. Called once, on the thread that becomes
+   the core's; returns nullptr with `*why` set on failure. */
 HostedCore *openHostedCore(const std::string &libraryDir, const Bootstrap &bootstrap,
                            std::string *why);
 

@@ -76,8 +76,8 @@ public class MouseOverlayTest {
     /**
      * The reason each producer keeps its own mask. A tap on the touchpad presses
      * LEFT and releases it 250 ms later; if the two shared a mask that release
-     * would drop whatever the overlay was holding — which is precisely the drag
-     * the overlay exists to make possible.
+     * would drop whatever the overlay was holding, which is the drag the overlay
+     * exists to make possible.
      */
     @Test
     public void aTapOnTheTouchpadDoesNotReleaseTheOverlaysButton() {
@@ -93,7 +93,7 @@ public class MouseOverlayTest {
         assertEquals(0, h.cursor.buttons());
     }
 
-    /** The whole point: hold with one finger, drag the cursor with another. */
+    /** The overlay's purpose: hold with one finger, drag the cursor with another. */
     @Test
     public void aSecondFingerStillDrivesTheCursorWhileAButtonIsHeld() {
         final Harness h = overlay();
@@ -110,9 +110,9 @@ public class MouseOverlayTest {
     }
 
     /**
-     * Two fingers on the pad still scroll while the overlay holds a button —
+     * Two fingers on the pad still scroll while the overlay holds a button:
      * three pointers down, of which the gesture layer sees exactly the two it
-     * needs. Both this and the drag above were confirmed with real fingers.
+     * needs. Both this and the drag above were also checked on a device.
      */
     @Test
     public void twoFingersStillScrollWhileAButtonIsHeld() {
@@ -311,8 +311,8 @@ public class MouseOverlayTest {
     }
 
     /**
-     * A second finger takes the border test out of the path — it is only
-     * evaluated while exactly one finger is down — so a timer left running
+     * A second finger takes the border test out of the path (it is only
+     * evaluated while exactly one finger is down), so a timer left running
      * would go on scrolling for the rest of the gesture, including well away
      * from the border.
      */

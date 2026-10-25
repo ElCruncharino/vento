@@ -1,13 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    The same pair as the other add-on's: `allowBackup="false"` stops a cloud
-    backup and stops nothing else, and a device-to-device transfer is a separate
-    mechanism which without a list of its own carries the whole data directory.
+    The same pair as the RealVNC add-on's: `allowBackup="false"` stops cloud
+    backup and nothing else, and device-to-device transfer is a separate
+    mechanism that copies the whole data directory unless it has its own rules.
 
-    This add-on acquires nothing, so what is excluded here is an empty directory
-    today. It is written down anyway, because the thing that would change that is
-    an add-on gaining something to keep, and the default it would gain it under
-    is "send it to the next phone".
+    This add-on downloads nothing, so the excluded directory is empty for now.
+    The rule is kept anyway, because if the add-on ever gains files to keep, the
+    default would copy them to the next phone.
 -->
 <data-extraction-rules>
     <device-transfer>

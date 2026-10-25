@@ -1,16 +1,17 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! How a credentials prompt's answer is read, the same for every client:
-//! the adapters apply these to what the phone's prompts and the Linux
-//! client's deliver, and `tests/vectors.rs` holds them to their cases.
+//! How the answer to a credentials prompt is read, the same for every
+//! client: the adapters apply these to the answers from the phone's and the
+//! Linux client's prompts, and `tests/vectors.rs` tests them against the
+//! shared cases.
 
 use crate::Credentials;
 use crate::catalog::About;
 
 /// `DOMAIN\user`, `user@domain` or a bare name, as `(domain, user)`. Both
-/// forms, because both are typed: the backslash is what Windows shows and
-/// the `@` is what a UPN looks like.
+/// forms are accepted because both get typed: Windows shows the backslash
+/// form, and a UPN uses `@`.
 pub fn split_domain(value: &str) -> (String, String) {
     let name = trim(value);
     if let Some((domain, user)) = name.split_once('\\') {
@@ -24,29 +25,29 @@ pub fn split_domain(value: &str) -> (String, String) {
     (String::new(), name.to_string())
 }
 
-/// A typed name without what Java's `trim()` takes off it — ASCII controls
-/// and the space — which is what the phone's prompts took off when they read
-/// the answer themselves, so that a name reads as it always has there.
+/// A typed name with ASCII controls and spaces trimmed, as Java's `trim()`
+/// does, matching how the phone's prompts read the answer before this code
+/// was shared.
 fn trim(typed: &str) -> &str {
     typed.trim_matches(|c: char| c <= ' ')
 }
 
-/// Credentials as a prompt hands them back: an empty user name means the
-/// one the session was created with. A name is read trimmed, so one that
-/// is only spaces is an empty one (`tests/vectors.rs`).
+/// Credentials as a prompt returns them: an empty user name means the one
+/// the session was created with. A name is trimmed, so one that is only
+/// spaces counts as empty (`tests/vectors.rs`).
 pub fn fill_user(mut credentials: Credentials, user: &str) -> Credentials {
     let typed = trim(&credentials.user);
     credentials.user = if typed.is_empty() { user } else { typed }.to_string();
     credentials
 }
 
-/// An RDP prompt's answer as the `(domain, user)` to send, against the
-/// session's own `domain` and `user` (already split). An empty name is the
-/// session's, domain and all; a name typed with a domain, or a domain given
-/// beside it, is that one; and a bare name keeps the session's domain, since
-/// the prompt has no box for one and `--domain CORP` answered with `alice`
-/// means `CORP\alice`. A local account on a machine with a domain is
-/// `.\alice`, as Windows writes it.
+/// An RDP prompt's answer as the `(domain, user)` to send, given the
+/// session's own `domain` and `user` (already split). An empty name means
+/// the session's user and domain; a name typed with a domain, or with a
+/// domain given separately, uses that domain; and a bare name keeps the
+/// session's domain, since the prompt has no domain field and `--domain
+/// CORP` answered with `alice` means `CORP\alice`. A local account on a
+/// machine with a domain is `.\alice`, as Windows writes it.
 pub fn rdp_identity(answer: &Credentials, domain: &str, user: &str) -> (String, String) {
     let typed = trim(&answer.user);
     if typed.is_empty() {
@@ -61,12 +62,12 @@ pub fn rdp_identity(answer: &Credentials, domain: &str, user: &str) -> (String, 
     }
 }
 
-/// The user name the phone's credentials prompt starts with, from the
+/// The initial user name in the phone's credentials prompt, from the
 /// record's: as written, except for a backend whose user name carries a
-/// domain ([`About::user_has_domain`], RDP's), whose prompt has no box for
-/// one and so starts with it in the name, `DOMAIN\user` — the form Windows
-/// shows — whichever way the record wrote it. (The Linux client's session
-/// has a domain of its own, `--domain`, and starts with the user as given.)
+/// domain ([`About::user_has_domain`], as in RDP). Its prompt has no domain
+/// field, so it starts with `DOMAIN\user` (the form Windows shows),
+/// whichever form the record used. (The Linux client has a separate
+/// `--domain` and starts with the user as given.)
 pub fn prompt_user(about: &About, user: &str) -> String {
     if !about.user_has_domain {
         return user.to_string();

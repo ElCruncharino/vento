@@ -4,12 +4,12 @@
 //! The encodings, each decoding one rectangle into scratch space.
 //!
 //! Everything here works in [`crate::PixelFormat::NATIVE`] and writes into a
-//! `w × h` buffer of framebuffer words. Nothing touches the framebuffer itself
-//! — the caller blits under the write lock, which is what keeps that lock held
-//! for a memcpy rather than for a socket read (see [`crate::Framebuffer`]).
+//! `w × h` buffer of framebuffer words. Nothing touches the framebuffer
+//! itself: the caller blits under the write lock, which keeps that lock held
+//! for a memcpy rather than a socket read (see [`crate::Framebuffer`]).
 //!
-//! `CopyRect` is the exception and is not here: it reads the framebuffer, so it
-//! is the caller's business.
+//! `CopyRect` is the exception and is not here: it reads the framebuffer, so
+//! the caller handles it.
 
 use crate::error::{Error, Result};
 use crate::pixel::{PixelReader, pack};
@@ -25,32 +25,32 @@ pub const ENC_ZRLE: i32 = 16;
 pub const ENC_CURSOR: i32 = -239;
 pub const ENC_DESKTOP_SIZE: i32 = -223;
 pub const ENC_LAST_RECT: i32 = -224;
-/// `ExtendedMouseButtons`: a ninth button, and a byte to put it in. Offered in
-/// `SetEncodings` and **acknowledged** by an empty rectangle of this encoding —
-/// the extra byte may not be sent before that arrives, since to a server that
-/// never agreed to it the marker bit means button 8 and the byte after it is
+/// `ExtendedMouseButtons`: a ninth button, and a byte to carry it. Offered in
+/// `SetEncodings` and **acknowledged** by an empty rectangle of this encoding.
+/// The extra byte must not be sent before that arrives, since to a server that
+/// never agreed to it the marker bit means button 8 and the following byte is
 /// the next message.
 pub const ENC_EXTENDED_MOUSE_BUTTONS: i32 = -316;
 /// QEMU's `PointerTypeChange`: the rectangle's *x* is 1 for absolute and 0 for
 /// relative, there are no pixels, and it arrives unprompted after every
 /// `SetEncodings`.
 pub const ENC_POINTER_TYPE_CHANGE: i32 = -257;
-/// `ExtendedDesktopSize`: the desktop's size *and* who may change it. The
-/// rectangle's *x* is why it arrived and its *y* is what came of it; the body is
-/// a screen layout. A server that sends one at all will take a `SetDesktopSize`,
-/// which is the only way this client ever learns that.
+/// `ExtendedDesktopSize`: the desktop's size *and* who changed it. The
+/// rectangle's *x* is the reason it was sent and its *y* the result; the body
+/// is a screen layout. A server that sends one at all accepts a
+/// `SetDesktopSize`, and this is the only way this client learns that.
 pub const ENC_EXTENDED_DESKTOP_SIZE: i32 = -308;
 
-/// Why an [`ENC_EXTENDED_DESKTOP_SIZE`] rectangle arrived, and how it went.
-/// Only a rectangle that is both this client's doing and a failure means the
-/// size has not changed; everything else is the server stating the truth.
+/// Why an [`ENC_EXTENDED_DESKTOP_SIZE`] rectangle arrived, and the result.
+/// Only a rectangle that is both this client's request and a failure means the
+/// size has not changed; anything else reports the desktop's current size.
 pub const RESIZE_REASON_CLIENT: usize = 1;
 pub const RESIZE_RESULT_SUCCESS: usize = 0;
 
-/// Whether a rectangle of this encoding carries pixels at all. The
-/// pseudo-encodings use the same four header fields to mean other things — a
-/// cursor's size, a new desktop's size, a pointer mode in *x* — so the caller's
-/// "inside the desktop" test applies to the real ones and to nothing else.
+/// Whether this is a pseudo-encoding, whose rectangle carries no pixels. The
+/// pseudo-encodings use the same four header fields for other things (a
+/// cursor's size, a new desktop's size, a pointer mode in *x*), so the
+/// caller's "inside the desktop" check applies only to the real ones.
 pub fn is_pseudo(encoding: i32) -> bool {
     !matches!(
         encoding,
@@ -58,7 +58,7 @@ pub fn is_pseudo(encoding: i32) -> bool {
     )
 }
 
-/// What to call one in the connection panel.
+/// The encoding's name for the connection panel.
 pub fn encoding_name(encoding: i32) -> &'static str {
     match encoding {
         ENC_RAW => "Raw",
@@ -108,9 +108,9 @@ const HEXTILE_COLOURED: u8 = 16;
 
 /// Hextile: 16×16 tiles, each either raw or a background with sub-rectangles.
 ///
-/// The background and foreground colours **persist between tiles** — a tile
-/// that specifies neither reuses the previous one's, which is where most of its
-/// compression comes from and the one piece of state a naive decoder drops.
+/// The background and foreground colours **persist between tiles**: a tile
+/// that specifies neither reuses the previous one's, which provides most of
+/// its compression and is the one piece of state a naive decoder drops.
 pub fn hextile(r: &mut Reader<impl Read>, w: usize, h: usize, out: &mut Vec<u32>) -> Result<()> {
     out.clear();
     out.resize(w * h, 0xff00_0000);
@@ -153,10 +153,10 @@ pub fn hextile(r: &mut Reader<impl Read>, w: usize, h: usize, out: &mut Vec<u32>
                 let sy = (xy & 0x0f) as usize;
                 let sw = (wh >> 4) as usize + 1;
                 let sh = (wh & 0x0f) as usize + 1;
-                // Bounded by the room left in the tile rather than by the
+                // Clipped to the room left in the tile rather than to the
                 // tile's size: a sub-rectangle at x=15 may still claim a width
-                // of 16, and the neighbouring tile only survives it because it
-                // is decoded afterwards and paints over the spill.
+                // of 16, which would otherwise spill into the neighbouring
+                // tile, hidden only when that tile is decoded afterwards.
                 let sw = sw.min(tw.saturating_sub(sx));
                 let sh = sh.min(th.saturating_sub(sy));
                 fill(out, w, h, tx + sx, ty + sy, sw, sh, colour);
@@ -176,14 +176,14 @@ pub fn zrle(
     out: &mut Vec<u32>,
 ) -> Result<()> {
     let length = r.u32()? as usize;
-    // The compressed length is the server's, so it is bounded before it becomes
-    // an allocation.
+    // The compressed length comes from the server, so it is bounded before it
+    // becomes an allocation.
     if length > 64 << 20 {
         return Err(Error::Protocol(format!("ZRLE rectangle of {length} bytes")));
     }
     let compressed = r.bytes(length)?;
-    // What the tiles can possibly be worth decompressed: the costliest tile is
-    // run-length encoded with every run one pixel long, which is a three-byte
+    // The most the tiles can decompress to: the costliest tile is run-length
+    // encoded with every run one pixel long, which is a three-byte
     // CPIXEL and a length byte each, plus a subencoding byte and a full palette
     // per tile.
     let tiles_over = w.div_ceil(64) * h.div_ceil(64);
@@ -220,7 +220,7 @@ pub fn zrle(
                         *slot = tiles.cpixel()?;
                     }
                     // Packed indices, 1, 2 or 4 bits, each *row* padded to a
-                    // byte boundary — not the tile.
+                    // byte boundary, not the tile.
                     let bits = match size {
                         2 => 1,
                         3..=4 => 2,
@@ -283,16 +283,15 @@ pub fn zrle(
 
 /// A cursor from the `Cursor` pseudo-encoding: pixels, then a 1-bit mask.
 ///
-/// The alpha is the mask, so what comes back is drawable as it is — which is
-/// what `Listener.cursor` wants, and what makes the client-side cursor the
-/// whole touchpad design rests on possible.
+/// The alpha is the mask, so the result can be drawn as is, which is what
+/// `Handler::cursor` expects and what makes possible the client-side cursor
+/// the touchpad mode is built on.
 ///
 /// A pseudo-encoding's rectangle is not checked against the desktop, so the
-/// size is held to [`runtime::MAX_CURSOR_SIDE`] here, before the pixels are
-/// allocated by it. Past that the session ends, as it does in TigerVNC's
-/// viewer and in libvncclient: the bytes are there to be skipped, but a
-/// server that sends a cursor bigger than any screen's worth of cursor is
-/// not one whose next message is worth reading.
+/// size is limited to [`runtime::MAX_CURSOR_SIDE`] here, before the pixels
+/// are allocated. Past that the session ends, as in TigerVNC's viewer and
+/// libvncclient: the bytes could be skipped, but a server that sends a cursor
+/// larger than any real cursor is not worth reading further.
 pub fn cursor(r: &mut Reader<impl Read>, w: usize, h: usize) -> Result<Vec<u32>> {
     if w > runtime::MAX_CURSOR_SIDE || h > runtime::MAX_CURSOR_SIDE {
         return Err(Error::Protocol(format!("cursor of {w}x{h}")));
@@ -320,7 +319,7 @@ pub fn empty_cursor(w: usize, h: usize) -> bool {
     w == 0 || h == 0
 }
 
-/// A reader over the inflated ZRLE bytes. Not a `Read`: the tile loop wants to
+/// A reader over the inflated ZRLE bytes. Not a `Read`: the tile loop should
 /// fail loudly when the stream is short, rather than block.
 struct Tiles<'a> {
     data: &'a [u8],
@@ -413,8 +412,8 @@ mod tests {
         assert_eq!(out, vec![0xff000000, 0xff0000ff, 0xff000000, 0xff000000]);
     }
 
-    /// The persisting background is the piece worth a test: the second tile
-    /// specifies nothing at all and must come out the first one's colour.
+    /// The persisting background is the part worth testing: the second tile
+    /// specifies nothing and must come out in the first one's colour.
     #[test]
     fn hextile_background_persists() {
         let mut wire = Vec::new();
@@ -427,9 +426,9 @@ mod tests {
     }
 
     /// A sub-rectangle may claim a width the tile has no room for. It used to
-    /// paint into the next tile's columns, which nothing ever saw because that
-    /// tile is decoded afterwards and paints over it — here there is no next
-    /// tile, so the spill is visible.
+    /// paint into the next tile's columns, which was never visible because that
+    /// tile is decoded afterwards and paints over it; here there is no next
+    /// tile, so a spill would be visible.
     #[test]
     fn a_hextile_subrect_is_clipped_to_the_room_left_in_its_tile() {
         let mut wire = Vec::new();

@@ -26,11 +26,11 @@ pub fn client_name() -> String {
         .unwrap_or_else(|| "vento".to_string())
 }
 
-/// What decodes video here: libavcodec, for RustDesk's picture, where the
-/// phone hands over MediaCodec — decoding as `hardware` says, which is off
-/// unless the person asked.
+/// The video decoders here: libavcodec, where the phone hands over
+/// MediaCodec, decoding as `hardware` says, which is off unless the user
+/// turned it on.
 ///
-/// One a session, and held by it as well as handed to its backend in
+/// One per session, and held by it as well as handed to its backend in
 /// [`Connect::decoders`]: switching the way of decoding under a running
 /// session is [`FFmpeg::set_hardware`] on this, which every backend decoding
 /// through it takes at its next picture: RustDesk's video, and TigerVNC's
@@ -43,7 +43,7 @@ pub fn decoders(hardware: Hardware) -> Arc<FFmpeg> {
 
 /// Where the far end's sound goes here: a PipeWire stream of the session's
 /// own, or ALSA's default device where there is no PipeWire (`output` picks,
-/// `--audio-output`), where the phone hands over AAudio. One a session, as
+/// `--audio-output`), where the phone hands over AAudio. One per session, as
 /// [`Connect::audio`], so that its controls (the gain and mute, which a
 /// window sets while the session plays) are that session's alone, and its
 /// streams are listed under its name (`title`) in a mixer.

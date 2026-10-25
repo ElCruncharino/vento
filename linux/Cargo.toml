@@ -5,8 +5,8 @@
 # trait of `remotedesktop-api`, which the phone shares: the four Rust
 # protocols' own crates, and the four C libraries' small crates over the
 # vtable in `vento/backend.h`, whose shared libraries `build.rs` has CMake
-# make out of `backends/`. What this crate adds on top is the window
-# (`src/gui/`), the known-hosts file, and a headless probe.
+# make out of `backends/`. This crate adds the window (`src/gui/`), the
+# known-hosts file, and a headless probe.
 #
 # A workspace of its own rather than a member of the repository's, and the
 # root `Cargo.toml` says why at length: Cargo unifies features across a
@@ -32,18 +32,19 @@ path = "src/main.rs"
 
 [dependencies]
 log = "0.4"
-# What a platform is written to (`runtime::media`: the sound switch and
-# controls, the decoded picture's conversion), which the window reaches
-# directly rather than through `api`.
+# The platform interface (`runtime::media`: the sound switch and controls,
+# the decoded picture's conversion), which the window reaches directly rather
+# than through `api`.
 remotedesktop-runtime = { path = "../backends/runtime" }
-# The seam every backend is held by. Its `c` feature, the one adapter over
-# the C vtable, is the C backends' crates' to ask for, and nothing here names
+# The interface every backend implements. Its `c` feature, the adapter over
+# the C vtable, is enabled by the C backends' crates, and nothing here names
 # it.
 remotedesktop-api = { path = "../backends/api" }
-# libavcodec, for RustDesk's picture: the one protocol here whose frames are
-# video. Its build script builds FFmpeg and dav1d from `third_party/`
-# statically, and says where (`links`), so that `build.rs` hands the same
-# libraries to TigerVNC and FreeRDP: no FFmpeg of the system's is linked.
+# libavcodec, for video: RustDesk's picture, and the C backends' H.264
+# through `vento/video.h`. Its build script builds FFmpeg and dav1d from
+# `third_party/` statically, and says where (`links`), so that `build.rs`
+# hands the same libraries to FreeRDP for its scaling: no system FFmpeg is
+# linked.
 remotedesktop-platform-linux = { path = "../backends/platform/linux" }
 # The backends, each with its adapter in its own crate: the four protocols,
 # and the four C libraries' crates, whose libraries `build.rs` has CMake
@@ -60,8 +61,8 @@ remotedesktop-freerdp = { path = "../backends/modules/freerdp" }
 remotedesktop-realvnc = { path = "../backends/modules/realvnc" }
 # The window. winit owns the event loop and the Wayland connection, egui
 # draws into it through egui-winit and egui-wgpu, and the three wayland
-# crates are for the one protocol winit does not speak — the keyboard
-# shortcuts inhibitor — reached over winit's own connection through the
+# crates are for the one protocol winit does not speak (the keyboard
+# shortcuts inhibitor), reached over winit's own connection through the
 # window's raw handles (see `gui/wayland.rs`). egui-winit without its
 # clipboard, whose reads waited on the owner on the main thread: the window
 # has its own (`gui/clipboard/`), which never does.
@@ -96,8 +97,8 @@ xkeysym = "0.2"
 bytemuck = "1"
 
 [build-dependencies]
-# Runs `backends/CMakeLists.txt` with VENTO_SHARED on, which is the whole of
-# how the C backends get here; `build.rs` says where the libraries land.
+# Runs `backends/CMakeLists.txt` with VENTO_SHARED on, which is how the C
+# backends are built; `build.rs` says where the libraries land.
 cmake = "0.1"
 
 [dev-dependencies]
@@ -105,19 +106,19 @@ cmake = "0.1"
 # Already in the graph through egui's fonts, so it costs nothing new.
 ttf-parser = "0.25"
 
-# winit from the submodule, at the tag of the release crates.io has, with
-# `patches/winit/` applied by `./patch.sh`: the same source plus our fixes to
-# it, each written to go upstream: seven, which `patches/winit/` lists and
-# each of which says what it fixes (X11's wheel notch counted twice, a window
-# destroyed by another client, _NET_WM_STATE cached, RandR 1.5 monitors and
-# their changes; Wayland's suspended state, the custom cursor's buffer).
+# winit from the submodule, at the tag of the release on crates.io, with
+# `patches/winit/` applied by `./patch.sh`: the same source plus seven fixes of
+# ours, each written to go upstream and each saying what it fixes (X11's
+# wheel notch counted twice, a window destroyed by another client,
+# _NET_WM_STATE cached, RandR 1.5 monitors and their changes; Wayland's
+# suspended state, the custom cursor's buffer).
 # `dpi` comes along as winit's path dependency, from the same tag.
 [patch.crates-io]
 winit = { path = "../third_party/winit" }
 
 # The conversion every decoded frame goes through
 # (`runtime::media::video::convert`), optimised even in a debug build, which is
-# how `cargo run` runs it. Unoptimised its row loop is most of a RustDesk
+# what `cargo run` builds. Unoptimised its row loop is most of a RustDesk
 # session's processor, and the SSE2 one is slower still, every intrinsic a call:
 # 53 and 94 ms of a 1920×1200 frame, where optimised they are 21 and 1. The
 # crate it is in, `remotedesktop-runtime`, is small (rustls and ring are crates

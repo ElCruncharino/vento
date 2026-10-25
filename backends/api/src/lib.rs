@@ -1,28 +1,27 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! One session on any backend, the way every client holds one.
+//! The session API shared by all backends and clients.
 //!
-//! [`backend::Backend`] is the seam: what a window or a phone calls, whatever
-//! protocol is underneath. A session says what happens through a
-//! [`events::Mailbox`], as [`events::Event`]s. [`catalog`] is what each
-//! backend is called and can be told — each entry its backend's own file
-//! under `backends/modules/`, compiled here — and [`options`] the shape of
-//! what it can be told; [`kind::Kind`] puts an entry beside a backend's
-//! constructor, and [`kind::Connect`] is what a session is started with.
-//! [`credentials`] and [`trust`] are the rules every client keeps alike —
-//! how a prompt's answer is read, and how a far end's identity meets the
-//! pins — applied here for the phone and the Linux client both, and held to
-//! their cases by `tests/vectors.rs`.
+//! [`backend::Backend`] is the interface the Linux client and the phone
+//! call, whatever the protocol. A session reports what happens through a
+//! [`events::Mailbox`], as [`events::Event`]s. [`catalog`] holds each
+//! backend's name and options (each entry is its backend's own file under
+//! `backends/modules/`, compiled here), and [`options`] the shape of those
+//! options; [`kind::Kind`] pairs an entry with a backend's constructor, and
+//! [`kind::Connect`] holds a session's parameters. [`credentials`] and
+//! [`trust`] are rules every client applies the same way (reading the
+//! answer to a prompt, and checking a far end's identity against the pins),
+//! shared by the phone and the Linux client and tested against the cases in
+//! `tests/vectors.rs`.
 //!
-//! The adapters themselves are each in its backend's own crate: the protocol
-//! crate for RFB, IronRDP, RustDesk and SPICE, and a small crate beside the C
-//! library for libvncclient, TigerVNC and FreeRDP, which fill in [`c`] — the
-//! one adapter over `vento/backend.h`'s vtable, behind the `c` feature.
+//! Each adapter is in its backend's own crate: the protocol crate for RFB,
+//! IronRDP, RustDesk and SPICE, and a small crate beside the C library for
+//! libvncclient, TigerVNC, FreeRDP and RealVNC, which fill in [`c`], the
+//! adapter over the vtable in `vento/backend.h`, behind the `c` feature.
 //!
-//! This was the Linux client's own `src/`, until the phone wanted the same
-//! thing: nothing in it knows a platform, and what a session needs of one —
-//! where to keep things, what decodes video, what this machine is called —
+//! Nothing here is platform-specific: what a session needs from the
+//! platform (storage directories, video decoders, this machine's name)
 //! arrives through [`kind::Connect`].
 
 pub mod backend;

@@ -1,18 +1,16 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// A probe for a C backend, which is the whole of what a desktop does with one
-// so far: connect, print every callback as it arrives, answer the questions
-// from the command line, poke the far end once, and after a while write what
-// the framebuffer holds to a file and leave. One body, written against the
-// vtable in `vento/backend.h` and nothing else, under three `main`s that each
-// parse their own backend's configuration and hand over its `create` — the
-// same split as the Rust probes, where `runtime` is the body and a protocol
-// crate is the `main`.
+// A probe for a C backend: connect, print every callback as it arrives, answer
+// the questions from the command line, poke the far end once, and after a
+// while write the framebuffer to a file and exit. One body, written against
+// the vtable in `vento/backend.h` alone, under a `main` per backend that parses
+// that backend's configuration and passes its `create`: the same split as the
+// Rust probes, where `runtime` is the body and a protocol crate is the `main`.
 //
-// Its value is the proof: a session that reaches `connected` through this has
-// reached it through the neutral C API alone, with no Android under it, and
-// the PPM it writes is the picture the phone would have drawn.
+// A session that reaches `connected` through this has reached it through the
+// neutral C API alone, with no Android under it, and the PPM it writes is the
+// picture the phone would have drawn.
 
 #ifndef VENTO_PROBE_H
 #define VENTO_PROBE_H
@@ -56,8 +54,8 @@ bool vento_probe_option(vento_probe *p, int argc, char **argv, int *i);
    one is reported and exits. For the backends' own options. */
 const char *vento_probe_value(int argc, char **argv, int *i);
 
-/* What a backend's `main` hands over: its `vento_<name>_create`, over its
-   own configuration. */
+/* The function a backend's `main` passes: its `vento_<name>_create`, taking
+   its own configuration. */
 typedef vento_session *(*vento_probe_create)(void *config, const vento_callbacks *callbacks);
 
 /* Runs one session to its end and returns the process's exit status: zero

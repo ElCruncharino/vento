@@ -1,48 +1,48 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// FreeRDP's own client as a `vento_session`, so that above this file it is the
-// same shape as the IronRDP backend and a disagreement between them is a
-// disagreement between the clients rather than between two ways of binding one.
-// That is the whole point of the second RDP client: every RFB question here has
-// been answerable by asking the other two clients, and every RDP one has had a
-// single answer. Nothing in here names a platform: what the phone needs of it
-// is the Rust adapter in the module's `src/`, linked into the same library,
-// which the one JNI layer in `backends/platform/android` stands in front of.
+// FreeRDP's client as a `vento_session`, with the same interface as the
+// IronRDP backend, so a difference between them is a difference between the
+// two clients rather than between two bindings of one. That is the purpose of
+// a second RDP client: every RFB question in this project could be checked
+// against another VNC client, while every RDP one had a single answer. Nothing
+// in here is platform-specific: on Android, the Rust adapter in the module's
+// `src/` is linked into the same library, behind the shared JNI layer in
+// `backends/platform/android`.
 //
-// Three things are the library's decisions rather than ours, and each cost a
-// session to find out (they were found by driving the library on the phone with
-// no backend around it, before this file existed):
+// Three behaviours come from the library rather than from this file. Each was
+// found by driving the library on the phone without a backend, before this
+// file existed:
 //
 //   1. **The library installs command-line prompts over the callbacks you
-//      set.** Creating the context puts them in unconditionally, and
+//      set.** Creating the context installs them unconditionally, and
 //      `freerdp_client_start` does it again when `UseCommonStdioCallbacks` is
-//      on — so ours go in after the context exists, and the flag is stated
-//      off. On a phone there is no terminal, so those prompts refuse, and the
-//      refusal is reported as a TLS failure over a handshake that in fact
+//      on, so ours are set after the context exists and the flag is set off
+//      explicitly. On a phone there is no terminal, so those prompts refuse,
+//      and the refusal is reported as a TLS failure even though the handshake
 //      succeeded.
-//   2. **`update->DesktopResize` is not optional.** `gdi_ResetGraphics` asserts
-//      on it, so no callback is `abort()` rather than a missing feature.
-//   3. **The graphics pipeline paints nothing unless it is joined to the GDI**
-//      when its channel connects. It negotiates perfectly either way, which is
-//      a black desktop with a healthy-looking connection behind it.
+//   2. **`update->DesktopResize` is required.** `gdi_ResetGraphics` asserts on
+//      it, so without the callback the client aborts.
+//   3. **The graphics pipeline paints nothing unless it is attached to the
+//      GDI** when its channel connects. It negotiates correctly either way, so
+//      the result is a black desktop on a working connection.
 //
-// (A fourth is Android's and is in this module's CMakeLists.txt: WinPR defines
-// a `JNI_OnLoad` of its own, so it is compiled under another name and the one
-// the library exports, the Rust crate's, calls it.)
+// (A fourth is Android-specific and handled in this module's CMakeLists.txt:
+// WinPR defines its own `JNI_OnLoad`, so it is compiled under another name and
+// the one the library exports, the Rust crate's, calls it.)
 //
-// And two are ours, both forced by the seam rather than chosen:
+// Two more are ours, both required by the `vento_session` interface:
 //
-//   * One thread owns the connection and every call into the session is a
-//     queued command it drains, woken by an event of ours in the library's own
-//     handle set — because setting a flag does not wake a thread inside
+//   * One thread owns the connection, and every call into the session is a
+//     queued command it drains, woken by our event in the library's handle
+//     set, because setting a flag doesn't wake a thread inside
 //     `WaitForMultipleObjects`.
 //   * There are two framebuffers. The GDI decodes into its own between
-//     `BeginPaint` and `EndPaint`, and the seam promises that pixels may be read
-//     from the drawing thread at any moment; so the damage is copied under a
-//     writer lock when the batch ends, and reads are served from the copy. The
-//     alternative is holding that lock across a decode, which puts the drawing
-//     thread behind an H.264 frame.
+//     `BeginPaint` and `EndPaint`, and the interface allows pixels to be read
+//     from the drawing thread at any time, so the damage is copied under a
+//     writer lock when the batch ends and reads are served from the copy. The
+//     alternative is holding that lock across a decode, which would make the
+//     drawing thread wait for an H.264 frame.
 
 #include <pthread.h>
 #include <stdbool.h>
@@ -105,26 +105,25 @@ typedef struct {
 
 typedef struct Session Session;
 
-/* The context FreeRDP allocates for us: its own, and a pointer back to ours.
-   `rdpClientContext` is what the client layer keeps in the allocation, so
-   `ContextSize` has to name a struct that starts with one. The library
-   allocates exactly what it is told; a size short of that is refused by the
-   client layer call by call, each one failing with an "application bug" in
-   the log. */
+/* The context FreeRDP allocates: the library's context and a pointer to our
+   session. The client layer keeps an `rdpClientContext` in the allocation, so
+   `ContextSize` must name a struct that starts with one. The library
+   allocates exactly the size given; with a smaller one, each client layer
+   call fails with an "application bug" in the log. */
 typedef struct {
     rdpClientContext client;
     Session *session;
 } ShimContext;
 
 struct Session {
-    vento_session base; /* first, so that a pointer to this is a pointer to that */
+    vento_session base; /* first, so a `Session *` is also a `vento_session *` */
     vento_callbacks cb;
 
     ShimContext *ctx; /* protocol thread; published under both locks */
     freerdp *instance;
 
     pthread_t thread;
-    HANDLE wake; /* the doorbell in the library's handle set */
+    HANDLE wake; /* in the library's handle set, wakes the protocol thread */
 
     pthread_mutex_t lock;
     pthread_cond_t cond;
@@ -137,12 +136,11 @@ struct Session {
     int started;
     int connected;
     int closedReported;
-    int sawPointerPosition; /* protocol thread only: log the first, not the stream */
+    int sawPointerPosition; /* protocol thread only: only the first is logged */
     _Atomic int viewOnly;
     _Atomic int canResize;
-    /* What the display-control channel's server said it takes: monitors in
-       a layout (at most VENTO_MAX_MONITORS, 0 before it has said), and
-       pixels over all of them. */
+    /* The server's display-control limits: monitors in a layout (at most
+       VENTO_MAX_MONITORS, 0 until the server sends them) and total pixels. */
     _Atomic UINT32 dispMonitors;
     _Atomic uint64_t dispArea;
 
@@ -150,92 +148,92 @@ struct Session {
     int credAnswered;
     char *credUser, *credDomain, *credPass;
 
-    /* and the certificate one, which is the same shape */
+    /* the certificate prompt, answered the same way */
     int trustAnswered, trustAccepted;
 
-    /* the copy readRegion is served from */
+    /* the copy op_read_region reads from */
     pthread_rwlock_t fbLock;
     uint8_t *fb;
     int fbW, fbH;
 
-    /* The channels, kept because they arrive as an event rather than from a
-       call: a channel's interface is handed over once, when it connects. */
+    /* The channels' interfaces, kept because each is passed only once, in an
+       event when the channel connects. */
     CliprdrClientContext *cliprdr;
     DispClientContext *disp;
     _Atomic int gfxOpen; /* the graphics pipeline's channel is up */
-    /* What the server confirmed of the capability sets the pipeline offered:
-       the version, and whether that version with its flags carries H.264. */
+    /* The capability set the server confirmed from the pipeline's offer: its
+       version, and whether that version with its flags enables H.264. */
     _Atomic UINT32 gfxVersion;
     _Atomic int gfxH264;
 
-    /* The codec of the last surface the server sent, and the library's own
-       handler it is read on the way to. Asking the settings instead answers
-       what was *requested*: nothing on a client clears RemoteFxCodec when the
-       server declines it, and a server may decline for reasons two rows away —
-       xrdp offers the codec only to a client that calls its link a LAN. */
+    /* The codec of the last surface the server sent, recorded before calling
+       the library's handler. The settings only say what was *requested*: the
+       client never clears RemoteFxCodec when the server declines it, and a
+       server may decline because of other settings (xrdp offers the codec
+       only to a client that reports a LAN connection). */
     _Atomic UINT32 lastCodec;
     pSurfaceBits gdiSurfaceBits;
-    /* The GDI's handler for the pipeline's reset, chained through: the reset
-       is where a server on the pipeline states its monitors. */
+    /* The GDI's handler for the pipeline's reset, called from ours: on the
+       pipeline, the server sends its monitors in the reset. */
     pcRdpgfxResetGraphics gdiResetGraphics;
-    /* And its handler for every surface command, chained through so that
-       the H.264 contexts the library makes inside it are this session's
+    /* The GDI's handler for every surface command, called from ours so the
+       H.264 contexts the library creates inside it belong to this session
        (h264_vento.h). */
     pcRdpgfxSurfaceCommand gdiSurfaceCommand;
-    /* The capability set the server confirmed, to advertise again where a
-       decoder can no longer follow the stream, and whether that has been
-       done since the server last confirmed one. */
+    /* The capability set the server confirmed, advertised again when a
+       decoder loses track of the stream, and whether that has happened since
+       the server last confirmed one. */
     RDPGFX_CAPSET gfxCaps;
     _Atomic int gfxRestarting;
-    /* The platform's decoders, which every H.264 surface command goes
-       through, and what they say about the last picture. */
+    /* The platform's decoders, used for every H.264 surface command, and
+       their report on the last picture. */
     VentoH264 h264;
-    /* The platform's sound output, which the rdpsnd devices the channels
-       make play on (rdpsnd_vento.h). */
+    /* The platform's sound output, used by the channels' rdpsnd devices
+       (rdpsnd_vento.h). */
     VentoSound audio;
 
-    /* The desktop's monitors, x, y, width, height each, under `lock`: as the
-       server last stated them (`serverCount`, -1 before it has, 0 where what
-       it last stated was not a desktop), and as this end last asked for them
-       (`askedCount`, at connect and on every layout sent). The server's is
-       the answer where it has given one that covers the desktop as it now
-       is; what was asked is the answer where the desktop came out that size;
-       anything else is a desktop nothing here can divide.
-       `wantCount` is the layout op_request_layout left for the protocol thread
-       to send, the latest one only. */
+    /* The desktop's monitors (x, y, width, height each), under `lock`: as
+       the server last sent them (`serverCount`, -1 before it has, 0 if the
+       last layout it sent was not a valid desktop), and as this end last
+       requested them (`askedCount`, at connect and on every layout sent). The
+       server's layout is used when it covers the current desktop, the
+       requested one when the desktop has that size; otherwise the desktop is
+       not divided into monitors.
+       `wantCount` is the latest layout op_request_layout queued for the
+       protocol thread to send. */
     int32_t serverLayout[4 * VENTO_MAX_MONITORS];
     int serverCount;
     int32_t askedLayout[4 * VENTO_MAX_MONITORS];
     int askedCount;
     int32_t wantLayout[4 * VENTO_MAX_MONITORS];
     int wantCount;
-    /* A size asked for before the server said what it takes, 0 for none
-       (holdUntilCaps). */
+    /* A size requested before the server sent its display-control limits, 0
+       for none (holdUntilCaps). */
     int heldWidth, heldHeight;
 
-    /* What this phone has copied, as the wire wants it — UTF-16, CRLF, with
-       its terminator — held until something over there pastes. RDP's clipboard is a
-       delayed rendering: the format list says there is text and the bytes go
-       only when they are asked for. */
+    /* The near end's clipboard text in wire format (UTF-16, CRLF,
+       NUL-terminated), held until the far end pastes. RDP's clipboard uses
+       delayed rendering: the format list announces text and the data is sent
+       only on request. */
     WCHAR *clipOut;
     size_t clipOutLen;
 
     struct {
         INT64 id;
         UINT16 code;  /* RDP scancode, with 0xE000 for an extended one */
-        int shift;    /* the layout needed a Shift for it, and we pressed one */
-        WCHAR unicode; /* or it had no position at all */
+        int shift;    /* the US layout needs Shift for it, and this end pressed one */
+        WCHAR unicode; /* instead of `code`, for a character with no scancode */
     } keys[MAX_HELD_KEYS];
     int nkeys;
-    int shiftHeld; /* by the person, not by us */
+    int shiftHeld; /* by the user, not synthesised by this end */
 
-    UINT16 buttons; /* the RFB mask as last seen, because RDP wants the edges */
+    UINT16 buttons; /* the last RFB button mask, since RDP sends button changes */
 
     char *host;
     int port;
-    /* Why the address was not one, empty if it was: a session is created and
-       started in one call, so the protocol thread is the first place there is
-       to say it. */
+    /* Why the address is invalid, empty if it is valid: a session is created
+       and started in one call, so the protocol thread is the first place it
+       can be reported. */
     char addressError[160];
     char *user, *domain, *password;
     char *nla;
@@ -247,7 +245,7 @@ struct Session {
     UINT32 osMajorType;
     char *configPath;
     int width, height, monitors, keyboardLayout;
-    int scale; /* percent; what the far end is asked to draw its own interface at */
+    int scale; /* percent; the scale the far end is asked to draw its interface at */
     int compression;
     int connectTimeoutMs;
 };
@@ -256,13 +254,12 @@ static const vento_session_ops OPS;
 
 /* ---- the address -------------------------------------------------------- */
 
-/* An address is `host`, `host:port`, `[literal]` or `[literal]:port`, and a bare
-   IPv6 literal is refused in words rather than guessed at: unbracketed there is
-   no telling it from a host with a port after it, and what the guess this
-   replaced produced was the address truncated at its last colon. No display
-   number here, which is a VNC habit RDP has never had, so a second colon has
-   nothing to mean. The host is left at the front of `address`, which stays the
-   caller's buffer to free; `why` is empty unless there is nothing to dial. */
+/* An address is `host`, `host:port`, `[literal]` or `[literal]:port`. An
+   unbracketed IPv6 literal is refused with an error rather than guessed at,
+   since it can't be told apart from a host followed by a port. RDP has no
+   display numbers, unlike VNC, so a second colon has no meaning. The host is
+   left at the start of `address`, which the caller still frees; `why` is
+   empty unless the address is unusable. */
 static void splitAddress(char *address, int *port, char *why, size_t whyLen) {
     size_t len = strlen(address);
     while (len > 0 && (address[len - 1] == ' ' || address[len - 1] == '\t')) {
@@ -273,9 +270,9 @@ static void splitAddress(char *address, int *port, char *why, size_t whyLen) {
         memmove(address, address + lead, len - lead + 1);
         len -= lead;
     }
-    /* Not where another colon follows: "::1" is IPv6's loopback unbracketed,
-       and is told so below rather than that it has no host (as
-       runtime::address says it). */
+    /* Unless another colon follows: "::1" is the unbracketed IPv6 loopback,
+       and gets the bracketing error below rather than "no host" (as in
+       runtime::address). */
     if (len == 0 || (address[0] == ':' && strchr(address + 1, ':') == NULL)) {
         snprintf(why, whyLen, "No host in address");
         return;
@@ -329,18 +326,17 @@ static void splitAddress(char *address, int *port, char *why, size_t whyLen) {
 
 /* ---- the command queue -------------------------------------------------- */
 
-/* A full ring: the protocol thread has been inside one call for as long as
-   it took a person to make CMD_RING - 1 changes, which is a stalled
-   connection more than a busy one. Something has to go, and it is the
-   oldest command whose loss the far end cannot tell from a slow hand: a key
-   press (whose release then finds nothing held and sends nothing), or a
-   command a later one of its kind restates — a pointer, whose mask is the
-   whole of the buttons, the focus, a size, a layout, a clipboard. A release
-   is never one of them, since a lost one is a key held at the far end until
-   somebody presses it again. Where nothing in the ring can go, the new
-   command goes instead if it may; and only a ring of nothing but releases,
-   which no keyboard makes, loses its oldest. Returns whether `c` has room;
-   under `lock`. */
+/* A full ring means the protocol thread has been inside one call for as long
+   as CMD_RING - 1 inputs took, which is more likely a stalled connection than
+   a busy one. One command is dropped: the oldest whose loss the far end can't
+   tell from slow input. That is a key press (its release then finds nothing
+   held and sends nothing), or a command restated by a later one of its type:
+   a pointer (its mask holds all the buttons), the focus, a size, a layout, a
+   clipboard. A release is never chosen, since losing one leaves the key held
+   at the far end until it is pressed again. If nothing in the ring can go,
+   the new command is dropped instead, unless it is a release, in which case
+   the oldest command is dropped. Returns whether `c` has room; under
+   `lock`. */
 static bool releases(int type) {
     return type == CMD_KEY_UP || type == CMD_RELEASE_KEYS;
 }
@@ -377,10 +373,11 @@ static void post(Session *s, const Cmd *c) {
         free(c->text);
         return;
     }
-    /* Motion coalesces onto the tail: the protocol thread can be inside a
-       decode, and by the time it drains, every position but the last is
-       somewhere the pointer no longer is. A button change is a different event
-       and is never merged away. */
+    /* Motion is merged into the newest queued command when that is a pointer
+       command with the same buttons: the protocol thread can be inside a
+       decode, and by the time it drains the queue, every position but the
+       last is out of date. A button change is a separate event and is never
+       merged. */
     if (c->type == CMD_POINTER && s->head != s->tail) {
         const int last = (s->head + CMD_RING - 1) % CMD_RING;
         if (s->ring[last].type == CMD_POINTER && s->ring[last].c == c->c) {
@@ -422,17 +419,16 @@ static void fireClosed(Session *s, const char *detail) {
     if (already) {
         return;
     }
-    /* The library's own words, which can quote the server's; the seam promises
-       UTF-8. */
+    /* The library's message, which can quote the server's; the callback
+       takes UTF-8. */
     char *utf8 = vento_utf8_from_bytes(detail);
     s->cb.closed(s->cb.user, utf8 ? utf8 : "");
     free(utf8);
 }
 
-/* The far end's text, which is UTF-16 with Windows' line ends on the wire
-   and UTF-8 with LF at the seam, held to the bound every backend holds the
-   far end's clipboard to — in bytes of what the seam is given, as the IronRDP
-   backend counts it. */
+/* The far end's clipboard text: UTF-16 with CRLF on the wire, UTF-8 with LF
+   in the callback. It is limited to VENTO_MAX_CLIPBOARD like every backend's,
+   counted in bytes of the UTF-8 text as the IronRDP backend does. */
 static void fireClipboard(Session *s, const WCHAR *text, size_t units) {
     char *utf8 = ConvertWCharNToUtf8Alloc(text, units, NULL);
     if (!utf8) {
@@ -460,8 +456,8 @@ static Session *sessionOf(rdpContext *context) {
     return ((ShimContext *) context)->session;
 }
 
-/* One allocation per desktop size, zeroed opaque so that a region read before
-   anything has been decoded is black rather than transparent. */
+/* One allocation per desktop size, filled with opaque black so a region read
+   before anything has been decoded is black rather than transparent. */
 static BOOL allocFramebuffer(Session *s, int w, int h) {
     if (w <= 0 || h <= 0) {
         return FALSE;
@@ -491,11 +487,11 @@ static BOOL onBeginPaint(rdpContext *context) {
     return TRUE;
 }
 
-/* The whole of the second framebuffer's cost, and the only place it is paid:
-   once per damaged rectangle per paint, under the writer lock. The GDI's own
-   buffer is BGRX and the seam's framebuffer is RGBX, so red and blue trade
-   places here and the alpha the codecs leave undefined is filled in — one pass
-   over the damage rather than the library's converting copy and then ours. */
+/* The only cost of the second framebuffer: one copy per damaged rectangle per
+   paint, under the writer lock. The GDI's buffer is BGRX and the session's
+   framebuffer is RGBX, so red and blue are swapped here and the alpha the
+   codecs leave undefined is set, in one pass over the damage rather than the
+   library's converting copy followed by ours. */
 static BOOL onEndPaint(rdpContext *context) {
     Session *s = sessionOf(context);
     rdpGdi *gdi = context->gdi;
@@ -505,15 +501,15 @@ static BOOL onEndPaint(rdpContext *context) {
     }
 
     pthread_rwlock_wrlock(&s->fbLock);
-    /* Both sizes are read here, under the lock the copy's own size changes
-       under, and the damage is held to the smaller of the two buffers. The
-       desktop is resized on two threads — the protocol thread's for a
-       reactivation, the graphics pipeline's channel thread for its reset —
-       and a paint ends on either of them, so a size read before the lock
-       could be the old one of a copy since made smaller, and its rows were
-       then written at the old stride past the new allocation's end. And
-       the two buffers are resized one after the other (onDesktopResize),
-       with a call of this from inside gdi_resize in between. */
+    /* Both sizes are read here, under the lock that guards the copy's size,
+       and the damage is clipped to the smaller of the two buffers. The
+       desktop is resized on two threads (the protocol thread for a
+       reactivation, the graphics pipeline's channel thread for its reset),
+       and a paint can end on either, so a size read before taking the lock
+       could be the old size of a copy that has since shrunk, and rows were
+       then written at the old stride past the end of the new allocation. The
+       two buffers are also resized one after the other (onDesktopResize),
+       with a call to this from inside gdi_resize in between. */
     const int stride = s->fbW;
     const int fw = s->fb ? (stride < gdi->width ? stride : gdi->width) : 0;
     const int fh = s->fb ? (s->fbH < gdi->height ? s->fbH : gdi->height) : 0;
@@ -556,7 +552,7 @@ static BOOL onEndPaint(rdpContext *context) {
     return TRUE;
 }
 
-/* Only to see what the picture arrived as; the drawing is the library's. */
+/* Only records the codec; the library does the drawing. */
 static BOOL onSurfaceBits(rdpContext *context, const SURFACE_BITS_COMMAND *cmd) {
     Session *s = sessionOf(context);
     if (cmd) {
@@ -565,29 +561,30 @@ static BOOL onSurfaceBits(rdpContext *context, const SURFACE_BITS_COMMAND *cmd) 
     return s->gdiSurfaceBits ? s->gdiSurfaceBits(context, cmd) : TRUE;
 }
 
-/* Not optional: gdi_ResetGraphics asserts on this callback, so a client without
-   one does not fail to resize, it aborts on the channel thread.
+/* Required: gdi_ResetGraphics asserts on this callback, so a client without
+   one aborts on the channel thread instead of failing to resize.
 
-   Called on two threads: the protocol thread's, when the server reactivates
+   Called on two threads: the protocol thread, when the server reactivates
    the connection at another size (libfreerdp/core/connection.c), and the
-   graphics pipeline channel's, on its reset (libfreerdp/gdi/gfx.c), which
-   holds the pipeline's own lock but not the update lock every paint is made
-   under. So the whole of a resize is made under that one, which the library
-   exports for this and which is recursive: two resizes do not interleave
-   their copies and GDIs, the sizes go out in the order the buffers took
-   them, and no paint on the other thread is between its BeginPaint and its
-   EndPaint while the buffers change under it. gdi_resize ends a paint of
-   its own first (update_end_paint, into onEndPaint), with the copy already
-   at the new size and the GDI still at the old, which onEndPaint's clamp to
-   the smaller of the two is for.
+   graphics pipeline channel's thread, on its reset (libfreerdp/gdi/gfx.c),
+   which holds the pipeline's lock but not the update lock every paint is
+   made under. So the whole resize is made under the update lock, which the
+   library exports for this and which is recursive: two resizes don't
+   interleave their copies and GDIs, the sizes are reported in the order the
+   buffers took them, and no paint on the other thread is between its
+   BeginPaint and EndPaint while the buffers change. gdi_resize first ends a
+   paint of its own (update_end_paint, into onEndPaint), with the copy
+   already at the new size and the GDI still at the old one, which is why
+   onEndPaint clamps to the smaller of the two.
 
-   Without the pipeline, the codecs are this resize's too. They are sized at
-   connect, and planar, RemoteFX and NSCodec refuse anything wider than that
+   Without the pipeline, this resize also resizes the codecs. They are sized
+   at connect, and planar, RemoteFX and NSCodec refuse anything wider
    (planar's "maxWidth 1920 < nSrcWidth 2400"), which ended a bitmap session
-   at the first update after a resize past its starting width; only the
-   pipeline's reset resizes them in the library (gdi/gfx.c), and the core's
-   reactivation leaves them to the client, which xfreerdp does not do either.
-   With the pipeline open they are the reset's, and not touched here. */
+   at the first update after a resize past its starting width. In the library
+   only the pipeline's reset resizes them (gdi/gfx.c); the core's
+   reactivation leaves that to the client, and xfreerdp doesn't do it either.
+   With the pipeline open the reset handles them, and they are not touched
+   here. */
 static BOOL onDesktopResize(rdpContext *context) {
     Session *s = sessionOf(context);
     rdp_update_lock(context->update);
@@ -610,9 +607,10 @@ static BOOL onDesktopResize(rdpContext *context) {
 
 /* ---- the monitors ------------------------------------------------------- */
 
-/* Whether `n` screens, four ints each, are a division of a desktop `w × h`:
-   their bounding box is it. A layout that is not is one from before the
-   desktop last changed size, and says nothing about the desktop now. */
+/* Whether `n` screens (four ints each) divide a desktop of `w × h`, that is,
+   whether their bounding box is the desktop. A layout that doesn't is from
+   before the desktop last changed size, and says nothing about the current
+   one. */
 static bool covers(const int32_t *flat, int n, int w, int h) {
     if (n < 1) {
         return false;
@@ -630,15 +628,16 @@ static bool covers(const int32_t *flat, int n, int w, int h) {
     return right == w && bottom == h;
 }
 
-/* The widest and tallest a virtual desktop may be, and so any monitor in it
-   or any offset from its corner (MS-RDPBCGR 2.2.1.3.6). */
+/* The maximum width and height of a virtual desktop, and so of any monitor
+   in it or any offset from its corner (MS-RDPBCGR 2.2.1.3.6). */
 #define MAX_DESKTOP_SIDE 32766
 
-/* `n` MONITOR_DEFs as x, y, width, height each into `flat`, from the top
-   left of them all; false, with `flat` unspecified, where they are not a
-   desktop: a monitor narrower or shorter than a pixel, or anything past
-   MAX_DESKTOP_SIDE from that corner. The corners are the server's 32-bit
-   numbers, so the sums are made in 64. */
+/* Converts `n` MONITOR_DEFs into `flat` as x, y, width, height each,
+   relative to their combined top left corner. Returns false, with `flat`
+   unspecified, if they are not a valid desktop: a monitor less than a pixel
+   wide or tall, or anything more than MAX_DESKTOP_SIDE from that corner. The
+   corners are the server's 32-bit values, so the sums are computed in 64
+   bits. */
 static bool flattenLayout(const MONITOR_DEF *defs, int n, int32_t *flat) {
     int64_t left = 0, top = 0;
     for (int i = 0; i < n; i++) {
@@ -660,23 +659,24 @@ static bool flattenLayout(const MONITOR_DEF *defs, int n, int32_t *flat) {
     return true;
 }
 
-/* The monitors as the server states them, in its order, which is the only
-   identity RDP gives a monitor. A MONITOR_DEF's corners are inclusive and
-   relative to the primary monitor, which others may sit above or to the left
-   of; the desktop's pixel 0,0 is the top left of them all, so that is where
-   the seam's coordinates start. Two places say it: the Monitor Layout PDU of
-   the connection sequence (update->RemoteMonitors), and on the graphics
-   pipeline every reset, which is how such a server answers a layout. */
+/* Stores the monitors as the server sends them, in its order, which is the
+   only identity RDP gives a monitor. A MONITOR_DEF's corners are inclusive
+   and relative to the primary monitor, which others may be above or to the
+   left of; the desktop's pixel 0,0 is the top left corner of all of them, so
+   the session's coordinates start there. The server sends them in two
+   places: the Monitor Layout PDU of the connection sequence
+   (update->RemoteMonitors), and, on the graphics pipeline, every reset,
+   which is how such a server responds to a layout request. */
 static void heardLayout(Session *s, const MONITOR_DEF *defs, UINT32 count, const char *where) {
     const int n = count > VENTO_MAX_MONITORS ? VENTO_MAX_MONITORS : (int) count;
     int32_t flat[4 * VENTO_MAX_MONITORS];
     if (!flattenLayout(defs, n, flat)) {
-        /* Corners the far end could not have meant — a monitor of no width,
-           or one further from the others than a desktop is wide — whose sums
-           could overflow the 32 bits they arrived in. The whole of it
-           is set aside rather than the odd monitor: a monitor's place in the
-           list is its identity, and the rest renumbered would be wrong in a
-           quieter way. What was asked stands in for it (op_monitors). */
+        /* Invalid corners (a monitor of no width, or one further from the
+           others than a desktop is wide), whose sums could overflow the 32
+           bits they arrived in. The whole layout is ignored rather than the
+           bad monitor: a monitor's position in the list is its identity, and
+           renumbering the rest would be wrong in a less visible way. The
+           requested layout is used instead (op_monitors). */
         LOGW("%s: the server's %d monitors are not a desktop; their layout is ignored", where, n);
         pthread_mutex_lock(&s->lock);
         s->serverCount = 0;
@@ -709,13 +709,13 @@ static UINT onGfxResetGraphics(RdpgfxClientContext *context,
     return s->gdiResetGraphics ? s->gdiResetGraphics(context, reset) : CHANNEL_RC_OK;
 }
 
-/* `n` screens, x, y, width, height each, as a display-control layout, into
-   `out`, and what that layout makes of the desktop into `asked`. The
-   protocol's rules rather than ours: the first screen is the primary and sits
-   at the origin, so the lot moves to put it there; a monitor is 200 to 8192
-   pixels each way and its width is even. A screen made narrower or shorter by
-   that moves those right of or below it along by as much, so that screens
-   side by side stay side by side. Returns how many went in. */
+/* Converts `n` screens (x, y, width, height each) into a display-control
+   layout in `out`, and the desktop that layout produces into `asked`. The
+   protocol's rules: the first screen is the primary and is at the origin, so
+   all of them are shifted to put it there; a monitor is 200 to 8192 pixels
+   each way and its width is even. When that changes a screen's size, the
+   screens to its right or below move by the same amount, so adjacent screens
+   stay adjacent. Returns how many were written. */
 static int buildLayout(const int32_t *rects, int n, int scale, DISPLAY_CONTROL_MONITOR_LAYOUT *out,
                        int32_t *asked) {
     n = n > VENTO_MAX_MONITORS ? VENTO_MAX_MONITORS : n;
@@ -755,9 +755,8 @@ static int buildLayout(const int32_t *rects, int n, int scale, DISPLAY_CONTROL_M
         m->Width = (UINT32) w[i];
         m->Height = (UINT32) h[i];
         m->Orientation = ORIENTATION_LANDSCAPE;
-        /* The connection's, not 100: a layout re-states the whole of it, so
-           leaving these at the default would undo the interface size the
-           session was opened with. */
+        /* The connection's scale, not 100: a layout restates everything, so
+           the default would undo the scale the session was opened with. */
         m->DesktopScaleFactor = (UINT32) scale;
         m->DeviceScaleFactor = (UINT32) scale;
         asked[4 * i + 0] = x[i] - left;
@@ -768,12 +767,12 @@ static int buildLayout(const int32_t *rects, int n, int scale, DISPLAY_CONTROL_M
     return n;
 }
 
-/* A layout of `n` screens on the display-control channel, remembered as what
-   was asked for. A refusal is silence: the server makes a new desktop, a
-   different one, or nothing. What the server said it takes is held to here,
-   in words: the channel's own code would cut a layout down to its monitor
-   count without a line in the log, and a layout past its area is one the
-   server is entitled to drop on the floor. */
+/* Sends a layout of `n` screens on the display-control channel and stores it
+   as the requested layout. The server sends no refusal: it creates the new
+   desktop, a different one, or nothing. The server's limits are applied here
+   with a log line: the channel's own code would cut a layout down to the
+   monitor count without logging anything, and the server may ignore a
+   layout over its area. */
 static void sendLayout(Session *s, const int32_t *rects, int n) {
     if (!s->disp || !s->disp->SendMonitorLayout || !s->canResize || n < 1) {
         return;
@@ -824,9 +823,9 @@ static void onPointerFree(rdpContext *context, rdpPointer *pointer) {
     (void) pointer;
 }
 
-/* Converted when the pointer becomes the current one rather than when it
-   arrives: a server sends shapes it then never uses, and an unchanged shape
-   costs nothing on the other side anyway — `CursorCache` keys on the hash. */
+/* Converted when the pointer becomes current rather than when it arrives: a
+   server sends shapes it never uses, and an unchanged shape costs nothing on
+   the other side anyway (`CursorCache` keys on the hash). */
 static BOOL onPointerSet(rdpContext *context, rdpPointer *pointer) {
     Session *s = sessionOf(context);
     const UINT32 w = pointer->width, h = pointer->height;
@@ -837,9 +836,9 @@ static BOOL onPointerSet(rdpContext *context, rdpPointer *pointer) {
     if (!rgba) {
         return TRUE;
     }
-    /* RGBA32 — R, G, B, A in memory — which is the seam's own order for a
-       cursor as for the framebuffer; whatever the platform packs it into, it
-       does on its side of the call. */
+    /* RGBA32 (R, G, B, A in memory), the callback's order for cursors as
+       for the framebuffer; any repacking for the platform happens on the
+       other side of the call. */
     if (freerdp_image_copy_from_pointer_data((BYTE *) rgba, PIXEL_FORMAT_RGBA32, 0, 0, 0, w, h,
                                              pointer->xorMaskData, pointer->lengthXorMask,
                                              pointer->andMaskData, pointer->lengthAndMask,
@@ -850,9 +849,9 @@ static BOOL onPointerSet(rdpContext *context, rdpPointer *pointer) {
     return TRUE;
 }
 
-/* An empty shape is the seam's "the server has hidden the pointer". The default
-   arrow is the same answer: this end draws its own cursor, and a server's idea
-   of an arrow is not more informative than ours. */
+/* An empty shape tells the callback the server has hidden the pointer. The
+   default arrow is reported the same way: this end draws its own cursor, and
+   the server's arrow adds nothing to it. */
 static BOOL onPointerSetNull(rdpContext *context) {
     fireCursor(sessionOf(context), NULL, 0, 0, 0, 0);
     return TRUE;
@@ -863,13 +862,13 @@ static BOOL onPointerSetDefault(rdpContext *context) {
     return TRUE;
 }
 
-/* The far end saying where it has put the cursor, which this app's cursor does
-   not take instruction from: it is owned here and the viewport follows it.
+/* The far end reporting where it moved the cursor. This app ignores it: the
+   cursor is owned by this end and the viewport follows it.
 
-   On `update->pointer` rather than on the graphics pointer below, which has a
-   SetPosition of the same shape that the library never calls: the position
-   update is dispatched in core/update.c and the graphics module only ever sees
-   shapes. */
+   Set on `update->pointer` rather than on the graphics pointer below, whose
+   SetPosition has the same signature but is never called by the library: the
+   position update is dispatched in core/update.c and the graphics module only
+   sees shapes. */
 static BOOL onPointerPosition(rdpContext *context, const POINTER_POSITION_UPDATE *pos) {
     Session *s = sessionOf(context);
     if (s && !s->sawPointerPosition) {
@@ -894,9 +893,9 @@ static BOOL registerPointer(rdpGraphics *graphics) {
 
 /* ---- the clipboard ------------------------------------------------------ */
 
-/* Text and nothing else, in both directions. CF_UNICODETEXT is UTF-16 with a
-   terminator, which is what every Windows clipboard holds; the seam's is
-   UTF-8, and a file list or a bitmap has nowhere to go on this side. */
+/* Text only, in both directions. CF_UNICODETEXT is NUL-terminated UTF-16,
+   which every Windows clipboard holds; the callback takes UTF-8, and the near
+   end has no use for a file list or a bitmap. */
 static UINT sendFormatList(Session *s, int haveText) {
     CLIPRDR_FORMAT format = {0};
     CLIPRDR_FORMAT_LIST list = {0};
@@ -907,8 +906,8 @@ static UINT sendFormatList(Session *s, int haveText) {
     if (!s->cliprdr || !s->cliprdr->ClientFormatList) {
         return ERROR_INTERNAL_ERROR;
     }
-    /* The empty list matters as much as the full one: a channel that never
-       sends a format list is one neither direction works on. */
+    /* The empty list is needed too: on a channel that never sends a format
+       list, neither direction works. */
     return s->cliprdr->ClientFormatList(s->cliprdr, &list);
 }
 
@@ -941,8 +940,8 @@ static UINT onCliprdrServerCapabilities(CliprdrClientContext *cliprdr,
     return CHANNEL_RC_OK;
 }
 
-/* The far end has something. Ask for it only if it is text — the request is
-   what makes the bytes arrive, since RDP renders a clipboard on demand. */
+/* The far end copied something. Request it only if it is text; RDP renders a
+   clipboard on demand, so the data arrives only after the request. */
 static UINT onCliprdrServerFormatList(CliprdrClientContext *cliprdr,
                                       const CLIPRDR_FORMAT_LIST *list) {
     Session *s = (Session *) cliprdr->custom;
@@ -974,7 +973,7 @@ static UINT onCliprdrServerFormatListResponse(CliprdrClientContext *cliprdr,
     return CHANNEL_RC_OK;
 }
 
-/* Something over there is pasting what this phone copied. */
+/* The far end is pasting the near end's clipboard. */
 static UINT onCliprdrServerFormatDataRequest(CliprdrClientContext *cliprdr,
                                              const CLIPRDR_FORMAT_DATA_REQUEST *request) {
     Session *s = (Session *) cliprdr->custom;
@@ -1003,7 +1002,7 @@ static UINT onCliprdrServerFormatDataRequest(CliprdrClientContext *cliprdr,
     return rc;
 }
 
-/* And the answer to our own request: the far end's text. */
+/* The response to our request: the far end's text. */
 static UINT onCliprdrServerFormatDataResponse(CliprdrClientContext *cliprdr,
                                               const CLIPRDR_FORMAT_DATA_RESPONSE *response) {
     Session *s = (Session *) cliprdr->custom;
@@ -1034,11 +1033,11 @@ static void wireCliprdr(Session *s, CliprdrClientContext *cliprdr) {
 
 /* ---- the channels ------------------------------------------------------- */
 
-/* The server's pick from the capability sets the pipeline advertised, which is
-   the only place the answer is published: the library keeps it private and
-   leaves the settings saying what was asked. 8.1 carries H.264 only with the
-   AVC420 flag set, 10 and later unless the AVC-disabled one is, and 8.0 never.
-   The GDI does not use this hook, so there is nothing of its to chain. */
+/* The capability set the server picked from the pipeline's offer. This is the
+   only place it is available: the library keeps it private and the settings
+   still say what was requested. 8.1 enables H.264 only with the AVC420 flag
+   set, 10 and later unless the AVC-disabled flag is set, and 8.0 never. The
+   GDI doesn't use this hook, so there is no handler of its to call. */
 static UINT onGfxCapsConfirm(RdpgfxClientContext *gfx, const RDPGFX_CAPS_CONFIRM_PDU *confirm) {
     const rdpGdi *gdi = (const rdpGdi *) gfx->custom;
     if (!gdi || !confirm || !confirm->capsSet) {
@@ -1062,17 +1061,17 @@ static UINT onGfxCapsConfirm(RdpgfxClientContext *gfx, const RDPGFX_CAPS_CONFIRM
 }
 
 /* Every surface command, H.264 or not, is decoded inside the GDI's handler,
-   and that is where the library makes, resets and feeds a surface's H.264
-   context: inside it, the contexts are this session's.
+   where the library creates, resets and feeds each surface's H.264 context;
+   between vento_h264_enter and vento_h264_leave those contexts belong to this
+   session.
 
-   A decoder that can no longer follow its stream — a hardware one that
-   failed mid-stream and was replaced by software, or one the person changed
-   the mode under — has none of the pictures the stream refers back to, so
-   until the next key frame every command fails and nothing is drawn; and
-   Windows sends one only when a stream starts, not for a Refresh Rect, nor
-   for output suppressed and allowed again. The capabilities advertised again
-   are what it answers with new surfaces and a new stream, whose contexts get
-   new decoders. */
+   A decoder that loses track of its stream (a hardware one that failed
+   mid-stream and was replaced by software, or one whose mode the user
+   changed) has none of the reference pictures, so every command fails and
+   nothing is drawn until the next key frame. Windows sends one only when a
+   stream starts, not for a Refresh Rect or when output is suppressed and
+   allowed again. Advertising the capabilities again makes it respond with
+   new surfaces and a new stream, whose contexts get new decoders. */
 static UINT onGfxSurfaceCommand(RdpgfxClientContext *context, const RDPGFX_SURFACE_COMMAND *cmd) {
     rdpGdi *gdi = (rdpGdi *) context->custom;
     Session *s = sessionOf(gdi->context);
@@ -1091,17 +1090,17 @@ static UINT onGfxSurfaceCommand(RdpgfxClientContext *context, const RDPGFX_SURFA
     return rc;
 }
 
-/* The one thing that says a desktop can be reshaped at all, and a fact about
-   this session rather than about the backend: the display-control channel's
-   capabilities, which its server sends as the channel opens and before
-   which a layout would be cut down to a count the channel has not heard
-   yet. On the dynamic channels' thread; the numbers are read on the
-   protocol thread's. */
+/* The display-control channel's capabilities, the only indication that the
+   desktop can be resized, which depends on the session rather than the
+   backend. The server sends them when the channel opens; before that, a
+   layout would be cut down to a monitor count the channel hasn't received.
+   Called on the dynamic channels' thread; the values are read on the
+   protocol thread. */
 static UINT onDisplayControlCaps(DispClientContext *disp, UINT32 maxMonitors, UINT32 factorA,
                                  UINT32 factorB) {
     Session *s = (Session *) disp->custom;
     const UINT32 most = maxMonitors > VENTO_MAX_MONITORS ? VENTO_MAX_MONITORS : maxMonitors;
-    /* The area is per monitor it takes, the two factors' product each. */
+    /* The area is the two factors' product per monitor. */
     const uint64_t each = (uint64_t) factorA * factorB;
     const uint64_t area = most > 0 && each > UINT64_MAX / most ? UINT64_MAX : each * most;
     LOGI("display control: the server takes %u monitors of %u x %u pixels", maxMonitors, factorA,
@@ -1124,9 +1123,8 @@ static UINT onDisplayControlCaps(DispClientContext *disp, UINT32 maxMonitors, UI
     return CHANNEL_RC_OK;
 }
 
-/* A channel's interface arrives on an event rather than from a call, so the
-   pointer has to be kept: this is the only place either of them is handed
-   over. */
+/* A channel's interface arrives in an event rather than from a call, so the
+   pointer is kept: this is the only place it is passed. */
 static void onChannelConnected(void *context, const ChannelConnectedEventArgs *e) {
     rdpContext *ctx = (rdpContext *) context;
     Session *s = sessionOf(ctx);
@@ -1136,7 +1134,8 @@ static void onChannelConnected(void *context, const ChannelConnectedEventArgs *e
         RdpgfxClientContext *gfx = (RdpgfxClientContext *) e->pInterface;
         gdi_graphics_pipeline_init(ctx->gdi, gfx);
         gfx->CapsConfirm = onGfxCapsConfirm;
-        /* Chained, as SurfaceBits is: the GDI's handler is what resizes. */
+        /* Our handlers call the GDI's, as for SurfaceBits: the GDI's reset
+           handler does the resize. */
         s->gdiResetGraphics = gfx->ResetGraphics;
         gfx->ResetGraphics = onGfxResetGraphics;
         s->gdiSurfaceCommand = gfx->SurfaceCommand;
@@ -1170,20 +1169,19 @@ static void onChannelDisconnected(void *context, const ChannelDisconnectedEventA
     }
 }
 
-/* ---- what the connection asks a person ---------------------------------- */
+/* ---- credential and certificate prompts --------------------------------- */
 
-/* Blocks the protocol thread until the session is answered, which is the
-   design: on the other side of it is a dialog and a person. */
+/* Blocks the protocol thread until the session gets an answer, by design: the
+   answer comes from a dialog shown to the user. */
 static BOOL onAuthenticate(freerdp *instance, char **username, char **password, char **domain,
                            rdp_auth_reason reason) {
     Session *s = sessionOf(instance->context);
-    /* The library itself now asks only when something is missing: the TLS and
-       RDP paths skip the question when a user name and a password are both
-       set, and NLA asks only for an empty user name or no password at all. So
-       arriving here with both is one of the other reasons, and the answer is
-       the library's own — what the record already holds is the answer, and the
-       prompt is for when there is nothing to give. Forwarding it to a person
-       would turn a saved password into a dialog. */
+    /* The library only calls this when something is missing: the TLS and RDP
+       paths skip it when a user name and a password are both set, and NLA
+       calls it only for an empty user name or no password. Arriving here with
+       both means one of the other reasons, and the saved credentials are the
+       answer; the prompt is for when there are none. Forwarding it to the
+       user would show a dialog for a saved password. */
     if (*username && **username && *password && **password) {
         return TRUE;
     }
@@ -1215,31 +1213,31 @@ static BOOL onAuthenticate(freerdp *instance, char **username, char **password, 
     return ok ? TRUE : FALSE;
 }
 
-/* The same wait, for the other question a handshake asks. Nothing vouches for
-   an RDP server's certificate — a Windows host signs its own — so the identity
-   is the fingerprint, and the answer comes from the app: its pin store, or a
-   person.
+/* The same wait, for the certificate. No CA vouches for an RDP server's
+   certificate (a Windows host signs its own), so the identity is the
+   fingerprint, and the app decides, from its pin store or by asking the
+   user.
 
-   The library is told the certificate is managed outside it (see
-   applySettings), which makes this the only question it asks and the only
-   answer it takes. Left to manage it itself, it would first look the server
-   up in a store of its own under the config path and connect without asking
-   when what is on file matches — a PEM left there by anyone, ever, would
-   outvote the app — and a yes it was given would be written into that store
-   for next time. Here a yes is good for this connection alone (the library
-   keeps it for a redirect or a reconnect of the same session) and nothing is
-   written anywhere.
+   The library is told the certificate is managed externally (see
+   applySettings), so this is its only check. Otherwise it would first look
+   the server up in its own store under the config path and connect without
+   asking if the stored certificate matches, so any PEM ever placed there
+   would override the app, and it would write an accepted certificate into
+   that store. Here an acceptance applies to this connection only (the
+   library keeps it for a redirect or reconnect of the same session) and
+   nothing is written.
 
-   The fingerprint is the one the library's own prompt would have shown, the
-   SHA-256 of the server's certificate, so a pin made against that prompt
-   still matches. */
+   The fingerprint is the one the library's own prompt would show, the
+   SHA-256 of the server's certificate, so a pin made from that prompt still
+   matches. */
 static int onVerifyX509Certificate(freerdp *instance, const BYTE *data, size_t length,
                                    const char *hostname, UINT16 port, DWORD flags) {
     (void) hostname; (void) port; (void) flags;
     Session *s = sessionOf(instance->context);
 
-    /* The chain as PEM, the server's own certificate first, which is the one
-       read back here. Copied because the length is what bounds it. */
+    /* The chain as PEM, the server's certificate first, which is the one
+       parsed here. Copied to add a terminator, since only the length bounds
+       it. */
     char *pem = data ? malloc(length + 1) : NULL;
     if (!pem) {
         return 0;
@@ -1268,37 +1266,37 @@ static int onVerifyX509Certificate(freerdp *instance, const BYTE *data, size_t l
     }
     const int accepted = s->trustAccepted && !s->quit;
     pthread_mutex_unlock(&s->lock);
-    /* 0 rather than -1 for a no: both refuse, and -1 has the library log the
-       whole certificate as an error as well. */
+    /* 0 rather than -1 for a rejection: both refuse, and -1 also makes the
+       library log the whole certificate as an error. */
     return accepted ? 1 : 0;
 }
 
 /* ---- keysyms to scancodes ----------------------------------------------- */
 
 /*
- * The one place the protocol does not match the stack. Everything above
- * `CursorController` speaks X11 keysyms, because that is RFB's vocabulary;
- * RDP's keyboard is scancodes — set 1, with an E0 prefix for the keys the
- * original PC keyboard did not have.
+ * The one place where the protocol doesn't match the rest of the stack, which
+ * uses X11 keysyms (RFB's representation, used by the control layer and the
+ * clients). RDP's keyboard uses scancodes: set 1, with an E0 prefix for the
+ * keys the original PC keyboard didn't have.
  *
- * Three things follow, each a decision rather than a detail:
+ * Three decisions follow:
  *
- *   1. A scancode is a position, not a character: 0x1E is "the key left of S",
+ *   1. A scancode is a position, not a character: 0x1E is the key left of S,
  *      which is `a` on a US layout and `q` on a French one. So this table is a
- *      US layout, the connection asks for a US layout, and the server's own
- *      layout is what turns a position back into a character.
- *   2. What the layout cannot place goes as a Unicode keyboard event, which is
- *      how a phone's IME gets `é` and `→` across without a layout in between.
- *      It carries no modifier state, so it is the fallback and not the rule.
- *   3. Shift is part of the answer: `!` is not a key, it is `1` with Shift. The
- *      caller synthesises the modifier and has to know not to synthesise one
- *      that the person is already holding.
+ *      US layout, the connection requests a US layout, and the server's layout
+ *      maps each position back to a character.
+ *   2. Characters the layout has no key for are sent as Unicode keyboard
+ *      events, which is how a phone's IME sends `é` and `→` without a layout
+ *      in between. They carry no modifier state, so they are only a fallback.
+ *   3. Shift is part of the mapping: `!` is not a key but `1` with Shift. The
+ *      caller synthesises the modifier and must not synthesise one the user is
+ *      already holding.
  */
 
 #define KEY_EXT 0xE000u
 #define KEY_NONE 0xFFFFu
-/* Pause, which is not a position: the key never had a scancode of its own, and
-   the library has a call of its own for the sequence mstsc sends instead. */
+/* Pause has no scancode of its own; the library has a separate call for the
+   sequence mstsc sends instead. */
 #define KEY_PAUSE 0xFFFEu
 
 static UINT16 namedScancode(UINT32 keysym) {
@@ -1334,12 +1332,11 @@ static UINT16 namedScancode(UINT32 keysym) {
         case 0xffc8: return 0x57;             /* F11, which is not after F10 */
         case 0xffc9: return 0x58;             /* F12 */
 
-        /* The keypad. Each key appears twice, once under each Num Lock state,
-           and both spellings are the same position — which is the whole of what
-           RDP can say. Which of the two the far end produces is decided by the
-           far end's own Num Lock and not by ours, so this is the one place
-           where the phone owning the lock does not carry: with the lock off
-           here and on there, KP_Home arrives as 7. */
+        /* The keypad. Each key has two keysyms, one per Num Lock state, and
+           both map to the same scancode, which is all RDP can express. The far
+           end's Num Lock decides which of the two it produces, so this is the
+           one place where the near end's lock state doesn't apply: with the
+           lock off here and on there, KP_Home arrives as 7. */
         case 0xffb7: case 0xff95: return 0x47;   /* KP_7, KP_Home */
         case 0xffb8: case 0xff97: return 0x48;   /* KP_8, KP_Up */
         case 0xffb9: case 0xff9a: return 0x49;   /* KP_9, KP_Prior */
@@ -1358,8 +1355,8 @@ static UINT16 namedScancode(UINT32 keysym) {
         case 0xff8d: return KEY_EXT | 0x1c;      /* KP_Enter */
         case 0xffac: return 0x7e;                /* KP_Separator, the Brazilian keypad comma */
 
-        /* The unambiguous three of a Japanese board's conversion keys, which
-           are the three the control layer sends. */
+        /* The three unambiguous conversion keys of a Japanese keyboard, which
+           are the ones the control layer sends. */
         case 0xff27: return 0x70;             /* Hiragana_Katakana */
         case 0xff23: return 0x79;             /* Henkan_Mode */
         case 0xff22: return 0x7b;             /* Muhenkan */
@@ -1368,11 +1365,10 @@ static UINT16 namedScancode(UINT32 keysym) {
             if (keysym >= 0xffbe && keysym <= 0xffc7) {
                 return (UINT16) (0x3b + (keysym - 0xffbe));
             }
-            /* F13–F24, which no PC keyboard has and every layout still carries
-               a position for. F13–F23 run from 0x64; F24 does not follow them,
-               and a Windows far end resolves the position that would be F24 by
-               counting to VK_OEM_PA3 — KBD4_T6F in winpr's own table, and
-               KBD4_T76 is the one that is F24. */
+            /* F13–F24, which no PC keyboard has but every layout still has
+               scancodes for. F13–F23 run from 0x64; F24 doesn't follow them: a
+               Windows far end maps the next scancode (0x6F) to VK_OEM_PA3
+               (KBD4_T6F in winpr's table), and F24 is KBD4_T76. */
             if (keysym >= 0xffca && keysym <= 0xffd4) {
                 return (UINT16) (0x64 + (keysym - 0xffca));
             }
@@ -1383,9 +1379,8 @@ static UINT16 namedScancode(UINT32 keysym) {
     }
 }
 
-/* The printable half of a US layout, written as the rows of the keyboard
-   rather than sorted, because that is what it is: a wrong entry is visible as
-   a wrong neighbour. */
+/* The printable keys of a US layout, in keyboard row order rather than
+   sorted, so a wrong entry shows up as a wrong neighbour. */
 static const struct {
     UINT16 code;
     UINT16 plain, shifted;
@@ -1418,8 +1413,8 @@ static UINT32 keysymToUnicode(UINT32 keysym) {
     return 0;
 }
 
-/* Fills in one of the three answers: a position, a position with Shift, or a
-   character with no position at all. */
+/* Maps a keysym to one of three results: a scancode, a scancode with Shift,
+   or a character with no scancode. */
 static void mapKeysym(UINT32 keysym, UINT16 *code, int *shift, WCHAR *unicode) {
     *code = KEY_NONE;
     *shift = 0;
@@ -1429,8 +1424,8 @@ static void mapKeysym(UINT32 keysym, UINT16 *code, int *shift, WCHAR *unicode) {
         *code = named;
         return;
     }
-    /* The one keypad key a PC has no position for — FreeRDP's own xkb table has
-       KP_Equal as unknown — and it names a character, so it goes as one. */
+    /* The only keypad key with no PC scancode (FreeRDP's xkb table has
+       KP_Equal as unknown); it names a character, so it is sent as one. */
     if (keysym == 0xffbd) {
         *unicode = '=';
         return;
@@ -1458,9 +1453,9 @@ static void mapKeysym(UINT32 keysym, UINT16 *code, int *shift, WCHAR *unicode) {
 static void sendScancode(Session *s, UINT16 code, int down) {
     rdpInput *input = s->instance->context->input;
     if (code == KEY_PAUSE) {
-        /* The whole sequence goes on the press, so the release sends nothing.
-           What the library puts on the wire is what mstsc does — a Ctrl marked
-           E1 around a Num Lock — rather than the E1 1D 45 a keyboard sends. */
+        /* The whole sequence is sent on the press, so the release sends
+           nothing. The library sends what mstsc does (an E1-flagged Ctrl
+           around a Num Lock) rather than the E1 1D 45 a keyboard sends. */
         if (down) {
             freerdp_input_send_keyboard_pause_event(input);
         }
@@ -1485,10 +1480,9 @@ static void doKeyDown(Session *s, UINT32 keysym, INT64 keyId) {
         return;
     }
 
-    /* A second press of a key already down is auto-repeat, which RDP carries as
-       another down and nothing else — and re-recording it would fill the table
-       and then silently drop every later key, which is the fault stage 23f
-       found in two other backends. */
+    /* A second press of a key already down is auto-repeat, which RDP sends as
+       another key down. Recording it again would fill the table and then
+       silently drop every later key. */
     for (int i = 0; i < s->nkeys; i++) {
         if (s->keys[i].id == keyId) {
             if (s->keys[i].unicode) {
@@ -1507,9 +1501,9 @@ static void doKeyDown(Session *s, UINT32 keysym, INT64 keyId) {
     if (unicode) {
         freerdp_input_send_unicode_keyboard_event(s->instance->context->input, 0, unicode);
     } else {
-        /* Synthesised only when the person is not already holding one: a
-           capital typed while Shift is down would otherwise be released by us
-           on the way up, and the far end would see Shift let go mid-word. */
+        /* Synthesised only when the user isn't already holding Shift:
+           otherwise releasing a capital typed with Shift down would also
+           release Shift, and the far end would see it released mid-word. */
         if (shift && !s->shiftHeld) {
             sendScancode(s, 0x2a, 1);
         }
@@ -1527,10 +1521,9 @@ static void doKeyDown(Session *s, UINT32 keysym, INT64 keyId) {
 
 static void releaseAt(Session *s, int index) {
     if (s->keys[index].unicode) {
-        /* A character has an up as a position does, and the far end is owed
-           it: Windows turns a Unicode event into a key of its own whose down
-           and up go to the application like any other key's (xfreerdp sends
-           the release too). */
+        /* A character needs a release as a scancode does: Windows turns a
+           Unicode event into a key whose down and up go to the application
+           like any other key's (xfreerdp sends the release too). */
         freerdp_input_send_unicode_keyboard_event(s->instance->context->input, KBD_FLAGS_RELEASE,
                                                   s->keys[index].unicode);
     } else {
@@ -1569,10 +1562,11 @@ static void doReleaseAll(Session *s) {
     s->shiftHeld = 0;
 }
 
-/* An absolute position and an RFB button mask, which is what the whole control
-   stack speaks. Three of those bits are buttons and four are wheel notches, and
-   RDP has nothing pseudo about its wheel — so the buttons are held state and
-   the wheel is an edge. */
+/* An absolute position and an RFB button mask, as used throughout the control
+   stack. Bits 0x01 to 0x04, 0x80 and 0x100 are buttons and 0x08 to 0x40 are
+   wheel notches. RDP has real wheel events rather than RFB's wheel buttons,
+   so a button is sent on every change and a wheel notch only when its bit is
+   newly set. */
 static void doPointer(Session *s, int x, int y, UINT16 mask) {
     if (s->viewOnly || !s->connected) {
         return;
@@ -1581,7 +1575,7 @@ static void doPointer(Session *s, int x, int y, UINT16 mask) {
     const UINT16 previous = s->buttons;
     s->buttons = mask;
 
-    /* The move goes first, so that a click lands where the finger is. */
+    /* The move is sent first, so a click lands at the new position. */
     freerdp_input_send_mouse_event(input, PTR_FLAGS_MOVE, (UINT16) x, (UINT16) y);
 
     static const struct { UINT16 bit, flag; } BUTTONS[] = {
@@ -1598,8 +1592,8 @@ static void doPointer(Session *s, int x, int y, UINT16 mask) {
                                            (UINT16) x, (UINT16) y);
         }
     }
-    /* Buttons 8 and 9, which RDP calls X1 and X2 and Windows means browser back
-       and forward by. */
+    /* Buttons 8 and 9, RDP's X1 and X2, which Windows uses for browser back
+       and forward. */
     static const struct { UINT16 bit, flag; } EXTENDED[] = {
             {0x80, PTR_XFLAGS_BUTTON1},
             {0x100, PTR_XFLAGS_BUTTON2},
@@ -1640,10 +1634,11 @@ static void doClipboard(Session *s, WCHAR *text, size_t len) {
     }
 }
 
-/* The reverse of RFB's pause: an RDP server sends what it likes, so this is a
-   Suppress Output PDU telling it not to, and the redraw on the way back is the
-   server's own doing when output is allowed again. It is the picture's alone:
-   the sound plays on (applySettings says why). */
+/* Unlike an RFB client, which pauses by not requesting updates, an RDP client
+   receives updates unrequested, so losing focus sends a Suppress Output PDU
+   telling the server to stop, and the server redraws when output is allowed
+   again. It affects only the picture; sound keeps playing (see
+   applySettings). */
 static void doFocus(Session *s, int focused) {
     if (!s->connected || !s->instance->context->gdi) {
         return;
@@ -1651,13 +1646,14 @@ static void doFocus(Session *s, int focused) {
     gdi_send_suppress_output(s->instance->context->gdi, focused ? FALSE : TRUE);
 }
 
-/* A size or a layout asked for before the display-control channel's server
-   has said what it takes (onDisplayControlCaps), which on Windows is a
-   second or so after the session has connected: held, the latest one, and
-   sent when it has — or never, by a server with no such channel. `width` 0
-   is the layout op_request_layout left, which stays where it is. Whether it
-   was held; under `lock`, as the capabilities are taken, so that they cannot
-   arrive between the look and the hold. */
+/* Holds a size or layout requested before the server has sent its
+   display-control capabilities (onDisplayControlCaps), which on Windows arrive
+   a second or so after the session connects. Only the latest is kept, and it
+   is sent when the capabilities arrive, or never if the server has no such
+   channel. `width` 0 means the layout op_request_layout stored, which stays
+   in place. Returns whether it was held. Checked under `lock`, as the
+   capabilities are stored, so they can't arrive between the check and the
+   hold. */
 static bool holdUntilCaps(Session *s, int width, int height) {
     pthread_mutex_lock(&s->lock);
     const bool hold = !s->canResize;
@@ -1675,18 +1671,17 @@ static bool holdUntilCaps(Session *s, int width, int height) {
     return hold;
 }
 
-/* A desktop `width × height`, which is the whole of it and not one monitor:
-   the seam's size is the framebuffer's everywhere else. So the monitors the
-   session asks for divide the width between them, side by side, the last
-   taking what the division leaves over; asking each for the whole width made
-   a desktop of two monitors twice as wide as the one asked for. (IronRDP's
-   backend divides it the same way.) */
+/* A desktop of `width × height` in total, not per monitor: everywhere else in
+   the session interface the size is the framebuffer's. So the requested
+   monitors divide the width between them side by side, the last taking the
+   remainder; requesting the whole width for each made a two-monitor desktop
+   twice as wide as requested. (IronRDP's backend divides it the same way.) */
 static void doResize(Session *s, int width, int height) {
     if (holdUntilCaps(s, width, height)) {
         return;
     }
-    /* No more monitors than the server takes, so that a server of one is
-       still asked for the whole size rather than the first of its parts. */
+    /* No more monitors than the server supports, so a single-monitor server
+       still gets the whole size rather than its first part. */
     const int most = (int) atomic_load(&s->dispMonitors);
     int count = s->monitors < 1 ? 1
                 : (s->monitors > VENTO_MAX_MONITORS ? VENTO_MAX_MONITORS : s->monitors);
@@ -1702,8 +1697,8 @@ static void doResize(Session *s, int width, int height) {
     sendLayout(s, rects, count);
 }
 
-/* The layout op_request_layout left, the latest one: requests made faster
-   than the thread drains are the same question asked again. */
+/* Sends the latest layout op_request_layout stored: requests made faster
+   than the thread drains them supersede each other. */
 static void doLayout(Session *s) {
     int32_t rects[4 * VENTO_MAX_MONITORS];
     if (holdUntilCaps(s, 0, 0)) {
@@ -1755,16 +1750,16 @@ static BOOL onPreConnect(freerdp *instance) {
     rdpContext *ctx = instance->context;
     PubSub_SubscribeChannelConnected(ctx->pubSub, onChannelConnected);
     PubSub_SubscribeChannelDisconnected(ctx->pubSub, onChannelDisconnected);
-    /* Before the connection, since the connection sequence is where the
-       Monitor Layout PDU comes. */
+    /* Set before connecting, since the Monitor Layout PDU arrives in the
+       connection sequence. */
     ctx->update->RemoteMonitors = onRemoteMonitors;
     return TRUE;
 }
 
-/* Idempotent on purpose: upstream has two call sites for this callback — the
-   activation sequence and the end of freerdp_connect — and which of them runs is
-   the server's business rather than ours. A second one that got through would
-   re-initialise the GDI under a framebuffer the first had already published. */
+/* Idempotent on purpose: upstream calls this callback from two places (the
+   activation sequence and the end of freerdp_connect), and which one runs
+   depends on the server. A second call would re-initialise the GDI under a
+   framebuffer the first had already published. */
 static BOOL onPostConnect(freerdp *instance) {
     Session *s = sessionOf(instance->context);
     if (s->connected) {
@@ -1774,12 +1769,12 @@ static BOOL onPostConnect(freerdp *instance) {
     const UINT32 w = freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth);
     const UINT32 h = freerdp_settings_get_uint32(settings, FreeRDP_DesktopHeight);
 
-    /* BGRX because that is what every codec here decodes to, so the library's
-       copy into this buffer is a memcpy per row. The seam wants RGBX and the
-       difference is two bytes swapped — which onEndPaint does in a pass it
-       makes anyway. Asking the GDI for RGBX instead moves that swap into
-       FreeRDP's generic converter, which reads and writes a pixel at a time and
-       cost a fifth of the decode thread when it was measured. */
+    /* BGRX because every codec here decodes to it, so the library's copy into
+       this buffer is a memcpy per row. The session's framebuffer is RGBX,
+       which differs by two swapped bytes, and onEndPaint swaps them in a pass
+       it makes anyway. Asking the GDI for RGBX instead moves the swap into
+       FreeRDP's generic converter, which works a pixel at a time and took a
+       fifth of the decode thread when measured. */
     if (!gdi_init(instance, PIXEL_FORMAT_BGRX32)) {
         return FALSE;
     }
@@ -1791,15 +1786,16 @@ static BOOL onPostConnect(freerdp *instance) {
     update->EndPaint = onEndPaint;
     update->DesktopResize = onDesktopResize;
     update->pointer->PointerPosition = onPointerPosition;
-    /* Chained rather than replaced: the GDI's own handler is what draws. */
+    /* Ours calls the GDI's handler rather than replacing it: the GDI's
+       handler does the drawing. */
     s->gdiSurfaceBits = update->SurfaceBits;
     update->SurfaceBits = onSurfaceBits;
 
-    /* What the server will take from us. Both of these are the client's wish
-       ANDed with the server's offer during capability exchange, so after
-       PostConnect they are facts about this session rather than about us. The
-       relative one is not acted on yet; whether a server offers it at all is
-       the question a relative pointer over RDP turns on. */
+    /* The input the server accepts. Each is the client's request ANDed with
+       the server's offer during capability exchange, so after PostConnect
+       they describe this session rather than the client. The relative pointer
+       is not used yet; whether servers offer it decides whether a relative
+       pointer over RDP is possible. */
     LOGI("server input: relative pointer %s, horizontal wheel %s, unicode %s",
          freerdp_settings_get_bool(settings, FreeRDP_HasRelativeMouseEvent) ? "yes" : "no",
          freerdp_settings_get_bool(settings, FreeRDP_HasHorizontalWheel) ? "yes" : "no",
@@ -1823,12 +1819,12 @@ static void applySettings(Session *s, rdpSettings *settings) {
         freerdp_settings_set_string(settings, FreeRDP_Password, s->password);
     }
     freerdp_settings_set_string(settings, FreeRDP_ClientHostname, s->clientName);
-    /* The major type says what this end runs on, as FreeRDP's X11 and Wayland
-       clients and the other RDP backend send it. The minor type stays
-       unspecified, which is IronRDP's too: FreeRDP's own clients name their
-       display stack there (an X server, Wayland, SDL), and this library draws
-       into a buffer for whichever window system the client has, while the
-       phone has no minor type at all. */
+    /* The major type is the near end's platform, as FreeRDP's X11 and Wayland
+       clients and IronRDP send it. The minor type stays unspecified, as in
+       IronRDP: FreeRDP's own clients put their display stack there (an X
+       server, Wayland, SDL), but this library draws into a buffer for
+       whichever window system the client uses, and Android has no minor
+       type. */
     freerdp_settings_set_uint32(settings, FreeRDP_OsMajorType, s->osMajorType);
     freerdp_settings_set_uint32(settings, FreeRDP_OsMinorType, OSMINORTYPE_UNSPECIFIED);
     freerdp_settings_set_uint32(settings, FreeRDP_KeyboardLayout, (UINT32) s->keyboardLayout);
@@ -1839,38 +1835,37 @@ static void applySettings(Session *s, rdpSettings *settings) {
     freerdp_settings_set_uint32(settings, FreeRDP_TcpConnectTimeout,
                                 (UINT32) (s->connectTimeoutMs > 0 ? s->connectTimeoutMs : 20000));
 
-    /* Where the library would keep its own certificate store. Nothing is kept
-       there — the certificate is managed outside the library, below — but the
-       TLS layer still sets a store up at connect, and without a path for one
+    /* Where the library would keep its certificate store. Nothing is kept
+       there (the certificate is managed outside the library, below), but the
+       TLS layer still sets up a store at connect, and without a path for one
        the connection fails before it starts. */
     if (s->configPath) {
         freerdp_settings_set_string(settings, FreeRDP_ConfigPath, s->configPath);
     }
-    /* Off already, since nothing in the library turns it on, and stated
-       because on it makes freerdp_client_start put a command-line prompt back
-       over every callback — and there is no terminal on a phone for them to
-       prompt at. */
+    /* Already off, since nothing in the library turns it on; set explicitly
+       because when on, freerdp_client_start puts command-line prompts back
+       over every callback, and a phone has no terminal for them. */
     freerdp_settings_set_bool(settings, FreeRDP_UseCommonStdioCallbacks, FALSE);
     freerdp_settings_set_bool(settings, FreeRDP_IgnoreCertificate, FALSE);
     freerdp_settings_set_bool(settings, FreeRDP_AutoAcceptCertificate, FALSE);
-    /* Every certificate goes to onVerifyX509Certificate and to nothing else:
-       not the known-hosts store under the config path, not its JSON
-       certificate list, not a certificate authority. The app's answer is the
-       only one, and the library writes none of its own. */
+    /* Every certificate goes to onVerifyX509Certificate only, not to the
+       known-hosts store under the config path, its JSON certificate list, or
+       a certificate authority. The app alone decides, and the library writes
+       nothing. */
     freerdp_settings_set_bool(settings, FreeRDP_ExternalCertificateManagement, TRUE);
 
-    /* Network Level Authentication: prefer it, insist on it, or refuse it.
-       Nothing here turns off TLS — a server that offers only the RDP security
-       layer is one whose password crosses in something a 1990s cipher calls
-       encryption, and the connection is worth failing.
+    /* Network Level Authentication: preferred, required, or refused. Nothing
+       here turns off TLS: a server that offers only the RDP security layer
+       sends the password protected only by a 1990s cipher, and the connection
+       should fail.
 
-       NLA is two switches since the library turned ExtSecurity on by default
-       in 3.32.0. That is HYBRID_EX: the same CredSSP, plus the Early User
-       Authorization Result PDU, which turns "this account may not log in here"
-       into an error rather than a login screen that says it. It is negotiated
-       on its own switch and ahead of plain NLA, so "Never" has to refuse both
-       or CredSSP happens anyway; "If supported" gets HYBRID_EX first, as every
-       client of this library now does. */
+       NLA has been two switches since the library turned ExtSecurity on by
+       default in 3.32.0. That is HYBRID_EX: the same CredSSP plus the Early
+       User Authorization Result PDU, which reports "this account may not log
+       in here" as an error instead of a login screen saying so. It has its
+       own switch and is negotiated before plain NLA, so "Never" has to turn
+       off both or CredSSP happens anyway; "If supported" tries HYBRID_EX
+       first, as every client of this library now does. */
     const int nlaOff = s->nla && strcmp(s->nla, "off") == 0;
     const int nlaRequired = s->nla && strcmp(s->nla, "require") == 0;
     freerdp_settings_set_bool(settings, FreeRDP_NlaSecurity, !nlaOff);
@@ -1879,13 +1874,13 @@ static void applySettings(Session *s, rdpSettings *settings) {
     freerdp_settings_set_bool(settings, FreeRDP_RdpSecurity, FALSE);
     freerdp_settings_set_bool(settings, FreeRDP_UseRdpSecurityLayer, FALSE);
 
-    /* The floor under TLS. 3.27.0 raised it to TLS 1.2 at OpenSSL's security
-       level 2, from the TLS 1.0 at level 1 that 3.19.1 set — but level 1
-       already refuses TLS 1.0 and 1.1 in OpenSSL 3, and the SHA-1 signatures
-       that come with them, so what the raise took from this app is keys under
-       2048 bits, and what this row gives back is more than it took. Level 0,
-       because it is the only one at which the lower version is a version a
-       handshake can use. Unset, both are the library's. */
+    /* The minimum TLS version. 3.27.0 raised it to TLS 1.2 at OpenSSL's
+       security level 2, from TLS 1.0 at level 1 set in 3.19.1. Level 1
+       already refuses TLS 1.0 and 1.1 in OpenSSL 3, along with their SHA-1
+       signatures, so for this app the raise only removed keys under 2048
+       bits, and this option restores more than that. Level 0, because it is
+       the only level at which a handshake can use the lower versions. With
+       the option off, both are the library's defaults. */
     if (s->legacyTls) {
         freerdp_settings_set_uint16(settings, FreeRDP_TLSMinVersion, TLS1_VERSION);
         freerdp_settings_set_uint32(settings, FreeRDP_TlsSecLevel, FREERDP_TLS_SECLEVEL_0);
@@ -1895,56 +1890,55 @@ static void applySettings(Session *s, rdpSettings *settings) {
     freerdp_settings_set_bool(settings, FreeRDP_RedirectClipboard, TRUE);
     freerdp_settings_set_bool(settings, FreeRDP_SupportDisplayControl, TRUE);
 
-    /* The picture. The graphics pipeline is what a machine since Windows 8
-       would rather send a desktop over, and the only path that carries H.264 —
-       which this build decodes with the platform's decoders (h264_vento.h),
-       on the phone's MediaCodec or the Linux client's FFmpeg. RemoteFX is the
-       older codec, and bitmaps are what is left when a server has neither. */
+    /* The picture. Windows 8 and later prefer the graphics pipeline, and it is
+       the only path that carries H.264, which this build decodes with the
+       platform's decoders (h264_vento.h): MediaCodec on Android, FFmpeg on
+       Linux. RemoteFX is the older codec, and bitmaps are the fallback when a
+       server supports neither. */
     const char *g = s->graphics ? s->graphics : "gfx";
     const int gfx = strcmp(g, "gfx") == 0 || strcmp(g, "gfx-novideo") == 0;
-    /* No decoders, which is the probe, and nothing is offered that would need
-       one. */
+    /* Without decoders (as in the probe), nothing that needs one is
+       offered. */
     const int h264 = strcmp(g, "gfx") == 0 && s->h264.available;
     const int rfx = gfx || strcmp(g, "rfx") == 0;
     freerdp_settings_set_bool(settings, FreeRDP_SupportGraphicsPipeline, gfx);
     freerdp_settings_set_bool(settings, FreeRDP_RemoteFxCodec, rfx);
-    /* One switch and not two: with H264 on and AVC444 off, the client advertises
-       capability version 8.1 and stops — every version from 10 up is inside a
-       branch these two select together — so half of "H.264 but only AVC420" is
-       also "no progressive v2, no scaling, no error-reporting caps". The choice
-       worth offering is video or no video, and it is this pair. */
+    /* One switch, not two: with H264 on and AVC444 off, the client advertises
+       capability versions up to 8.1 only (every version from 10 up is inside
+       a branch that needs both), so "H.264 but only AVC420" also means no
+       progressive v2, no scaling and no error-reporting caps. The useful
+       choice is video or no video, which is this pair. */
     freerdp_settings_set_bool(settings, FreeRDP_GfxH264, h264);
     freerdp_settings_set_bool(settings, FreeRDP_GfxAVC444, h264);
     freerdp_settings_set_bool(settings, FreeRDP_GfxProgressive, gfx);
     freerdp_settings_set_bool(settings, FreeRDP_GfxPlanar, gfx);
     freerdp_settings_set_bool(settings, FreeRDP_GfxSmallCache, FALSE);
     freerdp_settings_set_bool(settings, FreeRDP_GfxThinClient, FALSE);
-    /* Off, which is the library's own default and is stated here because the
-       obvious change is to turn it on: the legacy path is the only one that
-       uses cache orders, and on the damage workload the cache misses every
-       time and costs 0.97 MiB against 0.77. */
+    /* Off, the library's default, set explicitly because turning it on looks
+       like an obvious improvement: only the legacy path uses cache orders, and
+       on the damage workload the cache misses every time and costs 0.97 MiB
+       against 0.77. */
     freerdp_settings_set_bool(settings, FreeRDP_BitmapCacheEnabled, FALSE);
 
-    /* Sound: the two settings decide what the client info tells the server to
-       do — play it here, play it over there, or play nothing — and the library
-       loads the channel that carries it from the first of them, as a static
-       and a dynamic channel both, which is its own design. Here is the
+    /* Sound: the two settings decide what the client info tells the server
+       (play it here, play it on the remote machine, or play nothing), and the
+       library loads the channel that carries it from the first one, as both a
+       static and a dynamic channel, by its own design. Here means the
        platform's output, through the module's device (rdpsnd_vento.h), which
-       both channels are told to use by name; and a session handed no output
-       does not ask for the server's sound at all, rather than have the server
-       send it to be thrown away.
+       both channels are told to use by name. A session given no output
+       doesn't ask for the server's sound at all, rather than have the server
+       send it only to be discarded.
 
-       A device that discards every sample is what "off" and "over there" get:
-       autodetect, which is on below, makes the library register device
-       redirection, and device redirection without rdpsnd asked for adds
-       rdpsnd against the library's silent device anyway — a channel the
-       client info has already told the server not to play anything on.
+       "off" and "remote" get a device that discards every sample: autodetect,
+       which is on below, makes the library register device redirection, and
+       device redirection without rdpsnd requested adds rdpsnd with the
+       library's silent device anyway, on a channel the client info has
+       already told the server not to play anything on.
 
-       Hiding the window does not stop it. The Suppress Output PDU that
-       pauses the picture says nothing about sound, and the server keeps
-       sending it as it plays, which is what a minimised window playing on
-       should do; since nothing is held back while hidden, nothing arrives
-       late on the restore either. */
+       Hiding the window doesn't stop it. The Suppress Output PDU that pauses
+       the picture doesn't cover sound, and the server keeps sending it as it
+       plays, which is right for a minimised window. Since nothing is held
+       back while hidden, nothing arrives late on restore either. */
     const int soundAsked = s->sound && strcmp(s->sound, "local") == 0;
     const int soundHere = soundAsked && s->audio.available;
     const int soundThere = s->sound && strcmp(s->sound, "remote") == 0;
@@ -1963,18 +1957,18 @@ static void applySettings(Session *s, rdpSettings *settings) {
     freerdp_settings_set_bool(settings, FreeRDP_AudioPlayback, soundHere);
     freerdp_settings_set_bool(settings, FreeRDP_RemoteConsoleAudio, soundThere);
 
-    /* How big the far end draws its own interface. The protocol allows 100–500
-       for the desktop factor and exactly 100, 140 or 180 for the device one,
-       and a value outside either range makes a server ignore both — which is
-       why one row sets them to the same three values rather than two rows.
-       These two are the copy in the client core data, which Windows reads and
-       does nothing with; the copy that works is in the monitor block below. */
+    /* The scale the far end draws its interface at. The protocol allows
+       100–500 for the desktop factor and exactly 100, 140 or 180 for the
+       device factor, and a value outside either range makes a server ignore
+       both, so one option sets both to the same three values. These are the
+       values in the client core data, which Windows reads and ignores; the
+       ones it uses are in the monitor block below. */
     freerdp_settings_set_uint32(settings, FreeRDP_DesktopScaleFactor, (UINT32) s->scale);
     freerdp_settings_set_uint32(settings, FreeRDP_DeviceScaleFactor, (UINT32) s->scale);
 
-    /* What the remote machine may spend the link on drawing. The flags are a
-       hint it is free to ignore, and it decides some of the rest for itself
-       from the connection type. */
+    /* How much of the link the remote machine may spend on visual effects.
+       The flags are a hint it may ignore, and it decides some of the rest
+       itself from the connection type. */
     UINT32 performance = PERF_FLAG_NONE;
     UINT32 connectionType = CONNECTION_TYPE_AUTODETECT;
     if (s->experience && strcmp(s->experience, "plain") == 0) {
@@ -1985,11 +1979,12 @@ static void applySettings(Session *s, rdpSettings *settings) {
     } else if (!s->experience || strcmp(s->experience, "balanced") == 0) {
         performance = PERF_DISABLE_MENUANIMATIONS | PERF_DISABLE_FULLWINDOWDRAG
                 | PERF_DISABLE_CURSOR_SHADOW;
-        /* LAN, on a row that only asks about effects, because a server reads
-           this as what it may spend: xrdp offers RemoteFX to a client that says
-           LAN and plain bitmaps to one that says broadband, so anything less
-           here silently costs the codec. The other RDP client says the same
-           thing on the same row, which is what makes the two comparable. */
+        /* LAN, though the option is only about effects, because a server
+           reads this as the bandwidth available: xrdp offers RemoteFX to a
+           client that reports LAN and plain bitmaps to one that reports
+           broadband, so anything less here silently loses the codec. IronRDP
+           sends the same value for the same option, which keeps the two
+           comparable. */
         connectionType = CONNECTION_TYPE_LAN;
     } else {
         performance = PERF_ENABLE_FONT_SMOOTHING | PERF_ENABLE_DESKTOP_COMPOSITION;
@@ -1997,21 +1992,21 @@ static void applySettings(Session *s, rdpSettings *settings) {
     }
     freerdp_settings_set_uint32(settings, FreeRDP_PerformanceFlags, performance);
     freerdp_settings_set_uint32(settings, FreeRDP_ConnectionType, connectionType);
-    /* On whatever the connection type says, because a Windows host sends RTT
-       measure requests of its own accord and a client that has not enabled
-       autodetect treats one as a protocol error and drops the connection —
-       which is a session that ends half a second after it starts. What it buys
-       as well is the only line speed this protocol ever states. */
+    /* On regardless of the connection type, because a Windows host sends RTT
+       measure requests unprompted, and a client without autodetect enabled
+       treats one as a protocol error and drops the connection, ending the
+       session half a second after it starts. It also provides the only line
+       speed measurement this protocol has. */
     freerdp_settings_set_bool(settings, FreeRDP_NetworkAutoDetect, TRUE);
 
-    /* The monitor layout, which a scale other than 100 needs as much as a second
-       screen does. Two library conditions gate the block that carries each
+    /* The monitor layout, which a scale other than 100 needs as much as a
+       second screen does. Two library conditions gate the block carrying each
        monitor's scale factors: the layout is only written under UseMultimon,
-       and the attributes inside it only under HasMonitorAttributes, which
-       nothing on the client path ever sets — so a client of this library sends
-       its scale in the core data alone, and Windows acts on neither number
-       until the monitor block arrives with them. Both are therefore set for one
-       monitor as well, which costs a layout block naming a single screen. */
+       and the attributes inside it only under HasMonitorAttributes, which the
+       client path never sets. So a client of this library otherwise sends its
+       scale in the core data only, and Windows uses neither value until the
+       monitor block includes them. Both are therefore set for a single
+       monitor too, at the cost of a layout block listing one screen. */
     if (s->monitors > 1 || s->scale != 100) {
         freerdp_settings_set_bool(settings, FreeRDP_UseMultimon, TRUE);
         freerdp_settings_set_bool(settings, FreeRDP_HasMonitorAttributes, TRUE);
@@ -2041,8 +2036,8 @@ static void applySettings(Session *s, rdpSettings *settings) {
                 m->attributes.deviceScaleFactor = (UINT32) s->scale;
             }
         }
-        /* What the connection asks for is the first layout asked for, which
-           is the answer until the server says otherwise. */
+        /* The connection's layout is the first requested layout, used until
+           the server sends one. */
         pthread_mutex_lock(&s->lock);
         s->askedCount = s->monitors > VENTO_MAX_MONITORS ? VENTO_MAX_MONITORS : s->monitors;
         for (int i = 0; i < s->askedCount; i++) {
@@ -2069,8 +2064,8 @@ static void *protocolThread(void *arg) {
     ctx->instance->PostConnect = onPostConnect;
     ctx->instance->PostDisconnect = onPostDisconnect;
     ctx->instance->AuthenticateEx = onAuthenticate;
-    /* The one certificate question, asked with the library's own store left
-       out of it (see onVerifyX509Certificate). */
+    /* The only certificate check, with the library's own store bypassed (see
+       onVerifyX509Certificate). */
     ctx->instance->VerifyX509Certificate = onVerifyX509Certificate;
 
     applySettings(s, ctx->settings);
@@ -2093,9 +2088,9 @@ static void *protocolThread(void *arg) {
     }
     LOGI("handshake done: %s", freerdp_settings_get_string(ctx->settings, FreeRDP_ServerHostname));
 
-    /* The library's own handles plus one of ours. Setting a flag does not wake
-       a thread inside WaitForMultipleObjects, so the doorbell has to be in the
-       set the wait is over. */
+    /* The library's handles plus our wake event. Setting a flag doesn't wake
+       a thread inside WaitForMultipleObjects, so the event has to be in the
+       set being waited on. */
     while (!freerdp_shall_disconnect_context(ctx)) {
         pthread_mutex_lock(&s->lock);
         const int quit = s->quit;
@@ -2113,11 +2108,11 @@ static void *protocolThread(void *arg) {
         if (status == WAIT_FAILED) {
             break;
         }
-        /* Before the drain, not after: a command posted in between only costs a
-           wakeup that finds nothing, where the other order loses it until the
-           timeout. The reset is ours to do — a WinPR event handle has no
-           cleanup hook, so no wait resets one whatever it was created as, and
-           an auto-reset event left signalled turns this loop into a spin. */
+        /* Before the drain, not after: a command posted in between only costs
+           a wakeup that finds nothing, while the other order delays it until
+           the timeout. The reset is done here because a WinPR event handle has
+           no cleanup hook, so no wait resets one even if it was created as
+           auto-reset, and an event left signalled makes this loop spin. */
         ResetEvent(s->wake);
         drainCommands(s);
         if (!freerdp_check_event_handles(ctx)) {
@@ -2137,7 +2132,7 @@ static void *protocolThread(void *arg) {
     return NULL;
 }
 
-/* ---- the session's surface ---------------------------------------------- */
+/* ---- the session interface --------------------------------------------- */
 
 static Session *sessionOfBase(vento_session *base) {
     return (Session *) base;
@@ -2194,8 +2189,8 @@ vento_session *vento_freerdp_create(const vento_freerdp_config *cfg, const vento
         }
         return NULL;
     }
-    /* The decoders and the sound output are the session's from here,
-       released by freeSession on every way out. */
+    /* The session owns the decoders and the sound output from here;
+       freeSession releases them on every exit path. */
     vento_h264_init(&s->h264, cfg->video);
     vento_sound_init(&s->audio, cfg->audio);
     s->base.ops = &OPS;
@@ -2233,8 +2228,8 @@ vento_session *vento_freerdp_create(const vento_freerdp_config *cfg, const vento
     }
     s->configPath = dupOrNull(cfg->config_path);
     s->compression = cfg->compression;
-    /* Out of the protocol's range is a scale both ends ignore, so a bad value
-       is 100 rather than something a server has to argue with. */
+    /* A server ignores a scale outside the protocol's range, so an invalid
+       value becomes 100. */
     s->scale = cfg->scale == 140 || cfg->scale == 180 ? cfg->scale : 100;
     s->width = cfg->width;
     s->height = cfg->height;
@@ -2243,27 +2238,23 @@ vento_session *vento_freerdp_create(const vento_freerdp_config *cfg, const vento
     s->keyboardLayout = cfg->keyboard_layout;
     s->connectTimeoutMs = cfg->connect_timeout_ms;
 
-    /* WinPR reads $HOME through GetKnownPath, and an app's process on Android
-       has no HOME at all — which is not a missing feature but a session that
-       cannot start: freerdp_settings_new fails outright when the home path
-       comes back null, so the context below is never allocated. Only there,
-       where it is unset, does it become the config directory, before anything
-       of FreeRDP's runs: the environment is the whole process's, and a
-       desktop's HOME is the person's, which other threads may be reading and
-       which nothing here has the right to move. Set, the library uses it only
-       for paths the session then states for itself (FreeRDP_ConfigPath is
-       set from the same directory before the connection is made) or never
-       reaches (drive redirection, the user config of Azure AD and FFmpeg's
-       decoder, neither of which this build has). The
-       first session sets it, and every later one finds it set to the same
-       directory. */
+    /* WinPR reads $HOME through GetKnownPath, and an Android app's process has
+       no HOME, which stops a session from starting: freerdp_settings_new fails
+       when the home path is null, so the context below is never allocated.
+       Only when it is unset does it become the config directory, before any
+       FreeRDP code runs: the environment belongs to the whole process, and on
+       a desktop HOME is the user's, which other threads may be reading and
+       this code must not change. When HOME is set, the library uses it only
+       for paths the session sets itself (FreeRDP_ConfigPath is set from the
+       same directory before connecting) or never uses (drive redirection,
+       and the user config of Azure AD and FFmpeg's decoder, neither of which
+       this build has). The first session sets it, and every later one finds
+       it set to the same directory. */
     if (s->configPath && !getenv("HOME")) {
         setenv("HOME", s->configPath, 0);
     }
 
-    /* ContextSize is what the library allocates and the client layer keeps
-       rdpClientContext in; short of that, the client layer refuses the context
-       at every call that needs its half. */
+    /* ContextSize: see ShimContext. */
     RDP_CLIENT_ENTRY_POINTS entry = {0};
     entry.Size = sizeof(RDP_CLIENT_ENTRY_POINTS_V1);
     entry.Version = RDP_CLIENT_INTERFACE_VERSION;
@@ -2277,8 +2268,8 @@ vento_session *vento_freerdp_create(const vento_freerdp_config *cfg, const vento
     s->ctx = (ShimContext *) ctx;
     s->ctx->session = s;
     s->instance = ctx->instance;
-    /* Making the context put the library's own addin provider back, which
-       knows nothing of the module's rdpsnd device. */
+    /* Creating the context restored the library's own addin provider, which
+       doesn't know the module's rdpsnd device. */
     if (s->audio.available && !vento_sound_register()) {
         LOGW("could not register the sound device; the server is not asked for its sound");
         vento_sound_release(&s->audio);
@@ -2328,9 +2319,9 @@ static void op_answer_trust(vento_session *base, bool accept) {
     SetEvent(s->wake);
 }
 
-/* Both of the ways a session ends set the flag, wake the wait *and* abort the
-   connect: during a handshake the thread is inside somebody else's socket read,
-   which no event of ours is in the set of. */
+/* Both ways a session ends set the flag, wake the wait *and* abort the
+   connect: during a handshake the thread is inside the library's socket read,
+   whose wait doesn't include our event. */
 static void stop(Session *s) {
     pthread_mutex_lock(&s->lock);
     s->quit = 1;
@@ -2390,8 +2381,8 @@ static void op_view_only(vento_session *base, bool viewOnly) {
     Session *s = sessionOfBase(base);
     s->viewOnly = viewOnly;
     if (s->viewOnly) {
-        /* Whatever is held at the far end is held by this session, so it is
-           this session's to let go of when it stops driving. */
+        /* Keys held at the far end were pressed by this session, so it
+           releases them when it stops sending input. */
         Cmd c = {CMD_RELEASE_KEYS, 0, 0, 0, NULL, 0};
         post(s, &c);
     }
@@ -2407,16 +2398,13 @@ static void op_request_desktop_size(vento_session *base, int width, int height) 
 }
 
 void vento_freerdp_set_monitor_count(vento_session *base, int count) {
-    /* Remembered rather than acted on: the count is what the *next* layout
-       asks for, and a desktop somebody is working on does not get rearranged
-       as a side effect of a settings row moving. */
     sessionOfBase(base)->monitors = count < 1 ? 1 : (count > 16 ? 16 : count);
 }
 
-/* The monitors the desktop is made of, in the server's order: as it last
-   stated them, or as they were last asked for, whichever covers the desktop as
-   it is now (see `covers`). None for a desktop of one monitor, which is not a
-   layout, and none for a desktop neither covers. */
+/* The desktop's monitors in the server's order: as the server last sent
+   them, or else as last requested, whichever covers the current desktop (see
+   `covers`). None for a single-monitor desktop, which is not a layout, or for
+   a desktop neither covers. */
 static int op_monitors(vento_session *base, int32_t *out) {
     Session *s = sessionOfBase(base);
     if (!s->connected) {
@@ -2444,11 +2432,11 @@ static int op_monitors(vento_session *base, int32_t *out) {
     return n;
 }
 
-/* RDP has no name for a monitor but its place in the list, so the ids here
-   are indices (no `screens` member) and a layout is sent in the order given:
-   the first is the primary, and a screen past the far end's last is a new
-   one. The desktop's size is the layout's bounding box, which is what
-   `width` and `height` are anyway. */
+/* RDP identifies a monitor only by its position in the list, so this session
+   has no `screens` op (a screen's id is its index) and a layout is sent in
+   the order given: the first is the primary, and a screen past the far end's
+   last is a new one. The desktop's size is the layout's bounding box, which
+   `width` and `height` describe anyway. */
 static void op_request_layout(vento_session *base, int width, int height, const int32_t *screens,
                               int n) {
     (void) width;
@@ -2468,10 +2456,9 @@ static void op_request_layout(vento_session *base, int width, int height, const 
     post(s, &c);
 }
 
-/* Held as the wire wants it, UTF-16 with CRLF line ends and its terminator,
-   from the moment it arrives: the conversion is done once here rather than
-   on every paste. A text past the clipboard bound is not offered at all, as
-   the IronRDP backend does not offer one. */
+/* Converted to wire format (NUL-terminated UTF-16 with CRLF) on arrival, once
+   rather than on every paste. Text over VENTO_MAX_CLIPBOARD is not offered at
+   all, as in the IronRDP backend. */
 static void op_clipboard(vento_session *base, const char *utf8) {
     if (!utf8) {
         return;
@@ -2496,9 +2483,9 @@ static void op_clipboard(vento_session *base, const char *utf8) {
 }
 
 /* The facts: protocol, connection, security, encoding, line speed, server and
-   viewer pixels — the order the Rust adapter's `info` labels them in. What the
-   protocol has no concept of is omitted rather than printed empty, which is
-   why there is no desktop name here: RDP has none. */
+   viewer pixels, in the order the Rust adapter's `info` labels them. Values
+   the protocol has no concept of are omitted rather than left empty, so there
+   is no desktop name: RDP has none. */
 static bool op_info(vento_session *base, vento_strings *out) {
     Session *s = sessionOfBase(base);
     if (!s->connected || !s->ctx) {
@@ -2508,7 +2495,7 @@ static bool op_info(vento_session *base, vento_strings *out) {
     char protocol[64], connection[128], security[64], lineSpeed[64], server[64], viewer[64];
 
     snprintf(protocol, sizeof(protocol), "RDP (FreeRDP %s)", freerdp_get_version_string());
-    /* Written back the way it would have to be typed, brackets and all. */
+    /* Formatted as it would be typed, with brackets for IPv6. */
     const char *host = s->host ? s->host : "";
     if (strchr(host, ':')) {
         snprintf(connection, sizeof(connection), "[%s]:%d", host, s->port);
@@ -2526,8 +2513,8 @@ static bool op_info(vento_session *base, vento_strings *out) {
     }
     snprintf(security, sizeof(security), "%s", layer);
 
-    /* The autodetect exchange's own number, in kilobits, and empty until the
-       server has run one — which it does when it feels like it rather than at
+    /* The autodetect exchange's bandwidth in kilobits, empty until the server
+       has run one, which it does at a time of its choosing rather than at
        connect, so this row appears part way into a session. */
     const rdpAutoDetect *detect = autodetect_get(&s->ctx->client.context);
     const UINT32 kbps = detect ? detect->netCharBandwidth : 0;
@@ -2545,12 +2532,12 @@ static bool op_info(vento_session *base, vento_strings *out) {
              freerdp_settings_get_uint32(settings, FreeRDP_ColorDepth));
     snprintf(viewer, sizeof(viewer), "%u×%u, 32 bpp", w, h);
 
-    /* What the picture is arriving as rather than what was asked for: the
-       pipeline's channel opening is the server agreeing to it, and the version
-       and H.264 are what the server confirmed, since the settings that asked
-       for them are left standing whatever it says. The codec below it is read
-       off the surfaces themselves, for the same reason: a declined RemoteFX
-       leaves the setting that asked for it standing too. */
+    /* The encoding the picture arrives in rather than the one requested: the
+       pipeline's channel opening means the server accepted it, and the version
+       and H.264 are what the server confirmed, since the settings that
+       requested them stay unchanged whatever it answers. Without the pipeline
+       the codec is read from the surfaces for the same reason: the RemoteFX
+       setting stays set when the server declines it. */
     char encoding[64];
     if (s->gfxOpen) {
         const UINT32 version = s->gfxVersion;
@@ -2575,18 +2562,17 @@ static bool op_info(vento_session *base, vento_strings *out) {
     return vento_strings_set(out, values, sizeof(values) / sizeof(values[0]));
 }
 
-/* The overlay's line for the H.264: the last decoder's own, as RustDesk's and
-   TigerVNC's are ("H.264 vaapi map 4.1 ms", "H.264 sw 3.2 ms (vaapi: no
+/* The overlay's H.264 line: the last decoder's status, as for RustDesk and
+   TigerVNC ("H.264 vaapi map 4.1 ms", "H.264 sw 3.2 ms (vaapi: no
    device)"). */
 static bool op_decoder_status(vento_session *base, char *out, size_t len) {
     return vento_h264_status(&sessionOfBase(base)->h264, out, len);
 }
 
-/* Both directions out of the library's own statistics, which are counted where
-   the transport reads and writes its front BIO — so they are the protocol,
-   inside TLS and outside TCP, which is where every other backend here counts.
-   Nothing is patched for this and no private header is reached into: the pair
-   is published. */
+/* Both directions from the library's statistics, counted where the transport
+   reads and writes its front BIO, so they measure the protocol inside TLS and
+   outside TCP, where every other backend here counts. This uses the library's
+   public API, with no patch or private header. */
 static bool op_traffic(vento_session *base, uint64_t out[2]) {
     Session *s = sessionOfBase(base);
     if (!s->connected || !s->ctx) {

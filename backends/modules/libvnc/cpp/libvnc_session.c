@@ -2,34 +2,34 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // LibVNCServer's libvncclient as a `vento_session`, so that above this file it
-// is the same shape as the RFB client we wrote and the comparison is between
-// the clients rather than between two ways of binding one. Nothing in here
-// names a platform: what the phone needs of it is the Rust adapter in
-// the module's `src/`, linked into the same library, which the one JNI layer in
-// `backends/platform/android` stands in front of — as it does every backend.
+// has the same interface as our own RFB client and the two clients can be
+// compared directly. Nothing in here is platform-specific: on the phone, the
+// Rust adapter in the module's `src/` is linked into the same library and the
+// shared JNI layer in `backends/platform/android` wraps it, as it does every
+// backend.
 //
-// Three things here are the shim's rather than the library's, and each is
-// forced by libvncclient's API rather than chosen:
+// Three parts of this shim are required by libvncclient's API:
 //
 //   1. One thread owns the rfbClient, and every call into the session is a
 //      queued command it drains. Nothing in libvncclient is safe to call from
-//      a second thread — reads and writes go through the same buffered socket
-//      and the one framebuffer — so a pointer event sent from the main thread
+//      a second thread (reads and writes go through the same buffered socket
+//      and the one framebuffer), so a pointer event sent from the main thread
 //      would race the protocol thread's own writes.
-//   2. There are two framebuffers. libvncclient decodes into its own and has no
-//      lock over it, and the seam promises that pixels may be read from the
-//      drawing thread at any moment; so the damaged rectangles are copied under
-//      a writer lock once the update message is complete, and reads are served
-//      from that copy. The alternative — one buffer, and the reader waiting for
-//      HandleRFBServerMessage — puts the drawing thread behind a socket read.
+//   2. There are two framebuffers. libvncclient decodes into its own without
+//      a lock, and `vento/backend.h` allows pixels to be read from the drawing
+//      thread at any moment; so the damaged rectangles are copied under a
+//      writer lock once the update message is complete, and reads are served
+//      from that copy. With one buffer, the reader would wait for
+//      HandleRFBServerMessage, which puts the drawing thread behind a socket
+//      read.
 //   3. The alpha byte is filled in during that copy. RFB's 32-bit formats leave
 //      the fourth byte undefined and the decoder writes whatever the wire said;
-//      the seam promises an opaque one.
+//      `vento/backend.h` requires it to be opaque.
 //
-// Two of their features are available and deliberately not wired: **xvp**, which
-// shuts down or reboots the machine at the far end, and **text chat**. Neither
-// is missing because it would be hard — nothing in this app asks a session to do
-// either, and a protocol capability with no caller is a surface to maintain.
+// Two library features are deliberately not wired: **xvp**, which shuts down
+// or reboots the far end's machine, and **text chat**. Nothing in this app
+// asks a session for either, and an unused protocol capability is more code to
+// maintain.
 
 #include <errno.h>
 #include <fcntl.h>
@@ -76,9 +76,9 @@ enum {
 typedef struct {
     int type;
     int a, b, c;
-    int64_t id;  /* the key's identity, which is the seam's and not the keysym */
+    int64_t id;  /* the key id from the session API, not the keysym */
     char *text;  /* owned by the queue */
-    int32_t *screens; /* a layout's, five ints a screen and `c` of them; owned too */
+    int32_t *screens; /* a layout: `c` screens of five ints; owned by the queue */
 } Cmd;
 
 static void cmdFree(Cmd *c) {
@@ -99,8 +99,8 @@ typedef struct {
 /* What op_info reports of a connection besides its encodings. */
 typedef struct {
     bool known;
-    /* At most 255 of the server's bytes, as UTF-8: twice as many where they
-       were Latin-1. */
+    /* At most 255 bytes from the server, as UTF-8: up to twice as many if
+       they were Latin-1. */
     char desktop[512];
     char protocol[64], security[96], serverPixels[64], viewerPixels[64];
 } Facts;
@@ -112,7 +112,7 @@ typedef struct {
     rfbClient *cl; /* protocol thread only */
 
     pthread_t thread;
-    int wake[2]; /* self-pipe: the queue's doorbell */
+    int wake[2]; /* self-pipe that wakes the protocol thread */
 
     pthread_mutex_t lock;
     pthread_cond_t cond;
@@ -122,15 +122,15 @@ typedef struct {
 
     int quit;
     int paused;
-    _Atomic int viewOnly; /* written from whoever asks, read from the protocol thread */
+    _Atomic int viewOnly; /* written from any thread, read from the protocol thread */
     int connected;
     int closedReported;
     _Atomic int canResize; /* an ExtDesktopSize rectangle has arrived; written from the protocol thread */
 
-    /* The far end's screen layout, five ints per screen — the server's id,
-       then x, y, width, height — copied out of the library's own array under
-       `lock` because that array is the protocol thread's and this is read
-       from whichever thread asks. */
+    /* The far end's screen layout, five ints per screen (the server's id,
+       then x, y, width, height), copied out of the library's array under
+       `lock` because that array belongs to the protocol thread and this copy
+       is read from any thread. */
     int32_t *screens;
     int nscreens;
 
@@ -138,12 +138,12 @@ typedef struct {
     int credWaiting, credAnswered;
     char *credUser, *credPass;
 
-    /* and the certificate one, which is the same shape. The anonymous-TLS
-       question rides on the same pair: only one of the two can be outstanding,
+    /* The certificate prompt, which works the same way. The anonymous-TLS
+       question uses the same pair: only one of the two can be outstanding,
        since one is asked in place of the other. */
     int trustAnswered, trustAccepted;
 
-    /* true while rfbInitClient has not returned; see op_disconnect */
+    /* true while initClient has not returned; see stop */
     int handshaking;
     char *storedUser, *storedPass;
     int storedPassUsed;
@@ -165,52 +165,52 @@ typedef struct {
 
     char *host;
     int port;
-    /* Why the address was not one, empty if it was: a session is created and
-       started in one call, so the protocol thread is the first place there is
-       to say it. */
+    /* Why the address is invalid, or empty if it is valid. A session is
+       created and started in one call, so the protocol thread is the first
+       place to report it. */
     char addressError[160];
     int shared;
     int anonymousTls;
-    /* The encodings as last asked for, under `lock`; vento_libvnc_set_encodings
-       replaces and frees it there, and raises `encodingsChanged` for the
-       protocol thread, which sends them the next time it drains the queue.
-       A flag rather than a command in the queue, since a full queue drops
-       its oldest entry and a change of encodings is not one to lose. */
+    /* The most recently requested encodings, under `lock`;
+       vento_libvnc_set_encodings replaces and frees it there, and sets
+       `encodingsChanged` for the protocol thread, which sends them the next
+       time it drains the queue. A flag rather than a queued command, since a
+       full queue drops its oldest entry and an encodings change must not be
+       lost. */
     char *encodings;
     int compressLevel;
     int qualityLevel;
     int encodingsChanged;
-    /* The protocol thread's own copy of `encodings`, which is the string
-       libvncclient holds in appData.encodingsString and reads at every
-       SetFormatAndEncodings, as op_info does under the framebuffer lock. Kept
-       apart because the library holds it for the whole session and nothing
-       tells this file when it is done with it: the string set_encodings
-       replaces cannot be the one the library still has. Replaced, and the
-       previous one freed, only on the protocol thread and under the writer
-       lock. */
+    /* The protocol thread's own copy of `encodings`. libvncclient holds it in
+       appData.encodingsString and reads it at every SetFormatAndEncodings, and
+       op_info reads it under the framebuffer lock. Kept separate because the
+       library holds it for the whole session without saying when it is done
+       with it, so the string set_encodings replaces must not be the one the
+       library has. Replaced, and the previous one freed, only on the protocol
+       thread and under the writer lock. */
     char *applied;
     int colorLevel;
     int connectTimeoutMs;
 
     /* The connection's facts for op_info, under the writer lock: published
        by the protocol thread once the handshake is done (publishFacts), and
-       none before. */
+       empty before that. */
     Facts facts;
 
-    /* Every value an 8-bit pixel can take, as the shadow buffer wants it. A
-       reduced format is a table lookup per pixel in the copy that was already
-       there, rather than arithmetic in it. Unused at 32 bits. */
+    /* Every 8-bit pixel value, converted to the shadow buffer's format. A
+       reduced format then costs one table lookup per pixel in the existing
+       copy rather than arithmetic. Unused at 32 bits. */
     uint32_t palette[256];
 } Session;
 
 static const vento_session_ops OPS;
 static void publishFacts(Session *s, rfbClient *cl);
 
-/* `s->cl` has two kinds of reader — `op_traffic` under the framebuffer lock,
-   and the two teardown calls under `s->lock` — so both are held to change it. What
-   makes that necessary rather than tidy is that `rfbInitClient` frees the
-   client itself when it fails: a reader that sees the old pointer afterwards
-   shuts down a descriptor that is no longer anybody's. */
+/* `s->cl` is read by `op_traffic` under the framebuffer lock and by the two
+   teardown calls under `s->lock`, so both are held to change it. This is
+   required because a failed handshake frees the client (see `initClient`): a
+   reader that sees the old pointer afterwards would shut down a descriptor
+   that may already be reused. */
 static void publishClient(Session *s, rfbClient *cl) {
     pthread_rwlock_wrlock(&s->fbLock);
     pthread_mutex_lock(&s->lock);
@@ -231,8 +231,8 @@ static void ring_push(Session *s, const Cmd *c) {
     const int next = (s->head + 1) % CMD_RING;
     if (next == s->tail) {
         /* Full. Dropping the oldest keeps the newest pointer position, which
-           is the one that matters; a dropped button change would not be, so
-           this is only ever reached if the protocol thread is wedged. */
+           is the one that matters; a dropped button change would be lost, but
+           this is reached only if the protocol thread is stuck. */
         cmdFree(&s->ring[s->tail]);
         s->tail = (s->tail + 1) % CMD_RING;
     }
@@ -248,10 +248,9 @@ static void post(Session *s, const Cmd *c) {
         free(c->screens);
         return;
     }
-    /* Motion coalesces onto the tail of the queue: the protocol thread can be
+    /* Motion is coalesced at the end of the queue: the protocol thread can be
        inside a decode, and by the time it drains, every position but the last
-       is somewhere the pointer no longer is. A button change is a different
-       event and is never merged away. */
+       is stale. A button change is a different event and is never merged. */
     if (c->type == CMD_POINTER && s->head != s->tail) {
         const int last = (s->head + CMD_RING - 1) % CMD_RING;
         if (s->ring[last].type == CMD_POINTER && s->ring[last].c == c->c) {
@@ -277,9 +276,9 @@ static void fireClosed(Session *s, const char *detail) {
     if (already) {
         return;
     }
-    /* The library's own last words, which quote the server's: an "Unknown
-       authentication scheme" carries bytes somebody else chose, and the seam
-       promises UTF-8. */
+    /* The library's last message can quote the server: an "Unknown
+       authentication scheme" carries bytes from the far end, and the session
+       API requires UTF-8. */
     char *utf8 = vento_utf8_from_bytes(detail);
     s->cb.closed(s->cb.user, utf8 ? utf8 : "");
     free(utf8);
@@ -293,19 +292,19 @@ static Session *sessionOf(rfbClient *cl) {
     return (Session *) rfbClientGetClientData(cl, &sessionTag);
 }
 
-/* The format asked for on the wire, and the table that puts a reduced one back
-   into the shadow buffer's 32 bits. Level 0 is the format that makes the copy
-   below a memcpy; 1 and 2 are 64 and 8 colours, which is what the two other RFB
-   backends' colour rows mean by rgb222 and rgb111 — the same formats TigerVNC's
-   own viewer reduces to. libvncclient's `useBGR233`, `forceTrueColour` and
-   `requestedDepth` are not the way to ask for this: the library never reads
-   them, and the format it sends is whatever this field says. */
+/* Sets the pixel format requested on the wire, and the table that converts a
+   reduced one back to the shadow buffer's 32 bits. Level 0 is the format that
+   makes the copy below a plain copy; 1 and 2 are 64 and 8 colours, which is
+   what the RealVNC and TigerVNC backends' colour rows mean by rgb222 and
+   rgb111 (the formats TigerVNC's own viewer reduces to). libvncclient's
+   `useBGR233`, `forceTrueColour` and `requestedDepth` cannot be used for this:
+   the library never reads them, and it sends whatever `cl->format` says. */
 static void setColorFormat(Session *s, rfbClient *cl) {
     cl->format.bigEndian = FALSE;
     cl->format.trueColour = TRUE;
     if (s->colorLevel <= 0) {
         /* 32 bits little-endian with red at shift 0 puts the bytes in memory as
-           R, G, B, _ — which is the seam's order, once the fourth byte is
+           R, G, B, _, which is the session API's order once the fourth byte is
            filled in. */
         cl->format.bitsPerPixel = 32;
         cl->format.depth = 24;
@@ -331,8 +330,8 @@ static void setColorFormat(Session *s, rfbClient *cl) {
         const unsigned r = ((unsigned) i >> cl->format.redShift) & (unsigned) max;
         const unsigned g = ((unsigned) i >> cl->format.greenShift) & (unsigned) max;
         const unsigned b = (unsigned) i & (unsigned) max;
-        /* Full range rather than a shift: three bits of red have to reach 255,
-           or white comes out grey. */
+        /* Scaled to the full range rather than shifted: a one- or two-bit
+           channel has to reach 255, or white comes out grey. */
         s->palette[i] = 0xFF000000u | (b * 255u / (unsigned) max) << 16
                 | (g * 255u / (unsigned) max) << 8 | (r * 255u / (unsigned) max);
     }
@@ -395,18 +394,18 @@ static void onGotUpdate(rfbClient *cl, int x, int y, int w, int h) {
     s->dirty[s->ndirty++] = (Rect) {x, y, w, h};
 }
 
-/* Take a copy of the library's screen list, which is the patch's whole point:
-   upstream keeps one screen and the layout is the list. The fields are in
-   network byte order there, as `client->screen`'s are, so they are swapped here and
-   in sendLayout and nowhere else. The ids are kept, since a layout asked for
-   later hands them back. Called once per update message, and copies only
-   when the layout has actually moved. */
+/* Copies the library's screen list, which patches/libvncserver's 0004 adds
+   (upstream keeps only one screen). The fields are in network byte order
+   there, as in `client->screen`, so they are swapped here and in sendLayout
+   only. The ids are kept, since a later layout request sends them back.
+   Called once per update message, and copies only when the layout has
+   changed. */
 static void layoutChanged(Session *s, rfbClient *client) {
     const int n = client->numScreens;
     int32_t stack[5 * VENTO_MAX_MONITORS];
     int32_t *flat = stack;
     if (n > VENTO_MAX_MONITORS) {
-        return; /* sixteen heads is already absurd; the alternative is a malloc per update */
+        return; /* beyond any real setup; a fixed array avoids a malloc per update */
     }
     for (int i = 0; i < n; i++) {
         flat[5 * i + 0] = (int32_t) rfbClientSwap32IfLE(client->screens[i].id);
@@ -431,15 +430,15 @@ static void layoutChanged(Session *s, rfbClient *client) {
     pthread_mutex_unlock(&s->lock);
 }
 
-/* The whole of the second framebuffer's cost, and the only place it is paid:
-   once per damaged rectangle per update message, under the writer lock. */
+/* The entire cost of the second framebuffer: one copy per damaged rectangle
+   per update message, under the writer lock. */
 static void onFinishedUpdate(rfbClient *cl) {
     Session *s = sessionOf(cl);
     /* libvncclient has no callback for the ExtDesktopSize rectangle and no
-       "does this server resize" of its own; what it leaves behind is the screen
-       it read out of one, and a client that has never seen one has a screen of
-       zero size. So this is the announcement, read once an update ends because
-       that is the first place after it where the shim runs. */
+       way to ask whether the server can resize; it only stores the screen it
+       read from one, and a client that has never received one has a screen
+       of zero size. This is checked when an update ends, the first point
+       after the rectangle where the shim runs. */
     s->canResize = cl->screen.width != 0;
     layoutChanged(s, cl);
     if (s->ndirty == 0) {
@@ -489,23 +488,23 @@ static void onFinishedUpdate(rfbClient *cl) {
     s->ndirty = 0;
 }
 
-/* A shape of 0x0 is the server hiding the pointer, which the library reports
-   only with patches/libvncserver's 0008; it goes on as no pixels, as the seam
-   has a hidden pointer. */
+/* A 0x0 shape means the server hid the pointer, which the library reports
+   only with patches/libvncserver's 0008; it is passed on with no pixels, which
+   is how the session API represents a hidden pointer. */
 static void onGotCursor(rfbClient *cl, int xhot, int yhot, int w, int h, int bpp) {
     Session *s = sessionOf(cl);
     uint32_t *rgba = NULL;
-    /* The cursor arrives in the framebuffer's format, so a reduced one is one
-       byte a pixel here too. */
+    /* The cursor arrives in the framebuffer's format, so a reduced format is
+       one byte per pixel here too. */
     if (w > 0 && h > 0 && cl->rcSource && (bpp == 4 || bpp == 1)) {
         const int n = w * h;
         rgba = malloc((size_t) n * sizeof(uint32_t));
         if (rgba) {
             for (int i = 0; i < n; i++) {
                 /* The framebuffer format is R,G,B,_ in memory, and the palette
-                   is the same packing, which is the seam's order; the mask is
-                   one byte a pixel, nonzero where the cursor is drawn, and
-                   becomes the alpha. */
+                   uses the same packing, which is the session API's order; the
+                   mask is one byte per pixel, nonzero where the cursor is
+                   drawn, and becomes the alpha. */
                 const uint32_t p = bpp == 4
                         ? ((const uint32_t *) cl->rcSource)[i]
                         : s->palette[cl->rcSource[i]];
@@ -528,7 +527,7 @@ static void onCutText(rfbClient *cl, const char *text, int len) {
     if (!text || len <= 0) {
         return;
     }
-    /* ClientCutText is Latin-1, one code point a byte, which is at most two
+    /* ServerCutText is Latin-1, one code point per byte, which is at most two
        bytes of UTF-8 each. */
     char *utf8 = malloc((size_t) len * 2 + 1);
     if (!utf8) {
@@ -549,8 +548,8 @@ static void onCutText(rfbClient *cl, const char *text, int len) {
     free(utf8);
 }
 
-/* Blocks the protocol thread until the session is answered, which is the
-   design: on the other side of it is a dialog and a person. */
+/* Blocks the protocol thread until the prompt is answered, by design: the
+   answer comes from a dialog shown to the user. */
 static int askCredentials(Session *s, int needsUserName) {
     pthread_mutex_lock(&s->lock);
     s->credWaiting = 1;
@@ -573,9 +572,9 @@ static int askCredentials(Session *s, int needsUserName) {
     return ok;
 }
 
-/* The same wait, for the other two questions a handshake can ask: a
-   fingerprint to accept, or a far end with no identity to prove at all. Both
-   are answered through answer_trust, since only one of them is ever
+/* The same wait, for the other two questions a handshake can ask: whether to
+   accept a fingerprint, or a far end with no identity at all. Both are
+   answered through answer_trust, since only one of them is ever
    outstanding. */
 static int askIdentity(Session *s, void (*ask)(void *, const char *), const char *arg) {
     pthread_mutex_lock(&s->lock);
@@ -594,18 +593,18 @@ static int askIdentity(Session *s, void (*ask)(void *, const char *), const char
     return accepted;
 }
 
-/* Reached for every certificate. One that fails to verify against the system's
-   authorities (the phone's own store, or the host's) comes here as upstream
-   always sent it, which is nearly every one, since no authority signs a VNC
-   server's own; one that verifies comes here too, whether or not it is for the
-   name dialled, by the patches on the library's verify_certificate_callback,
-   since an authority's word is who the server says it is and not that it is
-   the one reached last time. Either way the identity is the fingerprint, and the
-   answer comes from the pin store or from a person — as for the TigerVNC
-   backend, whose library is patched the same way.
+/* Called for every certificate. One that fails to verify against the system's
+   authorities (the phone's store, or the host's) arrives here as upstream
+   always sent it, which is nearly every one, since authorities do not sign VNC
+   servers' certificates. One that verifies arrives here too, whether or not it
+   is for the name dialled, through the patches on the library's
+   verify_certificate_callback: an authority's signature shows who the server
+   claims to be, not that it is the same server as last time. Either way the
+   identity is the fingerprint, and the answer comes from the pin store or the
+   user, as for the TigerVNC backend, whose library is patched the same way.
 
-   Printed the way `openssl x509 -fingerprint -sha256` prints it, which is what
-   the other two backends pin, so one host reached through two of them is one
+   Formatted as `openssl x509 -fingerprint -sha256` prints it, which is what
+   the other two backends pin, so a host reached through two of them has one
    entry rather than two. */
 static rfbBool onCertMismatch(rfbClient *cl, const char *subject, time_t from, time_t until,
                               const uint8_t *sha256, size_t len) {
@@ -624,17 +623,17 @@ static rfbBool onCertMismatch(rfbClient *cl, const char *subject, time_t from, t
     return askIdentity(s, s->cb.trust_needed, hex) ? TRUE : FALSE;
 }
 
-/* The anonymous VeNCrypt sub-types: in the patched library this hook's presence
-   is what puts them in the acceptable set, and it is called once the server has
-   agreed one of them and before the handshake. There is no certificate coming
-   and nothing further to learn, so this is both the last moment the question is
-   worth asking and the first at which it can be.
+/* The anonymous VeNCrypt sub-types. In the patched library, setting this hook
+   adds them to the acceptable set, and it is called once the server has
+   agreed one of them, before the TLS handshake. No certificate follows and
+   there is nothing more to learn, so this is both the last point worth asking
+   and the first point possible.
 
    Always installed, even for a connection that does not allow them, so that
-   the refusal is this file's sentence rather than the library's "unknown
-   authentication scheme" — which is what the same server said before, and is
-   not what happened. The TigerVNC backend refuses at the same point for a
-   reason of its own. */
+   the refusal gives this file's reason rather than the library's "unknown
+   authentication scheme", which is what the same server produced before and
+   is not what happened. The TigerVNC backend refuses at the same point for
+   its own reason. */
 static rfbBool onConfirmAnonymousTLS(rfbClient *cl) {
     Session *s = sessionOf(cl);
     LOGI("anonymous VeNCrypt sub-type %u", (unsigned) cl->subAuthScheme);
@@ -672,9 +671,9 @@ static rfbCredential *onGetCredential(rfbClient *cl, int type) {
     Session *s = sessionOf(cl);
     if (type == rfbCredentialTypeX509) {
         /* Every field left null: no CA file, so the library checks against
-           the system's authorities, and no fingerprint given ahead of time, so
-           every certificate — verified or not — arrives at onCertMismatch,
-           which is the one place this backend answers it. */
+           the system's authorities, and no fingerprint given in advance, so
+           every certificate, verified or not, arrives at onCertMismatch, the
+           only place this backend decides on one. */
         return calloc(1, sizeof(rfbCredential));
     }
     if (type != rfbCredentialTypeUser) {
@@ -712,21 +711,19 @@ static rfbCredential *onGetCredential(rfbClient *cl, int type) {
 
 /* ---- logging ------------------------------------------------------------ */
 
-/* The last thing libvncclient said, so that a refused connection can be
-   reported in its words rather than in ours.
-   Its own diagnosis is far better than anything this shim can work out from
-   the outside — "Unknown authentication scheme from VNC server: 13, 133, 5,
-   129, 6, 130" against "Could not connect" — and the only way it leaves the
-   library is through these two hooks, which have no user pointer.
-   Per thread, which is what stands in for the pointer they lack: a session
-   does its whole handshake on its own thread, so the last line logged there is
-   its own — and with two sessions failing at once, a global would report one's
+/* The last message libvncclient logged, so that a refused connection can be
+   reported in its words rather than ours. Its diagnosis is far more specific
+   than anything this shim can work out ("Unknown authentication scheme from
+   VNC server: 13, 133, 5, 129, 6, 130" rather than "Could not connect"), and
+   it leaves the library only through these two hooks, which have no user
+   pointer. Thread-local in place of that pointer: a session does its whole
+   handshake on its own thread, so the last line logged there is its own,
+   whereas with two sessions failing at once a global would report one's
    reason for the other. */
 static _Thread_local char lastError[256];
 static _Thread_local char lastLine[256];
 
-/* Trimmed, because its lines end in a newline and something going on a screen
-   must not. */
+/* Trims the trailing newline, since the text is shown on screen. */
 static void remember(char *slot, const char *line) {
     snprintf(slot, 256, "%s", line);
     size_t n = strlen(slot);
@@ -762,19 +759,18 @@ static void forgetLastError(void) {
 
 /* Copies out, because the next line logged overwrites it. */
 static void takeLastError(char *out, size_t size) {
-    /* The error hook first, and the plain one behind it: libvncclient says most
-       of what it thinks through `rfbClientLog`, including the sentence that
-       explains a refused connection, and reserves `rfbClientErr` for rather
-       fewer of them. Whichever it used, the last thing it said before giving up
-       is the reason it gave up. */
+    /* The error hook first, then the plain one: libvncclient logs most
+       messages through `rfbClientLog`, including the one that explains a
+       refused connection, and uses `rfbClientErr` for few of them. Whichever
+       it used, its last message before giving up is the reason. */
     snprintf(out, size, "%s", lastError[0] ? lastError : lastLine);
 }
 
 /* ---- the protocol thread ------------------------------------------------ */
 
-/* What RFB's original ClientCutText can carry: everything above U+00FF becomes
-   a question mark, which is what a clipboard sent to a server that never agreed
-   to the extended one is worth. */
+/* Converts to what RFB's original ClientCutText can carry: everything above
+   U+00FF becomes a question mark, since the extended clipboard is not used
+   (see GotXCutText in protocolThread). */
 static char *utf8ToLatin1(const char *utf8) {
     const size_t n = strlen(utf8);
     char *out = malloc(n + 1);
@@ -800,8 +796,8 @@ static char *utf8ToLatin1(const char *utf8) {
     return out;
 }
 
-/* The encodings as asked for into the client's appData, as a copy of the
-   protocol thread's own (`applied`). Protocol thread only. */
+/* Copies the requested encodings into the client's appData, through the
+   protocol thread's own copy (`applied`). Protocol thread only. */
 static void takeEncodings(Session *s, rfbClient *cl) {
     pthread_mutex_lock(&s->lock);
     char *fresh = dupOrNull(s->encodings);
@@ -816,8 +812,8 @@ static void takeEncodings(Session *s, rfbClient *cl) {
     cl->appData.encodingsString = fresh;
     cl->appData.compressLevel = compressLevel;
     cl->appData.qualityLevel = qualityLevel < 0 ? 9 : qualityLevel;
-    /* Not a nicety: the quality pseudo-encoding is what lets Tight send JPEG at
-       all, so "lossless" is the absence of it rather than a value of it. */
+    /* Required: the quality pseudo-encoding is what lets Tight send JPEG at
+       all, so "lossless" means not sending it rather than a value of it. */
     cl->appData.enableJPEG = (qualityLevel >= 0);
     pthread_rwlock_unlock(&s->fbLock);
     free(old);
@@ -842,16 +838,16 @@ static const rfbExtDesktopScreen *serverScreen(rfbClient *client, uint32_t id) {
     return NULL;
 }
 
-/* A layout asked for — `n` screens of five ints, id, x, y, width, height — as
-   the screens to send, in network order, against the server's own: a screen
-   whose id the server has is that screen, moved or resized, and keeps its
-   flags, which is what makes this a change to the desktop that is there
-   rather than a new one; a screen with an id the server has not, or one
-   already used, is new, and gets the lowest id neither the server's layout
-   nor this one has, as TigerVNC's viewer gives its new screens a fresh one.
-   False where the result is not a layout of a `width × height` desktop, which
-   is what TigerVNC's ScreenSet::validate checks before it sends one: no
-   screen empty or outside the desktop, at most 255 of them. */
+/* Converts a requested layout (`n` screens of five ints: id, x, y, width,
+   height) into the screens to send, in network order, matched against the
+   server's layout. A screen whose id the server has is that screen, moved or
+   resized, and keeps its flags, so the request changes the existing desktop
+   rather than creating a new one. A screen with an id the server does not
+   have, or one already used, is new and gets the lowest id in neither
+   layout, as TigerVNC's viewer assigns new screens a fresh id. Returns false
+   if the result is not a valid layout of a `width × height` desktop, as
+   checked by TigerVNC's ScreenSet::validate before sending: no screen empty or
+   outside the desktop, and at most 255 of them. */
 static bool buildLayout(rfbClient *client, int width, int height, const int32_t *flat, int n,
                         rfbExtDesktopScreen *out) {
     if (n <= 0 || n > 255) {
@@ -900,16 +896,15 @@ static bool buildLayout(rfbClient *client, int width, int height, const int32_t 
     return true;
 }
 
-/* A SetDesktopSize of `n` screens, already in network order, built here
-   rather than with the library's SendExtDesktopSize: that one sends a single
-   screen, and the screen it sends is `client->screen`, which its reader
-   leaves at the *last* screen of the server's list — over two screens it
-   would ask for the second one's id and position at the whole desktop's size.
-   What it does around the message is kept: a full update request at the new
-   size, then no more until the server's answer clears `requestedResize`,
-   which keeps a screenful of the old size from being decoded into a
-   framebuffer about to be reallocated. Nothing is sent where the layout is
-   the one the server already has. */
+/* Sends a SetDesktopSize of `n` screens, already in network order, built here
+   rather than with the library's SendExtDesktopSize: that sends a single
+   screen, `client->screen`, which the library's reader leaves at the *last*
+   screen of the server's list, so with two screens it would request the
+   second one's id and position at the whole desktop's size. What it does
+   around the message is kept: a full update request at the new size, then no
+   more until the server's answer clears `requestedResize`, so that an update
+   at the old size is not decoded into a framebuffer about to be reallocated.
+   Nothing is sent if the layout matches the server's current one. */
 static rfbBool sendLayout(rfbClient *client, int width, int height,
                           const rfbExtDesktopScreen *screens, int n) {
     if (width == client->width && height == client->height && n == client->numScreens
@@ -949,9 +944,8 @@ static void runCmd(Session *s, Cmd *c) {
             if (cl && !s->viewOnly) {
                 /* One entry per key, not per press: a key already down going
                    down again is auto-repeat, and appending would fill the table
-                   in a second and a half of somebody leaning on a key — after
-                   which the next key pressed is not recorded at all and never
-                   released. */
+                   within a few seconds of holding a key, after which the next
+                   key pressed would not be recorded and never released. */
                 int slot = -1;
                 for (int i = 0; i < s->nkeys; i++) {
                     if (s->keys[i].id == c->id) {
@@ -970,10 +964,9 @@ static void runCmd(Session *s, Cmd *c) {
             }
             break;
         case CMD_KEY_UP:
-            /* The keysym recorded at press time, not one worked out again from
-               the key: the seam's whole point is that a release names the key
-               its press named, and libvncclient's SendKeyEvent has only the
-               keysym to say it with. */
+            /* The keysym recorded at press time, not one derived again from
+               the key: the session API requires a release to match its press,
+               and libvncclient's SendKeyEvent identifies keys only by keysym. */
             for (int i = 0; i < s->nkeys; i++) {
                 if (s->keys[i].id == c->id) {
                     if (cl && !s->viewOnly) {
@@ -1005,12 +998,12 @@ static void runCmd(Session *s, Cmd *c) {
         case CMD_RESIZE:
             /* One screen covering the desktop, which is TigerVNC's windowed
                case and the only one a phone has: the server's first screen,
-               so that its id and flags go back as they came, or a new one
-               where it has said of none. The answer to a refusal is an
-               unchanged size, so a refusal is silence here, and the panel goes
-               on reporting the size that is. */
+               so that its id and flags are sent back unchanged, or a new one
+               if the server has reported none. A refused request leaves the
+               size unchanged, so nothing happens here and the panel keeps
+               reporting the current size. */
             if (cl && !s->viewOnly && s->canResize) {
-                rfbClient *client = cl; /* what the byte-order macros are written against */
+                rfbClient *client = cl; /* the byte-order macros refer to `client` */
                 const int32_t one[5] = {
                         client->numScreens > 0 ? (int32_t) rfbClientSwap32IfLE(client->screens[0].id)
                                                : 0,
@@ -1075,10 +1068,10 @@ static int quitting(Session *s) {
     return quit;
 }
 
-/* The second half of a non-blocking connect, watched beside the doorbell:
-   the socket writable is the connect done (`SO_ERROR` says how), and the
-   doorbell with `quit` set is the session ended under it. 0 and `*err` set
-   where it did not connect. */
+/* The second half of a non-blocking connect, polled together with the wake
+   pipe: a writable socket means the connect finished (`SO_ERROR` gives the
+   result), and a wake with `quit` set means the session was ended. Returns 0
+   and sets `*err` if it did not connect. */
 static int waitConnected(Session *s, int fd, int timeoutMs, int *err) {
     struct timespec start;
     clock_gettime(CLOCK_MONOTONIC, &start);
@@ -1100,8 +1093,8 @@ static int waitConnected(Session *s, int fd, int timeoutMs, int *err) {
             return 0;
         }
         if (fds[1].revents) {
-            /* Whatever else rang it is a command, and the ring is drained once
-               the session is up whether or not the doorbell still says so. */
+            /* Any other wake is a command, and the ring is drained once the
+               session is up whether or not the pipe still has bytes. */
             drainWake(s);
             if (quitting(s)) {
                 *err = ECANCELED;
@@ -1120,14 +1113,14 @@ static int waitConnected(Session *s, int fd, int timeoutMs, int *err) {
     }
 }
 
-/* libvncclient's dial, done here so that a disconnect can end it.
-   Theirs (`ConnectClientToTcpAddr6WithTimeout`) makes its socket where
-   nothing outside can reach it and then waits out `connectTimeout` in a
-   `select` of its own, so a session ended while a black-holed address was
-   being dialled sat there for all of it, and `op_destroy`'s join with it.
-   This is the same dial otherwise — every address in turn, each with the
-   whole timeout, the socket left non-blocking with `TCP_NODELAY` as theirs
-   leaves it — with the doorbell watched beside the socket. */
+/* libvncclient's dial, done here so that a disconnect can end it. The
+   library's (`ConnectClientToTcpAddr6WithTimeout`) keeps its socket private
+   and waits out `connectTimeout` in its own `select`, so a session ended
+   while dialling an unreachable address waited for the full timeout, and so
+   did `op_destroy`'s join. Otherwise this is the same dial (every address in
+   turn, each with the whole timeout, the socket left non-blocking with
+   `TCP_NODELAY` as the library leaves it), with the wake pipe polled
+   alongside the socket. */
 static rfbSocket dial(Session *s, const char *host, int port, int timeoutMs) {
     char service[8];
     snprintf(service, sizeof service, "%d", port);
@@ -1168,8 +1161,7 @@ static rfbSocket dial(Session *s, const char *host, int port, int timeoutMs) {
     }
     freeaddrinfo(res);
     if (sock == RFB_INVALID_SOCKET) {
-        /* Nothing worth saying about a dial the session itself ended: what
-           is reported for it is nothing at all. */
+        /* A dial ended by the session itself is not reported. */
         if (err != ECANCELED) {
             logErr("Unable to connect to VNC server: %s", strerror(err));
         }
@@ -1180,12 +1172,12 @@ static rfbSocket dial(Session *s, const char *host, int port, int timeoutMs) {
     return sock;
 }
 
-/* `rfbInitClient` with the connect step ours (see `dial`): the library's
-   own two halves of it, `rfbClientConnect` and `rfbClientInitialise`, with the
-   first replaced, and the client freed on failure as theirs frees it — after
-   it has been unpublished, so that `stop` cannot reach a freed client in
-   between. A UNIX socket, which their connect also takes for a host, is still
-   theirs to dial: it either answers or refuses, and nothing waits on it. */
+/* `rfbInitClient` with our own connect step (see `dial`): the library's two
+   halves of it, `rfbClientConnect` and `rfbClientInitialise`, with the first
+   replaced, and the client freed on failure as the library frees it, after
+   it has been unpublished so that `stop` cannot reach a freed client. A UNIX
+   socket path, which the library's connect also accepts as a host, is still
+   dialled by the library: it connects or fails at once, with no wait. */
 static int initClient(Session *s, rfbClient *cl) {
     struct stat st;
     int ok;
@@ -1196,8 +1188,8 @@ static int initClient(Session *s, rfbClient *cl) {
         const rfbSocket sock = dial(s, cl->serverHost, cl->serverPort, timeoutMs);
         ok = sock != RFB_INVALID_SOCKET;
         if (ok) {
-            /* Under the lock `stop` tests it under: from here a disconnect
-               breaks this socket, and one that came first means it is not
+            /* Under the lock `stop` holds: from here a disconnect shuts down
+               this socket, and a disconnect that came first means it is not
                used at all. */
             pthread_mutex_lock(&s->lock);
             if (s->quit) {
@@ -1217,12 +1209,12 @@ static int initClient(Session *s, rfbClient *cl) {
     return 0;
 }
 
-/* Whether the TLS session holds bytes it has decrypted and the library has
-   not read: a record is read into the library's buffer only as far as the
-   message being read needs, so the rest of it — a whole message, the next
-   one, or the end of one — is in neither that buffer nor the socket, and
-   poll() would wait for the server to send something else before any of it
-   was handled. Upstream's own loop has the same gap. */
+/* Whether the TLS session holds decrypted bytes the library has not read. A
+   record is read into the library's buffer only as far as the current message
+   needs, so the rest of it (a whole message, the next one, or the end of one)
+   is in neither that buffer nor the socket, and poll() would wait for the
+   server to send more before any of it was handled. Upstream's own loop has
+   the same gap. */
 static bool tlsPending(rfbClient *cl) {
     return cl->tlsSession != NULL
            && gnutls_record_check_pending((gnutls_session_t) cl->tlsSession) > 0;
@@ -1245,17 +1237,17 @@ static void *protocolThread(void *arg) {
 
     setColorFormat(s, cl);
 
-    /* Their name for the opposite of what it says: it asks for the cursor
-       pseudo-encodings, which is how the shape arrives to be drawn here. It
-       also drags PointerPos into the list, and the LED state goes out
-       unconditionally beside it — neither separable without patching their
-       code, and both ignored here, but the two RFB backends' encoding lists
-       differ by exactly that, which matters when comparing them. */
+    /* Despite the name, this asks for the cursor pseudo-encodings, so the
+       shape arrives to be drawn locally. It also adds PointerPos to the list,
+       and the LED state pseudo-encoding is always sent with it. Neither can be
+       removed without patching the library, and both are ignored here, but
+       they are the difference between the two RFB backends' encoding lists,
+       which matters when comparing them. */
     cl->appData.useRemoteCursor = TRUE;
     cl->appData.shareDesktop = s->shared;
-    /* Both halves of "the desktop may change size": without this one the
-       original DesktopSize pseudo-encoding is never asked for and only a
-       server that speaks the extended one can say it has resized. */
+    /* Without this the original DesktopSize pseudo-encoding is never
+       requested, and only a server that supports ExtendedDesktopSize can
+       report a resize. */
     cl->canHandleNewFBSize = TRUE;
     takeEncodings(s, cl);
     cl->connectTimeout = (unsigned) (s->connectTimeoutMs > 0 ? (s->connectTimeoutMs + 999) / 1000 : 20);
@@ -1265,17 +1257,16 @@ static void *protocolThread(void *arg) {
     cl->FinishedFrameBufferUpdate = onFinishedUpdate;
     cl->GotCursorShape = onGotCursor;
     cl->GotXCutText = onCutText;
-    /* And deliberately *not* GotXCutTextUTF8, which is what would ask for the
-       extended clipboard — because asking for it here breaks the direction it
-       was supposed to improve. libvncclient's implementation of it acts on an
-       unsolicited `provide` and on nothing else: it ignores the `notify` a
-       server sends when its clipboard changes, and there is no call to answer
-       one with a `request`. Against a server that announces rather than pushes,
-       which TigerVNC's does, offering the encoding replaces a working Latin-1
-       path with silence. Measured, not assumed: with it on, a clipboard set on
-       the far end reaches this client as "not provide type. ignore" and stops
-       there. Teaching it to answer a notify is a patch to their code rather
-       than a flag, and it is on the deferred list. */
+    /* Deliberately *not* GotXCutTextUTF8, which would request the extended
+       clipboard and break the server-to-client direction. libvncclient's
+       implementation acts only on an unsolicited `provide`: it ignores the
+       `notify` a server sends when its clipboard changes, and has no call to
+       answer one with a `request`. Against a server that sends `notify`
+       rather than `provide`, such as TigerVNC's, enabling it replaces a
+       working Latin-1 path with nothing. Tested: with it on, a clipboard set
+       on the far end reaches this client as "not provide type. ignore" and
+       goes no further. Answering a notify needs a patch to libvncclient, not
+       a flag. */
     cl->Bell = onBell;
     cl->GetPassword = onGetPassword;
     cl->GetCredential = onGetCredential;
@@ -1289,8 +1280,8 @@ static void *protocolThread(void *arg) {
     publishClient(s, cl);
 
     /* A failed handshake frees the client, so `initClient` unpublishes it
-       before that — and the flag the teardown calls test goes back down after,
-       so that neither of them reads a freed client in between. */
+       first, and `handshaking` is cleared only afterwards, so that neither
+       teardown call reads a freed client in between. */
     forgetLastError();
     pthread_mutex_lock(&s->lock);
     s->handshaking = 1;
@@ -1311,8 +1302,8 @@ static void *protocolThread(void *arg) {
 
     publishFacts(s, cl);
 
-    /* Bracketed the way it would have to be typed, since a literal with a port
-       after it is otherwise two colons in a row nobody can read. */
+    /* An IPv6 literal is bracketed, as it would be typed, so that it stays
+       readable with a port after it. */
     if (strchr(cl->serverHost, ':')) {
         LOGI("connected to [%s]:%d, %dx%d", cl->serverHost, cl->serverPort, cl->width, cl->height);
     } else {
@@ -1335,11 +1326,11 @@ static void *protocolThread(void *arg) {
             continue;
         }
 
-        /* The socket is watched only while the session is in front. An RFB
-           server sends nothing that was not asked for and libvncclient asks
-           for the next update at the end of each one it handles, so leaving
-           the last one unread is the whole of the pause: at most one update
-           sits in the socket and the server then waits. */
+        /* The socket is polled only while the session has focus. An RFB
+           server sends only what was requested, and libvncclient requests the
+           next update at the end of each one it handles, so leaving the last
+           one unread is enough to pause: at most one update waits in the
+           socket and the server then stops sending. */
         struct pollfd fds[2];
         int n = 0;
         fds[n].fd = s->wake[0];
@@ -1384,20 +1375,21 @@ static void *protocolThread(void *arg) {
 
 /* ---- the address -------------------------------------------------------- */
 
-/* `host::port` is the one unbracketed address with two colons in it that is not
-   an IPv6 literal somebody left the brackets off: if the last colon is the one
-   after the first, there is no third. */
+/* Whether `address` is an unbracketed IPv6 literal. `host::port` is the only
+   unbracketed address with two colons that is not one: there, the last colon
+   directly follows the first, and there is no third. */
 static int bareLiteral(const char *address) {
     const char *first = strchr(address, ':');
     return first && strrchr(address, ':') > first + 1;
 }
 
-/* An address is `host`, `host:port`, `[literal]` or `[literal]:port`, and a bare
-   IPv6 literal is refused in words rather than guessed at: a number under 100 is
-   a display here, so `::1:1` cannot be an address and a display at once, and
-   what the guess this replaced produced was `::` — the wildcard address, which
-   connects to something. The host is left at the front of `address`, which stays
-   the caller's buffer to free; `why` is empty unless there is nothing to dial. */
+/* An address is `host`, `host:port`, `host::port`, `[literal]` or
+   `[literal]:port`, and a bare IPv6 literal is refused with an error rather
+   than guessed at: a number under 100 is a display here, so `::1:1` is
+   ambiguous, and the previous guess produced `::`, the wildcard address,
+   which does connect to something. The host is left at the start of
+   `address`, which remains the caller's buffer to free; `why` is empty unless
+   there is nothing to dial. */
 static void splitAddress(char *address, int *port, char *why, size_t whyLen) {
     size_t len = strlen(address);
     while (len > 0 && (address[len - 1] == ' ' || address[len - 1] == '\t')) {
@@ -1438,7 +1430,7 @@ static void splitAddress(char *address, int *port, char *why, size_t whyLen) {
     } else {
         const char *colon = strrchr(address, ':');
         if (colon) {
-            /* `host::port` is how somebody says they meant the port. */
+            /* `host::port` means the number is a port, not a display. */
             display = colon[-1] != ':';
             hostLen = (size_t) (colon - address) - !display;
             number = colon + 1;
@@ -1577,11 +1569,12 @@ static void op_answer_trust(vento_session *base, bool accept) {
     wake(s);
 }
 
-/* Both of the ways a session ends set the flag, ring the doorbell *and* break
-   the socket: the doorbell is what ends the dial (see `dial`), but nothing in
-   the handshake after it watches the wake pipe — the protocol thread is inside
-   somebody else's read, and the TLS one has no deadline of its own on
-   purpose — so breaking the socket is what a flag cannot do. */
+/* Both ways a session ends set the flag, write to the wake pipe *and* shut
+   down the socket. The wake pipe ends the dial (see `dial`), but nothing in
+   the handshake after it polls the pipe: the protocol thread is blocked in
+   the library's read, and the TLS handshake deliberately has no deadline of
+   its own (patches/libvncserver's 0002), so only shutting down the socket
+   interrupts it. */
 static void stop(Session *s) {
     pthread_mutex_lock(&s->lock);
     s->quit = 1;
@@ -1598,11 +1591,11 @@ static void op_disconnect(vento_session *base) {
     stop(sessionOfBase(base));
 }
 
-/* The same socket break as `op_disconnect`, for a sharper reason: this one
-   *joins*. A session destroyed while it is still connecting — the panel's
-   Reconnect, a second session started over the first — would otherwise hold
-   the caller, which on the phone is the main thread, until the connect
-   timeout ran out. */
+/* Shuts down the socket as `op_disconnect` does, which matters more here
+   because this one *joins*. A session destroyed while still connecting (the
+   panel's Reconnect, or a second session started over the first) would
+   otherwise block the caller, the main thread on the phone, until the
+   connect timeout ran out. */
 static void op_destroy(vento_session *base) {
     Session *s = sessionOfBase(base);
     stop(s);
@@ -1643,15 +1636,14 @@ static void op_view_only(vento_session *base, bool viewOnly) {
     sessionOfBase(base)->viewOnly = viewOnly ? 1 : 0;
 }
 
-/* For any number of screens, since this session sends layouts: a single size
-   over several, which would merge them, is what api::c declines to offer,
-   as the header has it. */
+/* Answers for any number of screens, since this session implements
+   `request_layout` (see `can_resize` in vento/backend.h). */
 static bool op_can_resize(vento_session *base) {
     Session *s = sessionOfBase(base);
     return s->canResize && !s->viewOnly;
 }
 
-/* Four ints a screen without the id, or all five with it. */
+/* Four ints per screen without the id, or all five with it. */
 static int copyScreens(Session *s, int32_t *out, bool ids) {
     pthread_mutex_lock(&s->lock);
     const int n = s->nscreens;
@@ -1684,8 +1676,8 @@ static void op_request_desktop_size(vento_session *base, int width, int height) 
 
 static void op_request_layout(vento_session *base, int width, int height, const int32_t *screens,
                               int n) {
-    /* RFB's limits: a count in a byte, every number in sixteen bits; what is
-       outside them could only be sent wrapped, as some other layout. */
+    /* RFB's limits: the count is one byte and every number sixteen bits;
+       anything outside them would be sent truncated, as a different layout. */
     if (width <= 0 || height <= 0 || width > 65535 || height > 65535 || !screens || n <= 0
             || n > 255) {
         return;
@@ -1714,19 +1706,18 @@ void vento_libvnc_set_encodings(vento_session *base, const char *encoding, int c
     s->encodingsChanged = 1;
     const int quit = s->quit;
     pthread_mutex_unlock(&s->lock);
-    /* Freed here and now, since libvncclient never holds this one: it holds
+    /* Freed immediately, since libvncclient never holds this string: it holds
        the protocol thread's copy, which is replaced when the protocol thread
-       next drains — at once if it is waiting, and after the handshake if it
-       is still in one. */
+       next drains (at once if it is waiting, or after the handshake if it is
+       still in one). */
     free(old);
     if (!quit) {
         wake(s);
     }
 }
 
-/* The wording TigerVNC's PixelFormat::print uses, because the panel shows one
-   of these rows per backend and three of them are that library's or a
-   deliberate copy of it. */
+/* Uses the wording of TigerVNC's PixelFormat::print, so that this row reads
+   the same as the TigerVNC backend's. */
 static void describeFormat(char *out, size_t size, const rfbPixelFormat *f) {
     if (!f->trueColour) {
         snprintf(out, size, "depth %d (%dbpp) colour map", f->depth, f->bitsPerPixel);
@@ -1740,10 +1731,10 @@ static void describeFormat(char *out, size_t size, const rfbPixelFormat *f) {
              f->bigEndian ? "big" : "little", r, g, b);
 }
 
-/* A VeNCrypt sub-type as the panel's Security row: which authentication ran,
-   and, for the three with no certificate under them, that the encryption
-   proved nothing about the server. A session that said only "TLS" would be
-   claiming the identity check this family does not have. */
+/* Describes a VeNCrypt sub-type for the panel's Security row: which
+   authentication ran and, for the three without a certificate, that the
+   encryption verified nothing about the server. Reporting only "TLS" would
+   imply an identity check these sub-types do not have. */
 static void describeVeNCrypt(char *out, size_t size, uint32_t subType) {
     const char *auth;
     switch (subType) {
@@ -1760,21 +1751,19 @@ static void describeVeNCrypt(char *out, size_t size, uint32_t subType) {
     snprintf(out, size, "%s (VeNCrypt)%s", auth, anonymous ? ", encrypted and unverified" : "");
 }
 
-/* Desktop name, protocol, connection, security, encoding, server and viewer
-   pixels — the order the Rust adapter's `info` labels them in. */
-/* The facts of a connection whose handshake is done, from the client on the
-   protocol thread, which is the only one that may read it: the handshake
-   writes the name, the version, the security and the formats as it goes,
-   and op_info, on whichever thread asks, read them there under a lock the
-   handshake never took. None of them changes afterwards. */
+/* Copies the facts of a connection whose handshake is done out of the client,
+   on the protocol thread, the only thread that may read it: the handshake
+   writes the name, version, security and formats as it goes, without taking
+   any lock op_info could hold. None of them changes afterwards. op_info
+   returns them in the order the Rust adapter's `info` labels them: desktop
+   name, protocol, connection, security, encoding, server and viewer pixels. */
 static void publishFacts(Session *s, rfbClient *cl) {
     char desktop[256], protocol[64], security[96], serverPixels[64], viewerPixels[64];
     snprintf(desktop, sizeof(desktop), "%s", cl->desktopName ? cl->desktopName : "");
     snprintf(protocol, sizeof(protocol), "RFB %d.%d", cl->major, cl->minor);
-    /* VeNCrypt leaves authScheme at 19 and puts the sub-type beside it, and
-       the sub-type is the whole of what the session is: which authentication
-       ran, and whether the tunnel it ran inside proved anything about the
-       server. */
+    /* VeNCrypt leaves authScheme at 19 and stores the sub-type separately,
+       and the sub-type says which authentication ran and whether the tunnel
+       verified anything about the server. */
     switch (cl->authScheme) {
         case rfbNoAuth: snprintf(security, sizeof(security), "None"); break;
         case rfbVncAuth: snprintf(security, sizeof(security), "VNC password"); break;
@@ -1783,8 +1772,7 @@ static void publishFacts(Session *s, rfbClient *cl) {
     }
     describeFormat(serverPixels, sizeof(serverPixels), &cl->si.format);
     describeFormat(viewerPixels, sizeof(viewerPixels), &cl->format);
-    /* The desktop name is the server's own bytes; the rest of these this file
-       wrote. */
+    /* Only the desktop name comes from the server; the rest is written here. */
     char *name = vento_utf8_from_bytes(desktop);
 
     pthread_rwlock_wrlock(&s->fbLock);
@@ -1808,9 +1796,9 @@ static bool op_info(vento_session *base, vento_strings *out) {
         return false;
     }
     const Facts facts = s->facts;
-    /* What was asked for, not what arrived: libvncclient tells nobody which
-       encoding decoded a rectangle, so this row is the offer and its label
-       says so. Every other backend here reports the encoding in use. */
+    /* The requested encodings, not the one in use: libvncclient does not
+       report which encoding decoded a rectangle, so this row is the offer and
+       its label says so. The other backends report the encoding in use. */
     snprintf(encoding, sizeof(encoding), "%s", s->applied ? s->applied : "");
     pthread_rwlock_unlock(&s->fbLock);
 
@@ -1819,8 +1807,9 @@ static bool op_info(vento_session *base, vento_strings *out) {
     return vento_strings_set(out, values, sizeof(values) / sizeof(values[0]));
 }
 
-/* The counters the patched sockets.c keeps, read under the framebuffer lock:
-   the client may be freed by a failed `rfbInitClient` under us. */
+/* The counters kept by the patched sockets.c (patches/libvncserver's 0005),
+   read under the framebuffer lock because a failed handshake may free the
+   client concurrently. */
 static bool op_traffic(vento_session *base, uint64_t out[2]) {
     Session *s = sessionOfBase(base);
     bool have = false;

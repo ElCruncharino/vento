@@ -4,19 +4,17 @@
 //! One channel of a session: its own TCP connection, its own link handshake,
 //! its own ticket and its own ack accounting.
 //!
-//! A SPICE session is four of these — main, display, inputs, cursor — and a
-//! fifth, playback, where the server has sound and the session plays it; what
-//! ties them together is the session id the main channel's `INIT` hands out.
-//! Everything below the session layer is the same for all of them, which is
-//! why it is here rather than five times over.
+//! A SPICE session is four of these (main, display, inputs, cursor), plus
+//! playback where the server has sound and the session plays it. The session
+//! id from the main channel's `INIT` ties them together. Everything below the
+//! session layer is the same for all of them, so it is here once.
 //!
-//! **Reading is a task of its own and writing is not.** Every channel's reader
-//! is spawned onto the session's runtime and pushes whole messages into one
-//! queue, so the session `select!`s over a queue rather than over four
-//! `read_exact`s — which matters because `read_exact` is not cancel-safe, and a
-//! `select!` that drops one halfway has eaten bytes out of the middle of
-//! somebody's message. The write half stays behind a mutex the session takes
-//! per message.
+//! **Reading is a separate task; writing is not.** Each channel's reader is
+//! spawned onto the session's runtime and pushes whole messages into one
+//! queue, so the session `select!`s over a queue rather than over several
+//! `read_exact`s. This matters because `read_exact` is not cancel-safe: a
+//! `select!` that drops one halfway loses bytes from the middle of a message.
+//! The write half stays behind a mutex the session takes per message.
 
 use crate::error::{Error, Result};
 use crate::tls;
@@ -64,8 +62,8 @@ impl Kind {
 }
 
 /// The playback channel's capabilities (`SPICE_PLAYBACK_CAP_*` in
-/// spice-protocol's `enums.h`), which their protocol crate does not name.
-/// CELT, bit 0, is a codec nobody has shipped since 2013.
+/// spice-protocol's `enums.h`), which ryll's protocol crate does not define.
+/// CELT (bit 0) is obsolete and not offered.
 pub mod playback_caps {
     /// The guest's volume and mute, as messages rather than in the samples.
     pub const VOLUME: u32 = 1 << 1;
@@ -90,23 +88,21 @@ pub struct Ended {
 /// The write half of a channel, plus what a session has to remember about it.
 pub struct Channel {
     writer: Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send>>>,
-    /// The task reading the other half, which is stopped when the channel is
-    /// dropped: with both halves gone the socket closes, and the server sees
-    /// the channel end — which is how the sound is turned off — with no
-    /// `Ended` from a reader nobody is waiting for.
+    /// The task reading the other half, stopped when the channel is dropped:
+    /// with both halves gone the socket closes and the server sees the channel
+    /// end (which is how the sound is turned off), and no `Ended` is sent.
     reader: tokio::task::JoinHandle<()>,
     /// The server stops sending after this many unacknowledged messages, so a
-    /// client that never acks gets one screenful and then silence that looks
-    /// exactly like a server with nothing to say.
+    /// client that never acks gets one screenful and then silence,
+    /// indistinguishable from an idle server.
     pub ack_window: u32,
     since_ack: u32,
     /// Held acks: the ack window is this protocol's own flow control, so a
-    /// session that has left the screen stops answering and the server stops
-    /// sending. See `Client::set_focused`.
+    /// session that has left the screen stops acking and the server stops
+    /// sending. See `Session::focus` in `client.rs`.
     paused: bool,
-    /// The session's own counter, shared by all its channels — the received
-    /// half of the pair belongs to the reader task and is only ever added to
-    /// there.
+    /// The session's sent-bytes counter, shared by all its channels. The
+    /// received counter belongs to the reader task and is only added to there.
     sent: Arc<AtomicU64>,
 }
 
@@ -116,16 +112,15 @@ impl Channel {
     ///
     /// `session_id` is 0 for the main channel and the id its `INIT` gave for
     /// every other one. `trust` is asked once, on the first channel of a TLS
-    /// session, in the one moment where the answer is worth anything: after the
-    /// handshake, which is when there is a certificate to judge, and before the
-    /// link, which is when the ticket goes out. Every other channel must
-    /// present the certificate accepted then (`tls::Connector::admit`).
+    /// session, at the only point where the answer matters: after the
+    /// handshake, when there is a certificate to check, and before the link,
+    /// when the ticket is sent. Every other channel must present the
+    /// certificate accepted then (`tls::Connector::admit`).
     ///
-    /// **The deadline is around each step and never around the question.** A
-    /// person reading a fingerprint takes longer than a server does to answer,
-    /// and a timeout that covers both kills the session while the dialog is
-    /// still on screen — which is what it did here, at twenty seconds, until
-    /// this was three deadlines rather than one.
+    /// **The deadline applies to each step and never to the question.**
+    /// Reading a fingerprint takes longer than a server takes to answer, and a
+    /// timeout covering both would end the session while the dialog is still
+    /// on screen.
     ///
     /// `caps` are channel capabilities beyond the ones this client always
     /// offers on a channel of this kind: what the playback channel offers
@@ -165,20 +160,17 @@ impl Channel {
         };
 
         let reply = within(deadline, link(&mut stream, session_id, kind, caps)).await??;
-        // The link reply carries a public key, and 46a asked whether it is an
-        // identity: it is not. QEMU generates an RSA-1024 key per *connection*
-        // for the sole purpose of encrypting this ticket, so there is nothing
-        // to pin and the password crosses a plain port protected against a
-        // passive observer alone.
+        // The link reply's public key is not an identity: QEMU generates an
+        // RSA-1024 key per *connection* only to encrypt this ticket, so there
+        // is nothing to pin, and on a plain port the password is protected
+        // against a passive observer only.
         within(deadline, perform_auth(&mut stream, &reply.pub_key, password))
             .await?
             .map_err(|e| refused(&e.to_string()))?;
 
         let (read, write) = tokio::io::split(stream);
-        // One pair of counters for the whole session rather than one per
-        // channel: the panel has one row, and four numbers that have to be
-        // added up before they mean anything are four chances to add them up
-        // differently.
+        // One pair of counters for the whole session rather than per channel,
+        // since the panel has one traffic row.
         let (received, sent) = traffic;
         let reader = tokio::spawn(async move {
             let error = read_messages(kind, read, &queue, &received).await.err();
@@ -206,8 +198,8 @@ impl Channel {
 
     /// Count a message towards the ack window and answer when it is full.
     ///
-    /// Every message counts, not only the ones a client finds interesting,
-    /// because that is what the server counts too.
+    /// Every message counts, including ones the client ignores, because the
+    /// server counts them all.
     pub async fn acknowledge(&mut self, ack: u16) -> Result<()> {
         self.since_ack += 1;
         if self.ack_window > 0 && !self.paused && self.since_ack >= self.ack_window {
@@ -217,22 +209,21 @@ impl Channel {
         Ok(())
     }
 
-    /// Stop or resume answering the window, which is what an unfocused session
-    /// does instead of the pause message this protocol does not have.
+    /// Stop or resume acking, which an unfocused session does instead of
+    /// sending the pause message this protocol lacks.
     pub async fn set_paused(&mut self, paused: bool, ack: u16) -> Result<()> {
         let was = self.paused;
         self.paused = paused;
         if was && !paused && self.ack_window > 0 {
-            // Whatever built up while nobody was looking is acknowledged on
-            // the way back, so the picture starts again at once rather than
-            // after another window's worth of messages — but a window at a
-            // time, and only whole ones. The server subtracts a whole window
-            // from its unsigned count per ack, so an ack for a part of one
-            // leaves that count wrapped around, and the channel then waits
-            // for an ack that can never come: nothing more arrives on it, and
-            // the next thing the server has to send — a resize's new surface
-            // — never does. A part of a window needs no ack: the server has
-            // not stopped for it.
+            // Messages received while paused are acknowledged on resume, so
+            // the picture restarts at once rather than after another window of
+            // messages, but one window per ack and only whole windows. The
+            // server subtracts a whole window from its unsigned count per ack,
+            // so an ack for part of a window wraps that count around, and the
+            // channel then waits for an ack that never comes: nothing more
+            // arrives on it, including the new surface after a resize. A
+            // partial window needs no ack, since the server has not stopped
+            // for it.
             let windows = self.since_ack / self.ack_window;
             self.since_ack %= self.ack_window;
             for _ in 0..windows {
@@ -252,16 +243,16 @@ impl Drop for Channel {
 
 /// The link handshake, with capabilities of this client's own.
 ///
-/// Theirs is `perform_link` and this is the same handshake, because the
-/// capability list is not: their display default advertises **H.264 video
-/// streams**, and this build has that decoder patched out, so a server that
-/// took the offer would send a codec this end cannot decode and the region
-/// under the stream would freeze. It advertises the stream *report* too, which
-/// is a message this client never sends back.
+/// The same handshake as ryll's `perform_link`, with a different capability
+/// list: ryll's display default advertises **H.264 video streams**, and this
+/// build has that decoder patched out, so a server that took the offer would
+/// send a codec this client cannot decode and the region under the stream
+/// would freeze. It also advertises the stream *report*, a message this client
+/// never sends.
 ///
-/// The rest is what makes the picture work and is theirs unchanged — chiefly
-/// `COMPOSITE`, without which the guest's QXL driver falls back to a software
-/// path and sends far fewer updates.
+/// The rest of ryll's list is unchanged, chiefly `COMPOSITE`, without which the
+/// guest's QXL driver falls back to a software path and sends far fewer
+/// updates.
 async fn link<S>(stream: &mut S, session_id: u32, kind: Kind, caps: u32) -> Result<SpiceLinkReply>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
@@ -269,9 +260,9 @@ where
     use shakenfist_spice_protocol::constants::capabilities as cap;
     let channel_caps = match kind {
         // The agent's token count, which a server sends only to a client that
-        // asked for it: without this bit an agent connecting *after* the
-        // session says so with no number in the message, and a client that
-        // sends what it has not been granted is disconnected.
+        // asks for it: without this bit, an agent connecting *after* the
+        // session is announced with no token count, and a client that sends
+        // more than it has been granted is disconnected.
         Kind::Main => cap::DEFAULT_MAIN | cap::MAIN_AGENT_CONNECTED_TOKENS,
         Kind::Display => {
             cap::DISPLAY_SIZED_STREAM
@@ -298,8 +289,8 @@ where
     stream.write_all(&message.serialize()).await?;
     stream.flush().await?;
 
-    // The reply's own header says how much follows it, and the parser wants
-    // both halves in one buffer.
+    // The reply's header gives the size of the rest, and the parser needs
+    // both in one buffer.
     let mut reply = vec![0u8; 16];
     stream.read_exact(&mut reply).await?;
     let size = u32::from_le_bytes(reply[12..16].try_into().expect("four bytes")) as usize;
@@ -311,22 +302,22 @@ where
     SpiceLinkReply::parse(&reply).map_err(|e| Error::Protocol(e.to_string()))
 }
 
-/// Their own cap on a link message, applied to the reply as well: real ones are
-/// a couple of hundred bytes.
+/// ryll's cap on a link message (`MAX_LINK_MESSAGE_SIZE`), applied to the
+/// reply as well: real ones are a couple of hundred bytes.
 const MAX_LINK_REPLY: usize = 4096;
 
-/// One step of a connection, with a deadline on it. A server that stops
-/// answering halfway through a handshake is a session that never opens and
-/// never says why, which is what a mistyped port looks like.
+/// One step of a connection, with a deadline. Without it, a server that stops
+/// answering halfway through a handshake (as with a mistyped port) leaves a
+/// session that never opens and reports no error.
 async fn within<T>(deadline: Duration, step: impl Future<Output = T>) -> Result<T> {
     tokio::time::timeout(deadline, step)
         .await
         .map_err(|_| Error::Io(std::io::ErrorKind::TimedOut.into()))
 }
 
-/// A refused ticket is the one error worth telling apart, because it is the one
-/// with a person on the other end of it — and it arrives as text, since what
-/// their auth hands back is an `anyhow` with the link error's name in it.
+/// A refused ticket is the one error worth telling apart, because the user can
+/// fix it. It arrives as text, since ryll's `perform_auth` returns an `anyhow`
+/// error containing the link error's name.
 fn refused(text: &str) -> Error {
     if text.contains(&format!("{:?}", SpiceError::PermissionDenied))
         || text.contains("Authentication failed")
@@ -374,8 +365,8 @@ async fn read_messages<R: AsyncRead + Unpin>(
     }
 }
 
-/// The cap on one message, which is a bound on what a hostile server can make
-/// this end allocate. A whole 4K desktop as one uncompressed image is 33 MB and
-/// is the largest thing a server has any reason to send — and it does not, since
-/// QEMU compresses anything worth compressing.
+/// The cap on one message, which bounds what a hostile server can make this
+/// client allocate. A whole 4K desktop as one uncompressed image is 33 MB, the
+/// largest thing a server has any reason to send, and QEMU compresses it
+/// anyway.
 const MAX_MESSAGE: usize = 64 * 1024 * 1024;

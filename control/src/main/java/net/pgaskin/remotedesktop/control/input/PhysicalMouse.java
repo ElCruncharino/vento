@@ -6,7 +6,7 @@ package net.pgaskin.remotedesktop.control.input;
 import android.view.MotionEvent;
 
 /**
- * A real mouse: relative motion, a button mask, and a wheel — none of it run
+ * A real mouse: relative motion, a button mask, and a wheel, none of it run
  * through gesture recognition.
  *
  * <p>That last part is the whole design. The original feeds a mouse through the
@@ -15,14 +15,14 @@ import android.view.MotionEvent;
  * a mouse is its own producer feeding the same sinks the gesture layer does, so
  * the centre-follow desktop, the edge clamp and the zoom come free and none of
  * the gesture machinery is in the path. Acceleration and momentum go with it:
- * the jerk curve is tuned for a finger that lifts and re-lands, and what somebody
- * expects from their mouse is their own OS pointer profile, which was applied
- * before the event ever reached us. {@link Config#mouseSpeed} is the one dial.
+ * the jerk curve is tuned for a finger that lifts and re-lands, and a mouse is
+ * expected to follow the OS pointer profile, which was applied before the
+ * event reached us. {@link Config#mouseSpeed} is the one dial.
  *
  * <p>{@code View.requestPointerCapture()} delivers <em>relative</em> deltas and
  * stops the local pointer leaving the window, which is what a remote desktop
  * wants and what the original never asks for: without it the remote pointer can
- * only go where the local one can and movement stops dead at the screen edge —
+ * only go where the local one can and movement stops dead at the screen edge,
  * which is what the original's 32 ms edge auto-scroll exists to paper over. The
  * uncaptured path is kept anyway, since capture only holds while the window has
  * focus and a mouse should keep working while a sheet is open; it derives deltas
@@ -83,7 +83,7 @@ public final class PhysicalMouse {
     }
 
     /**
-     * The whole button state at once, which is how a mouse reports it — a
+     * The whole button state at once, which is how a mouse reports it: a
      * chorded press arrives as one event, which is why {@link MouseSink} takes a
      * mask rather than a button.
      */
@@ -125,7 +125,7 @@ public final class PhysicalMouse {
     }
 
     /**
-     * The mouse is gone — the window lost focus, the session left the screen.
+     * The mouse is gone: the window lost focus, or the session left the screen.
      * Everything it holds is held <em>there</em>, so it is let go of, on the
      * same argument as {@link TouchRouter#cancel}.
      */
@@ -141,8 +141,7 @@ public final class PhysicalMouse {
 
     /**
      * Android's button bits as RFB's. Back and forward are buttons 8 and 9,
-     * which is what X11 calls them and what both desktops mean by them; the
-     * original has no concept of either.
+     * which is how X11 numbers them; the original has no concept of either.
      */
     static int toRfbMask(int androidButtons) {
         int m = 0;
@@ -170,7 +169,7 @@ public final class PhysicalMouse {
         switch (ev.getActionMasked()) {
             case MotionEvent.ACTION_MOVE, MotionEvent.ACTION_HOVER_MOVE -> {
                 // Batched samples first: a 1000 Hz mouse delivers several per
-                // frame and dropping them would quietly halve its resolution.
+                // frame, and each is a delta that would otherwise be lost.
                 for (int h = 0; h < ev.getHistorySize(); h++) {
                     motion(ev.getHistoricalX(h), ev.getHistoricalY(h));
                 }

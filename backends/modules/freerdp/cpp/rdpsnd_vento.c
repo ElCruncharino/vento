@@ -7,24 +7,22 @@
 //
 // What the channel asks of a device: whether it plays a format the server
 // offers, a stream opened in one of them when the server starts sending,
-// each wave's samples as they arrive, the server's volume, and how long
-// until what was just handed over is heard — which goes back to the server
-// in the wave's confirm, and is how it learns what the client's end of the
-// latency is. All of it is the table's (vento/audio.h): the queue, the
-// device opened off this thread, the drop past a quarter of a second, the
-// session's gain and mute — and the decoding, where the server sends AAC or
-// Opus, which the platform's decoders do (libavcodec on the Linux client,
-// MediaCodec on the phone) rather than the library's own DSP. Every call into
-// a device comes from the channel's one thread at a time, and none waits on
-// the platform's device.
+// each wave's samples as they arrive, the server's volume, and the delay
+// until the samples just passed are heard, which goes back to the server in
+// the wave's confirm and tells it the client's share of the latency. The
+// table (vento/audio.h) does all of it: the queue, opening the device off
+// this thread, the drop past a quarter of a second, the session's gain and
+// mute, and the decoding when the server sends AAC or Opus, done by the
+// platform's decoders (libavcodec on Linux, MediaCodec on Android) rather
+// than the library's DSP. The channel calls into a device from one thread at
+// a time, and no call waits on the platform's device.
 //
-// What the channel does not do is say when the sound has stopped: the
-// server's Close PDU is logged and nothing more, so a device it opened stays
-// open, and a stream left open keeps the platform's device running on
-// silence and the session saying it plays. So the device closes its own
-// stream once what it was last given has been heard and two seconds more
-// have passed, as TigerVNC's does at its server's AudioEnd, and the next
-// wave opens another.
+// The channel never reports when the sound has stopped: the server's Close
+// PDU is only logged, so a device it opened stays open, and an open stream
+// keeps the platform's device playing silence and the session reporting that
+// it plays. So the device closes its own stream once its last samples have
+// been heard and two more seconds have passed, as TigerVNC's does at its
+// server's AudioEnd, and the next wave opens another.
 
 #include <pthread.h>
 #include <stdint.h>
@@ -50,22 +48,20 @@
 #define LOGI(...) vento_log(VENTO_LOG_INFO, TAG, __VA_ARGS__)
 #define LOGW(...) vento_log(VENTO_LOG_WARN, TAG, __VA_ARGS__)
 
-/* How long a stream stays open after what it was last given has been heard:
-   long enough that the gaps between a server's sounds do not each close and
-   reopen the platform's device, short enough that the session stops saying
-   it plays soon after the sound does. TigerVNC's grace, for the same
-   reasons. */
+/* How long a stream stays open after its last samples have been heard: long
+   enough that the gaps between a server's sounds don't each close and reopen
+   the platform's device, short enough that the session stops reporting sound
+   soon after it ends. The same as TigerVNC's, for the same reasons. */
 #define IDLE_GRACE_MS 2000
 
-/* What this device plays of a format, and how: as it comes, widened from 8
-   bits, or decoded by the platform's decoders, which the session's table
-   says it has (`VentoSound`). Windows picks AAC whenever it is offered, and
-   it is offered wherever the platform decodes it: both platforms, now that
-   it is vento's to decode rather than the library's FFmpeg's, which only the
-   Linux client had. What none of these is, the channel decodes before the
-   device sees it where the library can — which without its FFmpeg is PCM
-   alone, so nothing — and offers back otherwise. The one place a format is
-   decided. */
+/* How this device plays a format: as received, widened from 8 bits, or
+   decoded by the platform's decoders, which the session's table reports
+   (`VentoSound`). Windows picks AAC whenever it is offered, and it is offered
+   wherever the platform decodes it, now on both platforms, since vento
+   decodes it instead of the library's FFmpeg, which only the Linux client
+   had. Other formats the channel decodes before the device sees them if the
+   library can (without its FFmpeg, only PCM, so none of them), and otherwise
+   does not offer back. This is the only place a format is decided. */
 typedef enum {
     KIND_NONE = 0,
     KIND_S16,
@@ -110,23 +106,23 @@ typedef struct {
     AUDIO_FORMAT format;
     Kind kind;
     bool opened;
-    bool announced; /* the first wave since `Open` has been described */
-    bool failed;    /* the platform would not open a stream in it */
+    bool announced; /* the first wave since `Open` has been logged */
+    bool failed;    /* the platform failed to open a stream in it */
     /* The decoder of a decoded kind, opened with the format, and whether a
-       wave has failed to decode since (said once). */
+       wave has failed to decode since (logged once). */
     vento_audio_decoder *decoder;
     bool undecodable;
-    /* What the stream is open in, which for a decoded kind is the decoder's
-       answer rather than the server's format (Opus is always 48 kHz). */
+    /* The stream's rate and channels, which for a decoded kind come from the
+       decoder rather than the server's format (Opus is always 48 kHz). */
     int streamRate, streamChannels;
     /* The server's volume, as a gain, applied to every stream opened. */
     float gain;
-    /* Whether this device's server listed a format it plays, and so counts
-       among the session's devices that offer the switch (`stopOffering`). */
+    /* Whether this device's server listed a format it plays, so the device
+       counts in the session's `offering` (`stopOffering`). */
     bool offering;
 
-    /* The stream and when it was last written to, under `lock`, which the
-       closing thread takes too. */
+    /* The stream and its idle deadline, under `lock`, which the closing
+       thread also takes. */
     pthread_mutex_t lock;
     pthread_cond_t cond;
     pthread_t closer;
@@ -171,9 +167,9 @@ static void closeDecoderLocked(Device *d) {
     }
 }
 
-/* The stream, opened in `rate` and `channels` if it is not open in them:
-   the first wave since `Open`, or since the stream was closed for being
-   idle, or a decoder whose output changed. */
+/* Opens the stream in `rate` and `channels` unless it is already open in
+   them: on the first wave since `Open`, after the stream was closed for being
+   idle, or when a decoder's output changed. */
 static bool openLocked(Device *d, int rate, int channels) {
     if (d->stream != NULL && d->streamRate == rate && d->streamChannels == channels) {
         return true;
@@ -198,9 +194,9 @@ static bool openLocked(Device *d, int rate, int channels) {
 }
 
 /* Closes the stream once it has been idle past its deadline, which every
-   write moves on. A thread per device rather than a timer of the library's:
-   the channel calls the device only when a wave arrives, and a wave that
-   never comes is the case this is for. */
+   write extends. A thread per device rather than a library timer: the channel
+   calls the device only when a wave arrives, and this is for when no wave
+   comes. */
 static void *closer(void *arg) {
     Device *d = arg;
     pthread_mutex_lock(&d->lock);
@@ -231,11 +227,11 @@ static void *closer(void *arg) {
 
 /* ---- the device -------------------------------------------------------- */
 
-/* This device's channel will send no more sound: it closed — its server
-   closed it, or the session is ending — or its server lists nothing this end
-   plays. The switch goes when no channel of the session has sound left to
-   send, which is not yet where the other rdpsnd channel, the static or the
-   dynamic one, still offers. */
+/* This device's channel will send no more sound: it closed (its server
+   closed it, or the session is ending), or its server lists nothing this end
+   plays. The switch is withdrawn when no channel of the session has sound
+   left to send, so not while the other rdpsnd channel (static or dynamic)
+   still offers sound. */
 static void stopOffering(Device *d) {
     if (!d->offering) {
         return;
@@ -251,10 +247,10 @@ static BOOL formatSupported(rdpsndDevicePlugin *device, const AUDIO_FORMAT *form
     return kindOf(d->sound, format) != KIND_NONE;
 }
 
-/* The server's formats, said as the channel hears them, with what becomes of
-   each: played here, decoded here first ("vento"), decoded by the library
-   first, or not offered back. Which one the server picks shows in the first
-   wave (`playEx`). */
+/* Logs the server's formats as the channel receives them, with how each is
+   handled: played here, decoded here first ("vento"), decoded by the library
+   first, or not offered back. The first wave shows which one the server
+   picked (`playEx`). */
 static UINT serverFormatAnnounce(rdpsndDevicePlugin *device, const AUDIO_FORMAT *formats,
                                  size_t count) {
     Device *d = (Device *) device;
@@ -282,8 +278,8 @@ static UINT serverFormatAnnounce(rdpsndDevicePlugin *device, const AUDIO_FORMAT 
     LOGI("sound: the server offers %zu formats: %s", count, line);
     /* A server that lists a format this end plays may send sound from now on,
        and nothing in rdpsnd asks it to stop during a session (the client's
-       formats are an answer to these, sent once), so the session's switch is
-       a mute, there from this list rather than from the first wave. */
+       formats are a single reply to this list), so the session's switch is a
+       mute, offered from this list rather than from the first wave. */
     if (playable && d->sound->table.offer != NULL) {
         if (!d->offering) {
             d->offering = true;
@@ -296,11 +292,11 @@ static UINT serverFormatAnnounce(rdpsndDevicePlugin *device, const AUDIO_FORMAT 
     return CHANNEL_RC_OK;
 }
 
-/* What a decoded kind's format sets its decoder up with: an Opus
-   identification header where the server sent one as the format's extra
-   bytes, and otherwise nothing, so that the format's numbers stand for AAC
-   LC or plain Opus — which is what Windows' AAC is (raw frames, no extra
-   bytes) and what the library's own decoding assumed of it too. */
+/* The configuration a decoded kind's decoder is opened with: an Opus
+   identification header when the server sent one as the format's extra
+   bytes, and otherwise nothing, so the format's fields describe AAC LC or
+   plain Opus. That matches Windows' AAC (raw frames, no extra bytes) and
+   what the library's own decoding assumed of it too. */
 static void decoderConfig(const AUDIO_FORMAT *f, const uint8_t **config, size_t *len) {
     *config = NULL;
     *len = 0;
@@ -349,12 +345,12 @@ static BOOL open_(rdpsndDevicePlugin *device, const AUDIO_FORMAT *format, UINT32
             rate = 48000;
         }
     }
-    /* Opened now rather than at the first wave, which follows at once, in
-       what the decoder will most likely make of it — and opened again at the
-       first wave if it makes something else. A stream the platform will not
-       open is said once and the waves are dropped, but the device still
-       answers that it opened: a failed open is an error the channel ends
-       itself over, and with it the session. */
+    /* Opened now rather than at the first wave, which follows immediately,
+       in the format the decoder will most likely produce, and opened again at
+       the first wave if it produces something else. If the platform fails to
+       open a stream, that is logged once and the waves are dropped, but the
+       device still reports that it opened: the channel treats a failed open
+       as an error and ends itself, and the session with it. */
     openLocked(d, rate, (int) format->nChannels);
     d->idleAt = nowMs() + IDLE_GRACE_MS;
     pthread_mutex_unlock(&d->lock);
@@ -362,7 +358,7 @@ static BOOL open_(rdpsndDevicePlugin *device, const AUDIO_FORMAT *format, UINT32
 }
 
 /* The server's volume: the left channel in the low word, the right in the
-   high one, each out of 0xFFFF. One gain for the stream, the louder of the
+   high one, each out of 0xFFFF. The stream gets one gain, the louder of the
    two, since the table has no balance: a server that pans is heard at the
    level of its louder side rather than not at all. */
 static BOOL setVolume(rdpsndDevicePlugin *device, UINT32 value) {
@@ -382,9 +378,9 @@ static BOOL setVolume(rdpsndDevicePlugin *device, UINT32 value) {
     return TRUE;
 }
 
-/* What the client tells the server its volume is, in the formats it
-   confirms: the server's own, as last set, and full to begin with — a
-   server that took a zero here would start the session muted. */
+/* The volume the client reports to the server in the formats it confirms:
+   the server's own, as last set, and full initially, since a server given
+   zero here would start the session muted. */
 static UINT32 getVolume(rdpsndDevicePlugin *device) {
     Device *d = (Device *) device;
     pthread_mutex_lock(&d->lock);
@@ -408,8 +404,8 @@ static const int16_t *widen(Device *d, const BYTE *data, size_t size) {
     return d->wide;
 }
 
-/* One wave of a decoded kind, through the platform's decoder: its samples,
-   in what the decoder says they are, NULL where it made none. */
+/* Decodes one wave of a decoded kind through the platform's decoder: its
+   samples, in the format the decoder reports, or NULL if it produced none. */
 static const int16_t *decodeLocked(Device *d, const BYTE *data, size_t size, size_t *bytes,
                                    int *rate, int *channels) {
     *bytes = 0;
@@ -429,11 +425,11 @@ static const int16_t *decodeLocked(Device *d, const BYTE *data, size_t size, siz
     return samples;
 }
 
-/* A wave: as the server sent it where this device plays or decodes its
+/* A wave: as the server sent it when this device plays or decodes its
    format, and otherwise already decoded by the channel (`format` is then the
-   server's, the samples 16-bit PCM in the stream that was opened). What comes
-   back is the milliseconds until these samples are heard, which the channel
-   adds to the wave's confirm. */
+   server's, the samples 16-bit PCM in the opened stream's format). Returns
+   the milliseconds until these samples are heard, which the channel adds to
+   the wave's confirm. */
 static UINT playEx(rdpsndDevicePlugin *device, const AUDIO_FORMAT *format, const BYTE *data,
                    size_t size) {
     Device *d = (Device *) device;
@@ -459,8 +455,8 @@ static UINT playEx(rdpsndDevicePlugin *device, const AUDIO_FORMAT *format, const
         samples = widen(d, data, size);
         bytes = size * sizeof(int16_t);
     }
-    /* A decoder that made nothing of this wave (yet) leaves the stream as it
-       is, open or closed. */
+    /* A decoder that produced nothing for this wave (yet) leaves the stream
+       as it is, open or closed. */
     if (samples != NULL && bytes > 0 && openLocked(d, rate, channels)) {
         d->sound->table.write(d->stream, samples, bytes);
     }
@@ -502,13 +498,13 @@ static void free_(rdpsndDevicePlugin *device) {
     free(d);
 }
 
-/* The channel's entry for a device, called when the channel connects (the
-   static one) or opens (the dynamic one), each making a device of its own. */
+/* The channel's entry point for a device, called when the channel connects
+   (static) or opens (dynamic), each creating its own device. */
 static UINT VCAPITYPE entry(PFREERDP_RDPSND_DEVICE_ENTRY_POINTS points) {
     rdpContext *context = freerdp_rdpsnd_get_context(points->rdpsnd);
     VentoSound *sound = context != NULL ? vento_sound_of(context) : NULL;
     if (sound == NULL || !sound->available) {
-        /* The session names this device only where it has an output. */
+        /* The session names this device only when it has an output. */
         return CHANNEL_RC_INITIALIZATION_ERROR;
     }
     Device *d = calloc(1, sizeof(Device));
@@ -541,12 +537,12 @@ static UINT VCAPITYPE entry(PFREERDP_RDPSND_DEVICE_ENTRY_POINTS points) {
     return CHANNEL_RC_OK;
 }
 
-/* ---- finding it -------------------------------------------------------- */
+/* ---- registration ----------------------------------------------------- */
 
-/* Every lookup of an addin goes through here once registered: rdpsnd's
-   device "vento" is this module's, and everything else — every channel, and
-   every other device — is the library's own static table's, as it is for any
-   client of the library. */
+/* Every addin lookup goes through here once registered: rdpsnd's device
+   "vento" is this module's, and everything else (every channel and every
+   other device) comes from the library's static table, as for any client of
+   the library. */
 static PVIRTUALCHANNELENTRY provider(LPCSTR name, LPCSTR subsystem, LPCSTR type, DWORD flags) {
     if (name != NULL && subsystem != NULL && strcmp(name, RDPSND_CHANNEL_NAME) == 0
             && strcmp(subsystem, VENTO_RDPSND_SUBSYSTEM) == 0) {
@@ -558,11 +554,11 @@ static PVIRTUALCHANNELENTRY provider(LPCSTR name, LPCSTR subsystem, LPCSTR type,
 
 bool vento_sound_register(void) {
     /* Process-wide, as the library's provider is: every session registers
-       the same function, so a second session's undoes nothing of the
-       first's. What it cannot close is the moment between a context being
-       made, which puts the library's provider back, and this call; a channel
-       of another session that looks its device up in that moment does not
-       find it, and that session plays nothing. */
+       the same function, so a second session's registration undoes nothing
+       of the first's. It can't cover the moment between a context being
+       created, which restores the library's provider, and this call: another
+       session's channel that looks up its device in that moment doesn't find
+       it, and that session plays nothing. */
     return freerdp_register_addin_provider(provider, 0) == 0;
 }
 
@@ -580,7 +576,8 @@ bool vento_sound_init(VentoSound *v, const vento_audio *table) {
     v->table = *table;
     v->available = true;
     atomic_init(&v->offering, 0);
-    /* Asked once: what the server is offered for the whole session. */
+    /* Queried once: this decides what the server is offered for the whole
+       session. */
     if (table->decodable != NULL && table->decoder_open != NULL && table->decode != NULL
             && table->decoder_close != NULL) {
         v->aac = table->decodable(table->user, VENTO_AUDIO_CODEC_AAC);

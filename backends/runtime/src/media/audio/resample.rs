@@ -6,12 +6,13 @@
 //!
 //! **Linear**, which is the cheapest conversion there is and the worst that
 //! is worth having: between 44.1 and 48 kHz its images sit some 40 dB down
-//! at the top of the band, which nobody hears over a remote desktop's
+//! at the top of the band, which is inaudible in a remote desktop's
 //! notification sounds and speech, and it has no delay and no filter state
-//! to warm up. It is a fallback rather than the path: both platforms' sound
-//! servers (PipeWire, directly or behind ALSA's default device;
-//! AudioFlinger behind AAudio) take any rate and resample properly themselves, so this runs only
-//! on a device that refused the stream's rate outright.
+//! to warm up. It is a fallback rather than the usual path: both platforms'
+//! sound servers (PipeWire, directly or behind ALSA's default device;
+//! AudioFlinger behind AAudio) take any rate and resample properly
+//! themselves, so this runs only on a device that refused the stream's rate
+//! outright.
 
 use std::collections::VecDeque;
 

@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The FreeRDP backend's entry in the catalog: what it is called, where it
-//! goes in a picker, how its identities are pinned, and every option it
-//! takes. Compiled by `remotedesktop-api`, which names this file by path
-//! (`backends/api/src/catalog.rs`), and not by this module's crate: the
-//! Linux client's picker and the phone's generated Java (`vento-codegen`)
-//! read it without building the backend.
+//! The FreeRDP backend's catalog entry: its name, its place in a picker, how
+//! its identities are pinned, and its options. Compiled by
+//! `remotedesktop-api`, which includes this file by path
+//! (`backends/api/src/catalog.rs`), not by this module's crate, so the Linux
+//! client's picker and the Android generated Java (`vento-codegen`) read it
+//! without building the backend.
 
 use crate::catalog::About;
 use crate::options::{
@@ -19,51 +19,49 @@ pub static FREERDP: About = About {
     name: "RDP (FreeRDP)",
     short_name: "FreeRDP",
     description: "The most robust RDP implementation. Support EGFX with hardware-accelerated H.264 video, and supports audio. This is the best one to use with a Windows RDP server.",
-    // Ahead of the other RDP client: it is the one that reaches a Windows
-    // desktop, and the one whose picture can be a video.
+    // Ahead of IronRDP: this one works with Windows desktops and supports
+    // H.264 video.
     order: 20,
     pinning: Pinning::ADDRESS,
-    // The prompt has no box for a domain, so it starts with it in the
-    // name, as Windows shows it.
+    // The prompt has no domain field, so the domain goes in the user name
+    // (`DOMAIN\user`), as Windows shows it.
     user_has_domain: true,
     saves_identity: false,
     options: OPTIONS,
 };
 
-/// What the FreeRDP backend can be told.
+/// The FreeRDP backend's options.
 ///
-/// It began as the other RDP backend's rows copied so the two would be
-/// comparable, and two of these are things that client cannot be asked at
-/// all: **EGFX**, the graphics pipeline, which is how a machine since Windows
-/// 8 would rather send a desktop and the only path that carries H.264; and the
-/// **interface size**, which is the only answer the phone has to a desktop
-/// whose text is sized for a monitor and is being read on it. The **sound**
-/// began here too, and the other has it now, all but the remote machine.
+/// They started as a copy of IronRDP's rows so the two would be comparable.
+/// Two of them are not supported by IronRDP at all: **EGFX**, the graphics
+/// pipeline, which Windows 8 and later prefer for sending a desktop and the
+/// only path that carries H.264; and the **display scale**, the only way to
+/// make a desktop with text sized for a monitor readable on a phone. **Sound**
+/// also started here, and IronRDP has it now, except for playing it on the
+/// remote machine.
 ///
-/// What is deliberately **not** here:
+/// Deliberately left out:
 ///
-/// - **The keyboard layout.** Every key goes as a position against a US table,
-///   and the phone's own layout has already turned a press into a character
-///   before the backend sees it — so the layout named at connect time is what
-///   turns those positions back into the characters that were typed, and
-///   naming another one makes every letter a different letter.
-/// - **The codecs one at a time.** Progressive and planar cost nothing and are
-///   decoded in software either way; the two H.264 switches are one switch,
-///   since the pair also selects every capability version above 8.1. What is
-///   left is video or no video, which is a value on the picture row.
-/// - **Small cache and thin client.** Both are a phone telling a server to
-///   expect less of it. The cache they shrink is the server's, the memory it
-///   costs is the server's, and the one part that reaches the picture asks for
-///   a cheaper H.264 profile on a phone that decodes in hardware.
-/// - **Drives, printers and smartcards.** A printer needs CUPS and a smartcard
-///   needs PC/SC, neither of which is in this build; a drive needs a POSIX
-///   path, and what a person can grant on Android is a document tree with no
-///   path at all.
-/// - **The clipboard** (a question about the client, answered once for every
-///   protocol in the client's own settings), **the domain** (already a field,
-///   split out of the user name) and **the colour depth** (the codec has
-///   decided what a pixel costs long before it reaches a framebuffer that is
-///   32 bits either way).
+/// - **The keyboard layout.** Keys are sent as scancodes from a US table, and
+///   the near end's layout has already turned a press into a character before
+///   the backend sees it. The layout sent at connect time (US) maps those
+///   scancodes back to the typed characters; any other layout would change
+///   every letter.
+/// - **Individual codecs.** Progressive and planar cost nothing and are
+///   decoded in software either way. The two H.264 switches act as one, since
+///   the pair also enables every capability version above 8.1. That leaves
+///   video or no video, which is a value of the Graphics row.
+/// - **Small cache and thin client.** Both tell the server to expect less of
+///   the client. The cache they shrink and the memory it costs are the
+///   server's, and the only part that affects the picture requests a cheaper
+///   H.264 profile, on a phone that decodes in hardware.
+/// - **Drives, printers and smartcards.** Printers need CUPS and smartcards
+///   need PC/SC, neither of which is in this build. Drives need a POSIX path,
+///   and Android grants access to a document tree, which has no path.
+/// - **The clipboard** (a client setting shared by every protocol), **the
+///   domain** (already a field, split out of the user name) and **the colour
+///   depth** (the codec decides the cost of a pixel before it reaches the
+///   framebuffer, which is 32 bits either way).
 pub static OPTIONS: &[Spec] = &[
     choices(
         "Nla",
@@ -178,9 +176,9 @@ mod tests {
     use crate::kind::Platform;
     use crate::options::find;
 
-    /// The keys it had when the phone's lists became these, in the same
-    /// order: a key is stored in connection records and preference files,
-    /// so one renamed is a setting forgotten.
+    /// The keys the Android lists had when they moved here, in the same
+    /// order: keys are stored in connection records and preference files,
+    /// so renaming one loses the setting.
     #[test]
     fn the_keys_are_the_ones_records_hold() {
         let keys: Vec<&str> = OPTIONS.iter().map(|s| s.key).collect();

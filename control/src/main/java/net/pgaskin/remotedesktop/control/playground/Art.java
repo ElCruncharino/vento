@@ -105,7 +105,7 @@ public final class Art {
         return new Cursor(bmp, 0, 0, "ARROW");
     }
 
-    /** The link hand, hotspot at the fingertip — what a page changes to. */
+    /** The link hand, hotspot at the fingertip: what a page changes to. */
     public static Cursor handCursor() {
         final int w = 22, h = 28;
         final Bitmap bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
@@ -149,7 +149,7 @@ public final class Art {
         return new Cursor(bmp, 8, 1, "HAND");
     }
 
-    /** Crosshair, hotspot in the middle — the interesting case for hotspots. */
+    /** Crosshair, hotspot in the middle: the interesting case for hotspots. */
     public static Cursor crossCursor() {
         final int n = 21, m = n / 2;
         final Bitmap bmp = Bitmap.createBitmap(n, n, Bitmap.Config.ARGB_8888);

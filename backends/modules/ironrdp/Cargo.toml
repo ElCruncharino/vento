@@ -1,6 +1,6 @@
-# The RDP backend's native half, in the RFB client's shape because `Backend` is
-# what both have to fit. Bound rather than written: what is ours is the threads,
-# the framebuffer, the keysym map and the trust decision.
+# The IronRDP backend's native code, structured like the RFB client since both
+# implement `Backend`. IronRDP handles the protocol; this crate adds the
+# threads, the framebuffer, the keysym map and the trust decision.
 [package]
 name = "remotedesktop-ironrdp"
 version.workspace = true
@@ -9,9 +9,9 @@ license.workspace = true
 publish = false
 
 [lib]
-# `lib` for the tests and the example, `cdylib` for the library the app loads —
-# one crate for one protocol. The name is the `.so`'s: librdp.so is too plain a
-# name to put in somebody's APK.
+# `lib` for the tests and the example, `cdylib` for the library the app loads:
+# one crate for one protocol. This is also the `.so` name; librdp.so is too
+# generic a name for a library inside an APK.
 name = "remotedesktop_ironrdp"
 crate-type = ["lib", "cdylib"]
 
@@ -26,10 +26,10 @@ remotedesktop-runtime.workspace = true
 # preference:
 # `ironrdp-session` 0.11.0 chunks a decoded bitmap by the *rectangle's* width
 # where the protocol pads the bitmap's own width up to a multiple of four, so
-# every update not a multiple of four wide shears one row further left than the
-# last. On xrdp that is most of them. Fixed upstream and unreleased — revisit at
-# the next release. The paths are the root `Cargo.toml`'s
-# `[workspace.dependencies]`.
+# every update whose width is not a multiple of four shears each row one step
+# further left than the last. On xrdp that is most of them. Fixed upstream but
+# unreleased; revisit at the next release. The paths are in the root
+# `Cargo.toml`'s `[workspace.dependencies]`.
 ironrdp-cliprdr.workspace = true
 ironrdp-blocking.workspace = true
 ironrdp-connector.workspace = true
@@ -40,7 +40,7 @@ ironrdp-graphics.workspace = true
 ironrdp-input.workspace = true
 ironrdp-pdu.workspace = true
 # The server's sound, played on the session's output (`src/sound.rs`), and
-# device redirection with no devices, without which Windows never starts it.
+# device redirection with no devices, without which Windows never starts sound.
 ironrdp-rdpsnd.workspace = true
 ironrdp-rdpdr.workspace = true
 ironrdp-session.workspace = true
@@ -53,17 +53,17 @@ rustls = { version = "0.23", default-features = false, features = [
     "logging",
 ] }
 # CredSSP binds the authentication to the TLS certificate's public key, so the
-# SubjectPublicKeyInfo has to come out of the DER. A parser rather than an
-# offset: this is the one field whose position nobody should guess.
+# SubjectPublicKeyInfo has to be extracted from the DER. A parser rather than a
+# fixed offset, since this field's position must not be guessed.
 x509-cert = { version = "0.2", default-features = false, features = ["pem"] }
 
-# `src/backend.rs`, the protocol as an `api::Backend`: what the Linux
-# client holds, and what the phone's JNI layer stands in front of.
+# `src/backend.rs`, the protocol as an `api::Backend`, used by the Linux
+# client directly and by the phone through its JNI layer.
 remotedesktop-api.workspace = true
 
-# The probe is a development tool, built only when asked for: `cargo run
-# --features probe --example ironrdp-probe`. Without the feature `cargo test` and
-# `clippy --all-targets` leave it alone.
+# The probe is a development tool, built only on request: `cargo run
+# --features probe --example ironrdp-probe`. Without the feature, `cargo test`
+# and `clippy --all-targets` skip it.
 [features]
 probe = []
 
@@ -71,7 +71,7 @@ probe = []
 name = "ironrdp-probe"
 required-features = ["probe"]
 
-# The only part of this crate that knows a phone exists: the one line in
-# `src/lib.rs` that hands the backend to the platform crate's JNI layer.
+# The only Android-specific part of this crate: the line in `src/lib.rs` that
+# registers the backend with the platform crate's JNI layer.
 [target.'cfg(target_os = "android")'.dependencies]
 remotedesktop-platform-android.workspace = true

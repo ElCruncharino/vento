@@ -1,11 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// `ALooper`, which is what the core registers its sockets and timers on, as
-// an epoll set per thread. The pieces of `libandroid.so` the core imports are
-// the six functions below; `pollOnce` is also what the session's thread pumps
-// between its own tasks, and `wake` is how a task posted from another thread
-// makes that pump return.
+// `ALooper`, on which the core registers its sockets and timers, as an epoll
+// set per thread. The core imports the six `libandroid.so` functions below;
+// the session's thread also pumps `pollOnce` between its own tasks, and a
+// task posted from another thread calls `wake` to make that pump return.
 
 #ifndef VENTO_REALVNC_LOOPER_H
 #define VENTO_REALVNC_LOOPER_H
@@ -35,7 +34,7 @@ enum {
 
 class Looper {
 public:
-    /* This thread's, made on first use, as `ALooper_prepare` makes one. */
+    /* This thread's looper, created on first use, as `ALooper_prepare` does. */
     static Looper *forThread();
 
     int addFd(int fd, int ident, int events, ALooper_callbackFunc callback, void *data);
@@ -65,16 +64,17 @@ private:
     std::mutex lock_;
     std::map<int, Entry> fds_;
     /* Every registration's number, as Android's `mNextRequestSeq` numbers
-       them, carried in the epoll event beside the descriptor. A descriptor's
+       them, carried in the epoll event beside the descriptor. A descriptor
        number is reused as soon as it is closed, so an event read in the same
-       batch as a callback that closed it and opened another is the old
-       descriptor's, and the number is how it is told apart and dropped. */
+       batch as a callback that closed it and opened another belongs to the
+       old descriptor; the registration number identifies it so it can be
+       dropped. */
     uint32_t nextSeq_ = 1;
     /* Descriptors that reported only an error or hangup and were kept by
-       their callback. Level-triggered epoll would return them at once, for
-       ever — a UDP socket with a pending ECONNREFUSED does this, and spun the
-       loop a million times a second until the core's 750 ms TCP fallback
-       fired — so they are taken out of the set and put back after a moment. */
+       their callback. Level-triggered epoll would keep returning them at once
+       (a UDP socket with a pending ECONNREFUSED does this, and spun the loop a
+       million times a second until the core's 750 ms TCP fallback fired), so
+       they are taken out of the set and put back after a short delay. */
     std::map<int, std::chrono::steady_clock::time_point> parked_;
 };
 

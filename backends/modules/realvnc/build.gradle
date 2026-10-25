@@ -5,19 +5,19 @@ plugins {
     id 'com.android.library'
 }
 
-// `Backend` implemented on somebody else's viewer core. A protocol module like
-// the others: `:realvnc-jni` holds the declarations, and what is here is ours —
-// the session's lifecycle, the prompts, the options, and one small library that
-// reads a counter their exported functions do not offer. The same directory's
-// `cpp/` also holds the host's half of this backend (`realvnc_session.cxx`,
+// `Backend` implemented over RealVNC's viewer core. A protocol module like the
+// others: `:realvnc-jni` holds the declarations, and this module holds the
+// session lifecycle, the prompts, the options, and a small native library that
+// reads a counter the core's exported functions do not offer. This directory's
+// `cpp/` also holds the host side of this backend (`realvnc_session.cxx`,
 // built by `backends/CMakeLists.txt` and never by this file), which runs the
-// same core in a Linux process, and its root the Linux client's adapter over
-// that (`Cargo.toml`, `src/`), a crate no Gradle build names.
+// same core in a Linux process, and the module root holds the Linux client's
+// adapter over that (`Cargo.toml`, `src/`), a crate no Gradle build uses.
 //
-// Nothing of RealVNC's is in this or in anything built from it. It is the one
-// backend that ships in an add-on rather than in the app, because everything
-// which knows where their library comes from has to live somewhere the app is
-// not.
+// Nothing of RealVNC's is in this module or in anything built from it. It is
+// the only backend shipped in an add-on rather than in the app, because all
+// code that knows where the RealVNC library comes from has to live outside
+// the app.
 android {
     namespace = 'net.pgaskin.remotedesktop.backend.realvnc'
     compileSdk 36
@@ -28,7 +28,7 @@ android {
         externalNativeBuild {
             cmake {
                 targets 'remotedesktop_realvnc'
-                // scripts/check-warnings.sh, and nothing in the path of building
+                // Set only by scripts/check-warnings.sh, never when building
                 // the app: see backends/cmake/warnings.cmake.
                 if (project.hasProperty('strictWarnings')) {
                     arguments '-DSTRICT_WARNINGS=ON'
@@ -54,10 +54,10 @@ android {
         targetCompatibility JavaVersion.VERSION_21
     }
 
-    // Not AGP's `src/main/`, as in every module here: the Java is in `java/`,
-    // the files themselves with no package directories over them (javac goes
-    // by the `package` line), and the provider's registration is in
-    // `resources/`; the C is `cpp/`, above.
+    // Not AGP's `src/main/`, as in every module here: the Java is in `java/`
+    // with no package directories (javac uses the `package` line), the
+    // provider's registration is in `resources/`, and the C is in `cpp/`
+    // (above).
     sourceSets.main {
         java.srcDirs = ['java']
         resources.srcDirs = ['resources']
@@ -71,18 +71,19 @@ android {
 }
 
 dependencies {
-    // The seam, and the only thing of the app's this module may name.
+    // The seam, and the only part of the app this module may depend on.
     api project(':backends')
 
-    // Their JNI surface, and the pin on the build it binds to.
+    // RealVNC's JNI declarations, and the pin on the build they bind to.
     api project(':realvnc-jni')
 
-    // The add-on this ships inside, for the one thing it needs of it: the
-    // library, which crosses from the add-on's uid to the app's.
+    // The add-on side of the library transfer: the library crosses from the
+    // add-on's uid to the app's (`Libraries`), and the add-on's setup screen
+    // is started through `Plugin.ACTION_SETUP`.
     implementation project(':plugins')
 }
 
-// `RealVncCatalog`, what the catalog says this backend is: see :backends.
+// Generates `RealVncCatalog`, this backend's catalog entry: see :backends.
 androidComponents {
     onVariants(selector().all()) { variant ->
         project(':backends').generateCatalog(project, variant, 'realvnc', 'RealVncCatalog')

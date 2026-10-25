@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The client's own settings: the phone's `AppSettings`, as far as this
-//! window has any — one answer for every connection rather than a field of
+//! window has any. One answer for every connection rather than a field of
 //! one, and nothing saved, since there is nowhere this client saves.
 //!
 //! They are drawn in two places with one function: a section of the
@@ -27,8 +27,8 @@ pub struct Settings {
     /// as the phone does, rather than making it the window's own cursor.
     pub software_cursor: bool,
     /// Hold the window manager's or the compositor's shortcuts off while a
-    /// session has the focus and takes input — the X11 keyboard grab, or
-    /// Wayland's shortcuts inhibitor — so that Alt+Tab and the rest reach
+    /// session has the focus and takes input (the X11 keyboard grab, or
+    /// Wayland's shortcuts inhibitor), so that Alt+Tab and the rest reach
     /// the far end. Off, neither is ever taken and they stay this
     /// desktop's.
     pub grab_keyboard: bool,
@@ -58,8 +58,8 @@ impl Default for Settings {
 }
 
 impl Settings {
-    /// The five as rows of a two-column grid — a label and a box each, the
-    /// shape the dialog's and the panel's options are drawn in, with the
+    /// The five as rows of a two-column grid (a label and a box each, the
+    /// shape the dialog's and the panel's options are drawn in), with the
     /// label `weak` where the panel's are. True if one was changed this
     /// frame.
     pub fn rows(&mut self, ui: &mut Ui, weak: bool) -> bool {

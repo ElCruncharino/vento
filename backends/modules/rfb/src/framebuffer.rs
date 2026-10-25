@@ -8,10 +8,10 @@
 /// `ARGB_8888` bitmap.
 ///
 /// Written by the protocol thread under a write lock and read by the drawing
-/// thread under a read lock — which is why every decoder assembles a rectangle
+/// thread under a read lock, which is why every decoder assembles a rectangle
 /// in scratch space first and holds the lock only for the blit. A 1920×1200 raw
-/// update is nine megabytes off a socket, and stalling the drawing thread for
-/// as long as that takes to arrive would be a frame or two of nothing.
+/// update is nine megabytes from a socket, and stalling the drawing thread
+/// while it arrives would drop a frame or two.
 pub struct Framebuffer {
     width: usize,
     height: usize,
@@ -35,8 +35,8 @@ impl Framebuffer {
         self.height
     }
 
-    /// Nothing is preserved: a desktop that changes size has repainted anyway,
-    /// and the server sends the whole thing again.
+    /// Nothing is preserved: a desktop that changes size is repainted anyway,
+    /// and the server sends all of it again.
     pub fn resize(&mut self, width: usize, height: usize) {
         self.width = width;
         self.height = height;
@@ -86,10 +86,10 @@ impl Framebuffer {
         }
     }
 
-    /// Copy a desktop rectangle out as `R, G, B, A` bytes, one row at a time
-    /// into a destination of its own stride. False if there is nothing to read
-    /// or the rectangle is not wholly inside the desktop — a partial answer
-    /// would be a half-drawn tile on screen.
+    /// Copies a desktop rectangle out as `R, G, B, A` bytes, one row at a time,
+    /// into a destination with its own stride. False if there is nothing to
+    /// read or the rectangle is not wholly inside the desktop, since a partial
+    /// result would be a half-drawn tile on screen.
     pub fn read_rgba(&self, x: usize, y: usize, w: usize, h: usize,
                      dst: &mut [u8], dst_stride: usize) -> bool {
         if self.width == 0 || w == 0 || h == 0 {
@@ -114,9 +114,9 @@ impl Framebuffer {
     }
 
     /// The whole desktop at `1/step`, nearest neighbour: the home screen's
-    /// thumbnail. Unlike RealVNC's scaler the step need not be a power of two —
-    /// that constraint was a consequence of `(int)(1/scale)` in their library,
-    /// and there is no float here at all.
+    /// thumbnail. Unlike RealVNC's scaler the step need not be a power of two:
+    /// that limit came from `(int)(1/scale)` in their library, and there is no
+    /// float here.
     pub fn thumbnail(&self, step: usize) -> Option<(usize, usize, Vec<u32>)> {
         if self.width == 0 || step == 0 {
             return None;
@@ -166,9 +166,9 @@ mod tests {
     }
 
     /// A rectangle that hangs over the right edge is narrowed, and each row
-    /// still comes from the source's own stride. Only a server that does not
-    /// clip to what was asked for gets here, which is why it went unnoticed:
-    /// what it produces is a skewed picture rather than a crash.
+    /// still comes from the source's own stride. Only a server that doesn't
+    /// clip to the requested area gets here, which is why the bug went
+    /// unnoticed: it produced a skewed picture rather than a crash.
     #[test]
     fn a_clipped_blit_keeps_the_source_stride() {
         let mut fb = Framebuffer::new();
@@ -189,10 +189,10 @@ mod tests {
         assert!(!fb.read_rgba(3, 0, 2, 1, &mut out, 8));
     }
 
-    /// The destination offset `nativeReadRegion` takes is a slice offset and
-    /// nothing else, which is what lets it promise that the rest of the
-    /// destination is left as it was — the promise the caller's tiles depend on,
-    /// since a tile is refreshed a piece at a time.
+    /// The destination offset `Backend::read_region` applies is only a slice
+    /// offset, which lets it guarantee that the rest of the destination is left
+    /// unchanged. The caller's tiles depend on that, since a tile is refreshed
+    /// a piece at a time.
     #[test]
     fn a_read_into_the_middle_leaves_the_rest_alone() {
         let mut fb = Framebuffer::new();
@@ -221,8 +221,8 @@ mod tests {
         }
     }
 
-    /// A downward move must copy from the bottom up, or every row is the first
-    /// one — the classic overlapping-`memcpy` bug, and the one a window drag
+    /// A downward move must copy from the bottom up, or every row becomes the
+    /// first one: the classic overlapping-`memcpy` bug, which a window drag
     /// hits every time.
     #[test]
     fn overlapping_copy_downwards() {

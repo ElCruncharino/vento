@@ -6,12 +6,11 @@ package net.pgaskin.remotedesktop.control.input;
 /**
  * Travel in, wheel clicks out, with the remainder carried.
  *
- * <p>Two things scroll — two fingers on the pad and a real wheel — and they
- * differ only in what a step is worth and in which way their axis points. What
- * they must not differ in is the arithmetic: accumulating rather than rounding
- * is what makes a high-resolution wheel produce the same number of clicks per
- * turn as a detented one, and a sign error here would be a sign error in one
- * place and not the other.
+ * <p>Two things scroll (two fingers on the pad and a real wheel), and they
+ * differ only in what a step is worth and in which way their axis points. They
+ * share the arithmetic: accumulating rather than rounding makes a
+ * high-resolution wheel produce the same number of clicks per turn as a
+ * detented one, and one copy of it keeps the two consistent.
  */
 final class WheelSteps {
 

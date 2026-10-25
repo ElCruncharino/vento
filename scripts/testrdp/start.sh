@@ -7,12 +7,12 @@ set -e
 
 RDP_USER="${RDP_USER:-proto}"
 RDP_PASSWORD="${RDP_PASSWORD:-protopass}"
-# tls  — TLS with the certificate below, and the password in the Client Info
-#        PDU. What xrdp anywhere is set up as, and what IronRDP's connector
-#        does when should_perform_credssp() is false.
-# rdp  — legacy RDP encryption, no TLS at all. Here so that "the client
-#        refuses to talk to a server that offers no TLS" is testable.
-# negotiate — xrdp's own default: whatever the client asks for.
+# tls:  TLS with the certificate below, and the password in the Client Info
+#       PDU. The usual xrdp setup, and what IronRDP's connector does when
+#       should_perform_credssp() is false.
+# rdp:  legacy RDP encryption, no TLS at all. Here so that "the client
+#       refuses to talk to a server that offers no TLS" is testable.
+# negotiate: xrdp's own default, whatever the client asks for.
 SECURITY_LAYER="${SECURITY_LAYER:-tls}"
 
 id -u "$RDP_USER" >/dev/null 2>&1 || useradd -m -s /bin/bash "$RDP_USER"
@@ -21,7 +21,7 @@ echo "$RDP_USER:$RDP_PASSWORD" | chpasswd
 # The server's own certificate, made once per container and self-signed,
 # because that is what an xrdp anywhere actually presents. Its fingerprint is
 # printed here so that what the phone shows can be checked against something
-# that is not the phone — the whole point of pinning a key nobody vouches for.
+# that is not the phone, which is the point of pinning a key no CA vouches for.
 if [ ! -f /etc/xrdp/proto-cert.pem ]; then
     openssl req -new -x509 -days 3650 -nodes -batch \
         -subj "/CN=prototype test desktop (rdp)" \

@@ -15,15 +15,14 @@
 # Host prereqs: cc (for eccdata), make, and the NDK below.
 set -eu
 
-# The archive member lists and the header list are sorted, and what `sort`
-# thinks of an underscore is a question of locale; the answer that is the same
-# everywhere is C's.
+# The archive member lists and the header list are sorted, and where `sort`
+# puts an underscore depends on the locale; C's order is the same everywhere.
 export LC_ALL=C
 
 cd "$(dirname "$0")"
 port=$PWD
 # The path built rather than cd'd into, so that the check below is what reports
-# a missing tree — a cd under set -e aborts before it can be reached.
+# a missing tree: a cd under set -e aborts before it can be reached.
 src=$(cd ../../../../.. && pwd)/third_party/nettle
 . ../ndk.sh
 
@@ -36,8 +35,8 @@ trap 'rm -rf "$tmp"' EXIT
 #   mini-gmp       Nettle's own bignums. GMP is a second autotools upstream and
 #                  Android has none of it; mini-gmp is a file in the tarball.
 #   no assembler   Nettle's per-architecture assembly is m4 input, and m4 is a
-#                  host tool this build refuses to need. What that costs is the
-#                  C fallbacks for AES, GHASH and the hashes.
+#                  host tool this build avoids depending on. The cost is the C
+#                  fallbacks for AES, GHASH and the hashes.
 #   no fat         Runtime CPU dispatch selects between those assembly variants,
 #                  so with the assembler off it has nothing to select.
 build() {

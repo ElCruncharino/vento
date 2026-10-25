@@ -5,18 +5,18 @@
 //! `runtime::media::audio::Outputs`: a PipeWire stream of its own per stream
 //! ([`pipewire`](crate::pipewire)), where a PipeWire daemon answers, and ALSA's
 //! `default` device ([`alsa`](crate::alsa)) where none does or libpipewire is
-//! not there — a PulseAudio desktop, a bare ALSA one, a Flatpak sandbox granted
-//! the pulse socket and not PipeWire's. Both libraries are loaded at run time,
-//! and where neither is there the far end's sound is dropped, which the log
-//! says once.
+//! missing (a PulseAudio desktop, a bare ALSA one, a Flatpak sandbox granted
+//! the pulse socket and not PipeWire's). Both libraries are loaded at run
+//! time, and where neither is present the far end's sound is dropped, which
+//! the log says once.
 //!
 //! PipeWire's own stream rather than its ALSA plugin, which is where ALSA's
 //! `default` leads on a PipeWire desktop: the plugin keeps a ring of the
-//! 50 ms asked for in front of the graph, and holds the writer to it, where
-//! a stream of its own is pulled a graph cycle at a time and keeps nothing
-//! (scratch/pipewire-eval measured RDP's sound 35-40 ms sooner, a mute heard
-//! in 5 ms rather than 55-65); and it is the session's node, named for it,
-//! in a mixer, rather than "PipeWire ALSA [vento]".
+//! 50 ms requested in front of the graph, and holds the writer to it, while a
+//! stream of its own is pulled a graph cycle at a time and keeps nothing
+//! (measured: RDP's sound 35-40 ms sooner, a mute heard in 5 ms rather than
+//! 55-65); and it appears in a mixer as the session's node, named for it,
+//! rather than "PipeWire ALSA [vento]".
 
 use std::sync::Arc;
 
@@ -35,8 +35,8 @@ pub enum Output {
     /// PipeWire's only: with no daemon, the far end's sound is dropped
     /// rather than played through ALSA. For tests of this path.
     PipeWire,
-    /// ALSA's `default` device, as before there was a PipeWire output;
-    /// libpipewire is not loaded. Without libasound, no sound.
+    /// ALSA's `default` device only; libpipewire is not loaded. Without
+    /// libasound, no sound.
     Alsa,
 }
 
@@ -64,7 +64,7 @@ impl Output {
     }
 }
 
-/// The desktop's output, as a session is handed it: one a session, for its
+/// The desktop's output as handed to a session: one per session, for its
 /// controls and for the name its streams are shown under.
 pub struct Audio {
     controls: Arc<Controls>,

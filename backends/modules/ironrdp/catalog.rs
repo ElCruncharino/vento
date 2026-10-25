@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The IronRDP backend's entry in the catalog: what it is called, where it
-//! goes in a picker, how its identities are pinned, and every option it
-//! takes. Compiled by `remotedesktop-api`, which names this file by path
-//! (`backends/api/src/catalog.rs`), and not by this module's crate: the
-//! Linux client's picker and the phone's generated Java (`vento-codegen`)
-//! read it without building the backend.
+//! The IronRDP backend's entry in the catalog: its name, its place in a
+//! picker, how its identities are pinned, and all its options. Compiled by
+//! `remotedesktop-api`, which includes this file by path
+//! (`backends/api/src/catalog.rs`), and not by this module's crate, so that
+//! the Linux client's picker and the phone's generated Java (`vento-codegen`)
+//! can read it without building the backend.
 
 use crate::catalog::About;
 use crate::options::{
@@ -21,59 +21,58 @@ pub static IRONRDP: About = About {
     description: "Rust RDP implementation. Uses less CPU than FreeRDP, but drops more frames and does not properly support EGFX",
     order: 25,
     pinning: Pinning::ADDRESS,
-    // The prompt has no box for a domain, so it starts with it in the
+    // The prompt has no domain field, so it starts with the domain in the
     // name, as Windows shows it.
     user_has_domain: true,
     saves_identity: false,
     options: OPTIONS,
 };
 
-/// What the IronRDP backend can be told.
+/// The IronRDP backend's options.
 ///
-/// Shorter than [RFB's](crate::catalog::RFB), and shorter for a different
-/// reason. RFB's list is short because the protocol has little to say; this
-/// one is short because almost everything RDP negotiates is negotiated *well*
-/// — the codec, the compression, the colour depth — and an option that
-/// re-decides what the two ends already agreed on is a way to make a session
-/// worse.
+/// Shorter than [RFB's](crate::catalog::RFB), for a different reason. RFB's
+/// list is short because the protocol has few settings; this one is short
+/// because RDP negotiates almost everything well (the codec, the
+/// compression, the colour depth), and an option that overrides what the
+/// two ends already agreed on can only make a session worse.
 ///
 /// Five things are deliberately **not** here:
 ///
-/// - **The keyboard layout.** RDP sends key *positions*, and `rdp::keymap`
-///   maps keysyms onto a US layout, so the layout named at connect time has to
-///   be the one that table was written for. Offering a choice would let
-///   someone pick a layout that turns every letter into a different letter.
-/// - **The clipboard.** The channel is open in both directions, but whether to
-///   share the local clipboard is a question about the client and is
-///   answered once for every protocol, in the client's own settings.
-/// - **The domain**, RDP's third credential, which is not a row because it is
-///   already a field: `DOMAIN\user` and `user@domain` are split out of the
-///   user name, which is what every RDP client takes and what anyone who has
-///   one will type.
-/// - **The colour depth**, which the three VNC backends do offer. There it is
-///   a wire format the server encodes into; here the picture arrives as
+/// - **The keyboard layout.** RDP sends key *positions*, and this crate's
+///   `keymap` maps keysyms onto a US layout, so the layout named at connect
+///   time has to be the one that table was written for. Offering a choice
+///   would allow a layout that turns every letter into a different letter.
+/// - **The clipboard.** The channel is open in both directions, but whether
+///   to share the local clipboard is a client setting, configured once for
+///   every protocol in the client's own settings.
+/// - **The domain**, RDP's third credential, which is not a row because it
+///   is already part of a field: `DOMAIN\user` and `user@domain` are split
+///   out of the user name, the form every RDP client accepts and RDP users
+///   type.
+/// - **The colour depth**, which three of the VNC backends offer. There it
+///   is a wire format the server encodes into; here the picture arrives as
 ///   RemoteFX or as bitmaps, and the codec has already decided what a pixel
-///   costs — 16-bit would apply to one of those two paths, save nothing where
-///   the codec is on, and put a conversion in front of a framebuffer that is
-///   32 bits either way.
-/// - **The graphics pipeline (MS-RDPEGFX)**, which is how a machine since
-///   Windows 8 would rather send a desktop and the only path that carries
-///   H.264. It was built, driven against both servers and taken out again,
-///   because IronRDP's implementation was then incomplete and, where it was
-///   complete, wrong. Nothing in the library set the capability flag a server
-///   needs before it will open the channel; the client received RFX
-///   Progressive and discarded it, though a finished decoder for it sat unused
-///   one crate away; and the ClearCodec that Windows sends for most of an
-///   interface was rejected outright — fifteen ClearCodec and twelve
-///   progressive failures in one short session, which is a desktop with solid
-///   rectangles of the wrong colour through it. Patched, all of that got as
-///   far as working against xrdp and no further. The library has since grown
-///   all three missing pieces — the flag and both decoders, and a session that
-///   composites what the pipeline draws — but upstream's own client still
-///   ships with the flag off, and none of it has been driven against a Windows
-///   host from here since. Until it has, offering it would be the same bet as
-///   before: a choice known to be right on one server and not known to be
-///   right on the one the protocol belongs to.
+///   costs. 16-bit would apply to only one of those two paths, save nothing
+///   where the codec is on, and add a conversion in front of a framebuffer
+///   that is 32 bits either way.
+/// - **The graphics pipeline (MS-RDPEGFX)**, which Windows 8 and later
+///   prefer for sending a desktop, and the only path that carries H.264. It
+///   was built, tested against both servers and removed again, because
+///   IronRDP's implementation was then incomplete and, where complete,
+///   wrong. Nothing in the library set the capability flag a server needs
+///   before it opens the channel; the client received RFX Progressive and
+///   discarded it, though a finished decoder for it sat unused one crate
+///   away; and the ClearCodec that Windows sends for most of an interface
+///   was rejected outright: fifteen ClearCodec and twelve progressive
+///   failures in one short session, leaving solid rectangles of the wrong
+///   colour across the desktop. With patches, it worked against xrdp and
+///   no further. The library has since added all three missing pieces (the
+///   flag, both decoders, and a session that composites what the pipeline
+///   draws), but upstream's own client still ships with the flag off, and
+///   none of it has been tested against a Windows host here since. Until
+///   it has, offering it would be the same bet as before: a choice known to
+///   work on one server and not known to work on the one the protocol
+///   belongs to.
 pub static OPTIONS: &[Spec] = &[
     choices(
         "Nla",
@@ -128,9 +127,9 @@ pub static OPTIONS: &[Spec] = &[
             choice("plain", "As little as possible"),
         ],
     ),
-    // FreeRDP's key, words and default, less the remote machine: leaving the
-    // sound there is a flag in the client info that IronRDP does not let a
-    // client set, and "Off" is the server playing it nowhere.
+    // FreeRDP's key, text and default, without "The remote machine": leaving
+    // the sound there is a flag in the client info that IronRDP does not let
+    // a client set, and "Off" means the server plays it nowhere.
     choices(
         "Sound",
         "Sound",
@@ -164,9 +163,9 @@ mod tests {
     use crate::options::Options;
     use crate::trust::pinned_as;
 
-    /// The keys it had when the phone's lists became these, in the same
-    /// order: a key is stored in connection records and preference files,
-    /// so one renamed is a setting forgotten.
+    /// The keys the phone's lists had when they moved here, in the same
+    /// order: keys are stored in connection records and preference files,
+    /// so renaming one loses the setting.
     #[test]
     fn the_keys_are_the_ones_records_hold() {
         let keys: Vec<&str> = OPTIONS.iter().map(|s| s.key).collect();

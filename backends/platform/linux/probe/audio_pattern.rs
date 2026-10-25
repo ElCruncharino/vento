@@ -1,14 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! A far end's rhythm, written into the desktop's output: how a protocol's
-//! sound arrives — QEMU's steady 10 ms, RDP's 23 ms waves and their
+//! A far end's rhythm, written into the desktop's output: the timing of a
+//! protocol's sound (QEMU's steady 10 ms, RDP's 23 ms waves and their
 //! lateness, Windows' PCM in pairs of 186 ms waves, Opus frames bunched by a
-//! network — with a half-second 440 Hz burst every two seconds, so that
+//! network) with a half-second 440 Hz burst every two seconds, so that
 //! `scripts/testaudio/pattern.py` can time each burst from the moment it was
 //! written to the moment the null sink captured it (the client's share of a
-//! session's latency, with nothing of a far end's) and count what went
-//! missing.
+//! session's latency, excluding the far end's) and count what went missing.
 //!
 //! **Run it through `scripts/testaudio/pattern.sh`, not by hand**: it plays
 //! sound. Like `audio_rig`, it writes silence in the pattern's rhythm until
@@ -86,9 +85,10 @@ mod rig {
         fn flush(&self) {}
     }
 
-    /// How a pattern's writes are made: `frames` a write, `group` writes at
-    /// once, a group due every `every` and sent between `early` before and
-    /// `late` after that; or, for `bursty`, let go at moments `hold` apart.
+    /// How a pattern's writes are made: `frames` per write, `group` writes at
+    /// once, each group due one group's duration after the last and sent
+    /// between `early` before and `late` after that; or, for `bursty`,
+    /// released at random moments 20 to 100 ms apart.
     struct Pattern {
         rate: u32,
         frames: usize,
@@ -169,7 +169,7 @@ mod rig {
         let every = wave * p.group as f64;
         let t0 = Instant::now();
         let mut buf = vec![0i16; p.frames * 2];
-        // The next write's first frame, and the group it is in.
+        // The next write's first frame.
         let mut next = 0u64;
         let mut go_frame: Option<u64> = None;
         let mut stalled_until = 0.0f64;
@@ -178,7 +178,7 @@ mod rig {
         let mut release = 0.0f64;
         let end = |go: Option<u64>| go.map(|g| g + ((seconds + 1.0) * p.rate as f64) as u64);
         loop {
-            // When this write's group is let go of: its due time and its
+            // When this write's group is released: its due time and its
             // lateness, or the network's next moment for `bursty`.
             let group = next / (p.frames * p.group) as u64;
             let due = group as f64 * every;
@@ -206,8 +206,7 @@ mod rig {
                 continue;
             }
             if go_frame.is_none() && go.load(Ordering::SeqCst) {
-                // A second of the stream's frames from here, and on a whole
-                // write.
+                // The tone starts a second of the stream's frames from here.
                 go_frame = Some(next + p.rate as u64);
                 next_stall = now
                     + if stall_at > 0.0 {

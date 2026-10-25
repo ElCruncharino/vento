@@ -2,29 +2,30 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! One RustDesk session: the handshake, the message loop, and everything the
-//! app can ask of a connection that is up.
+//! app can ask of an established connection.
 //!
-//! The protocol is small — one framed protobuf `Message` with a `oneof` of
-//! thirty arms — and most of what their product is lives in arms this app has
-//! no seam for. What is here is the seven that make a remote desktop: the login
-//! exchange, the picture, the cursor, the clipboard, input in both of its
-//! forms, and the timing message that has to be answered or a link saturates.
+//! The protocol is small (one framed protobuf `Message` with a `oneof` of
+//! thirty arms), and most of RustDesk's product features are in arms this app
+//! has no use for. This implements the seven a remote desktop needs: the login
+//! exchange, the picture, the cursor, the clipboard, both forms of input, and
+//! the timing message, which has to be answered or the link saturates.
 //!
-//! Three things about the far end are not guessable from the `.proto` and each
-//! cost a run to find:
+//! Three behaviours of the far end cannot be inferred from the `.proto`, and
+//! each was found by testing:
 //!
-//! - **`TestDelay` is echoed unchanged**, and only when the flag in it says the
-//!   peer started the exchange. Their server echoes anything with that flag
+//! - **`TestDelay` is echoed unchanged**, and only when its flag says the peer
+//!   started the exchange. RustDesk's server echoes anything with that flag
 //!   set, so a client that sets it on a reply gets its own message back and
-//!   answers it again — 9701 messages in fifteen seconds, on an idle session.
-//! - **A down event carries every modifier held.** Their server *releases*, on
-//!   the far end, each modifier not named in the event, so a Ctrl armed for the
-//!   letter after it is a Ctrl let go the moment that letter arrives. The same
-//!   is true of a mouse button going down, which is what makes Ctrl+click work.
-//! - **A Windows peer with more than one session logged in waits**: it
-//!   subscribes no video service at all until the client answers with a session
-//!   id. Nothing announces the wait — the login succeeds, the desktop simply
-//!   never comes.
+//!   answers it again: 9701 messages in fifteen seconds on an idle session.
+//! - **A down event carries every modifier held.** RustDesk's server
+//!   *releases*, on the far end, each modifier not named in the event, so a
+//!   Ctrl pressed for the next letter is released as soon as that letter
+//!   arrives. The same applies to a mouse button press, which is what makes
+//!   Ctrl+click work.
+//! - **A Windows peer with more than one logged-in session waits**: it
+//!   subscribes no video service until the client answers with a session id.
+//!   Nothing signals the wait: the login succeeds, and the desktop never
+//!   arrives.
 
 use std::collections::HashMap;
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
@@ -54,79 +55,79 @@ use runtime::media::audio::{Format, Outputs, Player};
 use runtime::{Handler, Hangup};
 use runtime::media::video::{self, Codec, Decoded, Decoders, GpuPicture, Hardware};
 
-/// Their default direct-access port, which is `RENDEZVOUS_PORT + 2`.
+/// RustDesk's default direct-access port, `RENDEZVOUS_PORT + 2`.
 pub const DIRECT_PORT: u16 = 21118;
 
-/// What we claim to be. Their server compares this against its own to decide
-/// which of its compatibility paths to take, so an honest answer is the one
-/// that avoids a path nothing here implements.
+/// The version this client reports. RustDesk's server compares it with its own
+/// to choose a compatibility path, so reporting the version this was written
+/// against avoids paths not implemented here.
 pub const VERSION: &str = "1.4.9";
 
-/// Their `TestDelay` arrives about once a second whatever the desktop is doing,
-/// so silence for this long is a link that has gone. A timeout is fatal rather
+/// The peer's `TestDelay` arrives about once a second regardless of activity,
+/// so silence for this long means the link is gone. A timeout is fatal rather
 /// than retried: a read that gives up part-way through a frame leaves the
-/// stream out of step, and there is nothing to resynchronise on.
+/// stream out of sync, with nothing to resynchronise on.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// How often to say something while a question is on somebody's screen, which
-/// has to be comfortably under the thirty seconds of silence the peer allows.
+/// How often to send something while a prompt is on screen; must be well
+/// under the thirty seconds of silence the peer allows.
 const KEEP_ALIVE_EVERY: Duration = Duration::from_secs(8);
 
-/// What the far end is told to send when the session is not on screen. There is
-/// no pause message in this protocol, and one frame a second is the nearest
-/// thing to one — the picture stays current enough to be worth showing the
-/// moment it comes back, at a hundredth of the traffic.
+/// The frame rate requested while the session is not focused. There is no
+/// pause message in this protocol, and one frame a second is the closest
+/// substitute: the picture stays recent enough to show as soon as the session
+/// is focused again, at a fraction of the traffic.
 const UNFOCUSED_FPS: i32 = 1;
 
-/// How often the decoder's status line is made again: it is a string a
-/// frame otherwise, for an overlay that is read by eye.
+/// How often the decoder's status line is rebuilt: otherwise it would be a
+/// string per frame, for an overlay read by eye.
 const STATUS_EVERY: Duration = Duration::from_millis(500);
 
 pub struct Config {
-    /// The peer: `host` or `host:port` for [`Reach::Direct`], and their nine
-    /// digits for [`Reach::Id`].
+    /// The peer: `host` or `host:port` for [`Reach::Direct`], and its nine-digit
+    /// id for [`Reach::Id`].
     pub address: String,
     pub reach: Reach,
     pub password: Option<String>,
     pub connect_timeout: Duration,
-    /// What the far end calls this phone in its own log and its own screen.
+    /// The name the far end shows for this client in its log and on screen.
     pub my_name: String,
-    /// What this end runs on, as the login says it.
+    /// The platform this end reports in the login.
     pub platform: Platform,
-    /// The live options' opening values. What they are afterwards is the
-    /// session's, since each of them can be changed while it is running.
+    /// The live options' initial values. After that the session holds them,
+    /// since each can be changed while it is running.
     pub quality: Quality,
-    /// 0 for the far end's own choice.
+    /// 0 lets the far end choose.
     pub fps: i32,
     pub codec: PreferredCodec,
     /// Whether the far end locks its screen when this session ends. Sent with
-    /// the login and never changed: what it asks for happens after the last
+    /// the login and never changed, since it takes effect after the last
     /// message either end sends.
     pub lock_after: bool,
-    /// Where the peer's sound goes, or `None` for a session that never asks
-    /// for it. Asked for only where the platform decodes Opus, which is all
-    /// their peer sends.
+    /// Where the peer's sound goes, or `None` for a session that never
+    /// requests it. Requested only where the platform decodes Opus, the only
+    /// format the peer sends.
     pub audio: Option<Arc<dyn Outputs>>,
-    /// Whether the peer is asked for its sound at login: where the session's
-    /// Enable switch starts, which asks again with their option message.
+    /// Whether the peer's sound is requested at login. This is the initial
+    /// state of the session's Enable switch, which changes it later with the
+    /// option message.
     pub sound: bool,
 }
 
-/// How long a stream stays open after its sound was heard: the gap between
-/// one sound and the next it rides over, as the other backends' streams do.
-/// Their peer goes on sending silence for eight seconds after its desktop
-/// falls silent and then nothing (its "zero gate"), so this is also how a
-/// session that has stopped sounding stops showing its Sound button, ten
-/// seconds after.
+/// How long a stream stays open after the last audible sound: the gap between
+/// sounds it bridges, as in the other backends. The peer keeps sending silence
+/// for eight seconds after its desktop goes quiet and then sends nothing (its
+/// "zero gate"), so this also makes a session that has gone quiet hide its
+/// Sound button ten seconds later.
 const QUIET: Duration = Duration::from_secs(2);
 
-/// What the login tells the peer this end runs on. Not a cosmetic field:
-/// their peer keys features on it — a file clipboard only between two
-/// Windows or two macOS ends, a printer only for a Windows one, the multiple
-/// clipboard formats refused to an Android client older than 1.3.3 — and it
-/// is part of how a trusted device is recognised, so each client says what
-/// their own client would say on the same machine: `Android` from their
-/// Android build, `whoami::platform()` (`Linux`) from their desktop one.
+/// The platform the login reports. Not cosmetic: the peer enables features
+/// based on it (a file clipboard only between two Windows or two macOS ends, a
+/// printer only for a Windows one, the multiple clipboard formats refused to an
+/// Android client older than 1.3.3), and it is part of how a trusted device is
+/// recognised. So each client reports what RustDesk's own client would on the
+/// same machine: `Android` from its Android build, `whoami::platform()`
+/// (`Linux`) from its desktop one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Platform {
     Android,
@@ -134,7 +135,7 @@ pub enum Platform {
 }
 
 impl Platform {
-    /// Their spelling, which is `whoami::Platform`'s `Display`.
+    /// RustDesk's spelling, which is `whoami::Platform`'s `Display`.
     pub fn wire(self) -> &'static str {
         match self {
             Platform::Android => "Android",
@@ -143,22 +144,22 @@ impl Platform {
     }
 }
 
-/// The two ways to a peer, which are not two transports of one connection but
-/// two different things to have chosen.
+/// The two ways to reach a peer, which are separate modes rather than two
+/// transports for one connection.
 ///
-/// Direct access is a mode the far end switched on, reaching a machine somebody
-/// can already address, and it has no key exchange at all. The id path reaches
-/// a machine nothing on this network can address, and the encryption comes with
-/// it rather than being a second decision: what makes the session verifiable is
+/// Direct access is a mode enabled on the far end, reaching a machine that is
+/// already addressable, and it has no key exchange at all. The id path reaches
+/// a machine that may not be addressable from this network, and encryption is
+/// part of it rather than a separate choice: the session is verifiable through
 /// the peer key the rendezvous server signs.
 pub enum Reach {
     Direct,
     Id {
         /// `host` or `host:port`; empty for the public network.
         server: String,
-        /// The server's public key, base64, as their `id_ed25519.pub` holds it;
-        /// empty for the public network's own, which is a constant in every
-        /// build of theirs.
+        /// The server's public key, base64, as in its `id_ed25519.pub`; empty
+        /// for the public network's key, which is built into every RustDesk
+        /// build.
         key: String,
     },
 }
@@ -200,9 +201,9 @@ impl Quality {
 ///
 /// A preference rather than an instruction: the peer picks from what it can
 /// encode and what this end says it can decode, and [`Auto`](Self::Auto) leaves
-/// it to choose — which on their server means whatever hardware encoder that
-/// machine has, falling back to VP9, since VP9 is the one codec compiled into
-/// every build of theirs.
+/// the choice to the peer. RustDesk's server then uses whatever hardware
+/// encoder the machine has, falling back to VP9, the one codec compiled into
+/// every RustDesk build.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PreferredCodec {
     Auto,
@@ -225,9 +226,10 @@ impl PreferredCodec {
         }
     }
 
-    /// The codec this asks for, or `None` for [`Auto`](Self::Auto). What it is
-    /// for is the check before it is sent: asking for one this end cannot
-    /// decode is a session with no picture, and the far end has no way to know.
+    /// The requested codec, or `None` for [`Auto`](Self::Auto). Used to check
+    /// the preference before sending it: requesting a codec this end cannot
+    /// decode leaves the session without a picture, and the far end cannot
+    /// tell.
     fn codec(self) -> Option<Codec> {
         match self {
             PreferredCodec::Auto => None,
@@ -262,17 +264,17 @@ impl PreferredCodec {
     }
 }
 
-/// What the handshake settled, and what is left to ask about it.
+/// The handshake's outcome, which the app still has to accept.
 enum Verified {
     /// The peer proved it holds the key the rendezvous server vouched for, and
-    /// both halves of the socket are sealed under a key agreed with it.
+    /// both directions of the socket are encrypted with a key agreed with it.
     Encrypted([u8; 32]),
-    /// Something did not check out, in these words, and the session is in the
-    /// clear — which the app has still to agree to.
+    /// A check failed, for this reason, and the session is unencrypted, which
+    /// the app still has to agree to.
     Clear(String),
 }
 
-/// Everything the connection panel can be told.
+/// The facts shown in the connection panel.
 #[derive(Clone, Default)]
 pub struct Info {
     pub desktop_name: String,
@@ -280,30 +282,30 @@ pub struct Info {
     pub connection: String,
     pub security: String,
     pub encoding: String,
-    /// The round trip their own timing message measures, which is the only
-    /// number about the link this protocol offers.
+    /// The round trip measured by the peer's timing message, the only
+    /// link measurement this protocol offers.
     pub round_trip: String,
     pub platform: String,
     pub display: String,
 }
 
-/// The decoder a session is drawing with, and what it was made for: a codec,
-/// a picture size and a way of decoding, a change in any of which makes it
-/// again.
+/// The session's current decoder and what it was created for: a codec, a
+/// picture size and a decoding mode. A change in any of them creates a new
+/// one.
 struct Current {
     codec: Codec,
     size: (usize, usize),
     hardware: Hardware,
-    /// What the Encoding row last said of where its pictures come from.
+    /// The hardware flag the Encoding row last showed.
     shown: Option<bool>,
-    /// When its status line was last made, `None` before the first.
+    /// When its status line was last built, `None` before the first.
     status_at: Option<Instant>,
     decoder: Box<dyn video::Decoder>,
 }
 
-/// The Encoding row: the codec, and whether its pictures come out of the
-/// hardware, where the decoder knows — nothing is said before the first
-/// picture, nor by a decoder that never knows.
+/// The Encoding row: the codec, and whether it is decoded in hardware when the
+/// decoder reports it (not before the first picture, nor for a decoder that
+/// never reports it).
 fn encoding(codec: Codec, hardware: Option<bool>) -> String {
     match hardware {
         Some(true) => format!("{} (hardware)", codec.name()),
@@ -312,7 +314,7 @@ fn encoding(codec: Codec, hardware: Option<bool>) -> String {
     }
 }
 
-/// One button of theirs, already shifted into the place a mask wants it.
+/// RustDesk's mouse event types, and its buttons as mask bits.
 mod mouse {
     pub const TYPE_MOVE: i32 = 0;
     pub const TYPE_DOWN: i32 = 1;
@@ -326,8 +328,8 @@ mod mouse {
     pub const FORWARD: i32 = 0x10;
 }
 
-/// An RFB button mask, which is what the gesture stack speaks, against theirs.
-/// The wheel is not in here: it is four bits of the same mask and becomes an
+/// RFB button mask bits (what the input stack uses) mapped to RustDesk's.
+/// The wheel is not included: it is four bits of the same mask and becomes an
 /// axis rather than a button.
 const BUTTONS: [(i32, i32); 5] = [
     (0x01, mouse::LEFT),
@@ -337,15 +339,14 @@ const BUTTONS: [(i32, i32); 5] = [
     (0x100, mouse::FORWARD),
 ];
 
-/// How far one notch of the wheel scrolls. Their server hands the number
-/// straight to the platform's own scroll call, so this is in whatever that
-/// calls a line — and one notch is one line on both far ends the rig has.
+/// How far one wheel notch scrolls. RustDesk's server passes the number
+/// directly to the platform's scroll call, so the unit is that platform's
+/// line, and one notch is one line on both test far ends.
 const WHEEL_NOTCH: i32 = 1;
 
-/// What [`Client::reach`] comes back with: the socket the session runs on, the
-/// introduction a peer reached by id still has to be put through (its signed
-/// key and the rendezvous key that vouches for it), and the panel's word for
-/// the connection.
+/// What [`Client::reach`] returns: the session's socket, the introduction still
+/// to be checked for a peer reached by id (its signed key and the rendezvous
+/// key that vouches for it), and the panel's description of the connection.
 struct Dialled {
     sock: TcpStream,
     introduction: Option<(Vec<u8>, String)>,
@@ -354,81 +355,81 @@ struct Dialled {
 
 pub struct Client {
     framebuffer: RwLock<Framebuffer>,
-    /// Whoever decodes the picture, which is the platform's to say and is not
-    /// known here: what the far end is told this end can take is asked of it
-    /// whenever the options go out, and a decoder is made from it whenever the
-    /// codec or the size changes.
+    /// The platform's video decoders, not known in advance here: they are
+    /// queried for what to advertise to the far end whenever the options are
+    /// sent, and a decoder is created from them whenever the codec or the size
+    /// changes.
     decoders: Arc<dyn Decoders>,
     traffic: Arc<Traffic>,
-    /// Serialized messages on their way to the writer thread. Input is encoded
-    /// on whichever thread produced it and written on a thread of its own, so a
-    /// stalled socket never reaches the main one.
+    /// Serialized messages queued for the writer thread. Input is encoded on
+    /// the thread that produced it and written on a separate thread, so a
+    /// stalled socket never blocks the main one.
     out: Mutex<Option<Sender<Vec<u8>>>>,
-    /// The sockets, for closing them from another thread: a read blocked on a
-    /// socket — or a dial — wakes when it is shut down and there is nothing
-    /// else to interrupt it with. Every socket of the rendezvous is held here
-    /// while it is the one being waited on, as well as the session's own.
+    /// The sockets, for closing them from another thread: shutting a socket
+    /// down is the only way to wake a read or dial blocked on it. Each
+    /// rendezvous socket is held here while it is being waited on, as well as
+    /// the session's own.
     hangup: Hangup,
     info: Mutex<Info>,
-    /// The decoder's status line, for an overlay: made on the protocol
+    /// The decoder's status line, for an overlay: built on the protocol
     /// thread, where the decoder is, at most every [`STATUS_EVERY`].
     decoder_status: Mutex<Option<String>>,
-    /// What the login names itself as, which for a direct connection is the
-    /// address the socket actually went to and for an id is that id.
+    /// The peer name the login sends: for a direct connection the address the
+    /// socket connected to, and for an id that id.
     login_as: Mutex<String>,
-    /// The sizes the far end will take, which is a fixed list rather than RFB's
-    /// free choice — empty for a peer that offers none.
+    /// The sizes the far end accepts, a fixed list rather than RFB's free
+    /// choice; empty for a peer that offers none.
     resolutions: Mutex<Vec<(i32, i32)>>,
     /// The far end's displays as rectangles of its whole desktop, in the peer's
-    /// own order — empty where it has only one, since there is then nothing to
-    /// choose between.
+    /// order; empty if it has only one, since there is nothing to choose.
     displays: Mutex<Vec<(i32, i32, i32, i32)>>,
-    /// Where the captured display's top left corner sits on the peer's whole
-    /// desktop. Input is injected into that desktop rather than into the
-    /// picture, so a pointer event on a second screen is off by this much
-    /// unless it is added — landing on whatever is at those coordinates on the
-    /// primary one. The pair is under one lock because a switch moves both.
+    /// The captured display's top left corner on the peer's whole desktop.
+    /// Input is injected into that desktop rather than into the picture, so a
+    /// pointer event on a second screen is off by this much unless it is
+    /// added, and lands at those coordinates on the primary one. The pair is
+    /// under one lock because a switch changes both.
     origin: Mutex<(i32, i32)>,
-    /// What each held key was sent as, by the id the app ties an up to a down
-    /// with.
+    /// What each held key was sent as, by the key id the app uses to match a
+    /// release to its press.
     keys: Mutex<HashMap<i64, Key>>,
     /// The modifiers held, in the order they went down. Every down event
     /// carries this list.
     modifiers: Mutex<Vec<ControlKey>>,
-    /// Where the pointer was last put, so that a button press does not have to
-    /// repeat a move that has not changed.
+    /// The last pointer position and mask, so that a button press does not
+    /// repeat an unchanged move.
     pointer: Mutex<(i32, i32, i32)>,
     view_only: AtomicBool,
     focused: AtomicBool,
     width: AtomicI32,
     height: AtomicI32,
     display: AtomicI32,
-    /// The live options: what a running session has been told, which is where
-    /// they live because every one of them can be changed while it is up.
+    /// The live options as last sent, held here because each can be changed
+    /// while the session is running.
     quality: AtomicI32,
-    /// The configured frame rate, which unfocusing lowers and focusing puts
-    /// back.
+    /// The configured frame rate. Losing focus lowers the rate sent, and
+    /// regaining it restores this one.
     fps: AtomicI32,
-    /// The codec asked for, and the last one the peer was told about. The
-    /// second is what keeps a quality change from being a codec renegotiation:
-    /// the preference goes out only when it has moved.
+    /// The requested codec, and the last one sent to the peer. The second
+    /// keeps a quality change from causing a codec renegotiation: the
+    /// preference is sent only when it has changed.
     codec: AtomicI32,
     codec_sent: AtomicI32,
-    /// The last round trip their timing message measured, in milliseconds.
+    /// The last round trip measured by the peer's timing message, in
+    /// milliseconds.
     round_trip: AtomicU64,
-    /// Whether the options ask the peer for its sound: set from the
-    /// [`Config`] when the session runs and by the session's switch, read
-    /// whenever the options go out. Shared with the switch's call, which
-    /// comes on a window's thread.
+    /// Whether the options request the peer's sound: set from the [`Config`]
+    /// when the session runs and by the session's switch, and read whenever
+    /// the options are sent. Shared with the switch, which is called on a
+    /// window's thread.
     sound: Arc<AtomicBool>,
 }
 
 impl Client {
     /// A client that decodes its picture with `decoders`.
     ///
-    /// Given here rather than in the [`Config`] because the question it answers
-    /// is asked outside [`run`](Client::run): a live option change on whichever
-    /// thread made it re-sends what this end can decode, and only the client is
+    /// Given here rather than in the [`Config`] because it is also needed
+    /// outside [`run`](Client::run): a live option change, on whatever thread
+    /// makes it, re-sends what this end can decode, and only the client is
     /// shared with that thread.
     pub fn new(decoders: Arc<dyn Decoders>) -> Client {
         Client {
@@ -483,23 +484,23 @@ impl Client {
         info
     }
 
-    /// The picture, where it was left on the GPU (see [`Client::picture`]).
+    /// The picture, if it was left on the GPU (see [`Client::picture`]).
     pub fn gpu_picture(&self) -> Option<Arc<dyn GpuPicture>> {
         self.framebuffer.read().unwrap().gpu()
     }
 
-    /// How the picture is being decoded, as the decoder last said: `None`
-    /// before the first frame, and where there is no decoder.
+    /// How the picture is being decoded, as the decoder last reported: `None`
+    /// before the first frame, and when there is no decoder.
     pub fn decoder_status(&self) -> Option<String> {
         self.decoder_status.lock().unwrap().clone()
     }
 
     /// Whether the far end offers a size it is not already at.
     ///
-    /// Unlike RFB this is a list rather than a free choice, so a request is
-    /// answered with the nearest of them — and a peer whose list is the one
-    /// mode it is running, which is every Xvfb, offers a control that could
-    /// only ever choose what is already on screen.
+    /// Unlike RFB this is a list rather than a free choice, so a request gets
+    /// the nearest entry, and a peer whose list holds only its current mode
+    /// (every Xvfb) would offer a control that can only choose the current
+    /// size.
     pub fn can_resize(&self) -> bool {
         if self.view_only.load(Ordering::Relaxed) {
             return false;
@@ -515,12 +516,12 @@ impl Client {
             .any(|offered| *offered != (w, h))
     }
 
-    /// The far end's displays, four numbers each — x, y, width, height in its
-    /// own desktop — and which of them is being captured.
+    /// The far end's displays, four numbers each (x, y, width, height in its
+    /// desktop), and the index of the captured one.
     ///
     /// This protocol sends **one** display at a time, so the list is a choice
-    /// rather than a description of the picture: what is on screen is one of
-    /// these rectangles and the others are not in it anywhere.
+    /// rather than a description of the picture: the picture shows one of these
+    /// rectangles and none of the others.
     pub fn displays(&self) -> (Vec<i32>, i32) {
         let displays = self.displays.lock().unwrap();
         let flat = displays
@@ -530,8 +531,8 @@ impl Client {
         (flat, self.display.load(Ordering::Relaxed))
     }
 
-    /// Ask the far end to capture another of its displays. What arrives back is
-    /// a `SwitchDisplay`, so nothing here assumes it worked.
+    /// Asks the far end to capture another of its displays. The answer is a
+    /// `SwitchDisplay`, so nothing here assumes the request succeeded.
     pub fn request_display(&self, index: i32) {
         if index < 0 || index as usize >= self.displays.lock().unwrap().len() {
             return;
@@ -545,10 +546,10 @@ impl Client {
         self.send(out);
     }
 
-    /// Which display this end wants, and a fresh picture of it.
+    /// Tells the peer which display to capture, and asks for a fresh picture.
     ///
-    /// The pair a client of this version is expected to send once the peer has
-    /// said what it is capturing — at the login, and again every time that
+    /// A client of this version is expected to send this pair once the peer
+    /// has said what it is capturing: at login, and again whenever that
     /// changes.
     fn ask_for(&self, display: i32) {
         let mut captured = CaptureDisplays::new();
@@ -561,8 +562,8 @@ impl Client {
         self.refresh_video();
     }
 
-    /// Ask for a fresh picture, which their server sends as a key frame: what
-    /// a decoder that starts mid-stream needs before it can draw anything.
+    /// Asks for a fresh picture, which RustDesk's server sends as a key frame,
+    /// needed by a decoder that starts mid-stream before it can draw anything.
     fn refresh_video(&self) {
         let mut misc = Misc::new();
         misc.set_refresh_video(true);
@@ -577,18 +578,18 @@ impl Client {
 
     // ---- the session ------------------------------------------------------
 
-    /// Connect, log in, and run until the far end or this end stops it. The
-    /// calling thread is the protocol thread and every callback arrives on it.
+    /// Connects, logs in, and runs until either end stops it. The calling
+    /// thread is the protocol thread and every callback arrives on it.
     pub fn run(&self, config: &Config, handler: &mut dyn Handler) -> Result<()> {
         self.quality.store(config.quality.ordinal(), Ordering::Relaxed);
         self.fps.store(config.fps, Ordering::Relaxed);
         self.codec.store(config.codec.ordinal(), Ordering::Relaxed);
         self.sound.store(config.sound && sound_of(config).is_some(), Ordering::Relaxed);
-        // No switch past the session, however it ends.
+        // Withdraws the sound switch when the session ends, however it ends.
         let _withdraw = Withdraw(sound_of(config));
 
-        // How the socket is obtained is the whole of the difference between the
-        // two modes: everything past this point is one session either way.
+        // The two modes differ only in how the socket is obtained; from here
+        // on the session is the same.
         let Dialled {
             sock,
             introduction,
@@ -597,7 +598,7 @@ impl Client {
             Err(_) if self.hangup.is_hung_up() => return Err(Error::Closed),
             other => other?,
         };
-        // Held for the rest of the session, the introduction with it.
+        // Held for the rest of the session.
         let _holding = match self.hangup.hold(&sock) {
             Err(_) if self.hangup.is_hung_up() => return Err(Error::Closed),
             other => other?,
@@ -611,11 +612,10 @@ impl Client {
                 let verified =
                     self.secure(&mut reader, &mut writer, &config.address, &signed_id_pk, &key)?;
                 let mut info = self.info.lock().unwrap();
-                // Which server vouched is the whole of the trust difference
-                // between the two ways of using this path: a key somebody
-                // pasted is their own pin, and the public network's is a pin
-                // chosen by RustDesk. And a session somebody agreed to have
-                // anyway says both halves of what it is.
+                // The vouching server is the only trust difference between the
+                // two ways of using this path: a key the user entered is their
+                // own pin, and the public network's key is chosen by RustDesk.
+                // A session the user accepted unverified reports both parts.
                 info.security = match verified {
                     Verified::Encrypted(_) => format!(
                         "xsalsa20-poly1305, vouched for by {}",
@@ -632,13 +632,12 @@ impl Client {
                 Some(verified)
             }
             None => {
-                // Not a footnote and not only in the log: this mode has no key
-                // exchange in it at all, and the panel is where a session says
-                // what it is protected by.
+                // Shown in the panel, not only logged: this mode has no key
+                // exchange at all, and the panel is where a session reports
+                // its protection.
                 self.info.lock().unwrap().security = "None (unencrypted)".into();
-                // A direct-access peer expects a client with no key to say so
-                // with an empty message, which is the whole of that mode's
-                // handshake.
+                // A direct-access peer expects a client without a key to send
+                // an empty message, which is that mode's entire handshake.
                 writer.send(&Message::new())?;
                 None
             }
@@ -661,12 +660,11 @@ impl Client {
         reader.set_timeout(Some(config.connect_timeout))?;
         let outcome = self.session(&mut reader, config, verified, handler);
 
-        // Whether this end asked, read **before** the tidying below closes the
-        // socket itself: an error that arrived because somebody pressed
-        // Disconnect is not one the screen should be told about, and one that
-        // arrived on its own is.
+        // Whether this end asked to stop, read **before** the cleanup below
+        // closes the socket itself: an error caused by the user pressing
+        // Disconnect is not reported, and any other error is.
         let asked = self.hangup.is_hung_up();
-        // The sender is what keeps the writer thread alive, so it goes before
+        // The sender keeps the writer thread alive, so it is dropped before
         // the join; the socket is shut down either way, since an ending that
         // came from the far end has not been through `close`.
         self.out.lock().unwrap().take();
@@ -685,12 +683,12 @@ impl Client {
                 log::info!("connecting to {addr}");
                 let sock = self.hangup.dial(addr, config.connect_timeout)?;
                 sock.set_nodelay(true)?;
-                // What the login says it dialled is this rather than what was
-                // typed, which their peer checks against three regular
+                // The login names the resolved address rather than the typed
+                // one, because the peer checks it against three regular
                 // expressions: a v4 literal with an optional port, a v6 one
                 // either bare or bracketed **with** a port, or a dotted name
-                // with one. A bracketed literal and no port matches none of
-                // them, and the refusal is `Offline`.
+                // with a port. A bracketed literal without a port matches none
+                // of them, and the refusal is `Offline`.
                 *self.login_as.lock().unwrap() = addr.to_string();
                 (sock, None, format!("Direct access to {addr}"))
             }
@@ -708,7 +706,7 @@ impl Client {
                     config.connect_timeout,
                 )?;
                 let connection = reached.how.describe();
-                // The id, which is what the peer is expecting to be called here.
+                // The id, which is the name the peer expects here.
                 *self.login_as.lock().unwrap() = config.address.clone();
                 (
                     reached.sock,
@@ -724,24 +722,22 @@ impl Client {
         })
     }
 
-    /// The handshake the direct mode has none of, ending with both halves of
-    /// the socket sealed — or, where something did not check out, with neither
-    /// and with the reason.
+    /// The key exchange (which direct mode lacks), ending with both directions
+    /// of the socket encrypted, or, if a check fails, with neither and the
+    /// reason.
     ///
-    /// **Nothing is asked here, and that is a deadline rather than a
-    /// preference.** The peer gives a handshake **18 seconds** and drops the
-    /// connection when it passes, which is less than a person takes to read a
-    /// dialog — measured, by leaving one on screen. So the exchange is finished
-    /// at machine speed and the question goes to the app afterwards, before the
-    /// login, which is the first thing on this wire that is anybody's secret.
+    /// **Nothing is asked here, because of a deadline.** The peer allows a
+    /// handshake **18 seconds** and drops the connection after that, which is
+    /// less than a user may take to read a dialog (tested by leaving one on
+    /// screen). So the exchange completes without waiting, and the app is asked
+    /// afterwards, before the login, the first message carrying a secret.
     ///
-    /// **A failure is a question rather than a refusal or a shrug.** Their own
-    /// client falls back to an unencrypted session whenever any step does not
-    /// check out — a signature that fails, a key that is not the one the server
-    /// vouched for, a peer that sends no `SignedId` at all — and says so only in
-    /// its log, which makes a session's own claim about itself worthless.
-    /// Refusing outright is the other end of that and deletes a session
-    /// somebody may still want.
+    /// **A failure becomes a question rather than a refusal or a silent
+    /// fallback.** RustDesk's own client falls back to an unencrypted session
+    /// whenever a step fails (a bad signature, a key other than the one the
+    /// server vouched for, a peer that sends no `SignedId`) and reports it only
+    /// in its log, so its sessions' security cannot be trusted. Refusing
+    /// outright would end a session the user may still want.
     fn secure(
         &self,
         reader: &mut wire::Reader,
@@ -755,7 +751,7 @@ impl Client {
         } else {
             server_key
         })?;
-        // One: the server's introduction, which says this id belongs to this
+        // Step one: the server's introduction, which binds this id to this
         // long-term key.
         let vouched = if signed_id_pk.is_empty() {
             Err("The rendezvous server did not vouch for a key.".to_string())
@@ -765,13 +761,13 @@ impl Client {
         };
         let peer_key = match vouched {
             Ok(key) => key,
-            // Nothing has been read from the peer yet, so what it is waiting
-            // for is a client with no key saying so — their empty message.
+            // Nothing has been read from the peer yet, so it is waiting for a
+            // client without a key to send the empty message.
             Err(why) => return self.in_the_clear(writer, why, false),
         };
-        // Two: the peer proving it holds that key, over a box key it made for
-        // this connection alone. The question goes to the app between the two,
-        // so nothing of ours is sealed to a machine somebody has refused.
+        // Step two: the peer proves it holds that key, by signing a box key it
+        // made for this connection alone. The app is asked about the result
+        // later, in `session`, before the login.
         let signed = match reader.message::<Message>()?.union {
             Some(message::Union::SignedId(signed)) => signed,
             _ => {
@@ -784,8 +780,8 @@ impl Client {
         };
         let box_key = match crypto::open_id_pk(&signed.id, &peer_key, peer_id) {
             Ok(key) => key,
-            // The peer is waiting for a `PublicKey` here, so the way to say
-            // there will be no key is an empty one — theirs does the same.
+            // The peer is waiting for a `PublicKey` here, so an empty one says
+            // there will be no key, as RustDesk's client does.
             Err(e) => {
                 return self.in_the_clear(
                     writer,
@@ -794,8 +790,9 @@ impl Client {
                 );
             }
         };
-        // Three: a key of ours, sealed to theirs. Everything after this frame
-        // is encrypted, in both directions, counted separately.
+        // Step three: our session key, sealed to the peer's box key.
+        // Everything after this frame is encrypted in both directions, each
+        // with its own counter.
         let (our_box_pk, sealed, key) = crypto::seal_session_key(&box_key)?;
         let mut public_key = PublicKey::new();
         public_key.asymmetric_value = our_box_pk.into();
@@ -809,13 +806,13 @@ impl Client {
         Ok(Verified::Encrypted(peer_key))
     }
 
-    /// Tell the peer there will be no key, and hand back the reason for the
-    /// question the app is about to be asked.
+    /// Tells the peer there will be no key, and returns the reason for the
+    /// question the app will be asked.
     ///
-    /// `expects_public_key` is whether the peer has already offered one: after
-    /// its `SignedId` it is waiting for a `PublicKey`, and an empty one is how
-    /// their own client declines; before that it is waiting for the empty
-    /// message a client with no key of its own sends.
+    /// `expects_public_key` is whether the peer has already offered a key:
+    /// after its `SignedId` it is waiting for a `PublicKey`, and RustDesk's
+    /// client declines with an empty one; before that it is waiting for the
+    /// empty message a client without a key sends.
     fn in_the_clear(
         &self,
         writer: &mut wire::Writer,
@@ -838,7 +835,7 @@ impl Client {
         verified: Option<Verified>,
         handler: &mut dyn Handler,
     ) -> Result<()> {
-        // Their server opens with `Hash` before anything is asked of it.
+        // The peer sends `Hash` first, unprompted.
         let hash = loop {
             match reader.message::<Message>()?.union {
                 Some(message::Union::Hash(h)) => break h,
@@ -846,11 +843,10 @@ impl Client {
                 None => {}
             }
         };
-        // Whatever the handshake left to ask, asked here: after it, because the
-        // peer times a handshake out under a person reading a dialog, and
-        // before the login, because that is what carries the password. The
-        // asking blocks this thread, so something else has to keep the socket
-        // from going quiet while it does.
+        // Any question the handshake left is asked here: after the handshake,
+        // because the peer would time it out while a dialog is open, and
+        // before the login, which carries the password. Asking blocks this
+        // thread, so a keep-alive stops the socket going quiet meanwhile.
         let agreed = match &verified {
             Some(Verified::Encrypted(peer_key)) => {
                 let alive = self.keep_alive();
@@ -878,14 +874,14 @@ impl Client {
         let mut rate = Rate::new();
         let mut cursors: HashMap<u64, Cursor> = HashMap::new();
         let mut connected = false;
-        // The peer's sound and the format it last said it is in. A peer
-        // sends something at least every second (its timing message), so a
-        // check for quiet after every message is often enough.
+        // The peer's sound and its last announced format. A peer sends
+        // something at least every second (its timing message), so checking
+        // for quiet after every message is often enough.
         let mut sound = sound_of(config).map(Player::new);
         let mut sound_format: Option<Format> = None;
-        // Whether the peer lets this session have its sound: their peer says
-        // so (a PermissionInfo) only where it does not, as the connection
-        // starts and whenever the person over there changes it.
+        // Whether the peer allows this session its sound. The peer sends a
+        // PermissionInfo only when it does not, at the start of the
+        // connection and whenever the setting changes on the far end.
         let mut sound_permitted = true;
 
         loop {
@@ -895,8 +891,8 @@ impl Client {
                 Err(e) => return Err(Error::Io(e)),
             };
             if let Some(player) = &mut sound {
-                // Turned off, at once: what the peer sent before it heard is
-                // not worth the second it would take to play out.
+                // Stopped at once: what the peer sent before receiving the
+                // change is not worth the second it would take to play out.
                 if !self.sound.load(Ordering::Relaxed) {
                     player.close();
                 }
@@ -908,17 +904,17 @@ impl Client {
                     Some(login_response::Union::PeerInfo(peer)) => {
                         self.arrived(&peer, handler, &mut back)?;
                         connected = true;
-                        // Logged in, the peer may send its sound: an
-                        // Enable switch, since the option message that
-                        // asked for it at login asks again at any time.
+                        // Once logged in, the peer may send its sound: offer
+                        // an Enable switch, since the option message sent at
+                        // login can be sent again at any time.
                         if sound_permitted && let Some(audio) = sound_of(config) {
                             self.offer_sound(&audio);
                         }
                     }
                     // Both password errors are answered on the same connection:
-                    // their client re-prompts and sends another `LoginRequest`
-                    // rather than dialling again, and the peer is waiting for
-                    // exactly that.
+                    // RustDesk's client prompts again and sends another
+                    // `LoginRequest` rather than reconnecting, and the peer
+                    // waits for exactly that.
                     Some(login_response::Union::Error(why))
                         if why == "Wrong Password" || why == "Empty Password" =>
                     {
@@ -939,9 +935,9 @@ impl Client {
                         let started = Instant::now();
                         self.picture(frame, &mut decoder, &mut back, handler);
                         rate.frame(started.elapsed(), back.converted());
-                        // Every frame, drawn or not: this is what the peer is
-                        // waiting for before it captures the next one, so a
-                        // frame that changed nothing still has to be answered.
+                        // Sent for every frame, drawn or not: the peer waits
+                        // for this before capturing the next one, so a frame
+                        // that changed nothing still has to be acknowledged.
                         let mut misc = Misc::new();
                         misc.set_video_received(true);
                         let mut out = Message::new();
@@ -963,23 +959,23 @@ impl Client {
                 }
                 message::Union::Clipboard(clip) => self.clipboard_arrived(clip, handler),
                 message::Union::MultiClipboards(many) => {
-                    // Whichever of them is text; the rest are formats the seam
-                    // has no concept of.
+                    // Only the text one is used; the other formats have no
+                    // equivalent in the session API.
                     for clip in many.clipboards {
                         self.clipboard_arrived(clip, handler);
                     }
                 }
                 message::Union::TestDelay(delay) => {
                     if !delay.from_client {
-                        // The round trip comes free with it: `last_delay` is
-                        // what the peer measured from the previous exchange, so
-                        // a client that echoes promptly is a client that has
-                        // been told its own latency and never has to ask.
+                        // The round trip comes with it: `last_delay` is what
+                        // the peer measured from the previous exchange, so a
+                        // client that echoes promptly learns its latency
+                        // without measuring it.
                         if delay.last_delay > 0 {
                             self.round_trip.store(delay.last_delay as u64, Ordering::Relaxed);
                         }
-                        // Echoed **unchanged**. Setting the flag here is what
-                        // turns one message a second into a busy loop between
+                        // Echoed **unchanged**. Setting the flag here would
+                        // turn one message a second into a busy loop between
                         // the two ends.
                         let mut out = Message::new();
                         out.set_test_delay(delay);
@@ -1007,8 +1003,8 @@ impl Client {
                     Some(misc::Union::SwitchDisplay(display)) => {
                         self.switched(&display, handler, &mut back);
                     }
-                    // What the Opus that follows was encoded at: one of Opus's
-                    // own rates, which their peer resamples its device to.
+                    // The format of the Opus frames that follow: one of Opus's
+                    // own rates, to which the peer resamples its device.
                     Some(misc::Union::AudioFormat(format)) => {
                         sound_format = Format::new(format.sample_rate, format.channels as usize);
                         log::info!(
@@ -1020,8 +1016,8 @@ impl Client {
                     }
                     _ => {}
                 },
-                // Frames that were on their way when the switch was turned
-                // off are dropped rather than opening a stream again.
+                // Frames still in transit when the switch was turned off are
+                // dropped rather than reopening a stream.
                 message::Union::AudioFrame(frame) if self.sound.load(Ordering::Relaxed) => {
                     if let (Some(player), Some(format)) = (&mut sound, sound_format) {
                         player.packet(SoundCodec::Opus, format, &[], &frame.data);
@@ -1032,7 +1028,7 @@ impl Client {
         }
     }
 
-    /// Everything that happens once, when the peer has said who it is.
+    /// The one-time setup once the peer has identified itself.
     fn arrived(
         &self,
         peer: &PeerInfo,
@@ -1061,8 +1057,8 @@ impl Client {
             info.protocol = format!("RustDesk {}", peer.version);
             info.platform = peer.platform.clone();
         }
-        // A peer with one display is a peer with nothing to choose, and an
-        // empty list is what the panel reads as "no row here".
+        // A peer with one display offers nothing to choose, and the panel
+        // shows no display row for an empty list.
         *self.displays.lock().unwrap() = if peer.displays.len() > 1 {
             peer.displays
                 .iter()
@@ -1079,11 +1075,11 @@ impl Client {
             .map(|r| (r.width, r.height))
             .collect();
 
-        // A Windows peer with RDP sharing on and more than one session logged
-        // in subscribes no video service until it is told which session to
-        // capture. Answering with anything other than the one the service is in
+        // A Windows peer with RDP sharing on and more than one logged-in
+        // session subscribes no video service until it is told which session
+        // to capture. Answering with any session other than the service's own
         // hands the connection to that session and drops this one, so the
-        // answer is the peer's own current one.
+        // answer is the peer's current one.
         if let Some(sessions) = peer.windows_sessions.as_ref() {
             log::info!(
                 "the peer offers {} windows sessions, current {}",
@@ -1096,9 +1092,8 @@ impl Client {
             out.set_misc(misc);
             self.send(out);
         }
-        // Which display this end wants captured, and a refresh so the first
-        // picture is a key frame rather than a wait for whatever the encoder
-        // does next.
+        // The display to capture, and a refresh so that the first picture is a
+        // key frame instead of waiting for the encoder's next one.
         self.ask_for(current as i32);
 
         self.resize(display.width, display.height, back);
@@ -1108,12 +1103,12 @@ impl Client {
         Ok(())
     }
 
-    /// The far end changed what it is capturing, or how big it is.
+    /// The far end changed which display it captures, or its size.
     ///
-    /// One message for both, and the peer sends it whether the change was asked
-    /// for or not — a display unplugged over there arrives here as the same
-    /// thing a switch does. The sizes it will take come with it, since they are
-    /// the new display's rather than the old one's.
+    /// One message covers both, and the peer sends it whether or not the change
+    /// was requested: a display unplugged on the far end arrives the same way
+    /// as a switch. The sizes it accepts come with it, since they belong to the
+    /// new display.
     fn switched(
         &self,
         switch: &SwitchDisplay,
@@ -1121,15 +1116,14 @@ impl Client {
         back: &mut Back,
     ) {
         let (width, height) = (switch.width, switch.height);
-        // Ahead of the size checks below, both of which return early: where the
-        // picture is on the peer's desktop is the one thing here that decides
-        // where input lands, and a switch that changed nothing else has still
-        // moved it.
+        // Before the size checks below, which both return early: the
+        // picture's position on the peer's desktop decides where input lands,
+        // and a switch that changed nothing else may still have moved it.
         *self.origin.lock().unwrap() = (switch.x, switch.y);
         if self.display.swap(switch.display, Ordering::Relaxed) != switch.display {
-            // The capture set and the key frame again, for the same reason the
-            // login sends them: the peer has said what it is capturing now, and
-            // this end has to say what it wants of it.
+            // The capture set and the key frame again, for the same reason as
+            // at login: the peer has said what it now captures, and this end
+            // has to confirm what it wants.
             self.ask_for(switch.display);
         }
         self.say_display(switch.display);
@@ -1144,9 +1138,9 @@ impl Client {
         if width <= 0 || height <= 0 {
             return;
         }
-        // Both swapped before either is compared: `&&` would leave the height
-        // alone whenever the width had changed, which is a framebuffer sized
-        // 1024×1440 for a 1024×768 display and a picture that never arrives.
+        // Both swapped before either is compared: with `&&` the height would
+        // not be swapped whenever the width had changed, giving a framebuffer
+        // sized 1024×1440 for a 1024×768 display and no picture.
         let was_width = self.width.swap(width, Ordering::Relaxed);
         let was_height = self.height.swap(height, Ordering::Relaxed);
         if was_width == width && was_height == height {
@@ -1157,9 +1151,8 @@ impl Client {
         handler.desktop_size(width as usize, height as usize);
     }
 
-    /// The panel's diagnostic line, which says which of the peer's displays the
-    /// picture is — and nothing at all where there is only one, since a desktop
-    /// having a screen is not news.
+    /// The panel's diagnostic line saying which of the peer's displays is
+    /// shown, empty if there is only one.
     fn say_display(&self, current: i32) {
         let count = self.displays.lock().unwrap().len();
         self.info.lock().unwrap().display = if count > 1 {
@@ -1176,16 +1169,15 @@ impl Client {
     }
 
     /// One update, which in this protocol is always a whole picture: there are
-    /// no damage rectangles anywhere in it, so what moved is found here rather
-    /// than read off the wire.
+    /// no damage rectangles, so the changed area is found here rather than read
+    /// from the wire.
     ///
-    /// Where whoever draws the session takes pictures on the GPU (the
-    /// platform's decoders say so, every frame), a picture the decoder can
-    /// leave there is left there and becomes the framebuffer's picture as it
-    /// is, damaging the whole desktop: there is no conversion to find what
-    /// moved, and nothing here reads it. The next picture converted on the
-    /// processor is then converted whole, its buffer knowing nothing of the
-    /// one before.
+    /// If the session's renderer accepts GPU pictures (the platform's decoders
+    /// report this every frame), a picture the decoder can leave on the GPU
+    /// stays there and becomes the framebuffer's picture as is, damaging the
+    /// whole desktop: without a conversion there is no way to find what moved,
+    /// and nothing here reads it. The next picture converted on the CPU is then
+    /// converted whole, since its buffer does not hold the previous picture.
     fn picture(
         &self,
         frame: VideoFrame,
@@ -1200,8 +1192,8 @@ impl Client {
             video_frame::Union::Av1s(v) => (Codec::Av1, v.frames),
             video_frame::Union::H264s(v) => (Codec::H264, v.frames),
             video_frame::Union::H265s(v) => (Codec::H265, v.frames),
-            // Raw pixels, which their server only sends where nothing can
-            // encode; nothing here asks for it and no run has produced one.
+            // Raw pixels, which RustDesk's server sends only when it has no
+            // encoder; never requested here and never seen in testing.
             video_frame::Union::Rgb(_) | video_frame::Union::Yuv(_) => {
                 log::warn!("the peer sent unencoded pixels, which this client does not read");
                 return;
@@ -1215,17 +1207,17 @@ impl Client {
             return;
         }
         // The size as well as the codec: a decoder is configured for one
-        // picture size, and this protocol changes that under a running session
-        // whenever the far end switches display. And the way of decoding,
-        // which the platform's decoders say and which can be switched under a
-        // running session too: asked every frame, that is the switch taking
-        // effect at the next picture, with no message of its own to wait for.
+        // picture size, and this protocol changes it during a session whenever
+        // the far end switches display. Also the decoding mode, reported by the
+        // platform's decoders, which can also change during a session: checked
+        // every frame, so a change takes effect at the next picture without a
+        // message of its own.
         let hardware = self.decoders.hardware();
         let made_for = |c: &Current| c.codec == codec && c.size == (w, h) && c.hardware == hardware;
         if !decoder.as_ref().is_some_and(made_for) {
             let switched = decoder.as_ref().is_some_and(|c| c.hardware != hardware);
-            // Let go of first, so that a hardware decoder's surfaces are back
-            // before the next one asks for its own.
+            // Dropped first, so that a hardware decoder's surfaces are released
+            // before the next one allocates its own.
             *decoder = None;
             match self.decoders.decoder(codec, w, h) {
                 Some(new) => {
@@ -1239,9 +1231,9 @@ impl Client {
                         decoder: new,
                     });
                     // A new decoder mid-stream has none of the pictures the
-                    // next frames refer to. A new codec or size starts with a
-                    // key frame of the peer's own accord; a new way of
-                    // decoding is this end's doing, and the peer is asked.
+                    // next frames refer to. After a new codec or size the peer
+                    // sends a key frame by itself; a new decoding mode is this
+                    // end's change, so the peer is asked for one.
                     if switched {
                         log::info!("decoding switched to hardware {hardware:?}: asking for a key frame");
                         self.refresh_video();
@@ -1272,13 +1264,13 @@ impl Client {
             match decoded {
                 Decoded::Gpu(picture) if (picture.width(), picture.height()) == (w, h) => {
                     held = Some(picture);
-                    // A picture converted after it in the same update is
-                    // converted whole, as one after it in the next is.
+                    // A picture converted after this one, in this update or
+                    // the next, is converted whole.
                     back.changed.all(w, h);
                 }
-                // Not the session's size, which is a frame between a resize
-                // and the desktop's new size: read back, as a converted one
-                // of that size would have been written.
+                // Not the session's size: a frame between a resize and the
+                // desktop's new size. Read back, as a converted picture of
+                // that size would have been written.
                 Decoded::Gpu(picture) => {
                     back.changed.all(w, h);
                     if picture.read(&mut back.pixels, w, h) {
@@ -1293,17 +1285,17 @@ impl Client {
                 Decoded::Nothing => {}
             }
         }
-        // A decoder that lost the pictures the stream refers back to — a
-        // hardware one that failed mid-stream and went on in software — draws
-        // nothing right until the next key frame, which is asked for rather
-        // than waited for.
+        // A decoder that lost the pictures the stream refers back to (a
+        // hardware one that failed mid-stream and continued in software)
+        // draws nothing correctly until the next key frame, so one is
+        // requested rather than waited for.
         if current.decoder.take_key_frame_request() {
             log::info!("the decoder asks for a key frame");
             self.refresh_video();
         }
         self.note(current);
         if let Some(picture) = held {
-            // Whatever the back buffer holds is not the picture on screen now.
+            // The back buffer no longer holds the picture on screen.
             back.lost();
             if !self.framebuffer.write().unwrap().show_gpu(picture) {
                 return;
@@ -1315,19 +1307,19 @@ impl Client {
         if !drew {
             return;
         }
-        // A frame that repeats the last one — which is what a peer sends to a
-        // client whose desktop nobody is touching — costs nothing from here on,
-        // and a frame that moved a caret costs the rows the caret is on.
+        // A frame that repeats the last one (what a peer sends while its
+        // desktop is idle) costs nothing from here on, and a frame that moved
+        // a caret costs only the rows the caret is on.
         let Some((dx, dy, dw, dh)) = back.changed.bounds(w) else {
             return;
         };
-        // Under a read lock and before the swap takes the picture away: the
-        // rows this frame did not convert are still the frame before last.
+        // Under a read lock and before the swap takes the picture: the rows
+        // this frame did not convert still hold the frame before last.
         if !back.carry(&self.framebuffer.read().unwrap()) {
             return;
         }
-        // The write lock is held for a `Vec` swap rather than for a conversion,
-        // which is what keeps the drawing thread out of the decoder's way.
+        // The write lock is held for a `Vec` swap rather than a conversion, so
+        // the drawing thread never waits for the decoder.
         if !self.framebuffer.write().unwrap().swap(&mut back.pixels) {
             back.lost();
             return;
@@ -1337,10 +1329,9 @@ impl Client {
         handler.frame_end();
     }
 
-    /// What the decoder now says about itself, where anybody is shown it: the
-    /// Encoding row whenever where its pictures come from changed — the
-    /// first picture, a fallback — and the status line every
-    /// [`STATUS_EVERY`].
+    /// Publishes what the decoder reports about itself: the Encoding row
+    /// whenever its hardware flag changes (the first picture, a fallback), and
+    /// the status line every [`STATUS_EVERY`].
     fn note(&self, current: &mut Current) {
         let hardware = current.decoder.hardware();
         if hardware != current.shown {
@@ -1364,8 +1355,8 @@ impl Client {
             clip.content
         };
         if content.len() > runtime::MAX_CLIPBOARD {
-            // Skipped whole, as every backend skips one: a part of a text
-            // pasted here would read as the whole of it.
+            // Skipped entirely, as in every backend: a truncated text would
+            // look like the whole of it when pasted.
             log::warn!(
                 "the peer's clipboard is over the {} bytes this client takes; skipped",
                 runtime::MAX_CLIPBOARD
@@ -1374,8 +1365,8 @@ impl Client {
         }
         if let Ok(text) = String::from_utf8(content) {
             if !text.is_empty() {
-                // The length rather than the text: a clipboard is somebody's
-                // password as often as it is a URL.
+                // The length rather than the text: a clipboard may hold a
+                // password.
                 log::info!("{} characters of clipboard from the peer", text.chars().count());
                 handler.clipboard(&text);
             }
@@ -1384,34 +1375,34 @@ impl Client {
 
     fn send_login(&self, config: &Config, hash: &Hash, password: &str) {
         let mut login = LoginRequest::new();
-        // **The address, not a name.** Their peer refuses a login whose
-        // username is neither its own id nor something that parses as an
-        // address, and the refusal it sends is `Offline` — which reads like the
-        // machine is not there rather than like a field being wrong. Which is
-        // why this is the socket's own address rather than what somebody typed:
-        // the two differ wherever a default port was filled in.
+        // **The address, not a name.** The peer refuses a login whose username
+        // is neither its own id nor something that parses as an address, and
+        // the refusal it sends is `Offline`, which suggests the machine is
+        // unreachable rather than that a field is wrong. So this is the
+        // socket's address rather than the typed one: the two differ whenever
+        // a default port was filled in.
         login.username = self.login_as.lock().unwrap().clone();
         login.password = login_hash(password, hash).into();
-        // Their peer shows this and logs it, so it is the phone rather than
-        // anything about this app: a person looking at the far end wants to
-        // know which device is on their desktop.
+        // The peer shows and logs this, so it names the device rather than
+        // this app: the user at the far end wants to know which device is
+        // connected to their desktop.
         login.my_id = config.my_name.clone();
         login.my_name = config.my_name.clone();
         login.my_platform = config.platform.wire().into();
         login.version = VERSION.into();
         login.session_id = 1;
-        // **The far end paces itself to us.** Without this it captures and
-        // sends on its own clock, and a phone that takes longer over a frame
-        // than the peer takes to make one falls further behind with every one
-        // of them — which is a desktop that drags a second late and gets worse
-        // the longer somebody drags it. With it, the peer captures the next
-        // frame when this end says it has finished with the last.
+        // **The far end paces itself to this client.** Without this it
+        // captures and sends on its own clock, and a phone that takes longer to
+        // handle a frame than the peer takes to produce one falls further
+        // behind with each frame: a drag lags a second behind and gets worse
+        // the longer it goes on. With it, the peer captures the next frame
+        // when this end acknowledges the last.
         login.video_ack_required = true;
         let mut option = self.options(true);
-        // The one option here that is not about the picture, and the only one a
-        // session can set and never see the effect of: what it asks for happens
-        // after the last message either end sends. Left unset rather than
-        // answered No, so a peer configured to lock itself goes on doing so.
+        // The only option here not about the picture, and its effect is never
+        // visible to the session, since it happens after the last message
+        // either end sends. Left unset rather than set to No, so a peer
+        // configured to lock itself still does.
         if config.lock_after {
             option.lock_after_session_end = BoolOption::Yes.into();
         }
@@ -1421,13 +1412,13 @@ impl Client {
         self.send(out);
     }
 
-    /// The options a session carries, at login and again whenever one changes.
+    /// The session's options, sent at login and again whenever one changes.
     ///
-    /// The codec preference is in it at login and afterwards **only when it has
-    /// moved**, which is what keeps a quality change from being a codec
-    /// renegotiation: their peer answers a preference by building a new encoder
-    /// and starting again with a key frame, so repeating the one it already has
-    /// would make every change of frame rate cost a whole screenful.
+    /// The codec preference is included at login and afterwards **only when it
+    /// has changed**, so that a quality change does not cause a codec
+    /// renegotiation: the peer answers a preference by building a new encoder
+    /// and restarting with a key frame, so repeating the current one would
+    /// make every frame rate change cost a full key frame.
     fn options(&self, at_login: bool) -> OptionMessage {
         let mut option = OptionMessage::new();
         option.image_quality = Quality::of(self.quality.load(Ordering::Relaxed)).wire().into();
@@ -1437,11 +1428,10 @@ impl Client {
         } else {
             UNFOCUSED_FPS
         };
-        // The peer's sound where this session plays it, and otherwise not: a
-        // desktop that is talking is a stream of Opus a session without
-        // sound would pay for and drop. The clipboard has no switch beside it
-        // because whether this phone shares one is a question about the
-        // phone, answered once for every protocol in the app's own settings.
+        // The peer's sound only if this session plays it: otherwise a desktop
+        // playing sound sends a stream of Opus the session would receive and
+        // drop. There is no clipboard option because clipboard sharing is a
+        // device setting, set once for every protocol in the app's settings.
         option.disable_audio = if self.sound.load(Ordering::Relaxed) {
             BoolOption::No
         } else {
@@ -1456,14 +1446,14 @@ impl Client {
         option
     }
 
-    /// What this end can decode, and which of those it would rather have.
+    /// What this end can decode, and which codec it prefers.
     ///
-    /// The abilities are the **platform's**, asked of its [`Decoders`] rather
-    /// than declared: their peer sends whatever a client says it can take, and
-    /// a claim this end cannot honour is a session with a cursor and no
-    /// picture. VP9 is the one every build of theirs can encode, so it is what
-    /// a peer with nothing else falls back to and what an empty ability list
-    /// would leave.
+    /// The abilities are the **platform's**, queried from its [`Decoders`]
+    /// rather than hardcoded: the peer sends whatever a client claims to
+    /// decode, and a false claim leaves the session with a cursor and no
+    /// picture. VP9 is the codec every RustDesk build can encode, so a peer
+    /// falls back to it when nothing else matches, including for an empty
+    /// ability list.
     fn decoding(&self, prefer: PreferredCodec) -> SupportedDecoding {
         let mut decoding = SupportedDecoding::new();
         decoding.ability_vp9 = self.decoders.decodable(Codec::Vp9) as i32;
@@ -1472,8 +1462,8 @@ impl Client {
         decoding.ability_h264 = self.decoders.decodable(Codec::H264) as i32;
         decoding.ability_h265 = self.decoders.decodable(Codec::H265) as i32;
         // A preference this end cannot decode is not passed on: the far end
-        // would honour it exactly, and nothing over there could tell that the
-        // picture never arrived.
+        // would honour it, with no way of telling that the picture never
+        // arrives.
         let prefer = match prefer.codec() {
             Some(codec) if !self.decoders.decodable(codec) => {
                 log::warn!("this end cannot decode {}, leaving the codec to the peer", codec.name());
@@ -1486,11 +1476,11 @@ impl Client {
         decoding
     }
 
-    /// The session's sound switch as an Enable switch, on as the options
-    /// ask: turned, it asks the peer with an option message carrying only
-    /// `disable_audio` — every other option left unset, which their peer
-    /// leaves as it is — and their peer subscribes the session to its sound
-    /// or takes it off. Sent from the switch's thread through the writer.
+    /// Offers the session's sound switch as an Enable switch, initially in the
+    /// state the options request. Toggling it sends the peer an option message
+    /// with only `disable_audio` set (the peer leaves unset options
+    /// unchanged), and the peer subscribes the session to its sound or
+    /// unsubscribes it. Sent from the switch's thread through the writer.
     fn offer_sound(&self, audio: &Arc<dyn Outputs>) {
         let sound = Arc::clone(&self.sound);
         let out = self.out.lock().unwrap().clone();
@@ -1511,8 +1501,8 @@ impl Client {
         );
     }
 
-    /// A live option change, which is one message and takes effect on the
-    /// picture in front of you.
+    /// A live option change: one message, which takes effect on the current
+    /// picture.
     pub fn set_options(&self, quality: Quality, fps: i32, codec: PreferredCodec) {
         self.quality.store(quality.ordinal(), Ordering::Relaxed);
         self.fps.store(fps, Ordering::Relaxed);
@@ -1537,9 +1527,9 @@ impl Client {
         }
     }
 
-    /// Whether the session is on screen. There is no pause message here, so
-    /// what this does is ask for one frame a second and ask for a fresh picture
-    /// on the way back.
+    /// Whether the session has focus. There is no pause message here, so this
+    /// asks for one frame a second when unfocused, and for a fresh picture when
+    /// focused again.
     pub fn set_focused(&self, focused: bool) {
         if self.focused.swap(focused, Ordering::Relaxed) == focused {
             return;
@@ -1552,11 +1542,11 @@ impl Client {
 
     /// Absolute desktop coordinates and an RFB button mask.
     ///
-    /// The seam says where the pointer is and which buttons are held; this
-    /// protocol wants a move, a press and a release as separate events, so the
-    /// edges are worked out here against the last mask seen. The coordinates
-    /// are the picture's and what goes out is the peer's desktop's, which is
-    /// the same thing only while the display being captured is at the origin.
+    /// The session API gives the pointer position and the buttons held; this
+    /// protocol takes a move, a press and a release as separate events, so the
+    /// changes are worked out here against the last mask. The coordinates are
+    /// the picture's and are sent as the peer's desktop's, which differ unless
+    /// the captured display is at the origin.
     pub fn pointer(&self, x: i32, y: i32, mask: i32) {
         if self.view_only.load(Ordering::Relaxed) {
             return;
@@ -1580,9 +1570,9 @@ impl Client {
             }
         }
         // The wheel is four bits of the same mask, and each is a notch rather
-        // than something held: the edge is the event and the release is not.
-        // Its two numbers are a distance rather than a place, so the display's
-        // origin is not added to them.
+        // than a held button: the press is the event and the release is
+        // ignored. Its two numbers are a distance rather than a position, so
+        // the display's origin is not added to them.
         let pressed = mask & !was;
         let (mut dx, mut dy) = (0, 0);
         if pressed & 0x08 != 0 {
@@ -1602,7 +1592,7 @@ impl Client {
         }
     }
 
-    /// One mouse event. A press carries the modifiers held, because their
+    /// One mouse event. A press carries the modifiers held, because RustDesk's
     /// server releases every modifier a down event does not name.
     fn mouse(&self, mask: i32, x: i32, y: i32, with_modifiers: bool) {
         let mut event = MouseEvent::new();
@@ -1622,8 +1612,7 @@ impl Client {
             return;
         }
         let Some(key) = keymap::key(keysym) else {
-            // At trace: a keysym is what was typed, and a log is no place
-            // for that.
+            // At trace level, since a keysym reveals what was typed.
             log::trace!("nothing in this protocol says keysym {keysym:#x}");
             return;
         };
@@ -1647,7 +1636,7 @@ impl Client {
         self.key(key, false);
     }
 
-    /// Let go of every key this session still has down at the far end.
+    /// Releases every key this session still holds down at the far end.
     pub fn release_all_keys(&self) {
         let held: Vec<Key> = {
             let mut keys = self.keys.lock().unwrap();
@@ -1673,8 +1662,8 @@ impl Client {
                 }
             }
             Key::Char(c) => {
-                // `chr` rather than `unicode`: their server can hold one down,
-                // which is what makes it a key rather than a piece of typing.
+                // `chr` rather than `unicode`: RustDesk's server can hold a
+                // `chr` down, so it acts as a key rather than typed text.
                 event.set_chr(c as u32);
                 if down {
                     event.modifiers = self.held_modifiers(None);
@@ -1686,10 +1675,9 @@ impl Client {
         self.send(out);
     }
 
-    /// The modifiers held, less the one being pressed: their server compares
-    /// the list against what is down on the far end and releases the
-    /// difference, and a modifier that names itself is one it would refuse to
-    /// press.
+    /// The modifiers held, minus the one being pressed: RustDesk's server
+    /// compares the list against what is down on the far end and releases the
+    /// difference, and it does not press a modifier that lists itself.
     fn held_modifiers(&self, itself: Option<ControlKey>) -> Vec<protobuf::EnumOrUnknown<ControlKey>> {
         let its = itself.and_then(|c| keymap::modifier_of(c));
         self.modifiers
@@ -1714,10 +1702,11 @@ impl Client {
         self.send(out);
     }
 
-    /// Ask the far end for a desktop this size, out of the sizes it offered.
+    /// Asks the far end for the offered size nearest to this one.
     ///
-    /// Unlike RFB there is no free choice: the peer publishes a list and takes
-    /// one of them, so the nearest by area is what a window's size becomes.
+    /// Unlike RFB there is no free choice: the peer publishes a list and
+    /// accepts only entries from it, so a window's size is mapped to the
+    /// nearest entry by area.
     pub fn request_desktop_size(&self, width: i32, height: i32) {
         let offered = self.resolutions.lock().unwrap().clone();
         let wanted = (width as i64) * (height as i64);
@@ -1740,14 +1729,13 @@ impl Client {
         self.send(out);
     }
 
-    /// Say something harmless every few seconds until told to stop.
+    /// Sends a harmless message every few seconds until stopped.
     ///
-    /// A peer that has heard nothing for **30 seconds** before the login drops
-    /// the connection, and a question put to a person can outlast that — the
-    /// session was lost at forty, with a dialog still on screen. Their timing
-    /// message is the one thing a client may send before it has logged in that
-    /// the far end is content to receive, so this is what a keepalive is made of
-    /// here.
+    /// A peer that receives nothing for **30 seconds** before the login drops
+    /// the connection, and a prompt can stay open longer (in testing the
+    /// session was lost at forty seconds, with a dialog still on screen). The
+    /// timing message is the only message a client may send before logging in
+    /// that the far end accepts, so it serves as the keep-alive.
     fn keep_alive(&self) -> KeepAlive {
         let mut delay = TestDelay::new();
         delay.from_client = true;
@@ -1772,9 +1760,9 @@ impl Client {
         KeepAlive { stop, thread }
     }
 
-    /// Hand a message to the writer thread. Dropped where the session has
-    /// ended, which is every input event between a socket going and the screen
-    /// being told.
+    /// Queues a message for the writer thread. Dropped if the session has
+    /// ended, which happens to input events between the socket closing and
+    /// the screen being notified.
     fn send(&self, message: Message) {
         let bytes = match message.write_to_bytes() {
             Ok(bytes) => bytes,
@@ -1789,9 +1777,9 @@ impl Client {
     }
 }
 
-/// The shape `runtime::Runner` runs: the inherent `run` and `close` are the
-/// implementation, and this is them written down for a session that does not
-/// know which protocol it has.
+/// The interface `runtime::Runner` runs: the inherent `run` and `close` are
+/// the implementation, exposed here for code that does not know which
+/// protocol it has.
 impl runtime::Client for Client {
     type Config = Config;
     type Error = Error;
@@ -1810,10 +1798,10 @@ impl runtime::Client for Client {
     }
 }
 
-/// The thread behind [`Client::keep_alive`], stopped by hand rather than by
-/// being dropped: it is stopped at a point where the answer has arrived and the
-/// next thing to happen is the login, and a `Drop` that joins a sleeping thread
-/// would hold that up for as long as the sleep has left.
+/// The thread behind [`Client::keep_alive`], stopped explicitly rather than on
+/// drop: it is stopped once the answer has arrived and the login comes next,
+/// and a `Drop` that joins the sleeping thread would delay the login for the
+/// rest of the sleep.
 struct KeepAlive {
     stop: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
@@ -1826,13 +1814,12 @@ impl KeepAlive {
     }
 }
 
-/// What a session is costing, logged once every [`Rate::EVERY`] frames.
+/// The session's decoding cost, logged once every [`Rate::EVERY`] frames.
 ///
-/// This protocol has no damage rectangles, so a frame arrives whole whatever
-/// moved in it, and what a session costs is how much of one is worth
-/// converting. That and where the time goes is the one thing worth having out
-/// of a running session, and it is one line a minute rather than anything a
-/// frame pays for.
+/// This protocol has no damage rectangles, so every frame arrives whole, and
+/// a session's cost depends on how much of each frame needs converting. That
+/// and the time spent are the useful measurements from a running session,
+/// logged as one line per [`Rate::EVERY`] frames at negligible cost per frame.
 struct Rate {
     frames: u64,
     since: Instant,
@@ -1876,8 +1863,8 @@ impl Rate {
     }
 }
 
-/// A cursor shape, kept because their protocol sends the pixels once and refers
-/// to them by id from then on.
+/// A cursor shape, kept because the protocol sends the pixels once and refers
+/// to them by id after that.
 struct Cursor {
     pixels: Vec<u32>,
     width: usize,
@@ -1892,15 +1879,15 @@ impl Cursor {
         if width == 0 || height == 0 {
             return None;
         }
-        // Two 32-bit fields of the peer's, so held to the shared bound before
-        // they size anything; within it the product cannot overflow.
+        // Two 32-bit fields from the peer, so checked against the shared bound
+        // before sizing anything; within it the product cannot overflow.
         if width > runtime::MAX_CURSOR_SIDE || height > runtime::MAX_CURSOR_SIDE {
             log::warn!("a {width}x{height} cursor is bigger than any cursor");
             return None;
         }
         let bytes = width * height * 4;
-        // Their cursors are zstd, as their clipboard is, and decoded no
-        // further than the size needs: anything past it is not drawn.
+        // Cursors are zstd-compressed, like the clipboard, and decoded only as
+        // far as the size needs: anything past it is not drawn.
         let rgba = unzstd(&data.colors, bytes).unwrap_or_default();
         if rgba.len() < bytes {
             log::warn!("a {width}x{height} cursor arrived as {} bytes", rgba.len());
@@ -1925,11 +1912,11 @@ impl Cursor {
     }
 }
 
-/// A zstd message of the peer's, decoded no further than one byte past
-/// `limit`, so a caller can tell a message that fits from one that does not
-/// without the rest being made: how much a message decodes to is the peer's
-/// to say, and a few hundred kilobytes of RLE blocks say gigabytes. Nothing
-/// for one that does not decode.
+/// Decodes a zstd message from the peer up to one byte past `limit`, so a
+/// caller can tell a message that fits from one that does not without decoding
+/// the rest: the decoded size is controlled by the peer, and a few hundred
+/// kilobytes of RLE blocks can decode to gigabytes. `None` if it does not
+/// decode.
 fn unzstd(data: &[u8], limit: usize) -> Option<Vec<u8>> {
     use std::io::Read;
     let decoder = zstd::stream::read::Decoder::with_buffer(data).ok()?;
@@ -1938,10 +1925,9 @@ fn unzstd(data: &[u8], limit: usize) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// `sha256(sha256(password ++ salt) ++ challenge)`. The inner hash is what a
-/// client stores, so a saved password is already salted per peer — which is
-/// worth knowing and is not what this app does, since it has one password store
-/// for six protocols.
+/// `sha256(sha256(password ++ salt) ++ challenge)`. RustDesk's client stores
+/// the inner hash, so its saved passwords are salted per peer. This app does
+/// not, since it has one password store for every backend.
 fn login_hash(password: &str, hash: &Hash) -> Vec<u8> {
     if password.is_empty() {
         return Vec::new();
@@ -1957,8 +1943,8 @@ fn login_hash(password: &str, hash: &Hash) -> Vec<u8> {
         .to_vec()
 }
 
-/// `host` or `host:port`, plus the bracketed IPv6 form. The direct mode's
-/// address only; an id is not one of these and never reaches here.
+/// `host` or `host:port`, plus the bracketed IPv6 form. Direct mode only; an
+/// id never reaches here.
 fn resolve(address: &str) -> Result<SocketAddr> {
     let (host, port) = runtime::address::split(address, DIRECT_PORT, runtime::address::Ports::Plain)
         .map_err(Error::Address)?;
@@ -2006,9 +1992,9 @@ impl Drop for Withdraw {
     }
 }
 
-/// The session's sound output, where the config has one and its platform
-/// decodes Opus: the only codec their peer encodes its sound in, so an
-/// output without the decoder is no sound at all.
+/// The session's sound output, if the config has one and its platform decodes
+/// Opus: the peer encodes sound only in Opus, so an output without that
+/// decoder plays nothing.
 fn sound_of(config: &Config) -> Option<Arc<dyn Outputs>> {
     config
         .audio
@@ -2020,9 +2006,8 @@ fn sound_of(config: &Config) -> Option<Arc<dyn Outputs>> {
 mod tests {
     use super::*;
 
-    /// Their formula, against the one value a run has confirmed end to end: the
-    /// rig's password, salt and challenge, and the digest their server
-    /// accepted.
+    /// RustDesk's two-round password hash: 32 bytes, dependent on the
+    /// challenge, and empty for an empty password.
     #[test]
     fn the_password_is_two_rounds() {
         let mut hash = Hash::new();
@@ -2031,20 +2016,15 @@ mod tests {
         let digest = login_hash("PASSword1", &hash);
         assert_eq!(digest.len(), 32);
         // The inner hash is what a client would store, and the outer one is
-        // what goes on the wire — so the same password against a second
-        // challenge is a different answer.
+        // sent, so the same password with a second challenge gives a
+        // different digest.
         let mut second = hash.clone();
         second.challenge = "fedcba".into();
         assert_ne!(digest, login_hash("PASSword1", &second));
         assert!(login_hash("", &hash).is_empty());
     }
 
-    /// The rig's second screen: 1024×768 at 1920,665 on a desktop whose first
-    /// display is 1920×1440. A tap in the middle of the picture is a tap on
-    /// that screen, and every coordinate on the wire is the desktop's — so a
-    /// client that sends the picture's own numbers moves the cursor on the
-    /// first display instead, which is what this pins.
-    /// A handler that takes everything and does nothing with it.
+    /// A handler that ignores everything.
     struct Nothing;
     impl Handler for Nothing {
         fn connected(&mut self, _width: usize, _height: usize) {}
@@ -2061,6 +2041,11 @@ mod tests {
         }
     }
 
+    /// The rig's second screen: 1024×768 at 1920,665 on a desktop whose first
+    /// display is 1920×1440. A tap in the middle of the picture is a tap on
+    /// that screen, and every coordinate on the wire is the desktop's, so a
+    /// client that sends the picture's coordinates moves the cursor on the
+    /// first display instead.
     #[test]
     fn a_pointer_is_where_the_captured_display_is() {
         let client = Client::new(Arc::new(video::NoDecoders));
@@ -2075,9 +2060,9 @@ mod tests {
                 .collect()
         };
 
-        // The origin comes off the switch message rather than the list the
-        // login carried, since that is the one a peer sends when a screen it
-        // was not asked about moves.
+        // The origin comes from the switch message rather than the login's
+        // display list, since the peer sends a switch message whenever a
+        // screen moves, requested or not.
         let mut switch = SwitchDisplay::new();
         switch.display = 1;
         switch.x = 1920;
@@ -2097,7 +2082,7 @@ mod tests {
         );
         assert_eq!((moved_and_pressed[1].x, moved_and_pressed[1].y), (2432, 1049));
 
-        // The wheel's two numbers are how far rather than where.
+        // The wheel's two numbers are a distance rather than a position.
         client.pointer(512, 384, 0x08);
         let released_and_scrolled = events();
         assert_eq!(released_and_scrolled.len(), 2);
@@ -2112,7 +2097,7 @@ mod tests {
         );
     }
 
-    /// An output that decodes Opus where told to, and plays nothing.
+    /// An output that optionally decodes Opus, and plays nothing.
     struct Sounding(Arc<runtime::media::audio::Controls>, bool);
 
     impl Outputs for Sounding {
@@ -2187,7 +2172,7 @@ mod tests {
             let message = Message::parse_from_bytes(&sent.try_recv().unwrap()).unwrap();
             let Some(message::Union::Misc(misc)) = message.union else { panic!("not a misc") };
             let Some(misc::Union::Option(option)) = misc.union else { panic!("not an option") };
-            // Nothing else in it, so the peer changes nothing else.
+            // No other options set, so the peer changes nothing else.
             assert_eq!(option.image_quality.enum_value(), Ok(ImageQuality::NotSet));
             assert_eq!(option.custom_fps, 0);
             assert!(option.supported_decoding.is_none());
@@ -2196,7 +2181,7 @@ mod tests {
         assert!(controls.set_enabled(false));
         assert_eq!(asked(&sent), BoolOption::Yes);
         assert!(!client.sound.load(Ordering::Relaxed));
-        // The next options, a quality change's, say the same.
+        // The next options sent, for example on a quality change, agree.
         assert_eq!(client.options(false).disable_audio.enum_value(), Ok(BoolOption::Yes));
         assert!(controls.set_enabled(true));
         assert_eq!(asked(&sent), BoolOption::No);
@@ -2207,8 +2192,9 @@ mod tests {
     fn a_port_is_theirs_unless_one_is_given() {
         assert_eq!(resolve("127.0.0.1").unwrap().port(), DIRECT_PORT);
         assert_eq!(resolve("127.0.0.1:5900").unwrap().port(), 5900);
-        // The bracketed form with no port is the case a `contains(':')` test
-        // for "has a port already" gets wrong, since every literal has one.
+        // The bracketed form without a port is the case a `contains(':')`
+        // check for "has a port" gets wrong, since every IPv6 literal has a
+        // colon.
         assert_eq!(resolve("[::1]").unwrap().port(), DIRECT_PORT);
         assert!(resolve("::1").is_err());
     }
@@ -2220,17 +2206,17 @@ mod tests {
         assert_eq!(encoding(Codec::Vp9, None), "VP9");
     }
 
-    /// Decoders whose way of decoding can be switched, as a desktop's can,
-    /// and which count what they make; each decoder draws a word per frame,
-    /// says it is hardware when made so, and asks for a key frame when told
-    /// to.
+    /// Decoders whose decoding mode can be switched, as on a desktop, and
+    /// which count the decoders they create; each decoder draws one word per
+    /// frame, reports hardware if created in hardware mode, and requests a key
+    /// frame on demand.
     #[derive(Default)]
     struct Switchable {
         hardware: Mutex<Hardware>,
         made: AtomicI32,
         lose_references: Arc<AtomicBool>,
-        /// The window takes pictures on the GPU, which each decoder then
-        /// hands back as a flat one.
+        /// Whether the window accepts GPU pictures, which each decoder then
+        /// returns as a flat-colour picture.
         gpu: AtomicBool,
     }
 
@@ -2299,10 +2285,10 @@ mod tests {
         }
     }
 
-    /// Hardware decoding switched on under a running session is a new
-    /// decoder at the next picture and a key frame asked for, with the
-    /// Encoding row and the status line following it; a decoder that loses
-    /// its references asks for one too; and nothing else asks.
+    /// Enabling hardware decoding during a session creates a new decoder at
+    /// the next picture and requests a key frame, and the Encoding row and the
+    /// status line follow; a decoder that loses its references also requests
+    /// one; nothing else does.
     #[test]
     fn a_switch_of_decoding_is_a_new_decoder_and_a_key_frame() {
         let decoders = Arc::new(Switchable::default());
@@ -2356,7 +2342,7 @@ mod tests {
         assert_eq!(refreshes(), 0);
     }
 
-    /// A handler that keeps the damage it is told of.
+    /// A handler that records the damage it receives.
     #[derive(Default)]
     struct Damage(Vec<(usize, usize, usize, usize)>);
     impl Handler for Damage {
@@ -2376,11 +2362,10 @@ mod tests {
         }
     }
 
-    /// With the window taking pictures on the GPU, the decoder's picture is
-    /// the framebuffer's as it is, the whole desktop damaged and nothing
-    /// converted until somebody reads it; and once it takes them no more,
-    /// the next picture is converted whole, with no new decoder or key
-    /// frame for the change.
+    /// While the window accepts GPU pictures, the decoder's picture becomes
+    /// the framebuffer's as is, the whole desktop is damaged, and nothing is
+    /// converted until it is read; once the window stops accepting them, the
+    /// next picture is converted whole, without a new decoder or key frame.
     #[test]
     fn a_picture_on_the_gpu_is_the_picture_until_one_is_converted() {
         let decoders = Arc::new(Switchable::default());
@@ -2430,9 +2415,9 @@ mod tests {
         assert_eq!(damage.0, [(0, 0, 4, 2)], "converted whole");
     }
 
-    /// A zstd frame that is `total` bytes of `byte` once decoded, as RLE
-    /// blocks of 128 KiB: four bytes on the wire for each, so 5 GiB of
-    /// output is 160 KiB of message, well inside a frame their wire takes.
+    /// A zstd frame that decodes to `total` bytes of `byte`, as RLE blocks of
+    /// 128 KiB: four bytes on the wire each, so 5 GiB of output is 160 KiB of
+    /// message, well within RustDesk's frame limit.
     fn zstd_rle(byte: u8, total: usize) -> Vec<u8> {
         const BLOCK: usize = 128 << 10;
         let mut out = vec![0x28, 0xb5, 0x2f, 0xfd]; // the magic, little-endian
@@ -2476,10 +2461,10 @@ mod tests {
         clip
     }
 
-    /// The peer's clipboard is zstd, and how much it decodes to is the peer's
-    /// to say: a few hundred kilobytes that decode to gigabytes are skipped
-    /// once they pass the shared bound, rather than decoded until the
-    /// allocation fails, and a clipboard at the bound still arrives whole.
+    /// The peer's clipboard is zstd, and its decoded size is controlled by the
+    /// peer: a few hundred kilobytes that decode to gigabytes are skipped once
+    /// they pass the shared bound, rather than decoded until allocation fails,
+    /// and a clipboard at the bound still arrives whole.
     #[test]
     fn a_clipboard_is_decoded_only_as_far_as_the_bound() {
         let client = Client::new(Arc::new(video::NoDecoders));
@@ -2503,9 +2488,9 @@ mod tests {
         data
     }
 
-    /// A cursor's size is two 32-bit fields of the peer's and its pixels zstd:
-    /// the size is held to the shared cursor bound, and the pixels are decoded
-    /// no further than that size needs, before anything is made of them.
+    /// A cursor's size is two 32-bit fields from the peer and its pixels are
+    /// zstd: the size is checked against the shared cursor bound, and the
+    /// pixels are decoded only as far as that size needs.
     #[test]
     fn a_cursor_is_decoded_only_as_far_as_its_size() {
         let bomb = zstd_rle(0xff, 5 << 30);

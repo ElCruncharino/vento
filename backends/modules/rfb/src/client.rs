@@ -23,23 +23,23 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
-/// What a connection is told before it starts.
+/// A connection's settings, given before it starts.
 pub struct Config {
-    /// `host`, `host:port`, `host:display` or `host::port`, the way every VNC
-    /// client has taken one since the beginning.
+    /// `host`, `host:port`, `host:display` or `host::port`, as every VNC
+    /// client has accepted since the beginning.
     pub address: String,
     /// `None` means "ask", through [`Handler::credentials`].
     pub password: Option<String>,
-    /// For the schemes that have one, which is VeNCrypt's `Plain` and nothing
-    /// else this client speaks.
+    /// For schemes that use one; of those this client supports, only
+    /// VeNCrypt's `Plain`.
     pub user_name: Option<String>,
-    /// Whether to insist on TLS, prefer it, or refuse it.
+    /// Whether to require TLS, prefer it, or refuse it.
     pub security: Security,
     /// Leave other viewers connected.
     pub shared: bool,
-    /// Preferred encoding, best first; the server picks the first it knows.
+    /// Preferred encodings, best first; the server picks the first it knows.
     pub encodings: Vec<i32>,
-    /// zlib effort, 0–9, as the `compressLevel` pseudo-encodings.
+    /// zlib effort, 0–9, sent as the `compressLevel` pseudo-encodings.
     pub compress_level: Option<u8>,
     pub connect_timeout: Duration,
 }
@@ -54,21 +54,22 @@ impl Default for Config {
             shared: true,
             encodings: vec![decode::ENC_ZRLE, decode::ENC_HEXTILE, decode::ENC_RRE],
             compress_level: None,
-            // A mistyped address must not be a spinner that never stops.
+            // A mistyped address must not leave the connection spinning
+            // forever.
             connect_timeout: Duration::from_secs(20),
         }
     }
 }
 
-/// What the connection panel can be told, as strings, because that is what it
-/// puts on screen.
+/// The connection panel's values, as strings, since that is how it shows
+/// them.
 #[derive(Clone, Default)]
 pub struct Info {
     pub desktop_name: String,
     pub protocol: String,
-    /// The transport: `TLSv1_3 · TLS13_AES_128_GCM_SHA256`, or the plain socket
-    /// said plainly. Worth a row of its own only because there are two of
-    /// them: with one transport it says nothing the address does not.
+    /// The transport: `TLSv1_3 · TLS13_AES_128_GCM_SHA256`, or a plain socket.
+    /// Worth its own row only because there are two transports: with one, it
+    /// would add nothing to the address.
     pub connection: String,
     pub security: String,
     pub encoding: String,
@@ -77,10 +78,10 @@ pub struct Info {
     pub viewer_pixels: String,
 }
 
-/// One screen of a desktop's layout. The rectangle is where the head is inside
-/// the framebuffer; the id and the flags are the server's own and go back
-/// unchanged in a `SetDesktopSize`, since a server matches the screens it is
-/// sent against the ones it has.
+/// One screen of a desktop's layout. The rectangle is the screen's position in
+/// the framebuffer; the id and the flags are the server's and are sent back
+/// unchanged in a `SetDesktopSize`, since a server matches the screens it
+/// receives against its own.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Screen {
     pub id: u32,
@@ -92,9 +93,9 @@ pub struct Screen {
 }
 
 /// One outbound message, already encoded. Encoding on the caller's thread and
-/// writing on one thread of our own is what keeps a stalled socket from
-/// reaching the main thread — the app calls [`Client::pointer`] from wherever
-/// a finger moved.
+/// writing on a thread of our own keeps a stalled socket from blocking the
+/// main thread, since the app calls [`Client::pointer`] from its input
+/// handlers.
 enum Out {
     Bytes(Vec<u8>),
     Stop,
@@ -103,12 +104,12 @@ enum Out {
 struct Shared {
     framebuffer: RwLock<Framebuffer>,
     out: Sender<Out>,
-    /// The socket, from the moment it starts dialling: what `close` breaks.
+    /// The socket, from when dialling starts; `close` breaks it.
     hangup: Hangup,
     info: Mutex<Info>,
-    /// Whether a framebuffer update has been asked for and not yet arrived.
-    /// A `Mutex` rather than an atomic because "ask unless one is outstanding"
-    /// is a test and a set, and two threads do it.
+    /// Whether a framebuffer update has been requested and not yet received.
+    /// A `Mutex` rather than an atomic because "request unless one is
+    /// outstanding" is a test-and-set, done from two threads.
     requested: Mutex<bool>,
     running: AtomicBool,
     focused: AtomicBool,
@@ -118,39 +119,39 @@ struct Shared {
     extended_buttons: AtomicBool,
     /// The server put the pointer in relative mode, so a `PointerEvent`'s
     /// coordinates are deltas biased by `0x7FFF` and this client no longer
-    /// knows where the cursor is.
+    /// knows the cursor's position.
     relative_pointer: AtomicBool,
-    /// The server has sent an `ExtendedDesktopSize` rectangle, which is the
-    /// only announcement there is that it will take a `SetDesktopSize`.
+    /// The server has sent an `ExtendedDesktopSize` rectangle, the only
+    /// indication that it accepts a `SetDesktopSize`.
     can_resize: AtomicBool,
     /// The layout the server last sent, in its own order. Empty until an
     /// `ExtendedDesktopSize` rectangle arrives, which for most servers is never.
     screens: Mutex<Vec<Screen>>,
-    /// What the session has moved, both directions, since the socket was
-    /// opened. Protocol bytes: inside TLS, outside TCP.
+    /// Bytes transferred in each direction since the socket was opened.
+    /// Protocol bytes: inside TLS, outside TCP.
     received: Counter,
     sent: Counter,
-    /// keyId → keysym, so a release names the key its press named. The
-    /// protocol has no notion of a key id at all: `KeyEvent` carries a keysym,
-    /// so remembering which one went down is the client's job, and doing it
-    /// here rather than in Java keeps it under the protocol's own tests.
+    /// keyId → keysym, so a release names the same key as its press. The
+    /// protocol has no key ids (`KeyEvent` carries a keysym), so the client
+    /// tracks which one went down, here rather than in Java so the protocol's
+    /// tests cover it.
     held: Mutex<HashMap<i64, u32>>,
-    /// Where the extended clipboard stands (see `clipboard.rs`). Both the
-    /// reader, answering the server, and whoever offers a copy reach it.
+    /// The extended clipboard's state (see `clipboard.rs`), used by the reader
+    /// when answering the server and by the thread offering a copy.
     clip: Mutex<Clip>,
 }
 
-/// The extended clipboard's state: what the server said it takes, and the
-/// text this end has announced and not yet been asked for.
+/// The extended clipboard's state: the server's capabilities, and the text
+/// this end has announced and not yet been asked for.
 #[derive(Default)]
 struct Clip {
-    /// The server's caps, action bits and all; 0 until it sends them, and
-    /// then the plain messages are not used again.
+    /// The server's caps, action bits included; 0 until it sends them, after
+    /// which the plain messages are not used again.
     server: u32,
-    /// The most text the server takes unasked; 0 means notify only.
+    /// The most text the server accepts unrequested; 0 means notify only.
     server_utf8_size: u32,
-    /// The text announced, LF line ends, until the server's clipboard
-    /// changes under it. TigerVNC's `hasLocalClipboard` with the text.
+    /// The announced text, with LF line ends, until the server's clipboard
+    /// changes. TigerVNC's `hasLocalClipboard`, plus the text.
     local: Option<String>,
 }
 
@@ -188,8 +189,8 @@ impl Client {
         }
     }
 
-    /// The desktop, for the drawing thread. Held under a read lock for the
-    /// length of a copy and nothing longer.
+    /// The desktop, for the drawing thread. Held under a read lock only for
+    /// the duration of a copy.
     pub fn framebuffer(&self) -> &RwLock<Framebuffer> {
         &self.shared.framebuffer
     }
@@ -212,7 +213,7 @@ impl Client {
 
     // ---- input, callable from any thread ----------------------------------
 
-    /// The pointer, where the server thinks in pixels.
+    /// An absolute pointer event, in desktop pixels.
     pub fn pointer(&self, x: u16, y: u16, button_mask: u16) {
         if self.shared.view_only.load(Ordering::Relaxed) {
             return;
@@ -225,13 +226,13 @@ impl Client {
         ));
     }
 
-    /// The pointer, where the server thinks in deltas — the same message with
-    /// the coordinates biased, which is the whole of QEMU's relative mode.
+    /// A relative pointer event: the same message with the coordinates
+    /// biased, which is all QEMU's relative mode is.
     ///
     /// A delta outside the biased range is clamped rather than wrapped: a
-    /// pointer that jumps to the far side of the desktop is wrong, but a
-    /// pointer that jumps to the *opposite* side of it is wrong in a way that
-    /// looks like a different bug.
+    /// pointer that jumps to the edge of the desktop is wrong, but one that
+    /// jumps to the *opposite* edge is wrong in a way that looks like a
+    /// different bug.
     pub fn pointer_relative(&self, dx: i32, dy: i32, button_mask: u16) {
         if self.shared.view_only.load(Ordering::Relaxed) {
             return;
@@ -244,29 +245,29 @@ impl Client {
         ));
     }
 
-    /// Whether the server has put the pointer in relative mode. Asked as well
-    /// as announced, because a screen that attaches to a session already
+    /// Whether the server has put the pointer in relative mode. Queryable as
+    /// well as announced, because a screen that attaches to a session already
     /// running has missed the announcement.
     pub fn pointer_is_relative(&self) -> bool {
         self.shared.relative_pointer.load(Ordering::Relaxed)
     }
 
-    /// Whether the ninth button has anywhere to go.
+    /// Whether the server accepts a ninth button.
     pub fn has_extended_buttons(&self) -> bool {
         self.shared.extended_buttons.load(Ordering::Relaxed)
     }
 
-    /// Whether this server will take a new desktop size.
+    /// Whether this server accepts a new desktop size.
     ///
-    /// View-only says no, which is the same rule TigerVNC's viewer has: a
-    /// session that promises to change nothing at the far end does not get to
-    /// change the shape of it either.
+    /// Not in view-only mode, the same rule as TigerVNC's viewer: a session
+    /// that promises to change nothing at the far end must not change its
+    /// shape either.
     ///
-    /// So does a desktop with more than one screen in it, and that one is this
-    /// client's own limitation rather than the protocol's: what is sent is a
-    /// layout of one screen covering the desktop, so granting a resize would
-    /// merge somebody's monitors into one. Refusing is the smaller wrong
-    /// answer, since nothing on a phone should quietly rearrange a workstation.
+    /// Not for a desktop with more than one screen either, which is this
+    /// client's limitation rather than the protocol's: the request is a layout
+    /// of one screen covering the desktop, so granting a resize would merge
+    /// the far end's monitors into one. Refusing is the lesser problem, since
+    /// a phone should not silently rearrange a workstation.
     pub fn can_resize(&self) -> bool {
         self.shared.can_resize.load(Ordering::Relaxed)
             && !self.shared.view_only.load(Ordering::Relaxed)
@@ -279,11 +280,10 @@ impl Client {
         self.shared.screens.lock().unwrap().clone()
     }
 
-    /// Ask the server for a desktop this size, as one screen covering it.
+    /// Asks the server for a desktop of this size, as one screen covering it.
     ///
-    /// The answer is another `ExtendedDesktopSize` rectangle, which is where
-    /// the size that actually happened comes from — this sends and reports
-    /// nothing.
+    /// The server answers with another `ExtendedDesktopSize` rectangle, which
+    /// reports the resulting size; this only sends.
     pub fn request_desktop_size(&self, width: u16, height: u16) {
         if !self.can_resize() || width == 0 || height == 0 {
             return;
@@ -306,18 +306,18 @@ impl Client {
         self.send(set_desktop_size(width, height, &[screen]));
     }
 
-    /// Whether the server takes a layout of screens now, any number of them:
-    /// the same rule as [`can_resize`](Client::can_resize) without the one
-    /// screen, since a layout says where each of them goes.
+    /// Whether the server accepts a layout of any number of screens now: the
+    /// same rule as [`can_resize`](Client::can_resize) without the
+    /// single-screen limit, since a layout places each screen.
     pub fn can_layout(&self) -> bool {
         self.shared.can_resize.load(Ordering::Relaxed) && !self.shared.view_only.load(Ordering::Relaxed)
     }
 
-    /// Ask the server for a desktop this size divided into `screens`, each
-    /// the server's screen of that id moved or resized, or a new one (see
+    /// Asks the server for a desktop of this size divided into `screens`, each
+    /// moving or resizing the server's screen with that id, or a new one (see
     /// [`requested_layout`]); their flags are ignored and the server's kept.
-    /// Nothing is sent for a layout that is not one of this desktop, or that
-    /// is the one the server has already.
+    /// Nothing is sent for a layout that doesn't fit this desktop, or that
+    /// matches the server's current one.
     pub fn request_layout(&self, width: u16, height: u16, screens: &[Screen]) {
         if !self.can_layout() || width == 0 || height == 0 {
             return;
@@ -350,15 +350,15 @@ impl Client {
         if self.shared.view_only.load(Ordering::Relaxed) {
             return;
         }
-        // Unknown means it was never pressed, or was released twice: sending
+        // An unknown id was never pressed or was already released: sending
         // nothing is right either way.
         if let Some(keysym) = self.shared.held.lock().unwrap().remove(&key_id) {
             self.send(key_event(keysym, false));
         }
     }
 
-    /// Let go of everything, for a screen going away with keys still held:
-    /// "held" means held at the far end, and it stays that way until told.
+    /// Releases every held key, for a screen going away with keys still held:
+    /// they stay held at the far end until released.
     pub fn release_all_keys(&self) {
         let held: Vec<u32> = self.shared.held.lock().unwrap().drain().map(|(_, k)| k).collect();
         for keysym in held {
@@ -366,15 +366,15 @@ impl Client {
         }
     }
 
-    /// Not sent while view-only: the far end's clipboard is the far end's, and
-    /// replacing it is driving rather than watching. Both borrowed clients
-    /// already refuse it there.
+    /// Not sent in view-only mode: replacing the far end's clipboard is
+    /// control, not viewing. The libvncclient and TigerVNC backends refuse it
+    /// there too.
     ///
-    /// With the extended clipboard the text is announced and kept, and goes
-    /// when the server asks for it — or at once, where the server said it
-    /// takes that much unasked — as TigerVNC's `announceClipboard` does it.
-    /// Without it, it goes as a plain `ClientCutText`: Latin-1, and LF line
-    /// ends, which is what RFB says lines end in.
+    /// With the extended clipboard the text is announced and kept, and sent
+    /// when the server requests it, or immediately if the server accepts that
+    /// much unrequested, as TigerVNC's `announceClipboard` does. Without it,
+    /// the text is sent as a plain `ClientCutText`: Latin-1, with LF line
+    /// ends, as RFB specifies.
     pub fn clipboard(&self, text: &str) {
         if self.shared.view_only.load(Ordering::Relaxed) {
             return;
@@ -393,8 +393,8 @@ impl Client {
         } else if server & clipboard::NOTIFY != 0 {
             clipboard::notify(true)
         } else {
-            // A server that cannot be told there is text can only be given
-            // it, which is what TigerVNC does then.
+            // A server that can't be notified of text can only be sent it,
+            // which is what TigerVNC does then.
             local_text(server, &text)
         };
         clip.local = Some(text);
@@ -406,11 +406,11 @@ impl Client {
         self.shared.view_only.store(view_only, Ordering::Relaxed);
     }
 
-    /// Whether to keep asking for updates.
+    /// Whether to keep requesting updates.
     ///
-    /// The pause is entirely this: an RFB server sends nothing that was not
-    /// asked for, so not asking is the whole mechanism — which is what the
-    /// RealVNC core's `focusEvent` turned out to be doing inside itself.
+    /// This is the whole pause mechanism: an RFB server sends nothing
+    /// unrequested, so not requesting pauses it, which is also what the
+    /// RealVNC core's `focusEvent` does internally.
     pub fn set_focused(&self, focused: bool) {
         self.shared.focused.store(focused, Ordering::Release);
         if focused {
@@ -418,9 +418,9 @@ impl Client {
         }
     }
 
-    /// End the session. The reader is blocked on a socket read, or still in
-    /// the dial, so it is woken by shutting the socket down rather than by a
-    /// flag it cannot see.
+    /// Ends the session. The reader is blocked on a socket read or still
+    /// dialling, so it is woken by shutting the socket down rather than by a
+    /// flag it can't see.
     pub fn close(&self) {
         self.shared.hangup.hang_up();
         let _ = self.shared.out.send(Out::Stop);
@@ -434,8 +434,8 @@ impl Client {
 
     // ---- the session -------------------------------------------------------
 
-    /// Connect and run until the session ends. Blocks; every [`Handler`] call
-    /// happens on this thread.
+    /// Connects and runs until the session ends. Blocks; every [`Handler`]
+    /// call happens on this thread.
     pub fn run(&self, config: &Config, handler: &mut dyn Handler) -> Result<()> {
         let result = self.session(config, handler);
         self.shared.running.store(false, Ordering::Release);
@@ -449,9 +449,9 @@ impl Client {
     fn session(&self, config: &Config, handler: &mut dyn Handler) -> Result<()> {
         let (host, port) = resolve(&config.address)?;
         let socket = connect(&self.shared.hangup, &host, port, config.connect_timeout)?;
-        // Held for the rest of the session, handshake and all: a server that
-        // takes the connection and then says nothing is a read that only a
-        // shut-down socket ends.
+        // Held for the rest of the session, including the handshake: if a
+        // server accepts the connection and then sends nothing, only shutting
+        // the socket down ends the read.
         let _holding = self.shared.hangup.hold(&socket)?;
         socket.set_nodelay(true).ok();
         socket.set_read_timeout(Some(config.connect_timeout)).ok();
@@ -464,8 +464,6 @@ impl Client {
 
         let version = security::handshake_version(&mut wire.r, &mut wire.w)?;
         let chosen = {
-            // The stored password answers the first ask and no more: a wrong
-            // one must not lock the session out of ever prompting.
             let mut ask = FromConfigThenHandler {
                 handler: &mut *handler,
                 stored: config
@@ -497,9 +495,9 @@ impl Client {
             info.protocol = format!("RFB {}.{}", version.0, version.1);
             info.connection = match wire.peer() {
                 Some(peer) => peer.description.clone(),
-                // Said rather than left blank: "this desktop and every
-                // keystroke are on the wire in the clear" is the fact a panel
-                // most needs to be able to state.
+                // Stated rather than left blank: that the desktop and every
+                // keystroke cross the network unencrypted is the fact the
+                // panel most needs to show.
                 None => "Not encrypted".to_string(),
             };
             info.security = chosen.description;
@@ -517,13 +515,12 @@ impl Client {
             .write_all(&set_encodings(&config.encodings, config.compress_level))?;
         wire.w.flush()?;
 
-        // The handshake is the only part with a deadline. Past it, an idle
-        // desktop is silent for as long as it likes — and the deadline must not
-        // cover the password prompt either, which is a person rather than a
-        // server: a timeout has to know what it is waiting for, and one that
-        // covers a prompt kills the connection under whoever is typing. Both
-        // fall out of putting it on the socket and taking
-        // it off here: a `Condvar` wait is not a read.
+        // The handshake is the only part with a deadline. After it, an idle
+        // desktop may be silent indefinitely, and the deadline must not cover
+        // the password prompt either, which waits for the user rather than the
+        // server: a timeout covering a prompt drops the connection while the
+        // user is typing. Setting the timeout on the socket and removing it
+        // here handles both, since a `Condvar` wait is not a read.
         socket.set_read_timeout(None).ok();
 
         self.shared.framebuffer.write().unwrap().resize(width, height);
@@ -531,8 +528,8 @@ impl Client {
         handler.connected(width, height);
 
         // The writer thread takes the write half itself rather than a second
-        // clone of the socket, because with TLS there is no second clone to
-        // take: one session encrypts both directions (see `transport`).
+        // clone of the socket, because with TLS there is none: one session
+        // encrypts both directions (see `transport`).
         let mut r = wire.r;
         let writer = self.spawn_writer(wire.w);
         self.shared.request_update_full();
@@ -544,16 +541,13 @@ impl Client {
         result
     }
 
-    /// Change the encodings on a running session.
+    /// Changes the encodings on a running session.
     ///
-    /// Live, and not by our contrivance: `SetEncodings` may be sent whenever a
-    /// client likes and the server uses the new list from the next rectangle
-    /// on. So the picture-quality control on this backend really does act on
-    /// the session in front of you — which the RealVNC one cannot do, since
-    /// its equivalent needs a *changed* quality and carries the group with it.
+    /// `SetEncodings` may be sent at any time, and the server uses the new
+    /// list from the next rectangle on, so this applies live.
     ///
     /// A full update follows, because otherwise nothing repaints until
-    /// something on the desktop moves and the change is invisible.
+    /// something on the desktop changes, and the change is invisible.
     pub fn set_encodings(&self, encodings: &[i32], compress_level: Option<u8>) {
         if !self.shared.running.load(Ordering::Acquire) {
             return;
@@ -608,7 +602,7 @@ impl Client {
                 }
                 1 => {
                     // SetColourMapEntries: only meaningful without true colour,
-                    // and we asked for true colour.
+                    // and this client asks for true colour.
                     r.skip(1)?;
                     let _first = r.u16()?;
                     let count = r.u16()? as usize;
@@ -627,23 +621,23 @@ impl Client {
     fn server_cut_text(&self, r: &mut Reader<impl Read>, handler: &mut dyn Handler) -> Result<()> {
         r.skip(3)?;
         let length = r.i32()?;
-        // `unsigned_abs`, because negating i32::MIN is the one value that
-        // overflows — in a release build silently, into a skip of two
-        // gigabytes that reads until the far end gives up.
+        // `unsigned_abs`, because negating i32::MIN overflows, silently in a
+        // release build, into a two-gigabyte skip that reads until the far
+        // end gives up.
         let n = length.unsigned_abs() as usize;
         if n > MAX_CUT_TEXT {
-            // Skipped, not refused: ending the session over a big copy at
-            // the far end lost the desktop for the sake of a clipboard.
-            // Nothing is delivered, since a cut-off text pasted here would
-            // read as the whole of it.
+            // Skipped, not refused: ending the session over a large copy at
+            // the far end lost the desktop for a clipboard. Nothing is
+            // delivered, since a truncated text pasted here would look
+            // complete.
             log::warn!("the far end's clipboard of {n} bytes is over the {MAX_CUT_TEXT} this client takes; skipped");
             r.skip(n)?;
             return Ok(());
         }
         let body = r.bytes(n)?;
         if length >= 0 {
-            // The far end owns the clipboard now, so a request for ours is
-            // one for something that has gone.
+            // The far end owns the clipboard now, so a request for ours would
+            // be for text that is gone.
             self.shared.clip.lock().unwrap().local = None;
             handler.clipboard(&clipboard::to_lf(&latin1(&body)));
             return Ok(());
@@ -662,8 +656,8 @@ impl Client {
                 let _ = self.shared.out.send(Out::Bytes(clipboard::caps()));
             }
             Message::Notify(formats) => {
-                // The server's clipboard changed: ask for its text at once,
-                // which is when the TigerVNC backend asks too.
+                // The server's clipboard changed: request its text
+                // immediately, as the TigerVNC backend does.
                 if formats & clipboard::UTF8 != 0 {
                     clip.local = None;
                     if clip.server & clipboard::REQUEST != 0 {
@@ -709,14 +703,14 @@ impl Client {
             let h = r.u16()? as usize;
             let encoding = r.i32()?;
 
-            // Every decoder below sizes its scratch from w and h, so this is
-            // what keeps a rectangle's cost bounded by the desktop rather than
-            // by two 16-bit fields a server chose: 65535×65535 raw is a 17 GB
-            // allocation, and an allocation that fails aborts the process
-            // instead of returning. A conforming server never sends one — it
-            // clips to what was asked for — so the check is free. A cursor's
-            // rectangle is a pseudo-encoding's and is not on the desktop;
-            // `decode::cursor` holds it to the cursor bound instead.
+            // Every decoder below sizes its scratch from w and h, so this keeps
+            // a rectangle's cost bounded by the desktop rather than by two
+            // 16-bit fields from the server: 65535×65535 raw is a 17 GB
+            // allocation, and a failed allocation aborts the process instead
+            // of returning. A conforming server never sends one (it clips to
+            // the requested area), so the check costs nothing. A cursor's
+            // rectangle belongs to a pseudo-encoding and is not on the
+            // desktop; `decode::cursor` limits it to the cursor bound instead.
             if !decode::is_pseudo(encoding) {
                 let fb = self.shared.framebuffer.read().unwrap();
                 if x + w > fb.width() || y + h > fb.height() {
@@ -734,8 +728,8 @@ impl Client {
                     check_desktop(w, h)?;
                     self.shared.framebuffer.write().unwrap().resize(w, h);
                     handler.desktop_size(w, h);
-                    // Everything that was on it is gone, so ask again rather
-                    // than leaving a screenful of the previous size's pixels.
+                    // Everything on it is gone, so request it again rather
+                    // than leaving the previous size's pixels on screen.
                     self.shared.request_update_full();
                     continue;
                 }
@@ -744,24 +738,24 @@ impl Client {
                         handler.cursor(&[], 0, 0, 0, 0);
                     } else {
                         let pixels = decode::cursor(r, w, h)?;
-                        // x and y are the hotspot, positively. The negated
-                        // one RealVNC's API hands out is their own rewriting of
-                        // the rectangle, not the protocol's.
+                        // x and y are the hotspot, positive. The negated one
+                        // RealVNC's API returns is their own rewriting of the
+                        // rectangle, not the protocol's.
                         handler.cursor(&pixels, w, h, x as i32, y as i32);
                     }
                     continue;
                 }
                 decode::ENC_EXTENDED_MOUSE_BUTTONS => {
-                    // An empty rectangle whose whole content is that it arrived.
+                    // An empty rectangle; its arrival is the whole message.
                     self.shared.extended_buttons.store(true, Ordering::Relaxed);
                     continue;
                 }
                 decode::ENC_POINTER_TYPE_CHANGE => {
                     // The flag is the rectangle's x; the width and height are
                     // the framebuffer's and mean nothing. Sent again whenever
-                    // the far end's mouse changes shape underneath — a tablet
-                    // plugged into the virtual machine — so this is a mode
-                    // being set, not a capability being learnt.
+                    // the far end's pointer device changes (a tablet plugged
+                    // into the virtual machine), so this sets a mode rather
+                    // than reporting a capability.
                     let relative = x == 0;
                     if self.shared.relative_pointer.swap(relative, Ordering::Relaxed) != relative {
                         handler.pointer_mode(relative);
@@ -770,15 +764,15 @@ impl Client {
                 }
                 decode::ENC_EXTENDED_DESKTOP_SIZE => {
                     *self.shared.screens.lock().unwrap() = screen_layout(r)?;
-                    // The rectangle arriving at all is the announcement, and it
-                    // is the only one there is: it says the server speaks
-                    // SetDesktopSize, not that it will grant one. A server
-                    // configured to refuse sends exactly this and then says no.
+                    // The rectangle's arrival is the only announcement there
+                    // is: it says the server supports SetDesktopSize, not that
+                    // it will grant one. A server configured to refuse sends
+                    // exactly this and then refuses.
                     self.shared.can_resize.store(true, Ordering::Relaxed);
                     if x == decode::RESIZE_REASON_CLIENT && y != decode::RESIZE_RESULT_SUCCESS {
-                        // Nothing changed, the pixels included, so this must not
-                        // ask for them again. The size in a refusal is the one
-                        // the desktop still has rather than the one asked for;
+                        // Nothing changed, including the pixels, so this must
+                        // not request them again. The size in a refusal is the
+                        // desktop's current one rather than the requested one;
                         // 1 is prohibited, 2 out of resources, 3 a bad layout.
                         log::warn!("the server refused a resize and stayed at {w}x{h} (result {y})");
                         continue;
@@ -831,7 +825,7 @@ impl Client {
 }
 
 impl Shared {
-    /// Ask for whatever has changed, unless a request is already outstanding.
+    /// Requests the changed areas, unless a request is already outstanding.
     fn request_update(&self) {
         let mut requested = self.requested.lock().unwrap();
         if *requested || !self.running.load(Ordering::Acquire) {
@@ -845,7 +839,7 @@ impl Shared {
         let _ = self.out.send(Out::Bytes(update_request(true, w, h)));
     }
 
-    /// Ask for all of it, outstanding request or not.
+    /// Requests the whole desktop, whether or not a request is outstanding.
     fn request_update_full(&self) {
         let mut requested = self.requested.lock().unwrap();
         *requested = true;
@@ -857,8 +851,8 @@ impl Shared {
     }
 }
 
-/// A desktop size within [`runtime::MAX_DESKTOP_PIXELS`]. Two 16-bit fields
-/// here, so the product cannot overflow.
+/// A desktop size within [`runtime::MAX_DESKTOP_PIXELS`]. Both are 16-bit
+/// fields, so the product cannot overflow.
 fn check_desktop(width: usize, height: usize) -> Result<()> {
     if width * height > runtime::MAX_DESKTOP_PIXELS {
         return Err(Error::Protocol(format!("desktop of {width}x{height}")));
@@ -866,8 +860,8 @@ fn check_desktop(width: usize, height: usize) -> Result<()> {
     Ok(())
 }
 
-/// A `SetEncodings` message: the caller's preferences, then the floor, then the
-/// pseudo-encodings.
+/// A `SetEncodings` message: the caller's preferences, then the fallback, then
+/// the pseudo-encodings.
 fn set_encodings(preferred: &[i32], compress_level: Option<u8>) -> Vec<u8> {
     let mut list: Vec<i32> = Vec::new();
     for &e in preferred {
@@ -876,31 +870,31 @@ fn set_encodings(preferred: &[i32], compress_level: Option<u8>) -> Vec<u8> {
         }
     }
     // CopyRect first and Raw last, always: Raw is the one encoding a server may
-    // not refuse, so it is the floor rather than a preference, and CopyRect
+    // not refuse, so it is the fallback rather than a preference, and CopyRect
     // costs four bytes for a window drag whatever else is in use.
     list.insert(0, decode::ENC_COPY_RECT);
     list.push(decode::ENC_RAW);
-    // The pseudo-encodings are requests for behaviour, not for pixels. Cursor
-    // is the load-bearing one: it is what lets the pointer be drawn here
-    // instead of a round trip away, which is the assumption the whole control
-    // stack rests on.
+    // The pseudo-encodings request behaviour, not pixels. Cursor matters most:
+    // it lets the pointer be drawn locally instead of a round trip away, which
+    // the whole control stack assumes.
     list.push(decode::ENC_CURSOR);
     list.push(decode::ENC_DESKTOP_SIZE);
-    // Both halves of "the desktop may change size". The plain one is a server
-    // announcing that it has; the extended one is a conversation, and asking
-    // for it is what makes this end able to ask for a size at all.
+    // Both halves of desktop resizing. With the plain one the server announces
+    // a change; the extended one is a two-way exchange, and requesting it is
+    // what lets this end request a size at all.
     list.push(decode::ENC_EXTENDED_DESKTOP_SIZE);
     list.push(decode::ENC_LAST_RECT);
-    // Both of these are asked for unconditionally, and neither is a preference
-    // about how this client would like to work: they are questions about the
-    // server, whose answers arrive as rectangles. Asking about the pointer mode
-    // is what makes a QEMU virtual machine with an ordinary PS/2 mouse usable
-    // at all — a server in relative mode with no client that says −257 drops
-    // every pointer event on the floor.
+    // Both of these are requested unconditionally, and neither is a preference
+    // about how this client works: they ask about the server, whose answers
+    // arrive as rectangles. Requesting the pointer mode is what makes a QEMU
+    // virtual machine with an ordinary PS/2 mouse usable at all: a server in
+    // relative mode drops every pointer event from a client that doesn't
+    // request −257.
     list.push(decode::ENC_EXTENDED_MOUSE_BUTTONS);
     list.push(decode::ENC_POINTER_TYPE_CHANGE);
-    // The clipboard in UTF-8 rather than Latin-1, where the server has it;
-    // its answer is its caps, as a ServerCutText (see `clipboard.rs`).
+    // The clipboard in UTF-8 rather than Latin-1, if the server supports it;
+    // the server answers with its caps, as a ServerCutText (see
+    // `clipboard.rs`).
     list.push(clipboard::ENC_EXTENDED_CLIPBOARD);
     if let Some(level) = compress_level {
         list.push(-256 + level.min(9) as i32);
@@ -927,8 +921,8 @@ fn client_cut_text(text: &str) -> Vec<u8> {
     msg
 }
 
-/// Our text, the way a server with the extended clipboard takes it: a
-/// provide where it has that action, and otherwise the plain message, as
+/// Our text in the form a server with the extended clipboard accepts: a
+/// provide if it supports that action, and otherwise the plain message, as
 /// TigerVNC's `sendClipboardData` chooses.
 fn local_text(server: u32, text: &str) -> Vec<u8> {
     if server & clipboard::PROVIDE != 0 {
@@ -938,13 +932,13 @@ fn local_text(server: u32, text: &str) -> Vec<u8> {
     }
 }
 
-/// A `PointerEvent`, in one of its two shapes.
+/// A `PointerEvent`, in one of its two forms.
 ///
 /// Without `ExtendedMouseButtons` the mask is one byte, buttons 1–8, and the
-/// ninth is dropped where it can be seen rather than by an `as u8` somewhere.
-/// With it, bit 7 becomes a *marker* saying a
-/// second byte follows, so button 8 moves out of the first byte and the two are
-/// reassembled at the far end as `(high << 7) | (low & 0x7f)`.
+/// ninth is dropped explicitly here rather than by an `as u8` elsewhere. With
+/// it, bit 7 becomes a *marker* saying a second byte follows, so button 8
+/// moves out of the first byte and the far end reassembles the two as
+/// `(high << 7) | (low & 0x7f)`.
 fn pointer_event(x: u16, y: u16, buttons: u16, extended: bool) -> Vec<u8> {
     let mut msg = Vec::with_capacity(7);
     msg.push(5u8);
@@ -961,12 +955,12 @@ fn pointer_event(x: u16, y: u16, buttons: u16, extended: bool) -> Vec<u8> {
     msg
 }
 
-/// A `SetDesktopSize`: the size wanted, and the screens it is divided into,
-/// at most 255 of them, as they are given.
+/// A `SetDesktopSize`: the requested size and the screens it is divided into,
+/// at most 255, as given.
 ///
-/// A screen that keeps the id and flags the server gave it is what makes this
-/// a change to the desktop that is there rather than a proposal of a new one —
-/// a server matches what it is sent against the screens it has.
+/// Screens that keep the ids and flags the server gave them make this a change
+/// to the existing desktop rather than a proposal of a new one, since a server
+/// matches the screens it receives against its own.
 fn set_desktop_size(width: u16, height: u16, screens: &[Screen]) -> Vec<u8> {
     let screens = &screens[..screens.len().min(255)];
     let mut msg = Vec::with_capacity(8 + 16 * screens.len());
@@ -987,13 +981,13 @@ fn set_desktop_size(width: u16, height: u16, screens: &[Screen]) -> Vec<u8> {
     msg
 }
 
-/// A layout asked for, as the screens to send against the server's own
-/// `have`: a screen whose id the server has is that screen, moved or resized,
-/// and keeps its flags; one with an id the server has not, or one already
-/// used earlier in the list, is new, and gets the lowest id neither list has,
-/// as TigerVNC's viewer gives its new screens a fresh one. `None` where the
-/// result is not a layout of a `width × height` desktop, by the rules
-/// TigerVNC's `ScreenSet::validate` checks before it sends one: at least one
+/// A requested layout, as the screens to send given the server's own `have`:
+/// a screen whose id the server has is that screen, moved or resized, and
+/// keeps its flags; one with an id the server doesn't have, or an id already
+/// used earlier in the list, is new and gets the lowest id neither list uses,
+/// as TigerVNC's viewer gives its new screens a fresh one. `None` if the
+/// result is not a valid layout of a `width × height` desktop, by the rules
+/// TigerVNC's `ScreenSet::validate` checks before sending one: at least one
 /// screen and at most 255, none empty or outside the desktop.
 pub fn requested_layout(have: &[Screen], width: u16, height: u16, wanted: &[Screen]) -> Option<Vec<Screen>> {
     if wanted.is_empty() || wanted.len() > 255 {
@@ -1035,10 +1029,10 @@ pub fn requested_layout(have: &[Screen], width: u16, height: u16, wanted: &[Scre
 
 /// The screen list inside an `ExtendedDesktopSize` rectangle.
 ///
-/// Every screen is read whatever the rectangle turns out to say — a refusal
-/// carries a layout too — because the list is part of the rectangle and
-/// stopping early would leave the next rectangle's header being read out of the
-/// middle of this one.
+/// Every screen is read regardless of what the rectangle reports (a refusal
+/// carries a layout too), because the list is part of the rectangle, and
+/// stopping early would read the next rectangle's header from the middle of
+/// this one.
 fn screen_layout<R: Read>(r: &mut Reader<R>) -> Result<Vec<Screen>> {
     let count = r.u8()? as usize;
     r.skip(3)?;
@@ -1056,7 +1050,7 @@ fn screen_layout<R: Read>(r: &mut Reader<R>) -> Result<Vec<Screen>> {
     Ok(screens)
 }
 
-/// A delta as the relative mode carries it: `0x7FFF` is no movement.
+/// A delta as relative mode encodes it: `0x7FFF` is no movement.
 fn bias(delta: i32) -> u16 {
     (0x7fff + delta).clamp(0, 0xffff) as u16
 }
@@ -1081,12 +1075,12 @@ fn key_event(keysym: u32, down: bool) -> Vec<u8> {
     msg
 }
 
-/// The stored password first, then the person.
+/// The stored password first, then the user.
 ///
-/// It goes through the prompt path rather than through the handshake's own
-/// config so that "wrong stored password" and "no stored password" reach the
-/// same place, and `take` is what makes it once: a stored password that the
-/// server refuses must not lock the session out of ever asking for the real one.
+/// It goes through the prompt path rather than the handshake's config so a
+/// wrong stored password and no stored password end up in the same place, and
+/// `take` makes it used only once: a stored password the server refuses must
+/// not stop the session from ever asking for the real one.
 struct FromConfigThenHandler<'a> {
     handler: &'a mut dyn Handler,
     stored: Option<Credentials>,
@@ -1094,9 +1088,9 @@ struct FromConfigThenHandler<'a> {
 
 impl security::Ask for FromConfigThenHandler<'_> {
     fn credentials(&mut self, needs_user: bool) -> Option<Credentials> {
-        // A stored password with no user name is no answer to a scheme that
-        // wants one, so that case goes to the prompt with the name filled in
-        // by the app rather than being sent half-blank.
+        // A stored password without a user name doesn't answer a scheme that
+        // needs one, so that case goes to the prompt with the name filled in by
+        // the app rather than being sent half-blank.
         if let Some(stored) = self.stored.take()
             && (!needs_user || !stored.user.is_empty())
         {
@@ -1112,12 +1106,12 @@ impl security::Ask for FromConfigThenHandler<'_> {
 
 /// `host`, `host:port`, `host:display` or `host::port`, plus the bracketed IPv6
 /// form. The display convention is older than the port one and every VNC client
-/// still takes it, so `10.0.0.5:1` has to mean 5901 rather than port 1.
+/// still accepts it, so `10.0.0.5:1` means 5901 rather than port 1.
 fn resolve(address: &str) -> Result<(String, u16)> {
     runtime::address::split(address, 5900, runtime::address::Ports::Display).map_err(Error::Address)
 }
 
-/// Each address in turn, through `hangup` so that a close ends the dial too.
+/// Tries each address in turn, through `hangup` so a close also ends the dial.
 fn connect(hangup: &Hangup, host: &str, port: u16, timeout: Duration) -> Result<TcpStream> {
     if host.is_empty() {
         return Err(Error::Protocol("no address".into()));
@@ -1135,9 +1129,9 @@ fn connect(hangup: &Hangup, host: &str, port: u16, timeout: Duration) -> Result<
     })))
 }
 
-/// The shape `runtime::Runner` runs: the inherent `run` and `close` are the
-/// implementation, and this is them written down for a session that does not
-/// know which protocol it has.
+/// The interface `runtime::Runner` runs: the inherent `run` and `close` are the
+/// implementation, exposed here for a session that doesn't know which protocol
+/// it has.
 impl runtime::Client for Client {
     type Config = Config;
     type Error = Error;
@@ -1151,8 +1145,8 @@ impl runtime::Client for Client {
         self.close();
     }
 
-    /// `run` reports a requested close as [`Error::Closed`], which is the
-    /// one ending the screen asked for and wants nothing said of.
+    /// `run` reports a requested close as [`Error::Closed`], the one ending the
+    /// screen requested, which needs no message.
     fn closed_on_request(error: &Error) -> bool {
         matches!(error, Error::Closed)
     }
@@ -1168,7 +1162,7 @@ impl Default for Client {
 mod tests {
     use super::*;
 
-    /// The forms are `runtime::address`'s; what is this client's own is the
+    /// The forms are `runtime::address`'s; this client's own parts are the
     /// default port and the display rule being on.
     #[test]
     fn addresses() {
@@ -1179,8 +1173,8 @@ mod tests {
         assert!(resolve("2001:db8::1").is_err());
     }
 
-    /// A release names the key its press named, and an unmatched one sends
-    /// nothing at all — which is what stops a stuck modifier at the far end.
+    /// A release names the same key as its press, and an unmatched one sends
+    /// nothing, which prevents a stuck modifier at the far end.
     #[test]
     fn key_ids_map_to_the_keysym_that_went_down() {
         let client = Client::new();
@@ -1199,10 +1193,10 @@ mod tests {
     }
 
     /// The ninth button, before and after the server agrees to carry it. Both
-    /// shapes are checked byte for byte, because the difference between them is
-    /// one bit that means "there is another byte" to one server and "button 8
-    /// is down" to another — and getting it wrong desynchronises the stream
-    /// rather than moving the pointer somewhere silly.
+    /// forms are checked byte for byte, because the difference is one bit that
+    /// means "another byte follows" to one server and "button 8 is down" to
+    /// another, and getting it wrong desynchronises the stream rather than
+    /// misplacing the pointer.
     #[test]
     fn extended_buttons_move_button_eight_into_the_second_byte() {
         // Buttons 1 (bit 0), 8 (bit 7) and 9 (bit 8).
@@ -1217,25 +1211,25 @@ mod tests {
             vec![5, 0b1000_0001, 0, 100, 0, 200, 0b0000_0011],
             "the marker bit is set, button 8 is bit 0 of the extra byte and 9 is bit 1"
         );
-        // What the far end reassembles is what we meant.
+        // The far end reassembles the original mask.
         let low = (extended[1] & 0x7f) as u16;
         let high = extended[6] as u16;
         assert_eq!((high << 7) | low, buttons);
     }
 
     /// The marker bit is set whenever the server agreed to it, even with no
-    /// button down at all: a first byte of zero and a trailing byte would be
-    /// read as a message with no extra byte, and the byte after it as the next
-    /// message's type.
+    /// button down: a first byte of zero followed by a trailing byte would be
+    /// read as a message without the extra byte, and the byte after it as the
+    /// next message's type.
     #[test]
     fn the_marker_bit_does_not_depend_on_which_buttons_are_down() {
         assert_eq!(pointer_event(1, 2, 0, true), vec![5, 0x80, 0, 1, 0, 2, 0]);
         assert_eq!(pointer_event(1, 2, 0, false), vec![5, 0, 0, 1, 0, 2]);
     }
 
-    /// Two heads side by side, and the reader left exactly at the end of the
-    /// list: a screen short or a screen long desynchronises every rectangle
-    /// after this one, which is a stream that dies somewhere else.
+    /// Two screens side by side, and the reader left exactly at the end of the
+    /// list: one screen too few or too many desynchronises every following
+    /// rectangle, and the stream fails somewhere else.
     #[test]
     fn a_screen_layout_is_read_whole() {
         let bytes: Vec<u8> = vec![
@@ -1255,9 +1249,9 @@ mod tests {
         assert_eq!(r.u8().unwrap(), 0xaa);
     }
 
-    /// The whole of `SetDesktopSize`, byte for byte: it is written once and a
-    /// server that reads a screen count where the padding should be closes the
-    /// connection rather than complaining.
+    /// The whole `SetDesktopSize`, byte for byte: a server that reads a screen
+    /// count where the padding should be closes the connection without an
+    /// error message.
     #[test]
     fn set_desktop_size_is_one_screen_covering_the_desktop() {
         let screen = Screen {
@@ -1281,9 +1275,9 @@ mod tests {
         );
     }
 
-    /// Nothing is sent until the server has said it takes one, because there is
-    /// nothing to say it with: the screen layout comes from the server's own
-    /// announcement.
+    /// Nothing is sent until the server has announced support, because there
+    /// is nothing to send it with: the screen layout comes from the server's
+    /// own announcement.
     #[test]
     fn a_resize_is_not_asked_for_before_the_server_offers_it() {
         let client = Client::new();
@@ -1377,8 +1371,8 @@ mod tests {
         assert!(requested_layout(&have, 1280, 800, &[screen(1, 0, 1280, 800, 0)]).is_some());
     }
 
-    /// Like a resize, a layout waits for the server's offer and is not sent
-    /// in view only; one is sent with every screen in it.
+    /// Like a resize, a layout waits for the server's announcement and is not
+    /// sent in view-only mode; when sent, it includes every screen.
     #[test]
     fn a_layout_is_asked_for_only_once_the_server_offers_one() {
         let client = Client::new();
@@ -1388,7 +1382,7 @@ mod tests {
         client.shared.can_resize.store(true, Ordering::Relaxed);
         *client.shared.screens.lock().unwrap() =
             vec![screen(9, 0, 1920, 1200, 0), screen(4, 1920, 800, 600, 0)];
-        // Two screens is not a resize, and is a layout.
+        // Two screens: not a resize, but a layout.
         assert!(!client.can_resize());
         assert!(client.can_layout());
         client.request_layout(2560, 800, &two);
@@ -1404,7 +1398,7 @@ mod tests {
         assert_eq!(sent, vec![set_desktop_size(2560, 800, &expected)]);
     }
 
-    /// What a session was told, for the tests that run the read loop over
+    /// Records the handler calls, for the tests that run the read loop over
     /// bytes rather than a socket.
     #[derive(Default)]
     struct Recorder {
@@ -1446,8 +1440,8 @@ mod tests {
         recorder
     }
 
-    /// A clipboard over the limit is stepped over and the session reads on:
-    /// the bell after it still rings, and nothing of the text is delivered.
+    /// A clipboard over the limit is skipped and the session continues: the
+    /// bell after it still rings, and none of the text is delivered.
     #[test]
     fn an_oversized_cut_text_is_skipped_not_fatal() {
         let n = crate::proto::MAX_CUT_TEXT + 1;
@@ -1485,8 +1479,8 @@ mod tests {
     }
 
     /// The `Cursor` pseudo-encoding has no desktop to be checked against, so
-    /// its two 16-bit fields are held to the shared cursor bound before
-    /// anything is allocated by them: 65535x65535 asked for 17 GB before a
+    /// its two 16-bit fields are limited to the shared cursor bound before
+    /// anything is allocated from them: 65535x65535 requested 17 GB before a
     /// pixel had arrived. Past it the session ends, as TigerVNC's and
     /// libvncclient's do.
     #[test]
@@ -1526,11 +1520,11 @@ mod tests {
         msg
     }
 
-    /// TigerVNC's turns, against a server that takes text by notify only
+    /// TigerVNC's sequence, against a server that accepts text by notify only
     /// (Xvnc's default): its caps are answered with ours, its notify with a
     /// request, and its provide delivered as UTF-8 with LF line ends. A copy
-    /// here is announced, given when asked for, and owned up to on a peek;
-    /// once the server's clipboard changes, a request for ours goes unanswered.
+    /// here is announced, sent when requested, and reported on a peek; once
+    /// the server's clipboard changes, a request for ours goes unanswered.
     #[test]
     fn the_extended_clipboard_takes_tigervncs_turns() {
         use clipboard::{CAPS, NOTIFY, PEEK, PROVIDE, REQUEST, UTF8};
@@ -1561,8 +1555,8 @@ mod tests {
         assert_eq!(sent(&client), vec![clipboard::request(), clipboard::notify(false)]);
     }
 
-    /// A server that takes text unasked is given it at once, up to the size
-    /// it named; past that it is only told.
+    /// A server that accepts text unrequested is sent it immediately, up to
+    /// the size it gave; past that it is only notified.
     #[test]
     fn text_goes_unasked_where_the_server_takes_it() {
         use clipboard::{CAPS, NOTIFY, PROVIDE, REQUEST, UTF8};
@@ -1590,8 +1584,8 @@ mod tests {
         assert_eq!(seen.clipboard, vec!["caf\u{e9}\n".to_string()]);
     }
 
-    /// `0x7FFF` is standing still, and a delta too big for the field stops at
-    /// the end of it rather than wrapping to the other side of the desktop.
+    /// `0x7FFF` is no movement, and a delta too large for the field stops at
+    /// its end rather than wrapping to the other side of the desktop.
     #[test]
     fn relative_deltas_are_biased_and_clamped() {
         assert_eq!(bias(0), 0x7fff);
@@ -1602,7 +1596,7 @@ mod tests {
         assert_eq!(bias(100_000), 0xffff);
     }
 
-    /// A relative pointer event is an ordinary one with biased coordinates —
+    /// A relative pointer event is an ordinary one with biased coordinates:
     /// same message type, same length, same button byte.
     #[test]
     fn relative_and_absolute_are_the_same_message() {

@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// The libvncclient backend's probe: `vento_libvnc_config` from the command
-// line, over the body in `backends/platform/linux/probe`.
+// The libvncclient backend's probe: builds a `vento_libvnc_config` from the
+// command line and runs the shared probe in `backends/platform/linux/probe`.
 //
 //   vento_libvnc_probe HOST:DISPLAY --password vncpass --out shot.ppm
 
@@ -72,8 +72,8 @@ int main(int argc, char **argv) {
     if (!config.address) {
         usage();
     }
-    /* The user name and the password are asked for rather than given, so
-       that the probe exercises the question every real session asks. */
+    /* The user name and password are prompted for rather than passed on the
+       command line, so that the probe exercises the credentials prompt. */
     printf("%s\n", vento_libvnc_version());
     return vento_probe_run(&probe, create, &config);
 }

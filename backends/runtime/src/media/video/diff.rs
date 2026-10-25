@@ -3,17 +3,17 @@
 
 //! What one frame differs from the last one in, found in the decoder's planes.
 //!
-//! A video stream has no damage rectangles — RustDesk's picture is one and
-//! nothing else — so what moved can only be found by comparing; and the planes
+//! A video stream has no damage rectangles (RustDesk's picture is only a video
+//! stream), so what moved can only be found by comparing; and the planes
 //! are a third of the bytes the picture is, are what the decoder has just
 //! written, and are still in this thread's cache. The answer is used twice
 //! over: it is the damage the drawing thread is told about, and it is which
 //! rows are worth converting at all.
 //!
 //! Two identical planes cannot make different pixels, so a row this calls
-//! unchanged is unchanged. The converse is not owed: a chroma sample that moves
-//! under a luma that is already saturated converts a row for nothing, which
-//! costs a row and cannot cost a picture.
+//! unchanged is unchanged. The converse does not hold: a chroma sample that
+//! moves under a luma that is already saturated converts a row for nothing,
+//! which costs a row and cannot lose a picture.
 
 use super::convert::{Frame, Plane};
 
@@ -201,8 +201,8 @@ impl Previous {
             // row already in hand.
         }
 
-        // What one unit of the chroma answer is: a byte of an interleaved pair,
-        // or a sample where the two planes are separate — and how many of them
+        // What one unit of the chroma answer is (a byte of an interleaved pair,
+        // or a sample where the two planes are separate), and how many of them
         // one column of the answer is worth.
         let per_sample = if shape.interleaved { 2 } else { 1 };
         let chroma_grain = (COLUMN_GRAIN * per_sample / shape.horiz).max(1);
@@ -276,7 +276,7 @@ impl Default for Previous {
 }
 
 /// Where a plane row differs from the copy kept of it, as the first and last
-/// unit that does — and the copy brought up to date, since a row that differs
+/// unit that does, and the copy brought up to date, since a row that differs
 /// is a row that has to be kept.
 ///
 /// The whole row is compared first and most rows of most frames stop there;

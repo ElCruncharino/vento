@@ -4,7 +4,7 @@
 #
 # The decoder tests' fixtures, and the only record of how they were made. Run
 # from anywhere; it writes beside itself. What came out of it was committed,
-# so a test does not depend on which encoders the machine running it has —
+# so a test does not depend on which encoders the machine running it has,
 # only on libavcodec decoding them.
 #
 # Every clip is the same 128×128 picture, three frames of it at ten a second:
@@ -14,11 +14,10 @@
 #   frame 2  frame 1 again
 #
 # so that the colour can be asserted on, the second frame moves sixteen rows,
-# and the third moves nothing the encoder did not choose to touch up. What a
-# lossy encoder may change around the band is its own business as far as the
-# block the band is in; 128 rows is what puts the bottom half in a different
-# 64-row superblock (VP9, AV1) or coding tree unit (H.265) from the band, so
-# that nothing there can move, and the test says so.
+# and the third moves nothing the encoder did not choose to touch up. A lossy
+# encoder may change anything in the blocks the band is in; 128 rows puts the
+# bottom half in a different 64-row superblock (VP9, AV1) or coding tree unit
+# (H.265) from the band, so nothing there can move, and the test asserts that.
 #
 # The source is RGB, converted to YUV by an explicit matrix and range and
 # tagged as such, so what the stream says about its colour is what was done to
@@ -32,8 +31,8 @@
 # High 10 (4:2:0) and VP9 profile 3 (4:4:4, ten bits).
 #
 # The encoders are asked for what a remote desktop asks for: no lookahead, no
-# reordering, one encoded frame per picture — no alt-ref frames hidden in a
-# VP9 superframe, no B-frames. H.264 and H.265 carry access unit delimiters,
+# reordering, one encoded frame per picture (no alt-ref frames hidden in a
+# VP9 superframe, no B-frames). H.264 and H.265 carry access unit delimiters,
 # which are what the test splits their Annex B streams into frames at; VP8,
 # VP9 and AV1 are IVF, whose frame headers do that already.
 #

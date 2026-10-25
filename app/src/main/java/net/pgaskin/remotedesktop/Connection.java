@@ -15,31 +15,28 @@ import java.util.UUID;
 /**
  * One saved connection: what to connect to, with what, and how.
  *
- * <p>Deliberately not RealVNC's {@code ServerRec} — that drags in native lists,
- * a finalizer idiom and an account sync we do not use, and the one thing it
- * was needed for is a thumbnail. This is a record and a JSON object.
+ * <p>Deliberately not RealVNC's {@code ServerRec}, which brings in native lists,
+ * a finalizer idiom and an account sync that are not used here, and would only
+ * have been needed for a thumbnail. This is a record and a JSON object.
  *
  * <p>{@link #options} holds only the {@link net.pgaskin.remotedesktop.backend.BackendOption.Scope#CONNECTION}
- * settings, and only the ones that have been changed from the backend's
- * default — an absent key means "whatever the backend says", so a default that
+ * settings (including {@link AppOptions}), and only the ones changed from the
+ * default: an absent key means "the backend's default", so a default that
  * changes in a later version reaches connections saved before it.
  *
- * @param pinned   kept at the top of the home screen. A fact about the list
- *                 rather than about connecting, and it lives here for the same
- *                 reason the name does: it is what somebody decided about this
- *                 connection.
- * @param sealedPassword the password as it is stored: encrypted under a
- *                 keystore key, or empty for none — see {@link Secrets}, which
- *                 is also where the answer to "what happens to a restored
- *                 backup" is written down. Kept sealed rather than revealed
- *                 because this record is read whenever the list is, and only
- *                 two callers want the plain text; a record that carried it
- *                 would decrypt every password to draw the home screen, and
- *                 re-encrypt every password to save any one of them — which on
- *                 a phone whose keystore is momentarily unavailable is not a
- *                 failure to read, it is the whole file overwritten with
- *                 nothing. The other fields are not secrets and are stored as
- *                 they are.
+ * @param pinned   kept at the top of the home screen. About the list rather
+ *                 than about connecting, but stored here like the name, since
+ *                 it is a per-connection choice of the user's.
+ * @param sealedPassword the password as stored: encrypted under a keystore
+ *                 key, or empty for none. See {@link Secrets}, which also
+ *                 covers what happens on restoring a backup. Kept sealed
+ *                 because this record is read whenever the list is, and only a
+ *                 few callers need the plain text; a record holding it would
+ *                 decrypt every password to draw the home screen and re-encrypt
+ *                 every password to save any one of them, which with a keystore
+ *                 that is briefly unavailable would overwrite the whole file's
+ *                 passwords with nothing. The other fields are not secrets and
+ *                 are stored as is.
  */
 public record Connection(String id, String name, String backendId, String address,
                          String userName, String sealedPassword, Map<String, String> options,
@@ -56,17 +53,17 @@ public record Connection(String id, String name, String backendId, String addres
     }
 
     /**
-     * The password in the clear, decrypted here and now. Empty for "none
-     * stored", which is also what an unopenable one means — see {@link Secrets}.
+     * The password in the clear, decrypted on each call. Empty if none is
+     * stored or it cannot be decrypted; see {@link Secrets}.
      */
     public String password() {
         return Secrets.reveal(sealedPassword);
     }
 
     /**
-     * The same connection with a new password, sealed on the way in. A password
-     * that cannot be encrypted is not stored at all rather than stored in the
-     * clear, which is why this can return a record with none.
+     * The same connection with a new password, encrypted. A password that cannot
+     * be encrypted is not stored at all rather than stored in the clear, so this
+     * can return a record with no password.
      */
     public Connection withPassword(String plaintext) {
         final String sealed = Secrets.protect(plaintext);
@@ -74,12 +71,12 @@ public record Connection(String id, String name, String backendId, String addres
                 sealed == null ? "" : sealed, options, pinned);
     }
 
-    /** What to put on the card: the name if there is one, else the address. */
+    /** The title shown in lists: the name if there is one, else the address. */
     public String title() {
         return name == null || name.isEmpty() ? address : name;
     }
 
-    /** ... and under it, the address, unless that is already the title. */
+    /** The subtitle: the address, unless that is already the title. */
     public String subtitle() {
         return name == null || name.isEmpty() ? "" : address;
     }
@@ -91,10 +88,9 @@ public record Connection(String id, String name, String backendId, String addres
     }
 
     /**
-     * Both halves of one answer: what a prompt was answered with, and what
-     * "forget these" clears. Together rather than one after the other because
-     * they <em>are</em> one answer — a user name kept without the password it
-     * went with is a connection that asks again and offers the wrong name.
+     * Sets both credentials at once: from a prompt's answer, or cleared by the
+     * editor. Together because they belong together: a user name kept without
+     * its password makes the next prompt offer the wrong name.
      */
     public Connection withCredentials(String newUserName, String plaintext) {
         return withUserName(newUserName).withPassword(plaintext);
@@ -117,9 +113,9 @@ public record Connection(String id, String name, String backendId, String addres
         o.put("backend", backendId);
         o.put("address", address);
         o.put("user", userName);
-        // Already sealed, and written as it is: encrypting here would mean
-        // every save re-encrypting every record, and a keystore that refuses
-        // once would take the whole file's passwords with it.
+        // Already encrypted, and written as is: encrypting here would mean
+        // every save re-encrypting every record, and one keystore failure
+        // would lose every password in the file.
         o.put("password", sealedPassword);
         final JSONObject opts = new JSONObject();
         for (Map.Entry<String, String> e : options.entrySet()) {

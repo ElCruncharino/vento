@@ -15,12 +15,12 @@ import java.util.function.Predicate;
  *
  * <p>A backend is built with an opaque {@code Map<String, String>}, which is
  * enough to pass options and useless for building a screen out of them. The
- * alternative to this is a hard-coded list of RealVNC's parameters in the
- * settings tree, which is exactly the coupling the flavour split exists to
- * prevent.
+ * alternative to this is a hard-coded list of each backend's parameters in
+ * the app's settings tree, which is the coupling that keeping each backend in
+ * its own module is meant to prevent.
  *
  * <p>The values are strings, because that is what the backends' own
- * configuration layers take — RealVNC's parameter registry parses
+ * configuration layers take: RealVNC's parameter registry parses
  * {@code "true"}/{@code "30"}/{@code "ZRLE2"} out of strings itself.
  * {@link Type} says how to ask for one, not how to store it.
  *
@@ -53,25 +53,25 @@ public record BackendOption(String key, String label, String summary, Type type,
     public enum Scope {
         /**
          * Belongs to one connection: offered in the editor, stored on the
-         * connection record. View-only and the desktop size are the shape of
-         * this — they are about one machine, and two servers on the same phone
-         * want different answers.
+         * connection record. View-only and the desktop size are examples:
+         * they are about one machine, and two servers on the same phone want
+         * different answers.
          */
         CONNECTION,
         /**
          * Belongs to the backend: offered in its settings screen, stored in its
-         * own preference file, and applied to every connection that uses it. Its
-         * own preference file, so a backend's settings live and die with the
-         * backend.
+         * own preference file, and applied to every connection that uses it.
+         * The file is its own so that a backend's settings live and die with
+         * the backend.
          */
         GLOBAL,
         /**
          * The connection's, with the backend's answer as its default: offered in
          * both screens, and read from the connection where it has one and from
          * the backend where it has not. The encoding and how much of the picture
-         * may be thrown away are the shape of this — mostly a fact about the
-         * link this phone is on rather than about one machine, but with one
-         * machine always able to disagree.
+         * may be thrown away are examples: mostly a fact about the link this
+         * phone is on rather than about one machine, but with one machine always
+         * able to disagree.
          *
          * <p>An editor stores an override only where the answer differs from
          * what the connection would do anyway, so moving the backend's answer
@@ -83,20 +83,20 @@ public record BackendOption(String key, String label, String summary, Type type,
     /**
      * A value and what to call it on screen.
      *
-     * @param summary  why you would pick this one over the others, or null. A
-     *                 value whose label is the whole of what there is to say has
-     *                 none, which is nearly all of them; where one is given, the
-     *                 choice is offered as a list of described items rather than
-     *                 as a menu of labels, since a menu has no room for a line
-     *                 of prose. Only the connection editor draws these.
+     * @param summary  why to pick this one over the others, or null. A value
+     *                 whose label says everything has none, which is nearly all
+     *                 of them; where one is given, the choice is offered as a
+     *                 list of described items rather than as a menu of labels,
+     *                 since a menu has no room for a line of prose. Only the
+     *                 connection editor draws these.
      * @param requires the key of a {@code BOOL} option this choice depends on,
      *                 or null. A choice whose dependency is off is not offered
-     *                 at all, which is for the case where a backend can do
-     *                 something it should not do unasked — an encoding that is
-     *                 lossy, say — and offering it as a preference while it is
-     *                 switched off would be offering something that cannot
-     *                 happen. One already chosen when the switch goes off goes
-     *                 back to the option's default; see {@link #stranded}.
+     *                 at all. This is for something a backend can do but should
+     *                 not do unasked (a lossy encoding, say): offering it as a
+     *                 preference while it is switched off would offer something
+     *                 that cannot happen. One already chosen when the switch
+     *                 goes off goes back to the option's default; see
+     *                 {@link #stranded}.
      */
     public record Choice(String value, String label, String summary, String requires) {
         public Choice(String value, String label) {
@@ -137,10 +137,9 @@ public record BackendOption(String key, String label, String summary, Type type,
      * capability, which is a fact about a live session and belongs on
      * {@link Backend}, and not a choice that depends on a switch, which is
      * {@link Choice#requires}. The case it is for is a mode dial that owns
-     * several settings until it is set to the value that hands them back — where
-     * leaving the row on screen means offering a control that provably does
-     * nothing, and greying it out means saying "not now" where the honest answer
-     * is "not here".
+     * several settings until it is set to the value that hands them back. There,
+     * leaving the row on screen offers a control that does nothing, and greying
+     * it out says "not now" where the accurate answer is "not here".
      *
      * <p>The gate is read from the same values the rows are drawn from, so a
      * screen where the controlling option is missing offers nothing that depends
@@ -164,10 +163,11 @@ public record BackendOption(String key, String label, String summary, Type type,
     /**
      * For a {@link Type#CHOICE}: the choice {@code value} names, where it
      * {@link Choice#requires requires} a switch that {@code on} says is off, or
-     * null. Such a value is left standing after its switch went, and is not
-     * what the backend would do either — TigerVNC's {@code h264} without
-     * {@code H264} negotiates something else — so a screen must not keep it
-     * selected. The Linux client's {@code Spec::stranded} is the same rule.
+     * null. Such a value is left over after its switch went off, and is not
+     * what the backend would do either (TigerVNC's {@code h264} without
+     * {@code H264} negotiates something else), so a screen must not keep it
+     * selected. {@code api::options::Spec::stranded}, used by the Linux client,
+     * is the same rule.
      *
      * @param on whether the {@code BOOL} option with that key is on
      */
@@ -200,9 +200,9 @@ public record BackendOption(String key, String label, String summary, Type type,
     /**
      * Every {@link #stranded} choice in {@code options} put back to its
      * {@link #fallback}, through {@code set}; the keys that moved, in the
-     * options' order. The one rule every screen keeps whenever a switch moves,
-     * and the Linux client's {@code Options::settle}: the two are held to the
-     * same cases by {@code backends/api/tests/options.json}.
+     * options' order. Every screen applies this whenever a switch moves, as
+     * the Linux client does with {@code api::options::Options::settle}; the two
+     * are held to the same cases by {@code backends/api/tests/options.json}.
      *
      * @param value what an option says now
      * @param on    whether the {@code BOOL} option with that key is on

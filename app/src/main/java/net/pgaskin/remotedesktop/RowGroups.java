@@ -13,19 +13,18 @@ import java.util.List;
 import com.google.android.material.textfield.TextInputLayout;
 
 /**
- * Rows grouped onto a container with large corners, which is the one shape this
- * app's settings, panel and editor are all made of.
+ * Rows grouped onto a container with large corners, the shape this app's
+ * settings, panel and editor are all built from.
  *
- * <p>Where a row sits in its group is what decides its background — first,
- * middle, last, or a group of one — so this is the only place that knows the
- * four drawables, and both renderers come through it: the settings tree's
- * adapter binds a row at a time, and the hand-built sheets hand over a whole
- * container.
+ * <p>A row's position in its group (first, middle, last, or a group of one)
+ * decides its background, so this is the only place that knows the four
+ * drawables, and both renderers use it: the settings tree's adapter binds one
+ * row at a time, and the hand-built sheets pass a whole container.
  *
- * <p>A row that is already a container of its own is left out of the run: an
- * outlined text field has a box and corners of its own, and a card behind it is
- * a second one. It keeps the group's inset, takes a wider gap, and ends the run
- * either side of itself.
+ * <p>A row that is already its own container is left out of the group: an
+ * outlined text field has its own box and corners, and a container behind it
+ * would add a second set. It keeps the group's inset, gets a wider gap, and
+ * ends the group on either side of itself.
  */
 final class RowGroups {
 
@@ -52,8 +51,8 @@ final class RowGroups {
 
     /**
      * One row: its background, the inset either side, and the gap under it.
-     * Every call sets all three, since a recycled row arrives wearing the last
-     * position's answers.
+     * Every call sets all three, since a recycled row still has the values from
+     * its previous position.
      */
     static void row(View view, boolean first, boolean last, int gapBelow) {
         view.setBackgroundResource(background(first, last));
@@ -76,9 +75,9 @@ final class RowGroups {
      * Every child of a container as one group, in the order they were added.
      * Called after the rows are built, and again whenever they are rebuilt.
      *
-     * <p>A hidden row is not in the group: an option that is only offered under
-     * some other option's answer leaves a run of rows behind it, and a gap where
-     * the corners do not meet is exactly what the run is drawn to avoid.
+     * <p>A hidden row is not in the group: an option shown only for some value
+     * of another option would otherwise leave a gap where the group's corners
+     * do not meet.
      */
     static void apply(ViewGroup container) {
         final Resources res = container.getResources();
@@ -101,8 +100,8 @@ final class RowGroups {
             } else {
                 view.setBackgroundResource(background(first, last));
             }
-            // The last row's gap is the container's business: what follows it is
-            // another section, or the end of the sheet.
+            // No gap after the last row; the container's own margin separates
+            // it from what follows, another section or the end of the sheet.
             margins(view, i == n - 1 ? 0 : (own || ownContainer(shown.get(i + 1))
                     ? fieldGap : gap));
         }

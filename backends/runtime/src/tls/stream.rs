@@ -7,12 +7,12 @@
 //! never meet. A TLS session cannot: it is one state machine, records are keyed
 //! in sequence, and both directions run through it. So the `rustls` connection
 //! sits behind a mutex taken **only for the crypto**, and the blocking socket
-//! read happens with no lock held at all — otherwise the reader, parked on a
-//! socket that says nothing for minutes at a time, would be holding the thing
-//! the writer needs for every keystroke.
+//! read happens with no lock held at all; otherwise the reader, blocked on a
+//! socket that can be silent for minutes, would hold the lock the writer needs
+//! for every keystroke.
 //!
 //! Both halves lock `conn` before `socket_write`, and never the other way
-//! round, which is the whole of the deadlock argument.
+//! round, which is what rules out a deadlock.
 //!
 //! What each protocol keeps for itself is the handshake: VeNCrypt has a plain
 //! byte in the middle of its own, and RDP's yields a public key that CredSSP
@@ -33,8 +33,8 @@ struct Stream {
 /// ordinary stream does.
 ///
 /// It keeps ciphertext of its own because rustls will not accept more while its
-/// decrypted-plaintext buffer is full — 16 KB of it, against a screenful of
-/// pixels. So the loop is: hand back plaintext, and only when there is none
+/// decrypted-plaintext buffer is full (16 KB of it, against a screenful of
+/// pixels). So the loop is: hand back plaintext, and only when there is none
 /// left take more of the stream, feeding it a record at a time and stopping the
 /// moment something is decrypted. What the socket gave us and rustls has not
 /// taken waits here rather than being dropped.
@@ -85,9 +85,9 @@ impl Read for Handle {
                 }
             }
             if self.at >= self.filled {
-                // No lock held: this is the read that waits, and an idle
-                // desktop waits in it for as long as nobody touches the far
-                // end. Holding the connection here would stop every keystroke.
+                // No lock held: this is the read that blocks, for as long as
+                // the far end's desktop is idle. Holding the connection here
+                // would stop every keystroke.
                 let n = self
                     .stream
                     .socket_read
@@ -133,8 +133,8 @@ impl Write for Handle {
     /// The whole buffer under one lock, and that is the point rather than an
     /// optimisation: rustls accepts at most its 64 KiB send buffer per call, so
     /// anything larger is a short write, and a caller's `write_all` would loop
-    /// with this lock released. Where two threads write application data — a
-    /// protocol thread's frames and a writer thread's input — the other one's
+    /// with this lock released. Where two threads write application data (a
+    /// protocol thread's frames and a writer thread's input), the other one's
     /// message would land inside this one.
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let mut conn = self.stream.conn.lock().unwrap();

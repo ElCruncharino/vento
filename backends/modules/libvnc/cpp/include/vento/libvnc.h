@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // LibVNCServer's libvncclient as a `vento_session`. The config is filled in
-// from the backend's options by `backends/modules/libvnc`, the
-// adapter both clients hold it through, and each field is explained below.
+// from the backend's options by `backends/modules/libvnc`, the adapter both
+// clients use.
 
 #ifndef VENTO_LIBVNC_H
 #define VENTO_LIBVNC_H
@@ -18,14 +18,15 @@ extern "C" {
 
 typedef struct vento_libvnc_config {
     /* `host`, `host:port`, `host:display`, `host::port`, `[literal]` or
-       `[literal]:port`; a bare IPv6 literal is refused in words. */
+       `[literal]:port`; a bare IPv6 literal is refused with an error. */
     const char *address;
     const char *user_name;   /* NULL for none */
     const char *password;    /* NULL for none, which prompts */
     bool shared;
-    /* Whether the VeNCrypt sub-types with no certificate in them may be used.
-       They are always offered; a connection that says no here ends when one
-       is agreed, before the tunnel is built, and says why. */
+    /* Whether the VeNCrypt sub-types without a certificate may be used. They
+       are always accepted in negotiation; if this is false, the connection
+       ends with an explanation when the server picks one, before the tunnel
+       is built. */
     bool anonymous_tls;
     const char *encoding;    /* a libvncclient encodings string, best first */
     int compress_level;      /* 0–9, or -1 for the server's own default */
@@ -34,7 +35,8 @@ typedef struct vento_libvnc_config {
     int connect_timeout_ms;  /* 0 or less for the library's default */
 } vento_libvnc_config;
 
-/* "LibVNCServer x.y.z" — the one call that proves the whole path. */
+/* "LibVNCServer x.y.z". Calling it also checks that the library loads and
+   links. */
 const char *vento_libvnc_version(void);
 
 /* Starts connecting and returns at once; everything after arrives through

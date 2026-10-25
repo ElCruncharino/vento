@@ -1,25 +1,23 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The desktop as pixels, and the one thing two threads share.
+//! The desktop's pixels, the main state shared between threads.
 //!
-//! Unlike the RFB client's, this one does not own the pixels: IronRDP's
-//! [`DecodedImage`] is what its decoders write into, and taking a copy of it
-//! after every update would double the cost of every frame for nothing. So the
-//! image itself lives behind the `RwLock` and this is the reading half — the
-//! same contract `rfb::Framebuffer` offers, so `nativeReadRegion` is the same
-//! call on either backend.
+//! Unlike the RFB client's framebuffer, this one does not own the pixels:
+//! IronRDP's decoders write into its [`DecodedImage`], and copying it after
+//! every update would double the cost of every frame. So the image itself
+//! lives behind the `RwLock` and this is the reading side, with the same
+//! contract as `rfb::Framebuffer`, so `Backend::read_region` works the same
+//! way on either backend.
 //!
-//! The format is [`PixelFormat::RgbA32`], which is `R, G, B, A` in memory —
+//! The format is [`PixelFormat::RgbA32`], which is `R, G, B, A` in memory,
 //! already an Android `ARGB_8888` pixel, so a region read is a row copy with no
-//! conversion anywhere in the path. That is the same decision, and the same
-//! payoff, as `rfb::PixelFormat::NATIVE`.
+//! conversion anywhere in the path, as with `rfb::PixelFormat::NATIVE`.
 
 use ironrdp_graphics::image_processing::PixelFormat;
 use ironrdp_session::image::DecodedImage;
 
-/// The format everything in this client works in. Not a preference: the whole
-/// point is that nothing converts.
+/// The format everything in this client uses, so that nothing converts.
 pub const FORMAT: PixelFormat = PixelFormat::RgbA32;
 
 pub struct Framebuffer {
@@ -45,16 +43,16 @@ impl Framebuffer {
         self.image = Some(DecodedImage::new(FORMAT, width, height));
     }
 
-    /// The image the decoders write into. Held under the write lock, which is
-    /// why every caller takes it for one update and no longer.
+    /// The image the decoders write into. Accessed under the write lock, so
+    /// every caller holds it for one update and no longer.
     pub fn image_mut(&mut self) -> Option<&mut DecodedImage> {
         self.image.as_mut()
     }
 
     /// Copy a desktop rectangle out as `R, G, B, A` bytes, one row at a time
-    /// into a destination of its own stride. False if there is nothing to read
-    /// or the rectangle is not wholly inside the desktop — a partial answer
-    /// would be a half-drawn tile on screen.
+    /// into a destination with its own stride. False if there is nothing to
+    /// read or the rectangle is not wholly inside the desktop, since a partial
+    /// read would show a half-drawn tile.
     pub fn read_rgba(
         &self,
         x: usize,
@@ -108,9 +106,9 @@ impl Framebuffer {
     }
 }
 
-/// The row arithmetic, on its own so that a test can see it: `DecodedImage`
-/// has no way in from outside the crate that owns it, and two strides that are
-/// not the same one is exactly the thing worth checking.
+/// The row arithmetic, separate so that a test can reach it: `DecodedImage`
+/// cannot be constructed with test data outside its own crate, and two
+/// different strides are what needs checking.
 fn copy_rows(
     data: &[u8],
     stride: usize,
@@ -138,8 +136,8 @@ impl Default for Framebuffer {
 mod tests {
     use super::*;
 
-    /// A read takes the source's stride and writes at the destination's, which
-    /// are different numbers whenever an Android bitmap is padded.
+    /// A read uses the source's stride and writes at the destination's, which
+    /// differ whenever an Android bitmap is padded.
     #[test]
     fn rows_land_at_the_destination_stride() {
         // 3×2 source, one byte per channel, values numbered by pixel.
@@ -155,10 +153,9 @@ mod tests {
         assert_eq!(&dst[8..12], &[0, 0, 0, 0], "padding is left alone");
     }
 
-    /// The destination offset `nativeReadRegion` takes is a slice offset and
-    /// nothing else, which is what lets it promise that the rest of the
-    /// destination is left as it was — the promise the caller's tiles depend on,
-    /// since a tile is refreshed a piece at a time.
+    /// The destination offset `Backend::read_region` takes is only a slice
+    /// offset, so the rest of the destination is left unchanged, which the
+    /// caller's tiles depend on, since a tile is refreshed piece by piece.
     #[test]
     fn a_read_into_the_middle_leaves_the_rest_alone() {
         // 2×2 source, pixels numbered 1..4 in the red channel.

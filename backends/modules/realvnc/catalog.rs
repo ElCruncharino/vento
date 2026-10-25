@@ -19,35 +19,35 @@ pub static REALVNC: About = About {
     // implementation as well as the protocol.
     short_name: "RealVNC",
     description: "RealVNC's proprietary client implementation. This is the only one which supports UDP, ZRLE2, and RealVNC's proprietary authentication/encryption. It performs significantly better than the others when connecting to a RealVNC server, especially for typical desktop usage.",
-    // After the open VNC and RDP clients: the more capable client against
-    // its own server, and the one with a ceiling on its life — 4.9.3's
-    // `libvncviewer.so` is 16 KB aligned, but it is somebody else's binary
-    // and cannot be rebuilt when the next page size arrives.
+    // After the open VNC and RDP clients: it is the more capable client
+    // against RealVNC's own server, but it has a limited lifetime. 4.9.3's
+    // `libvncviewer.so` is 16 KB aligned, but it is a third-party binary and
+    // cannot be rebuilt for a future page size.
     order: 30,
     pinning: Pinning::ADDRESS,
     user_has_domain: false,
     // The core asks to have an identity remembered after its security prompt,
-    // and is silent next time for a server it is handed back.
+    // and skips the prompt next time for a server whose identity it is given
+    // back.
     saves_identity: true,
     options: OPTIONS,
 };
 
 /// Which of RealVNC's parameters the clients offer.
 ///
-/// Every name here is one of two things: a parameter recovered from the
-/// binary's own registry, or one the original itself sets on `createSession`.
-/// The registry holds a great many more — the whole underscore-prefixed
-/// `_Hosted*` / `_Udp*` / `_Opus*` transport surface — and none is offered
-/// until there is a reason to, because an option nobody can describe is worse
-/// than no option.
+/// Every name here is either a parameter recovered from the binary's own
+/// registry or one the original sets on `createSession`. The registry holds
+/// many more (the whole underscore-prefixed `_Hosted*` / `_Udp*` / `_Opus*`
+/// transport surface), and none is offered without a reason, because an
+/// option that cannot be described is worse than no option.
 ///
 /// [`Scope::Connection`] versus [`Scope::Global`] is a question about the
 /// setting, not about the protocol: does one server want a different answer
 /// from another? Quality does, encryption policy does not.
 pub static OPTIONS: &[Spec] = &[
     // Auto, not the core's own default of High: Auto follows the measured line
-    // speed, and pinning High on every connection is deciding for a network
-    // nobody has seen yet.
+    // speed, while High on every connection would be chosen before the network
+    // is known.
     choices(
         "Quality",
         "Picture quality",
@@ -63,19 +63,17 @@ pub static OPTIONS: &[Spec] = &[
             choice("Custom", "Custom"),
         ],
     ),
-    // The one row every other RFB backend has and this one did not. All eight
-    // values of the enum the core registers, in the order it registers them,
-    // rather than a guess or a subset — including the two that are lossy,
-    // since the quality dial that would otherwise be how lossiness is asked
-    // for is by definition out of the way here.
+    // The encoding row every other RFB backend has. All eight values of the
+    // enum the core registers, in its registration order, rather than a guess
+    // or a subset, including the two lossy ones: the row applies only at a
+    // Custom quality, where the quality setting does not choose lossiness.
     //
-    // Only a Custom quality reaches it, which is why the row is not
-    // offered at any other. The picture policy builds its own list of
-    // encodings for each of the three fixed classes and consults this
-    // parameter only for the fourth, and that is the library rather than an
-    // interface decision: it was read out of the class switch and driven both
-    // ways — Automatic, High and Low all sent ZRLE with Hextile asked for, and
-    // Custom sent Hextile.
+    // Only a Custom quality reads it, so the row is not offered at any other.
+    // The picture policy builds its own encoding list for each of the three
+    // fixed classes and consults this parameter only for the fourth. That is
+    // the library's behaviour rather than an interface decision: it was read
+    // out of the class switch and tested both ways (Automatic, High and Low
+    // all sent ZRLE with Hextile requested, and Custom sent Hextile).
     when(
         choices(
             "PreferredEncoding",
@@ -98,23 +96,23 @@ pub static OPTIONS: &[Spec] = &[
         "Quality",
         &["Custom"],
     ),
-    // The colour depth, offered where the core reads it and nowhere else.
+    // The colour depth, offered only where the core reads it.
     //
     // Low and Custom are the qualities that consult it. The picture policy
     // resolves a quality to one of four classes and picks the pixel format
-    // from that: High and Medium ask for full colour whatever this says, Low
-    // and Custom use it, and Automatic is whichever class the measured line
-    // speed puts it in. Their own published reference says the parameter is
-    // ignored unless the quality is Custom, and the library disagrees with the
-    // documentation — the Low case is real, and was read out of the picture
-    // policy and then driven: at High a connection with `rgb111` asks for
-    // 24-bit colour, at Low and at Custom it asks for 3-bit.
+    // from that: High and Medium ask for full colour regardless, Low and
+    // Custom use this value, and Automatic follows the class the measured
+    // line speed selects. RealVNC's published reference says the parameter is
+    // ignored unless the quality is Custom, but the library behaves otherwise:
+    // the Low case was read out of the picture policy and then tested, and at
+    // High a connection with `rgb111` asks for 24-bit colour, while at Low and
+    // Custom it asks for 3-bit.
     //
     // The default is full colour where the original forces `rgb222` at every
-    // quality but Custom. That difference is smaller than it looked when it
-    // was made: at High and Medium the core asks for full colour whatever
-    // either of us says, so what it actually buys is a Low quality that keeps
-    // its colour, and an Automatic one that keeps it on a slow line.
+    // quality but Custom. The difference is small: at High and Medium the core
+    // asks for full colour regardless, and Low with no depth chosen still gets
+    // `rgb111` (`RealVncProvider.colorLevelFor`), so the default mainly lets an
+    // Automatic quality keep its colour on a slow line.
     when(
         choices(
             "ColorLevel",
@@ -181,12 +179,12 @@ pub static OPTIONS: &[Spec] = &[
         false,
     ),
     BELL,
-    // The three clipboard parameters this core has are deliberately not rows.
-    // Whether the local clipboard goes to a remote machine and comes back is a
-    // question about the client, asked once in the client's own settings and
-    // enforced there — the core's copies would be a second answer to it, in a
-    // second screen, one layer down. Left at their defaults, which is on, so
-    // the client's answer is the only one.
+    // The core's three clipboard parameters are deliberately not rows.
+    // Whether the local clipboard is sent to the remote machine and back is a
+    // client setting, set once in the client's own settings and enforced
+    // there; the core's parameters would be a second setting for the same
+    // thing, on a second screen, one layer down. They stay at their defaults
+    // (on), so the client's setting is the only one that applies.
     integer(
         "KeepAliveInterval",
         "Keep-alive interval",
@@ -210,9 +208,9 @@ mod tests {
     use super::*;
     use crate::options::{Options, find};
 
-    /// The keys it had when the phone's lists became these, in the same
-    /// order: a key is stored in connection records and preference files,
-    /// so one renamed is a setting forgotten.
+    /// The keys of the phone's option lists these replaced, in the same
+    /// order: keys are stored in connection records and preference files, so
+    /// renaming one loses the setting.
     #[test]
     fn the_keys_are_the_ones_records_hold() {
         let keys: Vec<&str> = OPTIONS.iter().map(|s| s.key).collect();

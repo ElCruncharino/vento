@@ -1,18 +1,17 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// `java.io` and `androidx.security.crypto`, which is how the core persists
-// what it keeps: its RSA key, the identities it has accepted, its password
-// store and its caches, each an `EncryptedFile` under the data directory it
-// was given.
+// `java.io` and `androidx.security.crypto`, through which the core persists
+// its RSA key, the identities it has accepted, its password store and its
+// caches, each an `EncryptedFile` under the data directory it was given.
 //
 // **The files are plain here.** `EncryptedFile` on a phone is AES-GCM under
 // a key in the hardware keystore; this stand-in opens the same path as an
 // ordinary file, so `rsaKeys/vncviewer.privatekey.enc` and
 // `passwords.json.enc` under `state_dir` are plaintext, protected by the
-// directory's mode and nothing else. A desktop client that wants better
-// wraps these two streams in whatever its platform keeps secrets with; what
-// the core reads and writes through them does not change.
+// directory's mode and nothing else. A desktop client needing more
+// protection can wrap these two streams in its platform's secret storage;
+// the data the core reads and writes through them does not change.
 
 #include <errno.h>
 #include <stdint.h>
@@ -102,12 +101,12 @@ void inputHooks(jnivm::ENV *E, const std::shared_ptr<jnivm::Class> &c) {
     c->HookInstanceFunction(E, "close", [](jnivm::ENV *, jnivm::Object *) {});
 }
 
-/* `data` as the whole of `path`, which only this user can read from the
-   moment it exists: a temporary file beside it, made 0600 by mkstemp, written
-   and then renamed over it. Opened in place and chmod'ed after, as it was, a
-   private key or the password store was readable by anyone on the machine
-   (under the usual umask) for as long as the write took, and a crash between
-   the truncate and the write left nothing where the old one was. */
+/* Writes `data` as the whole of `path`, readable only by this user from the
+   moment it exists: a temporary file beside it, made 0600 by mkstemp, is
+   written and then renamed over it. Opening in place and chmod'ing afterwards
+   would leave a private key or the password store readable by anyone on the
+   machine (under the usual umask) while the write runs, and a crash between
+   the truncate and the write would leave nothing where the old file was. */
 void writeWhole(const std::string &path, const std::vector<uint8_t> &data) {
     std::string temporary = path + ".XXXXXX";
     const int fd = mkstemp(temporary.data());

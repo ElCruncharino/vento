@@ -4,19 +4,20 @@
 //! The display channel: what the guest's screen is made of.
 //!
 //! SPICE draws in two ways at once and both are here. **Draw commands** carry
-//! an image — one of six encodings — and a box to put it in, which is the
-//! desktop. **Streams** are the part no other protocol in this app has: the
-//! server notices a region behaving like video, declares it a stream, and sends
-//! MJPEG or H.264 for that rectangle until it stops, with the framebuffer under
-//! it keeping its own contents. A stream's rectangle is a damaged rectangle
-//! like any other, which is why the seam took it without change.
+//! an image (one of six encodings) and a box on the desktop to put it in.
+//! **Streams** are unique to SPICE among this app's protocols: the server
+//! notices a region behaving like video, declares it a stream, and sends video
+//! (MJPEG, the codec this client advertises) for that rectangle until it
+//! stops, with the framebuffer under it keeping its own contents. A stream's
+//! rectangle is a damaged rectangle like any other, so the backend API needed
+//! no change for it.
 //!
 //! Only **surface 0** is drawn. The others are off-screen bitmaps a guest's
-//! driver composes into, and a client that ignores them draws a desktop that is
-//! right wherever the driver did not use one — which for QXL under the guests
-//! this was built against is all of it. What arrives for another surface is
-//! counted and logged once, so a guest that does use them says so rather than
-//! quietly painting nothing.
+//! driver composes into, and a client that ignores them draws a correct
+//! desktop wherever the driver did not use one, which for QXL under the guests
+//! tested is everywhere. Draws for another surface are counted and shown in
+//! the connection panel, so a guest that does use them is visible rather than
+//! silently painting nothing.
 
 use crate::error::{Error, Result};
 use crate::framebuffer::Framebuffer;
@@ -42,10 +43,10 @@ pub struct Display {
     framebuffer: Arc<RwLock<Framebuffer>>,
     images: Images,
     streams: HashMap<u32, Stream>,
-    /// The layout the server published, if it published one: `MONITORS_CONFIG`
-    /// is how a multi-head guest says which part of this surface is which
-    /// screen, each head by its id, then `x, y, width, height`. Empty means
-    /// it has not said, which is not the same as one.
+    /// The layout the server published, if any: `MONITORS_CONFIG` is how a
+    /// multi-head guest says which part of this surface is which screen, each
+    /// head by its id, then `x, y, width, height`. Empty means it has not
+    /// said, which is not the same as one head.
     monitors: Vec<(u32, i32, i32, i32, i32)>,
     /// How many heads the device says it can have, from the same message;
     /// zero until it has said.
@@ -56,10 +57,10 @@ pub struct Display {
     /// Whether anything has been drawn since the caller last asked, which is
     /// what decides whether a batch of messages ends in a repaint.
     dirty: bool,
-    /// Draws for a surface this client does not keep, which is a fact about
-    /// the guest's driver rather than an error — and worth a row in the panel
-    /// where it happens, since it is the one thing that would make the picture
-    /// incomplete without anything looking wrong.
+    /// Draws for a surface this client does not keep. This depends on the
+    /// guest's driver rather than being an error, and is worth a panel row
+    /// where it happens, since it would make the picture incomplete without
+    /// anything looking wrong.
     off_surface: u64,
 }
 
@@ -93,8 +94,8 @@ impl Display {
         self.streams.len()
     }
 
-    /// Whether the picture moved since this was last asked, which the session
-    /// turns into one `frameEnd` for a burst of draws rather than one each.
+    /// Whether the picture changed since the last call, which the session
+    /// turns into one `frame_end` for a burst of draws rather than one each.
     pub fn take_dirty(&mut self) -> bool {
         std::mem::take(&mut self.dirty)
     }
@@ -105,8 +106,8 @@ impl Display {
     }
 
     /// One message off the display channel. Damage is reported per draw rather
-    /// than per batch: the caller ends a frame when the queue drains, which is
-    /// what makes a screenful of small draws one repaint instead of eleven.
+    /// than per batch: the caller ends a frame when the queue drains, which
+    /// makes a screenful of small draws one repaint instead of one per draw.
     pub async fn message(
         &mut self,
         message_type: u16,
@@ -115,9 +116,9 @@ impl Display {
     ) -> Result<()> {
         match message_type {
             display_server::MODE => {
-                // The pre-surface way of saying how big the screen is, which a
-                // guest with no QXL driver — a BIOS, a bootloader, an installer
-                // — is the whole reason this protocol is worth having.
+                // The pre-surface way of giving the screen size, used by a
+                // guest without a QXL driver (a BIOS, a bootloader, an
+                // installer).
                 if body.len() >= 12 {
                     let width = u32::from_le_bytes(body[0..4].try_into().unwrap()) as usize;
                     let height = u32::from_le_bytes(body[4..8].try_into().unwrap()) as usize;
@@ -239,8 +240,8 @@ impl Display {
     /// A new screen: the framebuffer is thrown away and the server draws the
     /// whole of the new one.
     ///
-    /// The size is two 32-bit fields of the server's and the framebuffer is
-    /// allocated by it here, so one past [`runtime::MAX_DESKTOP_PIXELS`] (or
+    /// The size is two 32-bit fields set by the server, and the framebuffer is
+    /// allocated from it here, so one past [`runtime::MAX_DESKTOP_PIXELS`] (or
     /// past what a `usize` holds, on a 32-bit phone) ends the session as a
     /// protocol error rather than asking for gigabytes.
     fn reset_surface(
@@ -345,11 +346,10 @@ impl Display {
                     },
                 );
             }
-            // H.264 is the one that gets here, because the decoder that would
-            // take it is a C++ one this build patches out: the phone has one of
-            // its own and putting the stream through it is 46c's. Until then
-            // the region under the stream keeps whatever was drawn there, which
-            // is a still picture rather than a hole.
+            // H.264 would end up here (it is not advertised; see
+            // `channel::link`), since this build patches out ryll's openh264
+            // decoder. The region under such a stream keeps whatever was drawn
+            // there, which is a still picture rather than a hole.
             Err(e) => log::warn!("display: stream {id} is not decoded here: {e}"),
         }
     }
@@ -407,8 +407,7 @@ impl Display {
     }
 
     /// `MONITORS_CONFIG`: how many heads this surface is divided into, and
-    /// where each one is. The first protocol here that says so rather than
-    /// leaving it to be inferred.
+    /// where each one is.
     fn monitors_config(&mut self, body: &[u8]) {
         if body.len() < 4 {
             return;
@@ -429,8 +428,8 @@ impl Display {
                 read_u32(body, at + 16).unwrap_or(0) as i32,
                 read_u32(body, at + 20).unwrap_or(0) as i32,
             );
-            // The head's own number, which is its place in the agent's
-            // request: what a layout is asked for by.
+            // The head's own number, which is its position in the agent's
+            // request, and how a layout refers to it.
             let id = read_u32(body, at).unwrap_or(0);
             if width > 0 && height > 0 {
                 heads.push((id, x, y, width, height));
@@ -511,9 +510,9 @@ mod tests {
         assert_eq!(framebuffer.read().unwrap().width(), 1920);
     }
 
-    /// Two 32-bit fields of the server's are allocated the moment they
+    /// Two 32-bit fields set by the server are allocated from as soon as they
     /// arrive, four bytes a pixel: a surface no desktop could be is refused,
-    /// and ends the session saying so, before any of it is allocated.
+    /// ending the session with an error, before any of it is allocated.
     #[test]
     fn a_surface_bigger_than_any_desktop_is_refused() {
         let (framebuffer, mut display) = display();

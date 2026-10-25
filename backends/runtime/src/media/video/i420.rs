@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! A decoded picture copied into I420 — three 8-bit planes of its own, Y at
-//! full size and U and V at half — for whoever converts a picture itself
+//! A decoded picture copied into I420 (three 8-bit planes of its own, Y at
+//! full size and U and V at half) for a caller that converts a picture itself
 //! rather than having [`Output`](super::Output) do it: FreeRDP, whose
 //! AVC444 makes one picture of two before converting, and which was handed
 //! I420 by every decoder it ships.
@@ -10,8 +10,8 @@
 //! A copy, because what a decoder hands over is lent for one call: an
 //! FFmpeg frame is reused by the next decode and a MediaCodec buffer is
 //! released straight after. Whatever layout the decoder left the planes in
-//! — NV12's interleaved chroma off a GPU, MediaCodec's one buffer with three
-//! planes at offsets — comes out the same, and is read once, here, in code
+//! (NV12's interleaved chroma off a GPU, MediaCodec's one buffer with three
+//! planes at offsets) comes out the same, and is read once, here, in code
 //! that is optimised in a debug build too (it is in this crate for that).
 
 use super::convert::Frame;

@@ -18,8 +18,8 @@ import java.util.Map;
  * <p>Recorded on a device (the {@code RECORD} toggle writes one file per
  * gesture), replayed into the input stack in a JVM unit test. That is the only
  * way to regression-test the multi-finger gestures: {@code adb shell input}
- * cannot inject more than one pointer, and the tap/drag thresholds are exactly
- * the kind of thing that is easy to break silently.
+ * cannot inject more than one pointer, and the tap/drag thresholds are easy to
+ * break silently.
  *
  * <pre>
  *   # format remotedesktop-touch-1

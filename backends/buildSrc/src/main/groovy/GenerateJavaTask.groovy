@@ -19,7 +19,7 @@ import org.gradle.process.ExecOperations
 
 /**
  * Java sources written by {@code vento-codegen} ({@code
- * backends/platform/android/codegen}) out of what the Rust side says, for a
+ * backends/platform/android/codegen}) from the Rust definitions, for a
  * module to compile as a generated source directory: {@code
  * variant.sources.java.addGeneratedSourceDirectory}, which is also where this
  * task's output directory is decided.
@@ -27,14 +27,14 @@ import org.gradle.process.ExecOperations
  * <p>Unlike {@link CargoBuildTask} this one is checked and cached the ordinary
  * way, because what it reads is small and known: the generator's sources and
  * the crates it is built from, the lock file and the toolchain pin. Its
- * output is a function of those and of {@link #getArguments} alone — the
- * generator writes no time, no path and nothing in a map's order — so a cached
- * output is the output, and two checkouts produce the same files.
+ * output depends on those and on {@link #getArguments} alone (the generator
+ * writes no time, no path and nothing in a map's order), so a cached output is
+ * valid, and two checkouts produce the same files.
  *
  * <p>The generator is run with {@code cargo run} on the host, in the
  * workspace's own target directory, under the environment {@code
  * CargoBuildTask} scrubs, so that an ambient {@code RUSTFLAGS} cannot change
- * what it is.
+ * the generator.
  */
 @CacheableTask
 abstract class GenerateJavaTask extends DefaultTask {

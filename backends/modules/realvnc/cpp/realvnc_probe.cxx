@@ -3,8 +3,8 @@
 
 // The RealVNC backend's probe: `vento_realvnc_config` from the command line,
 // over the body in `backends/platform/linux/probe`. The libraries are not in
-// this repository; `--libs` says where a copy out of the viewer's APK is,
-// and the session refuses any other build than the pinned one.
+// this repository; `--libs` points at a copy extracted from the viewer's
+// APK, and the session refuses any build other than the pinned one.
 //
 //   vento_realvnc_probe HOST::PORT --libs DIR --state-dir DIR --trust --password vncpass --out shot.ppm
 
@@ -94,9 +94,8 @@ int main(int argc, char **argv) {
     if (!config.address || !config.library_dir) {
         usage();
     }
-    /* The user name is the prompt's to propose; the password is asked for
-       rather than given, so that the probe exercises the question every real
-       session asks. */
+    /* The user name is passed in for the prompt to propose; the password is
+       not, so that the probe answers the prompt every real session gets. */
     config.user_name = probe.user;
     printf("%s\n", vento_realvnc_version());
     return vento_probe_run(&probe, create, &config);

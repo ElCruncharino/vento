@@ -33,37 +33,32 @@ import java.util.Map;
 
 /**
  * What the {@code information} tap region opens: one sheet holding the session's
- * facts <em>and</em> the options it can still be told, over the live desktop.
- *
- * <p>Four decisions in it:
+ * facts <em>and</em> its live options, over the live desktop.
  *
  * <ol>
- *   <li><b>Controls above facts.</b> The region's real job is "change the
- *       quality", and the facts are what you read <em>after</em> deciding
- *       something is wrong.
- *   <li><b>Nothing opens a second window, and nothing leaves.</b> A choice drops
- *       a menu under its own row; a switch resolves where it is. The footer
- *       appears only once there is no session to leave, because this panel is
- *       about the connection in front of you rather than the record it was
- *       opened from.
- *   <li><b>The facts refresh while it is open</b>, once a second. Two of them
- *       move on their own — the encoding follows the quality group and the line
- *       speed is a running measurement — so this is where a quality change
- *       becomes visible as something other than a feeling.
+ *   <li><b>Controls above facts.</b> The panel is mostly opened to change the
+ *       quality, and the facts are read <em>after</em> deciding something is
+ *       wrong.
+ *   <li><b>Changes happen in place.</b> A choice opens a menu under its own row
+ *       (a dialog only when its choices need descriptions); a switch takes
+ *       effect where it is. The panel is about the live connection, not the
+ *       saved record, so it has no link to the editor.
+ *   <li><b>The facts refresh while it is open</b>, once a second. Some change
+ *       by themselves (the encoding follows the quality setting and the line
+ *       speed is a running measurement), so a quality change is visible here.
  *   <li><b>Both lists are generated</b>, so this class knows no parameter names
  *       and no protocol vocabulary.
- *   <li><b>The desktop size and the far end's display are here rather than in
- *       the editor</b>, and are the two controls that are not options: whether
- *       the far end will take a size at all, and whether it has another screen
- *       to send, are facts about the connection in front of you, which is
- *       exactly what this panel is for.
+ *   <li><b>The desktop size, the far end's display and the sound switch are here
+ *       rather than in the editor</b>, and are not backend options: whether
+ *       the far end accepts a size, has another screen to send, or can send
+ *       sound are facts about the live connection.
  * </ol>
  *
- * <p>A sheet over the desktop rather than a screen replacing it, which the
- * original cannot have: the pause hangs off visibility rather than window
+ * <p>A sheet over the desktop rather than a screen replacing it, which RealVNC
+ * Viewer does not do: the session pauses on visibility rather than window
  * focus, so the desktop behind this stays live and a quality change can be
- * watched landing. Nothing here touches the viewport insets — the desktop must
- * not move to make room for a panel that is about to close again.
+ * seen taking effect. Nothing here changes the viewport insets, so the desktop
+ * does not move to make room for a panel that will close again.
  */
 final class ConnectionPanel {
 
@@ -73,22 +68,22 @@ final class ConnectionPanel {
         void panelReconnect();
 
         /**
-         * End this one. The screen's own disconnect, so the panel's button asks
-         * the same question the tap region and the back gesture ask, and leaves
-         * the same way — a preview taken before the framebuffer goes, and one
-         * confirmation however it was reached.
+         * End this session. The screen's own disconnect, so the panel's button
+         * asks the same confirmation as the tap region and the back gesture,
+         * and ends the same way, with a preview taken before the framebuffer is
+         * gone.
          */
         void panelDisconnect();
 
         /**
-         * A live option was changed from here. Most of them are the backend's
-         * business alone; view-only is not, because the screen offers a keyboard
-         * and a mouse overlay that it would make meaningless.
+         * A live option was changed from here. Most only concern the backend;
+         * view-only also affects the screen, which offers a keyboard and a mouse
+         * overlay that view-only makes useless.
          */
         void panelOptionChanged();
     }
 
-    private static final long REFRESH_MS = 1000; // fast enough that a change reads as a result
+    private static final long REFRESH_MS = 1000; // fast enough to show the effect of a change
 
     private static final int MAX_WIDTH_DP = 560; // past which it is a centred card
 
@@ -115,21 +110,21 @@ final class ConnectionPanel {
     private final PanelOptions optionRows;  // so a refresh writes values instead of views
 
     /**
-     * What this session connected with — the saved connection's options over the
-     * backend's globals over the schema's defaults. The bottom two layers of
-     * what a control shows; {@link Session#liveOption} is the top one.
+     * What this session connected with: the saved connection's options over the
+     * backend's globals. With the schema's defaults these are the lower layers
+     * of what a control shows; {@link Session#liveOption} is the top one.
      */
     private final Map<String, String> connectedWith;
 
     /**
      * The desktop-size row, and the choices it was built with. Rebuilt rather
-     * than refreshed when those change, which is what a granted resize does to
-     * them: the size that has just arrived stops being one of the offers.
+     * than refreshed when the choices change, as they do after a granted
+     * resize, since the current size is one of them.
      */
     private PanelOptions resizeRow;
     private List<BackendOption.Choice> resizeChoices = List.of();
 
-    /** The same again for the far end's displays, where it sends one at a time. */
+    /** The same for the far end's displays, where it sends one at a time. */
     private PanelOptions displayOptions;
     private List<BackendOption.Choice> displayChoices = List.of();
 
@@ -137,11 +132,11 @@ final class ConnectionPanel {
     private PanelOptions soundOptions;
     private int soundKind = Backend.SOUND_SWITCH_NONE;
 
-    /** The fact rows on screen: what they are, and where their values go. */
+    /** The fact rows on screen: their identity, and their value views. */
     private List<String> factShape = List.of();
     private final List<TextView> factValues = new ArrayList<>();
 
-    private String desktopName;             // once the protocol has said it
+    private String desktopName;             // once the protocol has sent it
 
     private boolean polling;
 
@@ -166,14 +161,14 @@ final class ConnectionPanel {
         dialog.setContentView(content);
         dialog.getBehavior().setMaxWidth(dp(MAX_WIDTH_DP));
         // Open at full height, and have a drag downwards dismiss it rather than
-        // park it half way: a collapsed state is for a sheet whose content
+        // collapse it half way: a collapsed state suits a sheet whose content
         // continues below the fold, and this one is a page. In landscape the
-        // default showed the title and nothing else.
+        // default showed only the title.
         dialog.getBehavior().setSkipCollapsed(true);
         dialog.getBehavior().setState(BottomSheetBehavior.STATE_EXPANDED);
-        // The session screen is drawn edge to edge and may be hiding the system
-        // bars entirely; the sheet is a different window and gets neither for
-        // free. Its own bottom padding is the whole of what it needs.
+        // The session screen is drawn edge to edge and may hide the system bars;
+        // the sheet is a separate window and inherits neither. Bottom padding
+        // is all it needs.
         ViewCompat.setOnApplyWindowInsetsListener(content, (v, insets) -> {
             final Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
             v.setPadding(v.getPaddingLeft(), v.getPaddingTop(), v.getPaddingRight(), bars.bottom);
@@ -194,13 +189,12 @@ final class ConnectionPanel {
         content.findViewById(R.id.close).setOnClickListener(v -> dialog.dismiss());
         content.findViewById(R.id.log).setOnClickListener(v -> SessionLog.show(activity));
         // The panel stays open behind the share sheet, and the desktop behind
-        // it stays live: this takes a copy of the connection rather than doing
-        // anything to it, so there is nothing here to come back to.
+        // it stays live: a screenshot does not change the session.
         screenshot.setTooltipText(activity.getString(R.string.panel_screenshot));
         screenshot.setOnClickListener(v -> Screenshot.share(activity, session));
         action.setOnClickListener(v -> {
-            // Which of the two it is now, not which it was when the panel
-            // opened: a session can end while this is on screen.
+            // Checked now, not when the panel opened: a session can end while
+            // this is on screen.
             final boolean ended = ended();
             dialog.dismiss();
             if (ended) {
@@ -212,9 +206,9 @@ final class ConnectionPanel {
 
         backendName = Backends.name(backendId);
         live = Backends.options(backendId).stream().filter(BackendOption::live).toList();
-        // What the session is on, rather than what the record says: the two
-        // differ once either has been edited since it opened, and an
-        // address with no record behind it has only this.
+        // What the session was opened with, rather than what the record says:
+        // the two differ once the record has been edited since, and a session
+        // opened by address has no record.
         connectedWith = session.openedWith();
         optionRows = new PanelOptions(controls, live, new PanelOptions.Values() {
             @Override
@@ -235,9 +229,9 @@ final class ConnectionPanel {
             }
         });
         controls.setVisibility(optionRows.isEmpty() ? View.GONE : View.VISIBLE);
-        refreshAction();    // before it is shown, so the button is never briefly the other one
+        refreshAction();    // before it is shown, so the button never briefly shows the other label
         refreshDisplays();
-        screenshot.setEnabled(connected());  // ... and the same for this one
+        screenshot.setEnabled(connected());  // likewise
         refreshResize();
         refreshSound();
         setFacts(List.of());
@@ -261,10 +255,9 @@ final class ConnectionPanel {
     // ---- the poll -----------------------------------------------------------
 
     /**
-     * Stop asking. Called on dismissal, and by the screen when it stops — a
-     * panel left open behind a backgrounded app would be putting a question to
-     * the protocol every second, which is precisely what the pause exists to
-     * prevent.
+     * Stops polling. Called on dismissal, and by the screen when it stops: a
+     * panel left open behind a backgrounded app would query the backend every
+     * second, which the session pause exists to prevent.
      */
     void pause() {
         polling = false;
@@ -280,14 +273,14 @@ final class ConnectionPanel {
     }
 
     /**
-     * What the backend said at the last tick, which is what every row on this
-     * panel is drawn from.
+     * What the backend returned at the last tick, which every row on this panel
+     * is drawn from.
      *
-     * <p>One crossing per poll rather than one per row, and — more to the
-     * point — one instant: the display list, which display is on screen and
-     * whether a size may be asked for were three separate questions, so a
-     * screen plugged in over there between two of them left the panel drawing
-     * a row from one answer and a value from another.
+     * <p>One call into the backend per poll rather than one per row, and, more
+     * importantly, one consistent snapshot: as three separate queries (the
+     * display list, the current display, and whether a size can be requested),
+     * a screen plugged in at the far end between two of them could make the
+     * panel draw a row from one answer and a value from another.
      */
     private Backend.Facts polled = Backend.Facts.NONE;
 
@@ -301,9 +294,9 @@ final class ConnectionPanel {
             refreshHeader();
             refreshControls();
             refreshAction();
-            // Asynchronous, and may never answer: the backend's thread is
-            // allowed to be inside a connect or behind an unanswered prompt.
-            // Nothing above depends on it arriving.
+            // Asynchronous, and may never return: the backend's thread may be
+            // inside a connect or waiting on an unanswered prompt. Nothing above
+            // depends on it.
             session.backend().connectionInfo(f -> {
                 if (polling) {
                     setFacts(f);
@@ -322,15 +315,14 @@ final class ConnectionPanel {
     }
 
     /**
-     * What the connection is doing, in one line: the state, which client it is
-     * on, and the desktop. The client is here because it is the one thing about
-     * a live session that no other surface repeats — a machine can be reached
-     * by four of them and they do not behave alike, so "which one is this" is
-     * asked of the panel the way the picture's quality is.
+     * The connection's state in one line: the state, the backend, and the
+     * desktop size. The backend is here because no other part of the session
+     * screen shows it, and a machine may be reachable through several backends
+     * that behave differently.
      *
      * <p>The size comes from the backend rather than from the facts: it is
-     * known locally the moment the first framebuffer arrives, and this line has
-     * to say something before any answer has come back over the wire.
+     * known locally as soon as the first framebuffer arrives, and this line has
+     * to show something before any facts have arrived.
      */
     private String stateLine() {
         if (!connected()) {
@@ -341,39 +333,35 @@ final class ConnectionPanel {
         if (w <= 0 || h <= 0) {
             return activity.getString(R.string.panel_connected, backendName);
         }
-        // How the desktop is divided is only worth a word when it is divided:
-        // one monitor is what a desktop is, and saying so on every session
-        // would be a fact that is never news.
+        // The monitor count is only shown when there is more than one.
         final int monitors = polled.monitors().size();
         return monitors > 1
                 ? activity.getString(R.string.panel_connected_monitors, backendName, w, h, monitors)
                 : activity.getString(R.string.panel_connected_size, backendName, w, h);
     }
 
-    /** A session that is over: the bottom action becomes a way back in. */
+    /** A session that is over, for which the footer action becomes Reconnect. */
     private boolean ended() {
         return session.isClosed() || session.state() == Backend.State.CLOSED;
     }
 
     /**
-     * A session with a desktop behind it, which is what everything on this
-     * panel that acts on the connection needs and none of it can assume: one
-     * that is still connecting has no picture to photograph and no option that
+     * A session with a desktop, which every action on this panel needs: one
+     * that is still connecting has no picture to capture and no option that
      * would take effect.
      *
-     * <p>Not {@code !ended()} — the two differ for a session that has not
-     * connected yet, which is neither.
+     * <p>Not {@code !ended()}: a session that has not connected yet is neither.
      */
     private boolean connected() {
         return session.state() == Backend.State.CONNECTED && !session.isClosed();
     }
 
     /**
-     * The footer. One button at the end of the row, and which one it is follows
-     * the session: Disconnect while there is something to disconnect, Reconnect
-     * once there is not — two states of a slot rather than two buttons, since
-     * no session is ever in both. The log is beside it always, and is the only
-     * place the reason a connection failed is written down in full.
+     * The footer's action button follows the session: Disconnect while it is
+     * live, Reconnect once it has ended. One button with two states rather than
+     * two buttons, since a session is never in both. The log button is always
+     * beside it, and the log is the only place the full reason a connection
+     * failed is shown.
      */
     private void refreshAction() {
         action.setText(ended() ? R.string.panel_reconnect : R.string.session_disconnect);
@@ -382,19 +370,19 @@ final class ConnectionPanel {
     // ---- the controls -------------------------------------------------------
 
     /**
-     * Values, and whether the controls mean anything at all. None of them is
-     * live against a session that is connecting or gone — the backend would
-     * take the change and hold it for a connection that may never happen, and a
-     * switch that moves and does nothing is a lie.
+     * Values, and whether the controls are enabled. They are disabled while the
+     * session is connecting or gone: the backend would accept the change and
+     * hold it for a connection that may never happen, and a switch that moves
+     * but has no effect is misleading.
      */
     private void refreshControls() {
         final boolean enabled = connected();
         optionRows.setEnabled(enabled);
         optionRows.refresh();
         refreshDisplays();
-        // On the same poll rather than on the click, so that a session which
-        // has gone while the panel was open says so by going grey instead of
-        // by a toast after the fact.
+        // On each poll rather than on the click, so a session that ends while
+        // the panel is open disables the button instead of showing a toast
+        // after the tap.
         screenshot.setEnabled(enabled);
         refreshResize();
         refreshSound();
@@ -403,16 +391,15 @@ final class ConnectionPanel {
     // ---- the far end's sound -------------------------------------------------
 
     /**
-     * The session's sound switch, from when the far end may send sound rather
-     * than from when it does, so that a sound can be refused before it starts.
-     * What it does is the backend's to say: "Enable audio" where the far end
-     * can be asked to stop sending it and to send it again, "Mute audio" where
-     * it cannot (RDP) and the sound is silenced here instead. Here and not on
-     * the toolbar, whose buttons are the tap regions' and nothing else, since
-     * a screen may have either one alone. A fact about the live session for
-     * {@link #refreshResize}'s reason, and not an option: it is the session's,
-     * at once, and not remembered (see {@link Backend#setSoundEnabled} and
-     * {@link Backend#setMuted}).
+     * The session's sound switch, shown from when the far end may send sound
+     * rather than from when it does, so sound can be refused before it starts.
+     * The backend decides which switch: "Enable audio" where the far end can be
+     * asked to stop and resume sending sound, "Mute audio" where it cannot
+     * (RDP) and the sound is silenced here instead. Here and not on the
+     * toolbar, whose buttons match the tap regions exactly, since a screen may
+     * have either one alone. Live session state like {@link #refreshResize},
+     * and not an option: it applies immediately and is not saved (see
+     * {@link Backend#setSoundEnabled} and {@link Backend#setMuted}).
      *
      * <p>Called by the poll and, through the screen, whenever the session says
      * the switch changed.
@@ -423,8 +410,8 @@ final class ConnectionPanel {
         soundRow.setVisibility(kind == Backend.SOUND_SWITCH_NONE ? View.GONE : View.VISIBLE);
         if (kind != soundKind) {
             // Rebuilt rather than relabelled: a session that withdraws an
-            // Enable switch may offer a Mute one later, and the row's label is
-            // what it does.
+            // Enable switch may offer a Mute one later, and the label states
+            // what the switch does.
             soundKind = kind;
             soundOptions = null;
             soundRow.removeAllViews();
@@ -465,13 +452,13 @@ final class ConnectionPanel {
     // ---- the far end's displays ----------------------------------------------
 
     /**
-     * Which screen the far end is sending, for the one protocol that sends one
-     * of them at a time. A live fact for {@link #refreshResize}'s reason, and
-     * gone entirely where the far end has a single screen or reports none.
+     * Which screen the far end is sending, for the protocol that sends one at a
+     * time (RustDesk). Live session state like {@link #refreshResize}, and
+     * hidden where the far end has a single screen or reports none.
      *
-     * <p>Its value is the display the session <em>has</em>, asked for again
-     * every poll: a switch is a request, and a peer that answers with a
-     * different screen than the one tapped is a tick that moves somewhere else.
+     * <p>Its value is the display the session <em>has</em>, polled each time:
+     * a switch is only a request, and if the peer sends a different screen
+     * than the one tapped, the selection moves to that one.
      */
     private void refreshDisplays() {
         final Backend backend = session.backend();
@@ -515,17 +502,16 @@ final class ConnectionPanel {
     // ---- the desktop size ----------------------------------------------------
 
     /**
-     * The one control here that is not a {@link BackendOption}, because whether
-     * it can be offered at all is a fact about the live connection rather than
-     * a description of the backend: a VNC server announces that it takes a size
-     * by sending a rectangle, which may never arrive. So this asks every poll
-     * and the row appears when the answer does.
+     * Not one of the backend's {@link BackendOption}s, because whether it can be
+     * offered at all is a fact about the live connection rather than a
+     * description of the backend: a VNC server announces that it accepts a size
+     * by sending a rectangle, which may never arrive. So this checks every poll
+     * and the row appears once the answer is yes.
      *
      * <p>Its value is the size the desktop <em>has</em>, read from the backend
-     * rather than remembered from what was asked for. A server may refuse or
-     * grant something else, and there is nothing here that could tell the
-     * difference — so the control reports what arrived, and a refusal is a tick
-     * that stays where it was.
+     * rather than remembered from the request. A server may refuse or grant a
+     * different size, which this cannot distinguish, so the control shows the
+     * resulting size, and after a refusal the selection stays where it was.
      */
     private void refreshResize() {
         final boolean can = polled.canResize();
@@ -547,9 +533,9 @@ final class ConnectionPanel {
                 activity.getString(R.string.panel_desktop_size), null,
                 "", BackendOption.Scope.CONNECTION, true,
                 choices.toArray(new BackendOption.Choice[0]));
-        // Through the session each time rather than through the backend caught
-        // above: a reconnection from the footer builds a new one, and this row
-        // outlives that.
+        // Through the session each time rather than through a captured
+        // backend: a reconnection from the footer creates a new one, and this
+        // row outlives it.
         resizeRow = new PanelOptions(resize, List.of(option), new PanelOptions.Values() {
             @Override
             public String get(BackendOption o) {
@@ -569,10 +555,9 @@ final class ConnectionPanel {
     }
 
     /**
-     * What to offer: this phone's window first, since fitting it is the whole
-     * point; then the size the desktop already has, so the current state has a
-     * row of its own; then the ordinary ones, which are the RDP backend's list
-     * for the same reason it has one.
+     * The choices: this phone's window first, since fitting it is the main
+     * use; then the desktop's current size, so the current state has its own
+     * entry; then common sizes, matching the RDP backends' list.
      */
     private List<BackendOption.Choice> sizeChoices() {
         final List<BackendOption.Choice> choices = new ArrayList<>();
@@ -606,7 +591,7 @@ final class ConnectionPanel {
     }
 
     /**
-     * What an option is set to right now — the ladder's top rung.
+     * An option's current value, including the session layer.
      *
      * @see Options#live
      */
@@ -617,16 +602,16 @@ final class ConnectionPanel {
     // ---- the facts ----------------------------------------------------------
 
     /**
-     * What the backend has to say, rebuilt only when its <em>shape</em> changes.
-     * A poll that re-inflated eight rows a second would throw away the fold
-     * state and flicker; what actually moves is two values.
+     * The backend's facts, rebuilt only when their <em>shape</em> changes. A
+     * poll that re-inflated every row each second would flicker, and usually
+     * only a few values change.
      */
     private void setFacts(List<ConnectionFact> all) {
         final List<ConnectionFact> rows = new ArrayList<>();
         desktopName = null;
         for (ConnectionFact f : all) {
             if (f.field() == ConnectionFact.Field.DESKTOP_NAME) {
-                // The heading of the panel, not a row in it.
+                // Shown as the panel's heading, not as a row.
                 desktopName = f.value();
             } else {
                 rows.add(f);
@@ -676,9 +661,9 @@ final class ConnectionPanel {
     }
 
     /**
-     * A field the backend has but no answer for yet says so, rather than
-     * vanishing: the shape of the panel depends on the protocol, not on how much
-     * this server has got round to saying.
+     * A field the backend has but no value for yet is shown as not set rather
+     * than hidden: the panel's layout depends on the protocol, not on how much
+     * the server has sent so far.
      */
     private String display(ConnectionFact f) {
         return f.value().isEmpty() ? activity.getString(R.string.panel_not_set) : f.value();

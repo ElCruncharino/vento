@@ -19,9 +19,8 @@ import java.util.Map;
  * protocol.
  *
  * <p>It carries the description as well as the constructor because everything
- * here is a fact about the protocol rather than about the app — what the thing
- * is called, what it can be told — and the module that speaks it is the one
- * that knows.
+ * here is a fact about the protocol rather than about the app (its name, its
+ * options), and the module that implements it is the one that knows.
  */
 public interface BackendProvider {
 
@@ -39,14 +38,14 @@ public interface BackendProvider {
     String shortName();
 
     /**
-     * Why somebody would choose this one, in a sentence or two, under
-     * {@link #name} in a picker.
+     * Why to choose this one, in a sentence or two, under {@link #name} in a
+     * picker.
      *
      * <p>A choice rather than a description: what it does that the others in the
      * build do not, and what that costs. It is here rather than in the app
-     * because a build's list of backends is whatever is on its classpath, so a
-     * list of sentences about protocols the app is not allowed to name could
-     * only ever be a stale copy of it.
+     * because a build's list of backends is whatever is on its classpath, and
+     * the app does not name protocols, so a list of these kept in the app could
+     * only be a stale copy.
      */
     String description();
 
@@ -59,20 +58,19 @@ public interface BackendProvider {
     /**
      * A session for one connection, not yet started.
      *
-     * <p>The address is what somebody typed, and every backend reads it the same
-     * way: {@code host}, {@code host:port}, {@code [literal]} or
+     * <p>The address is as the user typed it, and every backend reads it the
+     * same way: {@code host}, {@code host:port}, {@code [literal]} or
      * {@code [literal]:port}, where a host is a name or an IPv4 literal and an
-     * <b>IPv6 literal is always bracketed</b>. The brackets are not a courtesy
-     * to the parser. The VNC backends read a port under 100 as a display number,
-     * which is what {@code :1} has meant since the 1990s, so {@code ::1:1} would
-     * have to be an address and a display at once; a bare literal is an error
-     * with a sentence in it rather than a guess, because the guesses on offer
-     * land on a different machine or on the wildcard address. What a port means
-     * when there is one is the protocol's own business, and only the VNC ones
-     * have the display rule.
+     * <b>IPv6 literal is always bracketed</b>. The VNC backends read a port
+     * under 100 as a display number, which is what {@code :1} has meant since
+     * the 1990s, so {@code ::1:1} would have to be an address and a display at
+     * once; a bare literal is an error with an explanation rather than a guess,
+     * because the possible guesses land on a different machine or on the
+     * wildcard address. What a port means is up to each protocol, and only the
+     * VNC ones have the display rule.
      *
-     * <p>A backend whose {@link #addressLabel} says this field is not a host —
-     * an id a rendezvous server resolves — is outside all of that, and says so
+     * <p>A backend whose {@link #addressLabel} says this field is not a host
+     * (an id a rendezvous server resolves) is outside all of that, and says so
      * where it parses.
      */
     Backend create(Context context, String address, String userName, String password,
@@ -95,10 +93,10 @@ public interface BackendProvider {
     /**
      * Whether this backend can be connected with yet.
      *
-     * <p>False only for one that needs something the build cannot contain — a
-     * library it has to be given on the device. It appears everywhere it would
-     * otherwise appear while this is false, because being chosen is one of the
-     * things that leads to {@link #setup}.
+     * <p>False only for one that needs something the build cannot contain: a
+     * library it has to be given on the device. While this is false it still
+     * appears everywhere it otherwise would, because choosing it is one way to
+     * reach {@link #setup}.
      */
     default boolean isSetup(Context context) {
         return true;
@@ -118,9 +116,9 @@ public interface BackendProvider {
      * Forget every server identity this backend has accepted.
      *
      * <p>Empty for all but the few that need it. {@link KnownHosts} is the
-     * store, and {@link Backends#forgetHosts} clears it for everybody; this is
-     * for a backend whose library pins the far end <em>itself</em> — RealVNC's
-     * core, with a blob only it can compare — or whose library once kept a
+     * store, and {@link Backends#forgetHosts} clears it for every backend; this
+     * is for a backend whose library pins the far end <em>itself</em> (RealVNC's
+     * core, with a blob only it can compare) or whose library once kept a
      * known-hosts file of its own that earlier builds left behind (FreeRDP's,
      * TigerVNC's), which nothing above this interface can find, since it is not
      * a fact about the app.

@@ -8,10 +8,10 @@ package net.pgaskin.remotedesktop.control.input;
  *
  * <p>A shape change says one thing: whatever is under the pointer is different
  * now. It says nothing about where the boundary was, how big the thing is or
- * what it is, and the whole design follows from that being all it says — the
- * pointer loses a little distance <em>after</em> the news, over a bounded span
- * of finger travel, so that a small target is easier to stop on and harder to
- * slide off. Nothing is pulled anywhere and nothing teleports.
+ * what it is, and the design follows from that: the pointer loses a little
+ * distance <em>after</em> the news, over a bounded span of finger travel, so
+ * that a small target is easier to stop on and harder to slide off. Nothing is
+ * pulled anywhere and nothing teleports.
  *
  * <p><b>The news is a reply, and it is late.</b> It was caused by a pointer
  * position sent a round trip ago, so the pointer is already past the boundary
@@ -21,18 +21,19 @@ package net.pgaskin.remotedesktop.control.input;
  * to be longer than the lag's travel, and why {@link #changed} refuses to arm
  * for a far end measured too late to be helping with the boundary it named.
  *
- * <p>The budget is in <em>finger</em> travel rather than desktop pixels, which
- * is a decision: it costs a constant amount of movement and buys
- * {@code span * (1 - gain) / 2 / scale} of desktop stickiness — full strength
- * zoomed out, where a link is four screen pixels tall and the help is wanted,
- * and negligible zoomed in, where it would cost real travel for nothing.
+ * <p>The budget is in <em>finger</em> travel rather than desktop pixels: it
+ * costs a constant amount of movement and buys
+ * {@code span * (1 - gain) / 2 / scale} of desktop stickiness. That is full
+ * strength zoomed out, where a link is four screen pixels tall and the help is
+ * wanted, and negligible zoomed in, where it would cost real travel for
+ * nothing.
  */
 final class HoverAssist {
 
     /**
      * How long after a gesture's last move a shape change still measures the
-     * far end's lateness. Beyond this it is the far end's own business — a
-     * spinner, a window opening — and not a reply to anything we sent.
+     * far end's lateness. A later change is the far end's own (a spinner, a
+     * window opening), not a reply to anything we sent.
      */
     private static final long LAG_WINDOW_MS = 600;
 
@@ -75,8 +76,9 @@ final class HoverAssist {
         burstStart = -1;
         burst = 0;
         lockoutUntil = -1;
-        // The lag estimate survives: it is a fact about the far end, and a
-        // session's worth of it is thrown away by a finger going down.
+        // The lag estimate survives: it is a property of the far end, and
+        // resetting it here would discard a session's worth of it on every
+        // finger down.
     }
 
     /** For the HUD: 1 outside a detent, {@link Config#hoverAssistGain} at its catch. */
@@ -118,8 +120,8 @@ final class HoverAssist {
             return gain = 1.0f;
         }
         if (dx * armX + dy * armY < 0) {
-            // Somebody reversing is somebody coming back to what they
-            // overshot, and slowing that down is the opposite of help.
+            // A reversal is a return to an overshot target, and slowing it
+            // down would only get in the way.
             budget = 0;
             return gain = 1.0f;
         }
@@ -139,9 +141,9 @@ final class HoverAssist {
     }
 
     /**
-     * The far end has changed the cursor's shape. Five things have to hold
-     * before that opens a detent, and four of them are the defence against a
-     * shape that changes for reasons that are not a boundary.
+     * The far end has changed the cursor's shape. Several things have to hold
+     * before that opens a detent, most of them a defence against a shape that
+     * changes for reasons that are not a boundary.
      *
      * @param speed   the smoothed finger speed {@link PointerAccel} keeps, px/ms
      * @param gliding whether a flick's momentum is still moving the pointer,
@@ -155,9 +157,9 @@ final class HoverAssist {
         }
         if (gestureEnd >= 0 && t - gestureEnd <= LAG_WINDOW_MS) {
             // How late this far end is, from the one kind of change whose cause
-            // is known. A lower bound rather than the interval itself — the
+            // is known. A lower bound rather than the interval itself (the
             // change may have been caused by an earlier event of the same
-            // gesture — and the threshold it is compared against is set knowing
+            // gesture), and the threshold it is compared against is set knowing
             // that. It cannot tell a late reply from a change the far end made
             // for itself, and does not have to: both are arguments against
             // arming.
@@ -181,7 +183,8 @@ final class HoverAssist {
         // The burst is counted over the changes that would otherwise arm,
         // rather than over everything that arrives: a hand crossing a desktop
         // full of small objects produces a dozen changes on the way, and
-        // locking out because of them is locking out the aim that follows.
+        // locking out because of them would also lock out the aim that
+        // follows.
         if (burstStart < 0 || t - burstStart > cfg.hoverAssistBurstMs) {
             burstStart = t;
             burst = 0;

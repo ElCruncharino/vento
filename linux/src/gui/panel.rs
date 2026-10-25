@@ -5,25 +5,25 @@
 //! live desktop.
 //!
 //! Controls above facts, as on the phone: the panel's real job is "change
-//! the quality", and the facts are what you read *after* deciding something
+//! the quality", and the facts are what is read *after* deciding something
 //! is wrong. The controls are the backend's live options from the registry,
 //! rendered by their kind and nothing else, so the panel knows no option by
-//! name; then the two that are not options — the desktop's size, where the
+//! name; then the two that are not options (the desktop's size, where the
 //! far end takes one, and which of its displays it is sending, where it
-//! sends one at a time — which are facts about the connection in front of
-//! you rather than descriptions of the backend; whether the desktop should
-//! follow this window's size; the client's own settings (`settings.rs`),
-//! which a session runs with a copy of and takes a change to at once; and
-//! the debug overlay.
+//! sends one at a time), which are facts about this connection rather than
+//! descriptions of the backend; whether the desktop should follow this
+//! window's size; the client's own settings (`settings.rs`), which a
+//! session runs with a copy of and takes a change to at once; and the debug
+//! overlay.
 //!
 //! Then the desktop's name on top of what the backend has to say about the
 //! connection in its own words, all of it in the backend's order, and the
-//! counts this client keeps itself. The session refreshes the [`Snapshot`] once a second while
-//! the panel is open, which is fast enough that a change reads as a result
-//! and slow enough that the question costs the protocol nothing. Nothing is
-//! rebuilt by a refresh: egui redraws from the same ids every frame, so an
-//! open dropdown stays open and a field somebody is typing in keeps its
-//! text until it is left.
+//! counts this client keeps itself. The session refreshes the [`Snapshot`]
+//! once a second while the panel is open, which is fast enough that a
+//! change reads as a result and slow enough that the question costs the
+//! protocol nothing. Nothing is rebuilt by a refresh: egui redraws from the
+//! same ids every frame, so an open dropdown stays open and a field being
+//! typed in keeps its text until it is left.
 //!
 //! The panel does nothing to the backend itself. What is changed on it
 //! comes back as [`Action`]s for the session to apply, which is what keeps
@@ -78,9 +78,9 @@ impl Snapshot {
 pub const NAME_MAX: usize = 128;
 
 /// `name`, a far end's or one typed or pasted, fit to be a window's title:
-/// control characters dropped — a NUL, which neither X11's title property
-/// nor Wayland's `set_title` can carry (winit panics on one), an escape, a
-/// bell — and the ones that are white space (a tab, a newline) made a space;
+/// control characters dropped (a NUL, which neither X11's title property
+/// nor Wayland's `set_title` can carry and winit panics on; an escape; a
+/// bell) and the ones that are white space (a tab, a newline) made a space;
 /// white space at either end trimmed; and no more than [`NAME_MAX`]
 /// characters, the last of them an ellipsis where it was cut.
 pub fn printable(name: &str) -> String {
@@ -146,8 +146,8 @@ pub enum Action {
 pub struct Panel {
     pub open: bool,
     /// What is being typed into a text field, per option, while it has the
-    /// focus: a refresh must not rewrite a field under somebody's fingers,
-    /// and the value is only sent once they leave it.
+    /// focus: a refresh must not rewrite a field while it is typed in, and
+    /// the value is only sent once the field loses the focus.
     edits: BTreeMap<&'static str, String>,
 }
 
@@ -190,9 +190,9 @@ impl Panel {
             .default_width(360.0)
             // Drawn at its content's height, and scrolled once that is
             // taller than the window it floats over. The default height is
-            // what the content is *offered* — an egui window offers its
+            // what the content is *offered* (an egui window offers its
             // content no more than that, and a scroll area never asks for
-            // more — and not what is drawn, which follows the content: the
+            // more) and not what is drawn, which follows the content: the
             // scroll area shrinks to it, where the window's own would not.
             .default_height(room)
             .max_height(room)
@@ -313,9 +313,9 @@ impl Panel {
                 actions.push(Action::Settings(settings));
             }
 
-            // The session's, not a setting: it is for whoever is looking
-            // into a problem with this connection, and is off again in the
-            // next. Ctrl+Alt+D toggles it as well.
+            // The session's, not a setting: it is for looking into a
+            // problem with this connection, and is off again in the next.
+            // Ctrl+Alt+D toggles it as well.
             let label = ui.label(RichText::new("Debug overlay").weak());
             label.on_hover_text(
                 "The state, the pixel path, the cursor, the view and the input, in a corner of the \
@@ -380,7 +380,7 @@ impl Panel {
                         }
                     }
                 } else if !field.has_focus() {
-                    // Refreshed only while nobody is typing in it.
+                    // Refreshed only while it does not have the focus.
                     *buffer = current.to_string();
                 }
             }
@@ -389,15 +389,6 @@ impl Panel {
     }
 }
 
-/// What to offer: this window first, since fitting it is the whole point;
-/// then the size the desktop already has, so the current state has a row of
-/// its own; the far end's own screens, where it has said how it is divided;
-/// then the ordinary ones. No backend here lists the sizes its far end would
-/// take — RFB, RDP and SPICE all take any — so there is nothing to ask.
-/// An egui window's close button, the cross its title bar draws, as a
-/// widget of its own: a square the height of a button, with the cross in
-/// the text colour of its state, so that it lights up under the pointer as
-/// the title bar's does.
 /// What the sound switch does, for its row's tooltip.
 fn sound_summary(switch: Switch) -> &'static str {
     match switch {
@@ -413,6 +404,10 @@ fn sound_summary(switch: Switch) -> &'static str {
     }
 }
 
+/// An egui window's close button, the cross its title bar draws, as a
+/// widget of its own: a square the height of a button, with the cross in
+/// the text colour of its state, so that it lights up under the pointer as
+/// the title bar's does.
 fn close_button(ui: &mut Ui) -> Response {
     let side = ui.spacing().interact_size.y;
     let (rect, response) = ui.allocate_exact_size(vec2(side, side), Sense::click());
@@ -427,6 +422,11 @@ fn close_button(ui: &mut Ui) -> Response {
     response
 }
 
+/// What to offer: this window first, since fitting it is the whole point;
+/// then the size the desktop already has, so the current state has a row of
+/// its own; the far end's own screens, where it has said how it is divided;
+/// then the ordinary ones. No backend here lists the sizes its far end would
+/// take (RFB, RDP and SPICE all take any), so there is nothing to ask.
 fn size_choices(have: (u32, u32), window: Option<(u32, u32)>, monitors: &[Monitor]) -> Vec<((u32, u32), String)> {
     let mut choices: Vec<((u32, u32), String)> = Vec::new();
     let mut offer = |size: (u32, u32), label: String| {
@@ -468,7 +468,7 @@ fn facts(ui: &mut Ui, snapshot: &Snapshot) {
             row(ui, fact.label, &fact.value);
         }
         // The count, unless the backend already put it among its own rows
-        // (the Java twins of most of them do).
+        // (the Java versions of most of them do).
         if let Some(traffic) = snapshot.traffic
             && !plain.iter().any(|f| f.field == Field::Data)
         {

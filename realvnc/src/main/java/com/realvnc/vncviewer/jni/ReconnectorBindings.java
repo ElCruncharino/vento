@@ -7,9 +7,9 @@ package com.realvnc.vncviewer.jni;
  * reconnect. Unlike the prompt families this one asks nothing: it is told to
  * show, to hide and to close, and there is no result native to call.
  *
- * <p>It is worth registering even for a client that draws no banner, because it
- * is the only notice that a session which still reports itself as connected is
- * in fact being re-established.
+ * <p>Worth registering even for a client that draws no banner: it is the only
+ * notice that a session still reporting itself as connected is being
+ * re-established.
  *
  * <p>Required by
  * {@code Java_com_realvnc_vncviewer_jni_ReconnectorBindings_setDlgFactory}, and

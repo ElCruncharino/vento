@@ -30,8 +30,8 @@ public class PhysicalMouseTest {
 
     @Test
     public void theThreeButtonsAreLeftRightMiddle() {
-        // Android's secondary is RFB's *third* bit, which is the one place the
-        // two vocabularies disagree about an ordering.
+        // Android's secondary is RFB's *third* bit, the one place the two
+        // orderings differ.
         assertEquals(Button.LEFT.mask(), PhysicalMouse.toRfbMask(PRIMARY));
         assertEquals(Button.RIGHT.mask(), PhysicalMouse.toRfbMask(SECONDARY));
         assertEquals(Button.MIDDLE.mask(), PhysicalMouse.toRfbMask(TERTIARY));
@@ -52,8 +52,8 @@ public class PhysicalMouseTest {
 
     /**
      * A chord that swaps one button for another releases first. The far end sees
-     * a mask, so pressing before releasing would show both held for one event —
-     * which on a desktop is a middle-click emulation or a drag that never
+     * a mask, so pressing before releasing would show both held for one event.
+     * On a desktop that is a middle-click emulation or a drag that never
      * started.
      */
     @Test
@@ -66,9 +66,9 @@ public class PhysicalMouseTest {
     }
 
     /**
-     * The bug a third producer of button presses brings. The mouse holds LEFT; a
+     * A third source of button presses brings this bug. The mouse holds LEFT; a
      * finger taps the touchpad, which presses and releases LEFT of its own 250 ms
-     * later — and last-writer-wins on a single mask would drop whatever the mouse
+     * later, and last-writer-wins on a single mask would drop whatever the mouse
      * was dragging.
      */
     @Test
@@ -110,8 +110,8 @@ public class PhysicalMouseTest {
         final Harness h = mouse();
         final float x0 = h.cursor.x();
         h.physicalMouse.motion(40, 0);
-        // 1:1 at scale 1, with no jerk curve anywhere in the path — the whole
-        // point of not going through GestureRecognizer.
+        // 1:1 at scale 1, with no jerk curve anywhere in the path, which is why
+        // the mouse does not go through GestureRecognizer.
         assertEquals(x0 + 40, h.cursor.x(), 0.001f);
         assertEquals(List.of("phys move 40.00,0.00"), h.physicalMouseEvents());
     }

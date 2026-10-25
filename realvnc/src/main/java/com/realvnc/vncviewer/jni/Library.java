@@ -16,13 +16,13 @@ import java.util.Set;
  * <p>It is here rather than wherever a copy happens to be fetched because it is
  * a fact about <i>these declarations</i>: every native's symbol, every
  * callback's name and every descriptor came out of one build, and
- * {@code check-jni-abi.sh} exists to say they still match it. A hash of that
+ * {@code check-jni-abi.sh} exists to check they still match it. A hash of that
  * build is the same statement in another form. Nothing here says where a copy
- * can be got — that belongs to whoever acquires one.
+ * can be obtained; that belongs to the code that acquires one.
  *
  * <p>The library is not in this repository and is in no artefact it produces.
- * Whoever loads it verifies it against this, because a hash of somebody else's
- * binary is the whole of what makes loading it safe.
+ * Code that loads it verifies it against this, because the hash of a
+ * third-party binary is the only thing that makes loading it safe.
  */
 public final class Library {
 
@@ -31,8 +31,8 @@ public final class Library {
 
     /**
      * In load order: {@code libvncviewer.so}'s {@code DT_NEEDED} on the first is
-     * satisfied by soname out of the namespace it is already in, so the two go
-     * in this order and no search path is needed for either.
+     * resolved by soname from the libraries already loaded, so loading them in
+     * this order needs no search path for either.
      */
     private static final List<String> NAMES = List.of("libc++_shared.so", "libvncviewer.so");
 
@@ -59,7 +59,7 @@ public final class Library {
         return NAMES;
     }
 
-    /** The ABIs pinned here, which is what a device must be one of. */
+    /** The ABIs pinned here; a device must support one of them. */
     public static Set<String> abis() {
         return Set.of("arm64-v8a", "x86_64");
     }
@@ -85,12 +85,12 @@ public final class Library {
 
     /**
      * What this device needs: each library's name to its SHA-256, in the order
-     * they must be loaded. One statement, used by whoever acquires a copy and
-     * again by whoever loads one.
+     * they must be loaded. Used both by the code that acquires a copy and by
+     * the code that loads one.
      *
-     * <p><b>Empty means this device can never have them</b>, which is a
-     * different answer from "has not got them yet" and has to be read as one:
-     * an empty set of requirements is satisfied by an empty store.
+     * <p><b>Empty means this device can never have them</b>, which is different
+     * from "does not have them yet" and must be treated as such: an empty set of
+     * requirements is satisfied by an empty store.
      */
     public static Map<String, String> wanted() {
         final String abi = abi();

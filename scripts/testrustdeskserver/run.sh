@@ -21,8 +21,8 @@ esac
 
 # Two modes of the same server rather than two containers. `relay` tells every
 # client to relay rather than punch, which is the only way to reach that path on
-# a network where a punch always lands; `open` stops the server insisting a
-# client names its key, which is what lets a client arrive with the wrong one
+# a network where a punch always lands; `open` stops the server requiring a
+# client to name its key, which is what lets a client arrive with the wrong one
 # and fail to verify the introduction it is given.
 RELAY_ONLY=N
 ENFORCE_KEY=Y

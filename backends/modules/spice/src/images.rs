@@ -4,10 +4,10 @@
 //! The image half of the display channel: five encodings, two caches, and what
 //! a draw's source rectangle does to what comes out.
 //!
-//! The decoders are theirs and the dispatch is ours, which is the split note 76
-//! §2 chose. What is here besides the dispatch is the part a decoder cannot do
-//! for itself: which images go in which cache, and the crop and scale that turn
-//! a decoded image into the rectangle a draw command names.
+//! The decoders are ryll's and the dispatch is here. Besides the dispatch,
+//! this handles what a decoder cannot do for itself: which images go in which
+//! cache, and the crop and scale that turn a decoded image into the rectangle a
+//! draw command names.
 
 use flate2::read::ZlibDecoder;
 use shakenfist_spice_compression::{
@@ -23,9 +23,9 @@ use std::sync::Arc;
 /// A decoded image: `R, G, B, A` bytes, row-major, top-down.
 ///
 /// The size is a claim about the pixels rather than a property of them, and
-/// the claim comes from the server (a descriptor) or from a decoder of
-/// theirs: [`fit`], the one place an image is indexed by its size, checks the
-/// two agree first.
+/// the claim comes from the server (a descriptor) or from one of ryll's
+/// decoders: [`fit`], the one place an image is indexed by its size, first
+/// checks that the two agree.
 pub struct Image {
     pub width: usize,
     pub height: usize,
@@ -40,12 +40,12 @@ pub struct Images {
     /// waits for an entry that will not arrive, and on a current-thread runtime
     /// that is a hang rather than a stall.
     dictionary: GlzDictionary,
-    /// The server's own image cache, which is a different thing: it names an
-    /// image the server has sent before and expects this end to have kept. Its
-    /// size is what `DISPLAY_INIT` promised, so a client that keeps less than it
-    /// said is a client that will miss. Each entry is the image's size and
-    /// then its pixels ([`keep`]), since the descriptor that later names it
-    /// carries a size of its own and is not where the pixels came from.
+    /// The server's own image cache, which is different: the server names an
+    /// image it has sent before and expects this end to have kept. Its size is
+    /// what `DISPLAY_INIT` promised, so a client that keeps less than it
+    /// promised gets cache misses. Each entry is the image's size and then its
+    /// pixels ([`keep`]), since the descriptor that later names it carries a
+    /// size of its own, which may not match the pixels.
     cache: ByteBoundedLru,
     jpeg: Arc<dyn JpegDecoder>,
     /// What has actually arrived, for the panel's encoding row: a list of what
@@ -58,9 +58,9 @@ impl Images {
         Images {
             dictionary: GlzDictionary::new(),
             cache: ByteBoundedLru::new(cache_bytes),
-            // The pure-Rust decoder, which is the only one of theirs that
-            // builds for a phone: the others are ImageIO, WIC, VA-API and a
-            // vendored libjpeg-turbo.
+            // The pure-Rust decoder, the only one of ryll's that builds for
+            // Android: the others use ImageIO, WIC, VA-API and a vendored
+            // libjpeg-turbo.
             jpeg: Arc::new(JpegDecoderRsDecoder::new()),
             seen: BTreeSet::new(),
         }
@@ -86,8 +86,8 @@ impl Images {
     }
 
     /// Every image encoding this client understands, dispatched on the
-    /// descriptor's type. The uncompressed one is ours because nobody
-    /// compresses it; the rest are theirs.
+    /// descriptor's type. The uncompressed bitmap is converted here; the rest
+    /// use ryll's decoders.
     async fn decode(&mut self, descriptor: &ImageDescriptor, data: &[u8]) -> Option<Image> {
         let kind = ImageType::from_u8(descriptor.image_type);
         self.seen.insert(name(descriptor.image_type));
@@ -102,7 +102,7 @@ impl Images {
         let decoded: Option<DecompressedImage> = match kind {
             Some(ImageType::Pixmap) => pixmap(data, descriptor.image_id),
             // The four-byte prefix is the compressed size, which the message
-            // framing has already told us.
+            // framing already gives.
             Some(ImageType::LzRgb) => {
                 let lz = data.get(4..)?;
                 lz_fits(lz, Lz::Lz, pixels)?;
@@ -115,10 +115,10 @@ impl Images {
             }
             Some(ImageType::ZlibGlzRgb) => {
                 // A GLZ image with zlib over it: the uncompressed size, the
-                // compressed size, and then the stream. The uncompressed
-                // size is the server's word, as is what the stream inflates
-                // to; what is read is what a GLZ stream of this image could
-                // be.
+                // compressed size, and then the stream. The server controls
+                // both the uncompressed size and what the stream inflates to,
+                // so inflation stops at the largest GLZ stream this image
+                // could have.
                 let compressed = u32::from_le_bytes(data.get(4..8)?.try_into().ok()?) as usize;
                 let zlib = data.get(8..8 + compressed.min(data.len() - 8))?;
                 let glz = inflate(zlib, pixels)?;
@@ -149,10 +149,10 @@ impl Images {
                 ))
             }
             // A JPEG and its alpha channel, which is a *separate* LZ stream
-            // rather than a fourth channel in the JPEG — and is what this server
-            // sends for every photographic image once it has decided the link is
+            // rather than a fourth channel in the JPEG. The server sends this
+            // for every photographic image once it has decided the link is
             // slow, since a QXL surface is 32 bits deep and so always has an
-            // alpha to carry. A client that decodes plain JPEG and not this one
+            // alpha to carry. A client that decodes plain JPEG but not this
             // shows the desktop with a hole where the picture is.
             Some(ImageType::JpegAlpha) => {
                 let jpeg_size = u32::from_le_bytes(data.get(1..5)?.try_into().ok()?) as usize;
@@ -186,8 +186,8 @@ impl Images {
             }
         };
         let Some(decoded) = decoded else {
-            // A decoder that says no is a picture with a hole in it, and the
-            // hole is silent: worth one line whatever the encoding.
+            // A failed decode leaves a hole in the picture with no other
+            // sign, so it is logged whatever the encoding.
             log::warn!("display: a {} image did not decode", name(descriptor.image_type));
             return None;
         };
@@ -218,8 +218,8 @@ impl Images {
         self.seen.iter().copied().collect()
     }
 
-    /// `INVAL_ALL_PIXMAPS` and `RESET`: the server is saying that what this end
-    /// remembers is no longer what it thinks this end remembers.
+    /// `INVAL_ALL_PIXMAPS` and `RESET`: the server no longer assumes this end
+    /// has kept anything it sent before.
     pub fn forget(&mut self) {
         self.dictionary.clear();
         self.cache.clear();
@@ -238,9 +238,9 @@ enum Lz {
 /// what has to be true before `decompress_lz` or `decompress_glz` sees it:
 /// both allocate width x height x 4 from the stream's header before a pixel
 /// is read, checked for overflow but not for size, so a one-pixel image
-/// whose stream said 65535x65535 was 17 GB. The image's size has been held
-/// to the desktop cap; a stream smaller than it is drawn stretched, as any
-/// small image is.
+/// whose stream said 65535x65535 would allocate 17 GB. The image's size has
+/// been held to the desktop cap; a stream smaller than it is drawn stretched,
+/// as any small image is.
 fn lz_fits(stream: &[u8], kind: Lz, pixels: usize) -> Option<()> {
     // Big-endian, unlike the rest of the wire, after the magic and version.
     let at = match kind {
@@ -264,8 +264,9 @@ fn glz_bound(pixels: usize) -> usize {
 }
 
 /// The zlib under a `ZLIB_GLZ_RGB` image, inflated no further than a GLZ
-/// stream of its image could be: what a zlib stream inflates to is the
-/// server's to say, a thousand to one, and 64 MiB of message is 64 GB.
+/// stream of its image could be: the server controls what a zlib stream
+/// inflates to, at up to a thousand to one, so a 64 MiB message could inflate
+/// to 64 GB.
 fn inflate(zlib: &[u8], pixels: usize) -> Option<Vec<u8>> {
     let mut glz = Vec::new();
     ZlibDecoder::new(zlib)
@@ -308,8 +309,8 @@ fn pixmap(data: &[u8], id: u64) -> Option<DecompressedImage> {
     let height = u32::from_le_bytes(data[6..10].try_into().ok()?) as usize;
     let stride = u32::from_le_bytes(data[10..14].try_into().ok()?) as usize;
     let top_down = flags & 0x04 != 0;
-    // 8 is BGRX and 9 is BGRA; the paletted and 16-bit formats belong to
-    // guests whose driver predates a 32-bit surface, and QEMU's does not.
+    // 8 is BGRX and 9 is BGRA; the paletted and 16-bit formats are for guest
+    // drivers that predate 32-bit surfaces, which QEMU's QXL driver does not.
     if format != 8 && format != 9 {
         log::warn!("display: a {format}-format bitmap is not 32-bit");
         return None;
@@ -342,11 +343,11 @@ fn pixmap(data: &[u8], id: u64) -> Option<DecompressedImage> {
 
 /// The alpha channel of a `JPEG_ALPHA` image, written into `pixels` in place.
 ///
-/// It is LZ again, and the same control bytes as `decompress_lz` — but with
+/// It is LZ again, with the same control bytes as `decompress_lz`, but with
 /// **one-byte pixels**: an alpha channel is one byte each, so a literal run is
 /// that many bytes and a back reference counts in bytes rather than in
-/// triplets. Their decoder assumes three, which is why this is here rather than
-/// a second call into theirs; everything else about the stream, header
+/// triplets. ryll's decoder assumes three, which is why this is here rather
+/// than a second call into it; everything else about the stream, header
 /// included, is the same.
 ///
 /// False for a stream that is not one, in which case the caller keeps the
@@ -435,14 +436,14 @@ fn lz_alpha(data: &[u8], pixels: &mut [u8]) -> bool {
 }
 
 /// The draw's source rectangle out of the image, at the size of the box it goes
-/// in — nearest neighbour, which is what SPICE's own default scale mode is.
+/// in, scaled nearest-neighbour (SPICE's default scale mode).
 ///
-/// The ordinary case is that neither happens: the image is exactly the
-/// rectangle, and this hands it straight back.
+/// Usually neither the crop nor the scale is needed: the image is exactly the
+/// rectangle, and is returned unchanged.
 ///
-/// Nothing for an image whose pixels are not the size it claims, and for a
-/// box bigger than any desktop could be ([`runtime::MAX_DESKTOP_PIXELS`]):
-/// both sizes are the server's word, and this is where they are indexed by.
+/// `None` for an image whose pixels are not the size it claims, and for a box
+/// bigger than any desktop could be ([`runtime::MAX_DESKTOP_PIXELS`]): both
+/// sizes come from the server, and this is where they are used as indexes.
 fn fit(image: Image, src: (u32, u32, u32, u32), width: usize, height: usize) -> Option<Image> {
     let claimed = image.width.checked_mul(image.height).and_then(|n| n.checked_mul(4));
     if claimed != Some(image.pixels.len()) {
@@ -535,8 +536,8 @@ mod tests {
         }
     }
 
-    /// A bottom-up bitmap is the default, and getting it the wrong way up is
-    /// a picture that looks nearly right — which is why it has a test.
+    /// A bottom-up bitmap is the default, and getting it the wrong way up
+    /// gives a picture that looks nearly right, which is why it has a test.
     #[test]
     fn a_bitmap_without_the_flag_is_bottom_up() {
         let mut data = vec![8u8, 0]; // format 32-bit BGRX, no flags
@@ -620,10 +621,9 @@ mod tests {
     }
 
     /// A cached image is the size it was when it was kept. The descriptor
-    /// that names it carries a size too, and a server that says 100×100 for
-    /// a pixel it cached is a server whose word is not what the pixels are:
-    /// what is drawn is the pixel, stretched over the box, rather than a
-    /// read a hundred rows past it.
+    /// that names it carries a size too, which may be wrong: for a server
+    /// that says 100×100 for a pixel it cached, what is drawn is the pixel,
+    /// stretched over the box, rather than a read a hundred rows past it.
     #[test]
     fn a_cached_image_is_its_own_size_whatever_the_descriptor_says() {
         use crate::testing::block_on;
@@ -645,7 +645,7 @@ mod tests {
         }
     }
 
-    /// A draw's box is two 32-bit fields of the server's, and a box no
+    /// A draw's box is two 32-bit fields set by the server, and a box no
     /// desktop could hold is refused before an image that size is made.
     #[test]
     fn a_box_bigger_than_any_desktop_is_refused() {
@@ -693,9 +693,9 @@ mod tests {
         }
     }
 
-    /// An LZ or GLZ stream carries a size of its own, and their decoders
+    /// An LZ or GLZ stream carries a size of its own, and ryll's decoders
     /// allocate by it before a pixel is read: a one-pixel image whose stream
-    /// said 65535x65535 asked for 17 GB. The stream's size is held to the
+    /// said 65535x65535 would ask for 17 GB. The stream's size is held to the
     /// descriptor's (which is held to the desktop cap) before they are
     /// called, and a stream that fits still decodes.
     #[test]
@@ -715,8 +715,9 @@ mod tests {
         }
     }
 
-    /// The zlib under a GLZ stream is the server's too: what it inflates to
-    /// is read no further than a GLZ stream of the image's size could be.
+    /// The zlib under a GLZ stream is also server-controlled: what it
+    /// inflates to is read no further than a GLZ stream of the image's size
+    /// could be.
     #[test]
     fn a_zlib_stream_is_inflated_only_as_far_as_its_image() {
         use flate2::{Compression, write::ZlibEncoder};

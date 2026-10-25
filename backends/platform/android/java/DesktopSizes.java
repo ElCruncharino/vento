@@ -14,15 +14,15 @@ import android.view.WindowMetrics;
 import java.util.Locale;
 
 /**
- * What each machine's desktop turned out to be, so that connecting again can
- * ask for the same thing — and the other size a session can ask for, this
+ * The size each machine's desktop turned out to be, so that connecting again
+ * can ask for the same thing, and the other size a session can ask for: this
  * phone's own.
  *
  * <p>RDP has no way to ask for "whatever it already is": the size is in the
  * client's connection data and something has to go there. So the nearest true
  * answer is the size the last session ended up at, which is what this
- * remembers — and it is the size the <em>server</em> reported rather than the
- * one that was asked for, since those differ (a server is free to round the
+ * remembers. It is the size the <em>server</em> reported rather than the one
+ * that was asked for, since those differ (a server is free to round the
  * width, and does).
  *
  * <p>One file for both RDP backends: the two clients ask the same machine for
@@ -77,17 +77,17 @@ public final class DesktopSizes {
     }
 
     /**
-     * The window a session gets on this phone, in pixels — the screen less the
-     * status and navigation bars, in whichever orientation it is held now — or
-     * null where there is no window manager to ask.
+     * The window a session gets on this phone, in pixels (the screen less the
+     * status and navigation bars, in its current orientation), or null where
+     * there is no window manager to ask.
      *
      * <p>The bars are subtracted because the desktop is drawn in what is left of
      * the window, so it is that rectangle, and not the panel, that makes a scale
-     * of 1 look like one pixel each. There is no activity here to ask — the
-     * session outlives every screen — so this is the display's own window, which
-     * differs from the session's only in a split screen. Whether it is a size a
-     * server will take is the caller's question: the field is 16 bits, and a
-     * server handed something absurd refuses rather than arguing.
+     * of 1 look like one pixel each. There is no activity here to ask (the
+     * session outlives every screen), so this is the display's own window, which
+     * differs from the session's only in a split screen. Whether a server will
+     * take the size is for the caller to check: the field is 16 bits, and a
+     * server handed something absurd refuses it.
      */
     public static int[] device(Context ctx) {
         final WindowManager wm = ctx.getSystemService(WindowManager.class);

@@ -4,10 +4,10 @@
 //! What the phone's JNI layer does with a cursor before it crosses to Java:
 //! packs its pixels the way a `Color` is packed, and hashes them.
 //!
-//! The hash is a contract with the other side — it is `CursorCache`'s
-//! identity, and the Java has its own copy (`CursorCache.hash`) — so it is
-//! written down once, here; the Linux client converts a cursor for its own
-//! window and needs neither.
+//! The hash is shared with the Java side (it is `CursorCache`'s identity, and
+//! the Java has its own copy, `CursorCache.hash`), so it is defined once,
+//! here; the Linux client converts a cursor for its own window and needs
+//! neither.
 
 /// `0xAA_BB_GG_RR` (memory order R, G, B, A) to `0xAA_RR_GG_BB`, which is
 /// Android's `Color` packing and the one `Bitmap.setPixels` takes.
@@ -16,10 +16,9 @@ pub fn swap_rb(p: u32) -> u32 {
 }
 
 /// FNV-1a over a cursor's size and its `Color`-packed pixels, which is its
-/// identity in `CursorCache` — so this and the Java copy of it have to agree,
-/// bit for bit. What it saves on the other
-/// side is a bitmap and a texture per cursor change rather than anything on
-/// the wire.
+/// identity in `CursorCache`, so this and the Java copy of it have to agree
+/// bit for bit. It saves a bitmap and a texture per cursor change on the Java
+/// side, not anything on the wire.
 ///
 /// Over the *packed* pixels, not the framebuffer's word order, because that
 /// is what the Java copy sees; the phone computes it after
@@ -47,8 +46,8 @@ mod tests {
     }
 
     /// Pinned values, computed by the copy this one replaced: the hash is
-    /// shared with code in two other languages, so a change here that still
-    /// passes every other test is a cache that misses on every cursor.
+    /// shared with the Java copy, so a change here that still passes every
+    /// other test would make the cache miss on every cursor.
     #[test]
     fn the_hash_is_the_one_the_shims_compute() {
         assert_eq!(hash(&[], 0, 0), 0x0832_8807_b4eb_6fed);

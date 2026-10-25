@@ -7,20 +7,21 @@ use std::fmt;
 
 #[derive(Debug)]
 pub enum Error {
-    /// The socket, at any point, on any of the four connections.
+    /// The socket, at any point, on any of the session's connections.
     Io(std::io::Error),
     /// The ticket was refused. SPICE's own auth has one answer and no
     /// message, so what this carries is the link error's name.
     Refused(String),
-    /// Nobody answered the password prompt, or the certificate was not
+    /// The password prompt was dismissed, or the certificate was not
     /// accepted.
     Cancelled,
-    /// The bytes did not mean what they have to mean.
+    /// The server sent malformed or unexpected data.
     Protocol(String),
-    /// What somebody typed is not an address, said in the words they need.
+    /// The configured address is not valid; the text says why.
     Address(String),
-    /// The server said so: `MAIN_DISCONNECTING`, or a `NOTIFY` at error
-    /// severity, in its own words.
+    /// The server ended the session: `MAIN_DISCONNECTING`, or a required
+    /// channel closed without an error. A non-empty text replaces the default
+    /// message.
     Server(String),
     /// `Client::close` was called; the only ordinary ending.
     Closed,

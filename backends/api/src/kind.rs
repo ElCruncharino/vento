@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! A backend as a client holds it — what it is ([`About`], from the
-//! [`catalog`](crate::catalog)) beside how to start a session on it — and
-//! [`Connect`], what a session is started with.
+//! A backend as a client holds it ([`Kind`]: its [`About`] from the
+//! [`catalog`](crate::catalog), and how to start a session on it), and
+//! [`Connect`], the parameters a session is started with.
 
 use crate::backend::Backend;
 use crate::catalog::About;
@@ -17,23 +17,23 @@ use std::sync::Arc;
 /// Where a client keeps things on disk.
 #[derive(Clone, Debug)]
 pub struct Dirs {
-    /// Where the client's own decisions are kept: the known hosts and
-    /// RealVNC's identities, both of which outlive every session.
+    /// The client's persistent decisions: the known hosts and RealVNC's
+    /// identities.
     pub config: PathBuf,
-    /// What a session leaves behind that is not a decision: FreeRDP's config
-    /// directory (which keeps nothing) and RealVNC's key, own identities and
-    /// logs, each under a directory of its own backend.
+    /// Other session state: FreeRDP's config directory (which stays empty)
+    /// and RealVNC's key, own identities and logs, each under a directory
+    /// named for its backend.
     pub state: PathBuf,
-    /// Where `libvncviewer.so` and `libc++_shared.so` out of the RealVNC
-    /// viewer's APK are, for the one backend whose library is not in any
-    /// build of this.
+    /// The directory holding `libvncviewer.so` and `libc++_shared.so` from
+    /// the RealVNC viewer's APK, for the only backend whose library is not
+    /// part of this project's build.
     pub realvnc_libs: PathBuf,
 }
 
 impl Dirs {
-    /// The XDG defaults, as the Linux client has them: `vento` under
-    /// `$XDG_CONFIG_HOME`, `$XDG_STATE_HOME` and `$XDG_DATA_HOME`, each
-    /// falling back to its place under `$HOME`.
+    /// The Linux client's XDG defaults: `vento` under `$XDG_CONFIG_HOME`,
+    /// `$XDG_STATE_HOME` and `$XDG_DATA_HOME`, each falling back to its
+    /// default under `$HOME`.
     pub fn xdg() -> Dirs {
         let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
         let xdg = |var: &str, under: &str| {
@@ -51,64 +51,61 @@ impl Dirs {
     }
 }
 
-/// Which client a session is in, for the protocols whose far end is told:
-/// RustDesk's login names the platform, and RDP's general capability set
-/// carries a major type.
+/// Which client a session is in, for the protocols that send it to the far
+/// end: RustDesk's login names the platform, and RDP's general capability
+/// set carries a major type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Platform {
     Android,
     Linux,
 }
 
-/// What a session is started with.
+/// The parameters a session is started with.
 pub struct Connect<'a> {
     pub address: &'a str,
     /// Empty for none. For the RDP backends, `DOMAIN\user` and `user@domain`
-    /// are split here as the Java backends split them, unless `domain` says
-    /// otherwise.
+    /// are split by [`Connect::domain_and_user`] unless `domain` is set.
     pub user: &'a str,
     pub domain: &'a str,
-    /// `None` prompts; an empty password is not a password, for the reason
-    /// the RealVNC backend found first — something that looks like a stored
-    /// secret and is not one fails the connection instead of asking for the
-    /// real one — and callers pass `None` for it.
+    /// `None` prompts. Callers pass `None` rather than an empty password,
+    /// since an empty string looks like a stored secret and fails the
+    /// connection instead of prompting for the real one (first seen with
+    /// RealVNC).
     pub password: Option<&'a str>,
     pub options: &'a Options,
     pub mailbox: Arc<Mailbox>,
     pub dirs: &'a Dirs,
-    /// The size of the screen this session will be drawn on, where there is
-    /// one, which is what the RDP backends' `DesktopSize=device` asks for.
+    /// The size of the screen this session will be drawn on, if known, for
+    /// the RDP backends' `DesktopSize=device`.
     pub screen: Option<(u32, u32)>,
-    /// The size this address's desktop ended up at last time, where the
-    /// client keeps that note — the phone does, per address, for both RDP
-    /// backends — which is what the RDP backends' `DesktopSize=remote` asks
-    /// for.
+    /// The desktop size this address ended up at last time, if the client
+    /// records it (the phone does, per address, for both RDP backends), for
+    /// the RDP backends' `DesktopSize=remote`.
     pub last_size: Option<(u32, u32)>,
-    /// What this address's server was last accepted as, where the client
-    /// keeps that note: the identity a backend handed over through
-    /// [`Backend::saved_identity`] after a session at this address, handed
+    /// The identity this address's server was last accepted with, if the
+    /// client records it: the value a backend returned from
+    /// [`Backend::saved_identity`] after a session at this address, passed
     /// back so that it does not ask again about a server it recognises.
-    /// Only for a backend whose [`About::saves_identity`] says so — RealVNC's
-    /// core is the one library with identities of its own — and `None` for
-    /// the others, whose far ends the client pins.
+    /// Only for a backend with [`About::saves_identity`] set (RealVNC's core
+    /// is the only library with its own identity store); `None` for the
+    /// others, whose far ends the client pins.
     pub identity: Option<&'a str>,
-    /// What the far end lists this machine as: a phone's model, a desktop's
-    /// host name.
+    /// The name the far end shows for this machine: a phone's model, a
+    /// desktop's host name.
     pub client_name: &'a str,
     pub platform: Platform,
-    /// What decodes a protocol's video, for the one whose picture is video
-    /// (RustDesk) and the two that have a video encoding (TigerVNC's and
-    /// FreeRDP's H.264, through `vento/video.h`): the phone's MediaCodec, or
-    /// libavcodec on a desktop. `None` is a RustDesk session with no
-    /// picture, reported as such, and a TigerVNC or FreeRDP one that never
-    /// offers H.264.
+    /// The video decoders, for the protocol whose picture is always video
+    /// (RustDesk) and the two with a video encoding (TigerVNC's and FreeRDP's
+    /// H.264, through `vento/video.h`): the phone's MediaCodec, or libavcodec
+    /// on a desktop. With `None`, a RustDesk session has no picture and
+    /// reports that, and TigerVNC and FreeRDP never offer H.264.
     pub decoders: Option<Arc<dyn Decoders>>,
-    /// Where the far end's sound goes, for the backends that have sound
+    /// The output for the far end's sound, for the backends that have sound
     /// (TigerVNC's QEMU audio and FreeRDP's rdpsnd through `vento/audio.h`,
     /// SPICE's, IronRDP's and RustDesk's in Rust): the phone's AAudio, or on
-    /// a desktop PipeWire (ALSA where no daemon answers), one per session so
-    /// that its controls — the switch and the mute a window sets — are this
-    /// session's alone. `None` is a session whose sound is dropped.
+    /// a desktop PipeWire (ALSA when no daemon answers). One per session, so
+    /// that its controls (the switch, and the mute a window sets) apply to
+    /// this session only. With `None`, the sound is dropped.
     pub audio: Option<Arc<dyn Outputs>>,
 }
 
@@ -123,32 +120,35 @@ impl Connect<'_> {
     }
 }
 
-/// Twenty seconds, as every Java backend has it: long enough for a server
-/// to finish a handshake, short enough that a mistyped address is not a
-/// spinner that never stops.
+/// Twenty seconds, the same as RealVNC's Java backend: long enough for a
+/// server to finish a handshake, short enough that a mistyped address does
+/// not leave the connection spinning indefinitely.
 pub const CONNECT_TIMEOUT_MS: i32 = 20_000;
 
 /// One backend: what it is, and how to start a session on it. Derefs to its
 /// [`About`], so `kind.id` and `kind.options` read as they always have.
 pub struct Kind {
     pub about: &'static About,
-    /// The one call that proves the whole path: what the library says it is.
+    /// The library's own version string; calling it proves the library
+    /// loads and links.
     pub version: fn() -> String,
     /// The backend's own constructor; sessions are started with
     /// [`Kind::start`], which wraps it.
     pub create: fn(&Connect) -> Result<Arc<dyn Backend>, String>,
-    /// Forgets what the backend's library keeps of its own about the server
-    /// `address` names ([`trust::same_server`](crate::trust::same_server)),
-    /// under `dirs`, for a client forgetting it: a line for the person per
-    /// thing removed. Never connects anywhere. `None` for a backend whose
-    /// library keeps nothing of a server's, which is all but RealVNC's (whose
-    /// core remembers the servers it accepted). The phone's counterpart is
+    /// Forgets what the backend's library stores under `dirs` about the
+    /// server `address` names
+    /// ([`trust::same_server`](crate::trust::same_server)), when the client
+    /// forgets that server: returns a user-facing line per item removed.
+    /// Never connects anywhere. `None` for a backend whose library stores
+    /// nothing about servers, which is all but RealVNC (whose core remembers
+    /// the servers it accepted). The phone's counterpart is
     /// `BackendProvider.forgetHosts`.
     pub forget: Option<Forget>,
 }
 
-/// [`Kind::forget`]: the client's directories and the address, to a line per
-/// thing removed, or why the backend's record could not be changed.
+/// [`Kind::forget`]: takes the client's directories and the address, and
+/// returns a line per item removed, or why the backend's record could not be
+/// changed.
 pub type Forget = fn(&Dirs, &str) -> Result<Vec<String>, String>;
 
 impl std::ops::Deref for Kind {
@@ -160,25 +160,25 @@ impl std::ops::Deref for Kind {
 }
 
 impl Kind {
-    /// Starts a session on this backend: its `create`, after what is the
-    /// same for every backend that has the option. `AcceptBell` is that: the
-    /// adapters and the libraries behind the vtable hand a bell over whatever
-    /// the option says, so it is dropped at the mailbox instead, once for
-    /// all of them. (RealVNC's core is told as well, since its library has a
-    /// switch of its own.) The option is not live, as the catalog has it,
-    /// so this is once per session.
+    /// Starts a session on this backend: calls its `create`, after the setup
+    /// shared by every backend. That includes `AcceptBell`: the adapters and
+    /// the libraries behind the vtable pass a bell on regardless of the
+    /// option, so it is dropped at the mailbox instead, once for all of them.
+    /// (RealVNC's core is told as well, since its library has its own
+    /// switch.) The option is not live in the catalog, so this is set once
+    /// per session.
     ///
-    /// The session's sound is likewise said for every backend at once: the
-    /// session's audio controls are told to say it through the mailbox, as
+    /// Sound is likewise reported the same way for every backend: the
+    /// session's audio controls report it through the mailbox as
     /// [`Event::Sound`](crate::events::Event::Sound), whichever backend's
-    /// streams it is that start and stop and whichever offers the switch.
+    /// streams start and stop and whichever offers the switch.
     pub fn start(&self, connect: &Connect) -> Result<Arc<dyn Backend>, String> {
         if self.options.iter().any(|s| s.key == "AcceptBell") {
             connect.mailbox.accept_bell(connect.options.bool("AcceptBell"));
         }
         if let Some(audio) = &connect.audio {
-            // Weak, so that a stream a backend leaks past its session does
-            // not keep the mailbox alive with it.
+            // Weak, so that a stream leaked by a backend past its session
+            // does not keep the mailbox alive.
             let mailbox = Arc::downgrade(&connect.mailbox);
             audio.controls().on_sound(Box::new(move |sound| {
                 if let Some(mailbox) = mailbox.upgrade() {

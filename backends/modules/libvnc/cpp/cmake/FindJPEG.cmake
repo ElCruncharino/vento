@@ -1,8 +1,8 @@
-# find_package(JPEG), answered with the libjpeg-turbo added as a subdirectory
-# beside it rather than with whatever is on the host. LibVNCServer asks for
-# JPEG_INCLUDE_DIR as a single directory (it greps jpeglib.h for JCS_EXT_RGB to
-# tell libjpeg-turbo from libjpeg), so this names the source tree; jconfig.h,
-# which is generated, is on the include path already.
+# find_package(JPEG), resolved to the libjpeg-turbo added as a subdirectory
+# next to it rather than to the host's library. LibVNCServer expects
+# JPEG_INCLUDE_DIR to be a single directory (it greps jpeglib.h for JCS_EXT_RGB
+# to tell libjpeg-turbo from libjpeg), so this names the source tree; the
+# generated jconfig.h is already on the include path.
 
 set(JPEG_FOUND TRUE)
 set(JPEG_INCLUDE_DIR "${THIRD_PARTY}/libjpeg-turbo/src")

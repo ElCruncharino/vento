@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The RustDesk client as a [`Backend`](api::backend::Backend), with this
-//! backend's option handling and its rows: what the Linux client holds, and
-//! what the phone reaches through `platform_android`'s JNI layer. The picture is decoded by whatever the client
-//! hands over in [`Connect::decoders`]: libavcodec on Linux, MediaCodec on
-//! the phone.
+//! backend's option handling and info rows. Used directly by the Linux client,
+//! and by the phone through `platform_android`'s JNI layer. Video is decoded
+//! by the decoders the caller passes in [`Connect::decoders`]: libavcodec on
+//! Linux, MediaCodec on the phone.
 
 use crate::{Client, Config, Platform, PreferredCodec, Quality, Reach};
 use runtime::{Bridge, Runner};
@@ -28,7 +28,7 @@ pub static KIND: Kind = Kind {
     forget: None,
 };
 
-/// The `Codec` option's value, as `RustDeskProvider` writes it.
+/// The `Codec` option's value, as the catalog defines it.
 fn codec_of(name: &str) -> PreferredCodec {
     match name {
         "vp9" => PreferredCodec::Vp9,
@@ -40,7 +40,7 @@ fn codec_of(name: &str) -> PreferredCodec {
     }
 }
 
-/// The `Quality` option's value, as `RustDeskProvider` writes it.
+/// The `Quality` option's value, as the catalog defines it.
 fn quality_of(name: &str) -> Quality {
     match name {
         "low" => Quality::Low,
@@ -49,7 +49,7 @@ fn quality_of(name: &str) -> Quality {
     }
 }
 
-/// The frame rate option as the client wants it: 0 for their choice.
+/// The frame rate option as the client takes it: 0 lets the peer choose.
 fn fps(options: &Options) -> i32 {
     options.int("FrameRate", 0).clamp(0, 120) as i32
 }
@@ -75,9 +75,9 @@ fn create(c: &Connect) -> Result<Arc<dyn Backend>, String> {
         },
         password: c.password.map(String::from),
         connect_timeout: Duration::from_millis(CONNECT_TIMEOUT_MS as u64),
-        // What the far end shows and logs while this session is up.
+        // The name the far end shows and logs for this session.
         my_name: c.client_name.to_string(),
-        // What their own client says from the same platform.
+        // What RustDesk's own client reports on the same platform.
         platform: match c.platform {
             kind::Platform::Android => Platform::Android,
             kind::Platform::Linux => Platform::Linux,
@@ -117,9 +117,9 @@ fn create(c: &Connect) -> Result<Arc<dyn Backend>, String> {
 }
 
 impl RustDesk {
-    /// The framebuffer to read, caught up first with a picture left on the
+    /// The framebuffer to read, first updated with any picture still on the
     /// GPU (see `Framebuffer::catch_up`). A picture that arrives between the
-    /// two locks is the next read's to catch up with.
+    /// two locks is picked up by the next read.
     fn framebuffer(&self) -> RwLockReadGuard<'_, Framebuffer> {
         let framebuffer = self.session.client.framebuffer();
         if framebuffer.read().unwrap().behind() {
@@ -130,8 +130,8 @@ impl RustDesk {
 }
 
 impl Backend for RustDesk {
-    /// Which of these become a move, a press, a release or a notch of the
-    /// wheel is the client's business.
+    /// The client works out which changes are a move, a press, a release or
+    /// a wheel notch.
     fn pointer(&self, x: i32, y: i32, button_mask: i32) {
         self.session.client.pointer(x, y, button_mask & 0x1ff);
     }
@@ -148,8 +148,8 @@ impl Backend for RustDesk {
         self.session.client.release_all_keys();
     }
 
-    /// There is no pause message in this protocol, so what this does is ask
-    /// the far end for one frame a second.
+    /// There is no pause message in this protocol, so this asks the far end
+    /// for one frame a second instead.
     fn focus(&self, focused: bool) {
         self.session.client.set_focused(focused);
     }
@@ -168,14 +168,14 @@ impl Backend for RustDesk {
             .request_desktop_size(width.min(i32::MAX as u32) as i32, height.min(i32::MAX as u32) as i32);
     }
 
-    /// What comes back is a switch message, which may name a different
-    /// display than the one asked for.
+    /// The peer answers with a switch message, which may name a different
+    /// display than the one requested.
     fn request_display(&self, index: i32) {
         self.session.client.request_display(index);
     }
 
     /// The picture-quality controls are live: one `Misc::option` message,
-    /// which their server acts on for the next frame.
+    /// which the peer applies from the next frame.
     fn set_option(&self, key: &str, value: &str) {
         let mut options = self.options.lock().unwrap();
         options.set(key, value);
@@ -190,8 +190,8 @@ impl Backend for RustDesk {
         }
     }
 
-    /// The displays and the current index come out of one call, so the two
-    /// cannot disagree about a display that arrived between them.
+    /// The displays and the current index come from one call, so they stay
+    /// consistent if a display arrives in between.
     fn facts(&self) -> Facts {
         let (width, height) = self.mailbox.size();
         let connected = self.mailbox.connected();
@@ -223,12 +223,12 @@ impl Backend for RustDesk {
             ConnectionFact::of(Field::DesktopName, "Desktop", &i.desktop_name),
             ConnectionFact::of(Field::Protocol, "Protocol", &i.protocol),
             ConnectionFact::of(Field::Connection, "Connection", &i.connection),
-            // The one row this backend exists to be honest in: there is no
-            // encryption in direct mode and no option to turn any on.
+            // Matters most for this backend: there is no encryption in direct
+            // mode and no option to enable it.
             ConnectionFact::of(Field::Security, "Security", &i.security),
             ConnectionFact::of(Field::Encoding, "Encoding", &i.encoding),
-            // Their timing message is a round trip rather than a rate, so it
-            // is not the line speed row.
+            // The peer's timing message measures a round trip rather than a
+            // rate, so it is not the line speed row.
             ConnectionFact::of(Field::Other, "Round trip", &i.round_trip),
         ];
         if let Some(traffic) = self.traffic() {
@@ -285,8 +285,8 @@ impl Backend for RustDesk {
         Some(Picture::from_words(w, h, &words))
     }
 
-    /// There is no user name in this protocol: a password is the whole of
-    /// what a peer asks for, and the rest of the answer is blank.
+    /// There is no user name in this protocol: a peer asks only for a
+    /// password, and the rest of the answer is left blank.
     fn answer_credentials(&self, credentials: Option<Credentials>) {
         self.session.answer_credentials(credentials.map(|c| Credentials {
             password: c.password,

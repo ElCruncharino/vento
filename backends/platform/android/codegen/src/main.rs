@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! `vento-codegen`: the phone's Java, written out of what Rust says.
+//! `vento-codegen`: writes the Android app's generated Java from the Rust
+//! definitions.
 //!
 //! ```text
 //! vento-codegen catalog <backend> <java package> <class> <out dir>
@@ -9,20 +10,19 @@
 //! vento-codegen json
 //! ```
 //!
-//! `catalog` writes one backend's entry in `api::catalog` — its id,
-//! name, description, place in a picker and every option it takes — as a
-//! Java class of constants and a `List<BackendOption>`, under `<out dir>` at
-//! the path its package names. A module's `BackendProvider` answers from it,
-//! and its Java names an option by the constant rather than by a string of
-//! its own. `natives` writes a module's natives class — the `native` methods
-//! of `NativeBackend.Natives`, out of `platform_android::surface`, on a class
-//! of the module's own that loads `<library>` — which is what its library
-//! registers its functions on. `json` prints the whole catalog, for a check
-//! that has to read it from somewhere other than Rust.
+//! `catalog` writes one backend's entry in `api::catalog` (its id, name,
+//! description, position in a picker and every option it takes) as a Java
+//! class of constants and a `List<BackendOption>`, under `<out dir>` at the
+//! path its package names. A module's `BackendProvider` answers from it, and
+//! its Java refers to an option by the constant rather than by its own string.
+//! `natives` writes a module's natives class: the `native` methods of
+//! `NativeBackend.Natives`, from `platform_android::surface`, on a class of
+//! the module's own that loads `<library>`. The library registers its
+//! functions on that class. `json` prints the whole catalog, for checks that
+//! read it outside Rust.
 //!
-//! The output is a function of the catalog and nothing else — no time, no
-//! path, no ordering a map could change — so that a build is the same build
-//! wherever it runs.
+//! The output depends only on the catalog (no time, no path, no map
+//! ordering), so a build is the same wherever it runs.
 
 use api::catalog::{self, About};
 use api::kind::Platform;
@@ -80,8 +80,8 @@ fn write_java(package: &str, class: &str, out: &str, source: &str) -> Result<(),
     std::fs::write(&path, source).map_err(|e| format!("{}: {e}", path.display()))
 }
 
-/// A Java string literal: ASCII only, everything else as `\uXXXX`, so that
-/// what javac reads does not depend on the encoding it was told.
+/// A Java string literal: ASCII only, everything else as `\uXXXX`, so the
+/// result does not depend on javac's source encoding.
 fn java_string(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + 2);
     out.push('"');
@@ -208,9 +208,9 @@ fn java_catalog(about: &About, package: &str, class: &str) -> String {
          import java.util.List;\n\
          \n\
          /**\n \
-          * What the {} backend is and what it can be told, as the catalog both\n \
-          * clients read says: its {{@code BackendProvider}} answers from here, and the\n \
-          * keys below are the ones its options are stored and set under.\n \
+          * The {} backend's entry in the catalog shared by both clients: its\n \
+          * {{@code BackendProvider}} answers from here, and its options are stored\n \
+          * and set under the keys below.\n \
           */\n\
          public final class {class} {{\n\
          \n    private {class}() {{\n    }}\n",
@@ -238,10 +238,10 @@ fn java_catalog(about: &About, package: &str, class: &str) -> String {
     out
 }
 
-/// A module's natives class. Every backend's is the same list on a different
-/// class, and the class is the point: each library registers its functions
-/// on its own module's, so that two libraries loaded into one app — the
-/// RustDesk add-on's and the app's own — never register over each other.
+/// A module's natives class. Every backend's has the same methods on a
+/// different class, because each library registers its functions on its own
+/// module's class, so two libraries loaded into one app (the RustDesk
+/// add-on's and the app's own) never register over each other.
 fn java_natives(package: &str, class: &str, library: &str) -> String {
     use platform_android::surface::{NATIVES, java_types};
     let mut out = String::new();
@@ -254,9 +254,9 @@ fn java_natives(package: &str, class: &str, library: &str) -> String {
          package {package};\n\
          \n\
          /**\n \
-          * The natives of {{@code lib{library}.so}}, which its {{@code JNI_OnLoad}}\n \
-          * registers on this class and no other: see {{@code NativeBackend.Natives}}\n \
-          * for what each one is.\n \
+          * The natives of {{@code lib{library}.so}}, registered by its\n \
+          * {{@code JNI_OnLoad}} on this class only. {{@code NativeBackend.Natives}}\n \
+          * documents each one.\n \
           */\n\
          final class {class} implements net.pgaskin.remotedesktop.backend.NativeBackend.Natives {{\n\
          \n    static {{\n        System.loadLibrary({});\n    }}\n",
@@ -301,7 +301,7 @@ fn json_nullable(text: Option<&str>) -> String {
     text.map_or_else(|| "null".to_string(), json_string)
 }
 
-/// The catalog as JSON: what a check outside Rust compares against.
+/// The catalog as JSON, for checks outside Rust to compare against.
 fn json() -> String {
     let mut out = String::from("[\n");
     for (i, about) in catalog::ALL.iter().enumerate() {

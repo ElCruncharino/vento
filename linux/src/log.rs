@@ -5,8 +5,8 @@
 //! `I tag: text` shape `vento_log` in the C libraries writes, so that a session
 //! on either half reads the same in a terminal.
 //!
-//! A logger of twenty lines rather than a crate, because what it has to do is
-//! the twenty lines and nothing a crate would add to them is wanted here.
+//! A short logger rather than a crate, since nothing a logging crate adds is
+//! needed here.
 
 use log::{Level, LevelFilter, Log, Metadata, Record};
 use std::io::Write;
@@ -38,7 +38,7 @@ impl Log for Stderr {
             Level::Trace => "T",
         };
         // The crate's name is the tag, as the C side's is the backend's; the
-        // module path after it says nothing a person reading a session wants.
+        // module path after it is noise in a session's log.
         let target = record.target();
         let tag = target.split("::").next().unwrap_or(target);
         // One write per line, so that two protocol threads do not interleave

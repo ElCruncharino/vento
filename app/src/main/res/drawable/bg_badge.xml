@@ -4,8 +4,8 @@
     SPDX-License-Identifier: GPL-3.0-or-later
 
     The backend badge on a home card. A scrim rather than a theme colour: it
-    sits over somebody's desktop, which may be any colour at all, so it has to
-    carry its own contrast instead of borrowing the surface's.
+    sits over a desktop preview, which may be any colour, so it carries its own
+    contrast instead of relying on the surface's.
 -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">

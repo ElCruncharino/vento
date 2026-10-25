@@ -15,12 +15,13 @@ import java.io.File;
  * <p>The directories are named here rather than at each recorder because
  * something outside the playground has to be able to delete them: a fixture is
  * recorded to be pulled off the phone and committed, and what is left afterwards
- * is a folder of raw touch and key streams from whatever was being tested. Two
- * places name a directory and a third deletes it is how one of them gets missed.
+ * is a folder of raw touch and key streams from whatever was being tested. With
+ * two places naming a directory and a third deleting it, one of them gets
+ * missed.
  *
- * <p>External files, both of them — {@code adb pull} without {@code run-as} is
- * the whole point of a fixture — so a phone with no external storage has nowhere
- * to put them and every call here says so by doing nothing.
+ * <p>External files, both of them ({@code adb pull} without {@code run-as} is
+ * the whole point of a fixture), so a phone with no external storage has
+ * nowhere to put them and every call here does nothing.
  */
 public final class Recordings {
 

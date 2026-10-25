@@ -24,7 +24,7 @@ esac
 docker image inspect "$NAME:latest" >/dev/null 2>&1 || docker build -t "$NAME:latest" .
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 # The render group is the host's, by number: the container's own /etc/group
-# knows nothing about it, and without membership the node opens read-only and
+# does not have it, and without membership the node opens read-only and
 # every encode fails.
 render_gid="$(stat -c %g "$DRM_DEVICE")"
 # The host compositor's socket, which this rig nests in: a headless wlroots has

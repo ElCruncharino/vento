@@ -1,16 +1,16 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// See vento_ffaudio.h. What is libavcodec's here and worth a note:
+// See vento_ffaudio.h. libavcodec details:
 //
-// - The setup is given as the stream's extradata, which for AAC is what
-//   makes a raw frame mean anything (without it libavcodec guesses a
-//   configuration from the context's rate and channels, which is what
-//   FreeRDP's own decoding relied on), and for Opus is where the pre-skip is,
-//   which libavcodec then drops from the start of the stream itself.
+// - The setup is given as the stream's extradata. For AAC, a raw frame cannot
+//   be decoded without it (libavcodec would guess a configuration from the
+//   context's rate and channels, which FreeRDP's own decoding relied on); for
+//   Opus it holds the pre-skip, which libavcodec then drops from the start of
+//   the stream itself.
 // - libavcodec reads past the end of a packet, up to its padding, so every
-//   packet is copied into a buffer of ours that has it: a protocol's packet
-//   sits in the middle of its message.
+//   packet is copied into a padded buffer of ours: a protocol's packet sits in
+//   the middle of its message.
 // - One thread: a packet of sound is a millisecond of work at most, and a
 //   decoder with threads delays its output by a frame per thread.
 
@@ -32,7 +32,7 @@ struct vento_ffaudio {
     // The packet, padded (see above).
     uint8_t *in;
     size_t in_cap;
-    // What the last packet made.
+    // The last packet's samples.
     int16_t *out;
     size_t out_cap; // in samples
     // Where the next packet starts, in the stream's samples: a protocol
@@ -214,9 +214,9 @@ int vento_ffaudio_decode(vento_ffaudio *audio, const uint8_t *data, size_t len,
         }
         const AVFrame *f = audio->frame;
         const int ch = f->ch_layout.nb_channels;
-        // Every frame of a packet is at one rate and layout; one that is not
-        // is a stream that changed between them, and what came before the
-        // change is what this packet returns.
+        // Every frame of a packet has one rate and layout; a frame that
+        // differs means the stream changed between them, and this packet
+        // returns the samples from before the change.
         if (ch <= 0 || (frames > 0 && (ch != *channels || f->sample_rate != *rate))) {
             av_frame_unref(audio->frame);
             break;

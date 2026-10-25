@@ -26,7 +26,7 @@ namespace {
 
 // ---- libc ---------------------------------------------------------------------
 
-/* libc-shim's own `syscall` knows gettid and getrandom and answers ENOSYS to
+/* libc-shim's own `syscall` knows gettid and getrandom and returns ENOSYS for
    the rest; the core uses raw timerfd_create and timerfd_settime. The numbers
    are the kernel's, the same under bionic and glibc. */
 long realSyscall(long n, ...) {
@@ -44,16 +44,16 @@ ssize_t readlinkChk(const char *path, char *buf, size_t len, size_t /*bufLen*/) 
     return readlink(path, buf, len);
 }
 
-/* An Android process is never torn down by running its static destructors —
-   it is killed — and the core's, run at `exit`, throw against each other and
-   against the fake VM's. Theirs are registered through this, so they are
-   not registered at all. */
+/* An Android process is killed rather than torn down by running its static
+   destructors, and the core's, run at `exit`, throw against each other and
+   against jnivm's. The core registers them through this, so they are not
+   registered at all. */
 int noAtexit(void (*)(void *), void *, void *) {
     return 0;
 }
 
-/* The bionic libc, as libc-shim provides it, with the gaps the core falls
-   into closed from glibc. The ABI is the same on Linux x86_64 and aarch64
+/* The bionic libc, as libc-shim provides it, with the gaps the core hits
+   filled from glibc. The ABI is the same on Linux x86_64 and aarch64
    for everything routed here; `getaddrinfo` is deliberately not, since
    bionic's `addrinfo` has `ai_canonname` before `ai_addr` and glibc the
    reverse. */
@@ -85,8 +85,8 @@ std::unordered_map<std::string, void *> libcSymbols() {
 
 // ---- libm -------------------------------------------------------------------------
 
-/* What the core imports from libm — three functions, read off its dynamic
-   symbol table — rather than the whole of it. The library is pinned by hash,
+/* Only what the core imports from libm (three functions, read off its
+   dynamic symbol table), not all of it. The library is pinned by hash,
    so the list is a fact about the pinned build. */
 std::unordered_map<std::string, void *> libmSymbols() {
     std::unordered_map<std::string, void *> libm;
@@ -100,8 +100,8 @@ std::unordered_map<std::string, void *> libmSymbols() {
 
 /* Android's priorities: VERBOSE 2, DEBUG 3, INFO 4, WARN 5, ERROR 6, FATAL 7.
    Everything lands in `vento_log` under this backend's tag with the core's
-   own tag in front, as `adb logcat RealVnc:V` would show it; a warning and
-   up is a warning here. */
+   own tag in front, as `adb logcat RealVnc:V` would show it; WARN and above
+   become warnings here. */
 int logVprint(int prio, const char *tag, const char *fmt, va_list ap) {
     char line[1024];
     vsnprintf(line, sizeof line, fmt, ap);
@@ -152,7 +152,7 @@ int bitmapLockPixels(JNIEnv *, jobject bm, void **addr) {
         return -2;
     }
     if (b->pixels.empty()) {
-        return -3; // ANDROID_BITMAP_RESULT_ALLOCATION_FAILED: one too big to make
+        return -3; // ANDROID_BITMAP_RESULT_ALLOCATION_FAILED: too big to allocate
     }
     *addr = b->pixels.data();
     return 0;
@@ -183,8 +183,8 @@ void *loadCore(const std::string &dir, std::string *why) {
                           {"AndroidBitmap_lockPixels", (void *) &bitmapLockPixels},
                           {"AndroidBitmap_unlockPixels", (void *) &bitmapUnlockPixels}});
 
-    // The core's DT_NEEDED on libc++_shared.so is satisfied by soname out of
-    // the namespace it is already in, so the two go in this order.
+    // The core's DT_NEEDED on libc++_shared.so is resolved by soname from the
+    // libraries already in the namespace, so libc++_shared.so is loaded first.
     linker::update_LD_LIBRARY_PATH(dir.c_str());
     if (!linker::dlopen((dir + "/libc++_shared.so").c_str(), RTLD_NOW)) {
         *why = std::string("libc++_shared.so: ") + linker::dlerror();

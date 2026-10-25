@@ -6,18 +6,18 @@ plugins {
 }
 
 // The three parts of the TigerVNC backend: `cpp/`, a shim over TigerVNC's own
-// client code that names no platform but the two media sinks beside it; the
-// crate at this directory's root (`Cargo.toml`, `src/`), the backend as an
-// `api::Backend` over it — the one the Linux client holds — and the JNI
-// layer every backend shares, registered on the generated natives class; and
-// `java/`'s provider, which holds a session as a `NativeBackend`. The AAR
-// carries the one library CMake links the first two into.
+// client code that names no platform other than through the two media sinks
+// beside it; the crate at this directory's root (`Cargo.toml`, `src/`), the
+// backend as an `api::Backend` over the shim (used directly by the Linux
+// client) and the JNI layer every backend shares, registered on the generated
+// natives class; and the provider in `java/`, which holds a session as a
+// `NativeBackend`. The AAR carries the one library CMake links the first two
+// into.
 //
-// As with libvncclient, the native half is not in this directory: it is
+// As with libvncclient, the native source is not in this directory: it is
 // `third_party/tigervnc`, a submodule at the repository root, pinned by its
-// gitlink and patched from `patches/`. This is the one module that compiles
-// C++, so it is the one that has to say what to do with the runtime — static,
-// because nothing else here needs a copy.
+// gitlink and patched from `patches/`. The module compiles C++, so it sets the
+// C++ runtime: static, so the library carries its own copy.
 
 // The crate at this directory's root, as the static library CMake links in:
 // see `rustStaticLibrary` in :backends.
@@ -62,9 +62,9 @@ android {
     }
 
     // Not AGP's `src/main/`: `src/` here is the crate's. The Java is in
-    // `java/`, the files themselves with no package directories over them
-    // (javac goes by the `package` line), and the provider's registration is
-    // in `resources/`; the C is `cpp/`, above.
+    // `java/`, without package directories (javac goes by the `package`
+    // line), and the provider's registration is in `resources/`; the C++ is
+    // `cpp/`, above.
     sourceSets.main {
         java.srcDirs = ['java']
         resources.srcDirs = ['resources']
@@ -81,8 +81,8 @@ dependencies {
     api project(':backends')
 }
 
-// A build must not come out of sources that look pristine and are not, nor out
-// of a submodule nobody has initialised.
+// No build from sources that look pristine but are not, or from an
+// uninitialised submodule.
 def patchCheck = tasks.register('patchCheck', PatchCheckTask) {
     patchScript.set(rootProject.file('patch.sh'))
 }

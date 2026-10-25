@@ -6,19 +6,20 @@ package net.pgaskin.remotedesktop.backend;
 import android.content.Context;
 
 /**
- * What an RDP backend does differently on this side of the boundary, as
- * {@link NativeBackend.Hooks}: written once for both RDP clients, since what
- * differs is the protocol and not the library.
+ * The RDP backends' Java-side differences, as {@link NativeBackend.Hooks}:
+ * written once for both RDP clients, since what differs is the protocol and
+ * not the library.
  *
  * <ul>
  *   <li><b>The desktop size is asked for.</b> There is no desktop at the far end
  *       until this connects, and no way to ask for "whatever it already is", so
  *       {@code DesktopSize=remote} is the size the last session to this address
- *       ended up at, from {@link DesktopSizes} — and every size the far end
+ *       ended up at, from {@link DesktopSizes}, and every size the far end
  *       reports is remembered for the next.
  *   <li><b>The domain is part of the user name.</b> {@code DOMAIN&#92;user} and
- *       {@code user@domain} are what every RDP client takes and every user
- *       types, so the prompt has no third field: it says so under the box.
+ *       {@code user@domain} are what every RDP client accepts and users
+ *       type, so the prompt has no third field, and a hint under the box
+ *       says so.
  *       The box starts with the record's name in the first form, and what is
  *       typed back is split, both by {@code api::credentials} on the far
  *       side of the JNI layer.

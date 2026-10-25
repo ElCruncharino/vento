@@ -17,7 +17,7 @@
 //! larger one, and the writes after it, back on time, a smaller one again.
 //! What a queue that started playing just after one write has to have kept
 //! to still have sound when a later one lands is that write's size and how
-//! much later the later one's `d` is — so the hold is the largest write and
+//! much later the later one's `d` is, so the hold is the largest write and
 //! the largest rise in `d`, from an earlier write to a later one, of late.
 //! (A fall, writes arriving earlier than the sound before them did, only
 //! fills the queue.) Two writes that land together are one: RDP's waves
@@ -25,9 +25,9 @@
 //! rise between pairs has been seen.
 //!
 //! How **late** a write is, though, is a question about when the far end
-//! let go of it, and a write sent with the one before — arriving before
+//! let go of it, and a write sent with the one before (arriving before
 //! half of that one's sound could have played, which no write at the far
-//! end's pace does — was let go of with it: it is as late as the first of
+//! end's pace does) was let go of with it: it is as late as the first of
 //! them, its own `d` aside. The second of a pair has a `d` a wave lower
 //! than the first's (its sound starts a wave further on, and it arrived
 //! with it), and against that an on-time pair reads as a wave late:
@@ -47,9 +47,9 @@
 //! device plays it; within a window that is a millisecond at most, at
 //! 100 ppm, and nothing to measure against.
 //!
-//! **After the far end paused** — the queue ran dry, and nothing came for
+//! **After the far end paused** (the queue ran dry, and nothing came for
 //! long enough that what comes next is a new sound rather than the last one
-//! late — `d` starts again from the next write, since the far end's sound
+//! late), `d` starts again from the next write, since the far end's sound
 //! has a hole in it that is no lateness. The buckets keep what they saw
 //! before, which is still how the far end sends. A queue that ran dry and
 //! had the far end's sound again soon after does not start again: that
@@ -67,8 +67,8 @@ pub const WINDOW: Duration = Duration::from_secs(8);
 pub const BUCKETS: usize = 8;
 
 /// The most a rhythm holds: Windows' PCM pair (372 ms) and its lateness,
-/// with room. A far end that sends slower than its sound plays — a guest
-/// that has fallen behind itself — has a lateness that rises for as long as
+/// with room. A far end that sends slower than its sound plays (a guest
+/// that has fallen behind itself) has a lateness that rises for as long as
 /// it is measured, which no queue can make up for; this is how far behind it
 /// is heard while it does, rather than the window's worth.
 pub const MOST: Duration = Duration::from_millis(500);
@@ -224,9 +224,10 @@ impl Rhythm {
     /// than the latest of the window was: that one's `d` (its first's, as
     /// lateness is measured) less where the stream's end is now against
     /// `at`. Just after a pair lands, the pair and how much later than it
-    /// the latest of the window was; less for every moment waited since. A queue that ran dry and starts again
-    /// on a late write starts from here, rather than from the earliest write
-    /// of the window the hold is measured against.
+    /// the latest of the window was; less for every moment waited since. A
+    /// queue that ran dry and starts again on a late write starts from here,
+    /// rather than from the earliest write of the window the hold is measured
+    /// against.
     pub fn keep(&self, at: Duration) -> usize {
         let Some(origin) = self.origin else { return 0 };
         let position = self.format.duration(self.frames.min(usize::MAX as u64) as usize);
@@ -280,9 +281,9 @@ impl Rhythm {
 
     /// How much the queue has to hold, in frames of the stream, for the far
     /// end's writes of late not to run it dry: the largest write and the
-    /// largest rise in `d` after one — every write's, the second of a pair
+    /// largest rise in `d` after one (every write's, the second of a pair
     /// too, which is how a queue that started on a pair keeps the pair as
-    /// well as the lateness between pairs — or the most that has landed at
+    /// well as the lateness between pairs), or the most that has landed at
     /// once, whichever is more, and never more than [`MOST`]. Nothing before
     /// the first write.
     pub fn hold(&self) -> usize {
@@ -303,8 +304,8 @@ impl Rhythm {
         self.format.frames(Duration::from_micros(self.rise(None, |b| b.first) as u64)).min(self.format.frames(MOST))
     }
 
-    /// The largest rise in `d` of the window — `spread`'s of each bucket:
-    /// every write's or each group's first — in microseconds, from an
+    /// The largest rise in `d` of the window (`spread`'s of each bucket:
+    /// every write's or each group's first), in microseconds, from an
     /// earlier write to a later one of the same run (of `only`, if given).
     fn rise(&self, only: Option<u32>, spread: impl Fn(&Bucket) -> Spread) -> i64 {
         let mut rise = 0i64;

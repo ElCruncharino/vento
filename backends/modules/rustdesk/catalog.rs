@@ -1,18 +1,18 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The RustDesk backend's entry in the catalog: what it is called, where it
-//! goes in a picker, how its identities are pinned, and every option it
-//! takes. Compiled by `remotedesktop-api`, which names this file by path
-//! (`backends/api/src/catalog.rs`), and not by this module's crate: the
+//! The RustDesk backend's catalog entry: its name, its position in a picker,
+//! how its identities are pinned, and its options. Compiled by
+//! `remotedesktop-api`, which includes this file by path
+//! (`backends/api/src/catalog.rs`), and not by this module's crate, so the
 //! Linux client's picker and the phone's generated Java (`vento-codegen`)
-//! read it without building the backend.
+//! can read it without building the backend.
 
 use crate::catalog::About;
 use crate::options::{Scope, Spec, VIEW_ONLY, choice, described, choices, bool, text, when};
 use crate::trust::{Network, Pinning};
 
-/// The rendezvous server an empty `RendezvousServer` means, which names the
+/// The rendezvous server used when `RendezvousServer` is empty; it names the
 /// public network in a pin's key.
 const PUBLIC_NETWORK: &str = "rs-ny.rustdesk.com";
 
@@ -21,16 +21,16 @@ pub static RUSTDESK: About = About {
     name: "RustDesk",
     short_name: "RustDesk",
     description: "RustDesk backend supporting direct or rendezvous connections. Uses hardware-accelerated video codecs.",
-    // Last: a third protocol, and the only one that arrives in an add-on on
-    // the phone.
+    // Last, after the VNC, RDP and SPICE backends; on the phone it comes in an
+    // add-on.
     order: 40,
-    // The id and the network it means something on. An id is handed out
-    // by a rendezvous server and re-issued when a machine's configuration
-    // is wiped, so the same digits on two networks are two machines, and
-    // one entry under the bare id would have them overwriting each other's
-    // identity. A first key is taken without asking, since it arrives
-    // signed by the rendezvous server for the id that was dialled and a
-    // question would have nothing to check it by.
+    // Pinned by the id and its network. An id is assigned by a rendezvous
+    // server and re-issued when a machine's configuration is wiped, so the
+    // same digits on two networks are two machines, and one entry under the
+    // bare id would let them overwrite each other's identity. A first key is
+    // accepted without asking, since it arrives signed by the rendezvous
+    // server for the dialled id and the user would have nothing to check it
+    // against.
     pinning: Pinning {
         network: Some(Network {
             option: "RendezvousServer",
@@ -43,32 +43,31 @@ pub static RUSTDESK: About = About {
     options: OPTIONS,
 };
 
-/// What the RustDesk backend can be told.
+/// The RustDesk backend's options.
 ///
-/// A short list, and the reason is the protocol rather than restraint: no
-/// security to choose, since each way to a machine has exactly one answer to
-/// that, and no colour depth, since the picture is a video stream. The codec
-/// is the nearest thing to an encoding here and behaves nothing like one — it
-/// is a preference between whole video codecs, answered by whichever of them
-/// that machine has an encoder for.
+/// The list is short because of the protocol: there is no security choice,
+/// since each way of reaching a machine has exactly one, and no colour depth,
+/// since the picture is a video stream. The codec is the closest thing to an
+/// encoding here but works differently: it is a preference between video
+/// codecs, honoured only if the machine has an encoder for it.
 ///
-/// The first three rows are how a machine is reached, and they are here rather
-/// than beside the address because only one protocol here has more than one
-/// answer to it. The server and its key are [`Scope::Layered`]: somebody
-/// running their own rendezvous server has every machine on it, so the answer
-/// belongs to the backend with a connection able to disagree.
+/// The first three rows say how a machine is reached. They are here rather
+/// than next to the address because only this protocol has more than one way.
+/// The server and its key are [`Scope::Layered`]: a self-hosted rendezvous
+/// server usually serves all of a user's machines, so the setting belongs to
+/// the backend, with a connection able to override it.
 ///
-/// What is **not** here and could have been: the peer's other displays. This
-/// protocol captures one at a time and switches with a message, so a chooser
-/// is a row whose contents depend on the connection that is running — a live
-/// fact rather than a static description, and it is in the connection panel
-/// with the desktop size, which is there for the same reason.
+/// Deliberately **not** here: the peer's other displays. This protocol
+/// captures one at a time and switches with a message, so a display chooser
+/// depends on the running connection. It is in the connection panel, with the
+/// desktop size, for the same reason.
 pub static OPTIONS: &[Spec] = &[
-    // The first row of the connection, because it says what the box above it
-    // holds and because the two are not one transport with a switch on it: one
-    // reaches a machine somebody can already address and encrypts nothing, and
-    // the other reaches a machine nothing on this network can address and is
-    // encrypted because of how it got there.
+    // The connection's first row, because it says what the address field
+    // above it holds, and because the two choices are different transports
+    // rather than one with a switch: one reaches a machine that is already
+    // addressable and encrypts nothing, and the other reaches a machine that
+    // may not be addressable from this network, encrypted as part of the
+    // rendezvous.
     choices(
         "ConnectBy",
         "Connect by",
@@ -105,8 +104,8 @@ pub static OPTIONS: &[Spec] = &[
         "ConnectBy",
         &["id"],
     ),
-    // Both of these are live in the way RFB's encoding is: their option
-    // message is read on the next frame the peer encodes.
+    // Both of these are live, like RFB's encoding: the option message takes
+    // effect on the next frame the peer encodes.
     choices(
         "Quality",
         "Quality",
@@ -135,9 +134,9 @@ pub static OPTIONS: &[Spec] = &[
             choice("60", "60"),
         ],
     ),
-    // Live like the two above it, and the one that is not free: the far end
-    // answers a codec it is not already using by building an encoder and
-    // starting again with a key frame.
+    // Live like the two above, but not free: switching to a codec the far end
+    // is not already using makes it build a new encoder and restart with a key
+    // frame.
     choices(
         "Codec",
         "Codec",
@@ -154,11 +153,12 @@ pub static OPTIONS: &[Spec] = &[
             choice("h265", "H.265"),
         ],
     ),
-    // Their own client's switch, on as theirs is: the peer sends Opus while
-    // its desktop makes a sound, and nothing once it has been silent for
-    // eight seconds. What the login asks, and where the session's Enable
-    // switch starts, which asks again with their option message. "The remote
-    // machine" rather than "the server", which here is the rendezvous one.
+    // The same switch as RustDesk's own client, on by default as there: the
+    // peer sends Opus while its desktop makes sound, and nothing once it has
+    // been silent for eight seconds. It sets what the login requests and the
+    // initial state of the session's Enable switch, which changes it with
+    // the option message. "The remote machine" rather than "the server",
+    // which here would mean the rendezvous server.
     bool(
         "Audio",
         "Sound",
@@ -184,9 +184,9 @@ mod tests {
     use crate::options::{Options, find};
     use crate::trust::pinned_as;
 
-    /// The keys it had when the phone's lists became these, in the same
-    /// order: a key is stored in connection records and preference files,
-    /// so one renamed is a setting forgotten.
+    /// The keys the phone's lists had before they moved here, in the same
+    /// order: keys are stored in connection records and preference files,
+    /// so renaming one loses the setting.
     #[test]
     fn the_keys_are_the_ones_records_hold() {
         let keys: Vec<&str> = OPTIONS.iter().map(|s| s.key).collect();

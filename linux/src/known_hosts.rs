@@ -1,36 +1,35 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Which certificate each address is supposed to have, as a file under
-//! `$XDG_CONFIG_HOME/vento`: what the phone keeps in its `known_hosts`
-//! preferences, kept here.
+//! The certificate pinned for each address, as a file under
+//! `$XDG_CONFIG_HOME/vento`: the counterpart of the phone's `known_hosts`
+//! preferences.
 //!
 //! A remote desktop server's certificate is one it made for itself on first
-//! start, and no authority vouches for it — so, as on the phone and as over
+//! start, and no authority vouches for it, so, as on the phone and as over
 //! SSH, the identity is the key: a fingerprint is pinned against the address
-//! the first time somebody accepts it and says to remember it, a connection
+//! the first time the user accepts it and asks to remember it, a connection
 //! is silent while it matches, and loud when it does not. A certificate an
 //! authority would have vouched for is asked about all the same, since the
-//! question is whether this is the machine it was last time, and an authority
-//! has no opinion on that.
+//! question is whether this is the machine it was last time, which an
+//! authority does not answer.
 //!
-//! This is the one store: no backend keeps certificates of its own (the
+//! This is the only store: no backend keeps certificates of its own (the
 //! adapters tell each library not to), and both the window and the probe
 //! read it. Only the window writes it, and only when a prompt was answered
-//! with *remember server* — the probe's `--trust` is for that run.
+//! with *remember server*; the probe's `--trust` applies to that run alone.
 //!
-//! What a pin means — the key an address is filed under, how two
-//! fingerprints compare, what is asked when they do not, and when an answer
-//! is pinned — is `api::trust`, the phone's rule as well as this
-//! client's; what is here is where this client keeps them, as a
-//! `trust::Store`.
+//! What a pin means (the key an address is filed under, how two fingerprints
+//! compare, what is asked when they do not, and when an answer is pinned) is
+//! `api::trust`, the phone's rule as well as this client's; this module is
+//! where this client keeps the pins, as a `trust::Store`.
 //!
 //! The file is a line per address, `<address> <fingerprint>`, with `#`
 //! comments; whitespace, control characters and `\` inside either are
 //! written as `\xHH`. A line that does not read as an entry is ignored and
 //! kept as it was the next time the file is written, so a hand edit gone
-//! wrong costs that entry and nothing else. It is replaced whole — written
-//! beside itself and renamed over — so a crash leaves the old one or the new
+//! wrong costs that entry and nothing else. It is replaced whole (written
+//! beside itself and renamed over), so a crash leaves the old one or the new
 //! one, never half of either, and it is private to this user.
 
 use api::catalog::About;
@@ -210,8 +209,8 @@ impl Store {
         }
     }
 
-    /// The file as it is, or as empty where it cannot be read — said once in
-    /// the log, since every question asked of an unreadable store has the
+    /// The file as it is, or as empty where it cannot be read, which is
+    /// logged, since every question asked of an unreadable store has the
     /// answer a missing one has.
     pub fn read_or_empty(&self) -> Table {
         self.read().unwrap_or_else(|e| {
@@ -327,7 +326,7 @@ pub fn saved_identity(config: &Path, about: &About, address: &str) -> Option<Str
     realvnc_identities(config).read_or_empty().get(address).map(str::to_owned)
 }
 
-/// What [`forget`] did, a line for the person each.
+/// What [`forget`] did, one line per item, for the user.
 #[derive(Debug, Default)]
 pub struct Forgotten {
     pub removed: Vec<String>,
@@ -339,7 +338,7 @@ pub struct Forgotten {
 }
 
 /// `vento --forget`: the server `address` names forgotten everywhere it is
-/// remembered, so that the next connection to it asks again — its pins in
+/// remembered, so that the next connection to it asks again: its pins in
 /// the known hosts, its RealVNC identity, and what each backend's library
 /// keeps of its own ([`Kind::forget`], RealVNC's core's record of the
 /// servers it accepted). An address matches as `api::trust::same_server`

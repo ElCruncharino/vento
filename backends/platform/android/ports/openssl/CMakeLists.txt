@@ -1,11 +1,12 @@
-# OpenSSL as two static libraries, built from the submodule in
-# third_party/openssl plus the Configure output in gen/ (see gen.sh). One target
-# per archive upstream builds, because that is what the defines are per: the
-# providers are compiled without most of the assembly's macros, and a file that
-# reads one it was not compiled for calls into a kernel that was never selected.
+# OpenSSL's libcrypto and libssl as static libraries, built from the submodule
+# in third_party/openssl plus the Configure output in gen/ (see gen.sh). One
+# target per archive upstream builds (the two libraries and two provider
+# archives), because that is what the defines are per: the providers are
+# compiled without most of the assembly's macros, and a file that reads one it
+# was not compiled for calls into a kernel that was never selected.
 #
-# `openssl` is the one a consumer links: an interface over the lot of them, with
-# the public headers — a quarter of which are generated — on its include path.
+# `openssl` is the one a consumer links: an interface over all of them, with the
+# public headers (about a fifth of which are generated) on its include path.
 
 set(OPENSSL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../third_party/openssl")
 if(NOT EXISTS "${OPENSSL_DIR}/Configure")
@@ -37,8 +38,7 @@ set(OPENSSL_INCLUDES
         "${OPENSSL_DIR}/providers/fips/include")
 
 # gen/ holds a generated file once when both ABIs produced the same bytes and
-# under the ABI when they did not, so where a name resolves is a question rather
-# than a rule.
+# under the ABI when they did not, so each name is looked up in both places.
 function(_openssl_add name group)
     set(sources ${OPENSSL_SOURCES_${group}})
     list(TRANSFORM sources PREPEND "${OPENSSL_DIR}/")
@@ -55,13 +55,13 @@ function(_openssl_add name group)
     target_compile_definitions(${name} PRIVATE ${OPENSSL_DEFINES_${group}}
             OPENSSL_BUILDING_OPENSSL OPENSSL_PIC OPENSSL_USE_NODELETE
             # Where a provider is loaded from and where the trust store lives.
-            # Both are paths that cannot exist on Android, which is this build
-            # saying there is neither: no module is loadable in an app's
-            # sandbox, and what verifies a certificate here is the app.
+            # Both are paths that do not exist on Android, so there is neither:
+            # no module is loadable in an app's sandbox, and certificates are
+            # verified by the app.
             OPENSSLDIR="/etc/ssl" ENGINESDIR="/nonexistent" MODULESDIR="/nonexistent")
-    # Somebody else's warnings, and one of ours: the NDK's clang finds
-    # unreachable code and sign conversions all through a library that has been
-    # compiled by everything for thirty years.
+    # Warnings in third-party code: the NDK's clang finds unreachable code and
+    # sign conversions all through a library that has been compiled by every
+    # compiler for thirty years.
     target_compile_options(${name} PRIVATE -w)
 endfunction()
 

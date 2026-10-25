@@ -2,20 +2,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The parts of a backend's native half that are about Android rather than
-//! about a protocol: [`backend`], which is any `api::Backend` as the
-//! natives `NativeBackend.java` calls, [`bitmap`], which writes pixels
-//! straight into a Java `Bitmap`, [`log`], which points the `log` crate at
-//! logcat, [`mediacodec`], which is the phone's video decoder speaking
-//! `runtime::media::video::Decoders`, [`aaudio`], which is its sound output
-//! speaking `runtime::media::audio::Outputs`, and [`mediacodec_audio`], its AAC
-//! and Opus decoders — and [`surface`], the JNI table itself, which
-//! is plain data and builds everywhere, because the code generator that
-//! writes each module's natives class runs on the host.
+//! about a protocol: [`backend`], any `api::Backend` behind the natives
+//! `NativeBackend.java` calls, [`bitmap`], which writes pixels straight into a
+//! Java `Bitmap`, [`log`], which points the `log` crate at logcat,
+//! [`mediacodec`], the phone's video decoder implementing
+//! `runtime::media::video::Decoders`, [`aaudio`], its sound output
+//! implementing `runtime::media::audio::Outputs`, and [`mediacodec_audio`],
+//! its AAC and Opus decoders; and [`surface`], the JNI table itself, which is
+//! plain data and builds everywhere, because the code generator that writes
+//! each module's natives class runs on the host.
 //!
-//! It was one crate with the RFB bindings in it, then one crate with every
-//! protocol's bindings beside it, and is now the one JNI layer: what a Rust
-//! backend's library adds to its protocol is its `api::Backend` adapter,
-//! which the Linux client holds too, and one [`natives!`] line.
+//! This is the one JNI layer: a Rust backend's library adds to its protocol
+//! only its `api::Backend` adapter, which the Linux client holds too, and one
+//! [`natives!`] line.
 //!
 //! Two threads reach a session, as they do in the RealVNC backend and for the
 //! same reasons: the protocol thread, which owns the connection and delivers
@@ -40,7 +39,7 @@ pub mod surface;
 use jni::objects::JString;
 
 /// `null` and the empty string both mean "nothing", because a Java field left
-/// blank arrives as one or the other depending on who filled it in.
+/// blank arrives as one or the other depending on what set it.
 #[cfg(target_os = "android")]
 pub fn string(env: &mut jni::Env, s: &JString) -> Result<Option<String>, jni::errors::Error> {
     if s.is_null() {

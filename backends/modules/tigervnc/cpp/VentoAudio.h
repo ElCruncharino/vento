@@ -1,20 +1,20 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Where the far end's sound goes: QEMU's audio extension, whose protocol half
+// Where the server's sound goes: QEMU's audio extension, whose protocol half
 // is TigerVNC's own (`CConnection` asks for it and hands over what arrives),
-// played on the platform's output, which the session is handed in its config
-// as `vento/audio.h`'s table — AAudio on the phone, a PipeWire stream (or
-// ALSA's default device) on the Linux client, behind the one queue and policy every backend's sound
-// shares (`runtime::media::audio`). Their viewer's own sinks, PulseAudio and
-// waveOut behind an `AudioOutput` in `vncviewer/`, are not compiled here, and
-// neither is a sink of this module's any more: how far ahead sound is kept,
-// what is dropped when it gets too far ahead, and opening the device off this
-// thread are all the table's.
+// played on the platform's output, which the session is given in its config
+// as `vento/audio.h`'s table: AAudio on Android, a PipeWire stream (or ALSA's
+// default device) on the Linux client, behind the one queue and policy every
+// backend's sound shares (`runtime::media::audio`). Their viewer's own sinks,
+// PulseAudio and waveOut behind an `AudioOutput` in `vncviewer/`, are not
+// compiled here, and this module has no sink of its own: how far ahead sound
+// is kept, what is dropped when it gets too far ahead, and opening the device
+// off this thread are all handled by the table.
 //
-// What CConnection asks every server for — 16-bit signed, stereo, 48 kHz — it
-// keeps to itself in CConnection.cxx, and their viewer restates it in its own
-// header the same way; it is restated below, beside the stream it opens.
+// The format CConnection asks every server for (16-bit signed, stereo,
+// 48 kHz) is private to CConnection.cxx, and their viewer restates it in its
+// own header the same way; it is restated below, beside the stream it opens.
 
 #ifndef VENTO_TIGERVNC_AUDIO_H
 #define VENTO_TIGERVNC_AUDIO_H
@@ -68,8 +68,8 @@ public:
     bool isOpen() const { return stream_ != nullptr; }
 
     /** The stream, opened if it is not: the server has begun sending, or
-        sends again after a pause closed it. A platform that will not open
-        one is said once, and the server's sound is dropped from then on. */
+        sends again after a pause closed it. A platform that cannot open one
+        is logged once, and the server's sound is dropped from then on. */
     void open() {
         if (stream_ != nullptr || !has_ || failed_) {
             return;
@@ -99,7 +99,7 @@ public:
 
     /** The session's sound switch, as an Enable switch: the server may send
         sound, and is asked for it (`on`) or not; `enable(ctx, on)` is called
-        on a window's thread when the person turns it, until `withdraw`. */
+        on a window's thread when the user turns it, until `withdraw`. */
     void offerEnable(bool on, void (*enable)(void *ctx, bool on), void *ctx) {
         if (has_ && table_.offer != nullptr) {
             table_.offer(table_.user, VENTO_AUDIO_SWITCH_ENABLE, on, enable, ctx);

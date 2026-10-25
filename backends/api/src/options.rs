@@ -1,28 +1,28 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! What a backend can be told, described well enough to offer without
-//! knowing what it means: `BackendOption` in Java. The lists themselves are
-//! each backend's own, in `backends/modules/<name>/catalog.rs` beside its
-//! entry in the [`catalog`](crate::catalog), and are the one copy; what is
-//! here is the shape of a row, the shorthands the lists are written in, and
-//! the rows more than one backend offers in the same words. The phone's
-//! lists are generated from them (`vento-codegen`, as a generated source of
-//! each backend's module), in the phone's words; where a desktop needs other
-//! words — a phone vibrates for a bell, a window cannot — a row says so
-//! beside them ([`Spec::desktop_summary`], [`Choice::desktop_label`]).
+//! Backend options, described well enough for a client to offer them
+//! without knowing what they mean: `BackendOption` in Java. Each backend's
+//! list is in `backends/modules/<name>/catalog.rs` beside its entry in the
+//! [`catalog`](crate::catalog), and is the only copy; this module holds the
+//! shape of a row, the shorthands the lists are written in, and the rows
+//! several backends offer with the same wording. The phone's lists are
+//! generated from them (`vento-codegen`, as a generated source of each
+//! backend's module), worded for the phone; where a desktop needs different
+//! wording (a phone vibrates for a bell, a window cannot), a row carries it
+//! separately ([`Spec::desktop_summary`], [`Choice::desktop_label`]).
 //!
-//! The values are strings, because that is what the backends' own
-//! configuration layers take; [`Type`] says how to ask for one, not how to
-//! store it. A `-o key=value` on the command line and a row in a dialog are
-//! the same thing here — a key checked against a backend's list, a value
-//! checked against the type — which is what keeps both of them generic.
+//! The values are strings, because the backends' own configuration layers
+//! take strings; [`Type`] says how to ask for a value, not how to store it.
+//! A `-o key=value` on the command line and a row in a dialog are handled
+//! the same way (the key checked against the backend's list, the value
+//! against the type), which keeps both generic.
 //!
 //! The lists are `static` and the descriptions are `&'static str`, so a
-//! dialog can hold a reference to a row without owning anything; the
-//! per-backend helpers that turn a value into what a library wants (a
-//! compression level, an encodings string) are in that backend's adapter,
-//! beside the call that takes it.
+//! dialog can hold a reference to a row without owning anything. The
+//! per-backend helpers that convert a value for a library (a compression
+//! level, an encodings string) are in that backend's adapter, beside the
+//! call that uses it.
 
 use crate::kind::Platform;
 use std::collections::{BTreeMap, BTreeSet};
@@ -41,7 +41,7 @@ pub enum Type {
 }
 
 /// Whose setting it is: the connection's, the backend's, or the connection's
-/// with the backend's answer as its default.
+/// with the backend's value as its default.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scope {
     Connection,
@@ -49,24 +49,24 @@ pub enum Scope {
     Layered,
 }
 
-/// A value and what to call it on screen. `summary` is why you would pick
-/// this one over the others, where that needs saying; `requires` is the key
-/// of a `Bool` option this choice depends on, so a choice whose switch is off
-/// is not offered at all.
+/// A value and its on-screen label. `summary` explains why to pick this one
+/// over the others, where that needs explaining; `requires` is the key of a
+/// `Bool` option this choice depends on, so a choice whose switch is off is
+/// not offered at all.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Choice {
     pub value: &'static str,
-    /// What to call it, as the phone words it.
+    /// The label, worded for the phone.
     pub label: &'static str,
-    /// What a desktop calls it where the phone's word is the phone's — "this
-    /// phone" — or `None`. See [`Choice::label_on`].
+    /// The desktop's label where the phone's is phone-specific ("this
+    /// phone"), or `None`. See [`Choice::label_on`].
     pub desktop_label: Option<&'static str>,
     pub summary: Option<&'static str>,
     pub requires: Option<&'static str>,
 }
 
 impl Choice {
-    /// What to call it in the client it is shown by.
+    /// The label for the client showing it.
     pub fn label_on(&self, platform: Platform) -> &'static str {
         match platform {
             Platform::Android => self.label,
@@ -75,7 +75,7 @@ impl Choice {
     }
 }
 
-/// What another option must say for this one to be offered at all.
+/// The values another option must have for this one to be offered at all.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Gate {
     pub key: &'static str,
@@ -95,11 +95,11 @@ pub struct Spec {
     pub key: &'static str,
     /// One line, for a preference title.
     pub label: &'static str,
-    /// The longer explanation, as the phone words it.
+    /// The longer explanation, worded for the phone.
     pub summary: Option<&'static str>,
-    /// The same explanation where a desktop needs other words — a phone
-    /// vibrates for a bell and a window cannot — or `None` where the phone's
-    /// words do for both. See [`Spec::summary_on`].
+    /// The same explanation where a desktop needs different wording (a
+    /// phone vibrates for a bell and a window cannot), or `None` where the
+    /// phone's wording fits both. See [`Spec::summary_on`].
     pub desktop_summary: Option<&'static str>,
     pub ty: Type,
     /// For `Choice`, in display order; empty otherwise.
@@ -113,7 +113,7 @@ pub struct Spec {
 }
 
 impl Spec {
-    /// The explanation in the words of the client it is shown by.
+    /// The explanation worded for the client showing it.
     pub fn summary_on(&self, platform: Platform) -> Option<&'static str> {
         match platform {
             Platform::Android => self.summary,
@@ -121,8 +121,8 @@ impl Spec {
         }
     }
 
-    /// For a `Choice`: what to show for `value` (a `&'static str` from the
-    /// list) in the client it is shown by, or the value itself when it is not
+    /// For a `Choice`: the label for `value` (a `&'static str` from the
+    /// list) in the client showing it, or the value itself when it is not
     /// one of the choices.
     pub fn label_for<'a>(&self, value: &'a str, platform: Platform) -> &'a str {
         self.choices
@@ -132,7 +132,7 @@ impl Spec {
             .unwrap_or(value)
     }
 
-    /// Whether `value` is something this option takes, in words when not.
+    /// Whether this option accepts `value`, with an error message when not.
     pub fn check(&self, value: &str) -> Result<(), String> {
         match self.ty {
             Type::Bool => match value {
@@ -159,11 +159,12 @@ impl Spec {
         }
     }
 
-    /// For a `Choice`: the choice `value` names, where it requires a switch
-    /// that `on` says is off — a value left standing after its switch went,
-    /// or given without it. Such a value is not offered, and is not what
-    /// the backend would do either (TigerVNC's `Encoding=h264` without
-    /// `H264` negotiates something else), so it must not stay selected.
+    /// For a `Choice`: the choice `value` names, if it requires a switch
+    /// that `on` says is off (a value left over after its switch was turned
+    /// off, or given without it). Such a value is not offered, and the
+    /// backend would not honour it either (TigerVNC's `Encoding=h264`
+    /// without `H264` negotiates something else), so it must not stay
+    /// selected.
     pub fn stranded(&self, value: &str, on: impl Fn(&str) -> bool) -> Option<&'static Choice> {
         let choices: &'static [Choice] = self.choices;
         choices
@@ -172,9 +173,9 @@ impl Spec {
             .filter(|c| c.requires.is_some_and(|key| !on(key)))
     }
 
-    /// What a stranded choice falls back to: the option's default, as if it
-    /// had never been picked, or the first choice on offer where the default
-    /// is stranded too (no list here has one that is).
+    /// The fallback for a stranded choice: the option's default, as if it
+    /// had never been picked, or the first choice on offer if the default is
+    /// stranded too (no list here has such a default).
     pub fn fallback(&self, on: impl Fn(&str) -> bool) -> &'static str {
         if self.stranded(self.default, &on).is_none() {
             return self.default;
@@ -217,10 +218,9 @@ pub(crate) const fn requiring(value: &'static str, label: &'static str, requires
     }
 }
 
-// Eight fields of one record set at once; the shorthands below are what
-// the lists actually call. They and the shared rows after them are the
-// crate's alone: the lists that use them are compiled here, under
-// `catalog`.
+// Sets eight fields at once; the lists use the shorthands below. They and
+// the shared rows after them are crate-private: the lists that use them are
+// compiled here, under `catalog`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) const fn spec(
     key: &'static str,
@@ -300,7 +300,7 @@ pub(crate) const fn choices(
     spec(key, label, summary, Type::Choice, choices, default, scope, live)
 }
 
-/// The same option, offered only where `key` says one of `values`.
+/// The same option, offered only when `key` has one of `values`.
 pub(crate) const fn when(spec: Spec, key: &'static str, values: &'static [&'static str]) -> Spec {
     Spec {
         gate: Some(Gate { key, values }),
@@ -372,10 +372,10 @@ pub(crate) const MONITOR_COUNTS: &[Choice] = &[
     choice("3", "Three"),
 ];
 
-/// A backend's settings as it was built with: every key from its list at its
-/// default, and whatever was set over that. Remembers which keys were set,
-/// because one backend (RealVNC) treats a colour depth somebody chose
-/// differently from one that is merely the default.
+/// A backend's settings: every key from its list at its default, with any
+/// values set on top. Remembers which keys were set, because one backend
+/// (RealVNC) treats an explicitly chosen colour depth differently from the
+/// default.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Options {
     values: BTreeMap<String, String>,
@@ -398,22 +398,21 @@ impl Options {
         self.set.insert(key.to_string());
     }
 
-    /// The value, or empty where there is none — which is what every reader
-    /// here expects of an option nobody has answered.
+    /// The value, or empty when there is none, which every reader here
+    /// expects for an unset option.
     pub fn get(&self, key: &str) -> &str {
         self.values.get(key).map(String::as_str).unwrap_or("")
     }
 
-    /// Whether somebody set this, as opposed to it being the default.
+    /// Whether this was set explicitly rather than left at the default.
     pub fn is_set(&self, key: &str) -> bool {
         self.set.contains(key)
     }
 
-    /// Every choice whose required switch is off, put back to what
-    /// [`Spec::fallback`] says; the keys that changed, for a live session to
-    /// pass on. A fallback is nobody's choice, so it is not counted as set.
-    /// The dialog and the live panel both keep to this whenever a switch
-    /// moves.
+    /// Resets every choice whose required switch is off to its
+    /// [`Spec::fallback`], and returns the changed keys for a live session to
+    /// pass on. A fallback was not chosen, so it is not counted as set. The
+    /// dialog and the live panel both call this whenever a switch changes.
     pub fn settle(&mut self, specs: &[Spec]) -> Vec<&'static str> {
         let mut changed = Vec::new();
         for spec in specs {
@@ -427,9 +426,9 @@ impl Options {
         changed
     }
 
-    /// The first choice given without its switch, in words: the command line
-    /// refuses `-o Encoding=h264` without `-o H264=true` rather than guess
-    /// which of the two was meant.
+    /// An error for the first choice given without its switch: the command
+    /// line refuses `-o Encoding=h264` without `-o H264=true` rather than
+    /// guess which of the two was meant.
     pub fn check_requirements(&self, specs: &[Spec]) -> Result<(), String> {
         for spec in specs {
             if let Some(choice) = spec.stranded(self.get(spec.key), |key| self.bool(key)) {
@@ -441,12 +440,12 @@ impl Options {
     }
 
     /// `Boolean.parseBoolean`: true for `"true"` in any case, false for
-    /// everything else including nothing.
+    /// everything else, including an unset key.
     pub fn bool(&self, key: &str) -> bool {
         self.get(key).eq_ignore_ascii_case("true")
     }
 
-    /// A whole number, or `default` where it is not one.
+    /// A whole number, or `default` if the value is not one.
     pub fn int(&self, key: &str, default: i64) -> i64 {
         self.get(key).trim().parse().unwrap_or(default)
     }
@@ -456,8 +455,8 @@ impl Options {
     }
 }
 
-/// `key=value`, as `-o` takes it. The first `=` splits, so a value may hold
-/// one; a missing one is an error in words.
+/// `key=value`, as `-o` takes it. Split at the first `=`, so a value may
+/// contain one; a missing `=` is an error.
 pub fn parse_assignment(text: &str) -> Result<(&str, &str), String> {
     match text.split_once('=') {
         Some((key, value)) if !key.trim().is_empty() => Ok((key.trim(), value)),
@@ -465,7 +464,7 @@ pub fn parse_assignment(text: &str) -> Result<(&str, &str), String> {
     }
 }
 
-/// The spec for `key` in `specs`, in words when there is none.
+/// The spec for `key` in `specs`, or an error listing the valid keys.
 pub fn find<'a>(specs: &'a [Spec], key: &str) -> Result<&'a Spec, String> {
     specs.iter().find(|s| s.key == key).ok_or_else(|| {
         let keys: Vec<&str> = specs.iter().map(|s| s.key).collect();
@@ -477,9 +476,9 @@ pub fn find<'a>(specs: &'a [Spec], key: &str) -> Result<&'a Spec, String> {
 mod tests {
     use super::*;
 
-    /// Rows of every type, as a backend's list has them: a choice with one
-    /// value behind a switch and one in a desktop's own words, a gated row,
-    /// a number, free text, and three of the shared rows.
+    /// Rows of every type, as in a backend's list: a choice with a value
+    /// behind a switch, a choice with a desktop label, a gated row, a
+    /// number, free text, and three of the shared rows.
     static FIXTURE: &[Spec] = &[
         choices(
             "Encoding",

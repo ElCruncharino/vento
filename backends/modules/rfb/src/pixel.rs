@@ -25,12 +25,11 @@ pub struct PixelFormat {
 impl PixelFormat {
     /// What we ask for, and the only format the decoders handle.
     ///
-    /// Chosen so that no conversion exists at all: 32 bits little-endian with
-    /// red at shift 0 puts the bytes in memory as `R, G, B, _`, which is
-    /// exactly what Android's `ARGB_8888` bitmap holds (`AndroidBitmap`'s
-    /// `RGBA_8888`). A framebuffer word is therefore `0xFF_BB_GG_RR` and a
-    /// region read is a row copy — the thing `Backend.readRegion` promises to
-    /// be cheap.
+    /// Chosen so no conversion is needed: 32 bits little-endian with red at
+    /// shift 0 puts the bytes in memory as `R, G, B, _`, which is exactly what
+    /// Android's `ARGB_8888` bitmap holds (`AndroidBitmap`'s `RGBA_8888`). A
+    /// framebuffer word is therefore `0xFF_BB_GG_RR` and a region read is a
+    /// row copy, which `Backend.readRegion` promises to be cheap.
     ///
     /// It also makes ZRLE's `CPIXEL` the three low bytes in wire order, which
     /// is `r, g, b` and needs no shifting either.
@@ -79,8 +78,8 @@ impl PixelFormat {
         w.write_all(&buf)
     }
 
-    /// One line for the connection panel's diagnostics
-    /// (`ConnectionFact.Field.SERVER_PIXELS`), in the shape RealVNC's own
+    /// One line for the connection panel's diagnostics (`Field::ServerPixels`
+    /// and `Field::ViewerPixels`), in the form RealVNC's own
     /// `getServerPixelFormat` uses.
     pub fn describe(&self) -> String {
         if !self.true_colour {

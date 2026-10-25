@@ -33,13 +33,12 @@ import java.util.function.Consumer;
  * the fixture set, for a question the fixtures were not recorded to answer.
  *
  * <p>Skipped otherwise, since its output is a table to read rather than an
- * assertion — the thresholds it exists to choose are a feel question, and the
+ * assertion: the thresholds it exists to choose are a matter of feel, and the
  * regression net for the code is {@link PointerAccelTest} plus the goldens.
  *
- * <p>One pitfall, which cost the first run of this analysis: the whole frame
- * list goes through {@code play} in one call, because the clock is rebased on
- * the first frame. {@link #replay} does its own loop for the per-frame
- * sampling, and rebases exactly once.
+ * <p>The whole frame list has to go through {@code play} in one call, because
+ * the clock is rebased on the first frame. {@link #replay} does its own loop
+ * for the per-frame sampling, and rebases exactly once.
  */
 public class AccelSweepTest {
 
@@ -52,7 +51,7 @@ public class AccelSweepTest {
 
     /**
      * The baseline is the original's curve with nothing of ours on it, so every
-     * row reads as a difference from the port — which is not what
+     * row reads as a difference from the port. That is not what
      * {@link Config#improved} is any more (it ships ADAPT+LOCK).
      */
     private static final String[] NAMES = {
@@ -210,7 +209,7 @@ public class AccelSweepTest {
     }
 
     /**
-     * Net displacement — where the cursor ended up, as opposed to how far it
+     * Net displacement: where the cursor ended up, as opposed to how far it
      * travelled getting there. The two columns say different things: a variant
      * can shorten the path (cancelled jitter) without moving the destination,
      * and the axis lock does exactly that.
@@ -226,10 +225,10 @@ public class AccelSweepTest {
 
     /**
      * How uneven consecutive emitted displacements are: mean absolute step
-     * change over mean magnitude. The {@code 1.1, 1.1, 5.0} sawtooth is exactly
-     * what this is meant to see. Kept after output spreading was deleted,
-     * because it is what measured the ripple that turned out to be
-     * imperceptible, and any future attempt on it starts here.
+     * change over mean magnitude, which picks up the {@code 1.1, 1.1, 5.0}
+     * sawtooth. Kept after output spreading was removed: it measured the
+     * ripple, which turned out to be imperceptible, and is the starting point
+     * for any further work on it.
      */
     private static double ripple(List<double[]> ms) {
         if (ms.size() < 2) {

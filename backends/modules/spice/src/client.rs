@@ -1,20 +1,19 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! One SPICE session: four channels, the state above them, and the handle the
-//! other threads hold.
+//! One SPICE session: its channels, the state above them, and the handle other
+//! threads hold.
 //!
-//! **The session is one task on one current-thread runtime**, which is note 83
-//! §5's decision and the only one in this repository that has an executor in it
-//! at all. A session is four sockets that have to be read at once, which is the
-//! shape where a thread each is the awkward answer; what it costs is no threads
-//! — the reader of every channel is a task beside this one, and `/proc/self/task`
-//! has the same entry in it either way.
+//! **The session is one task on one current-thread runtime**, the only async
+//! executor in this repository. A session is four sockets (five with audio)
+//! that have to be read at once, where a thread per socket is awkward. It costs
+//! no extra threads: each channel's reader is a task beside this one, on the
+//! same thread.
 //!
-//! Two other threads reach a session and neither of them is in here: whichever
-//! thread is drawing, which takes the framebuffer's read lock straight through
-//! the JNI, and whichever thread has input, which leaves a command on a queue
-//! and returns. Nothing above this line ever waits for a socket.
+//! Two other threads reach a session, and neither runs the session task: the
+//! drawing thread, which takes the framebuffer's read lock directly, and the
+//! input thread, which leaves a command on a queue and returns. Neither ever
+//! waits for a socket.
 
 use crate::agent::{Agent, Event};
 use crate::channel::{Channel, Ended, Kind, Message};
@@ -42,38 +41,38 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
-/// What this client says it is on the wire, and the version of the protocol
-/// those numbers name.
+/// The protocol version this client implements, as shown in the connection
+/// panel.
 pub const VERSION: &str = "SPICE 2.2";
 
-/// Where a server is when nobody said. QEMU makes somebody choose, so this is
-/// what `spice://host` means elsewhere rather than a default anything here has.
+/// The port used when the address has none. QEMU has no default SPICE port, so
+/// this is what `spice://host` means in other clients.
 pub const DEFAULT_PORT: u16 = 5900;
 
-/// How a session was told to reach a server, and what it may say about it.
+/// How a session reaches a server, and what it sends.
 pub struct Config {
     /// `host:port`. A plain SPICE port and a TLS SPICE port are different
-    /// ports rather than a negotiation, which is why the next field is a
-    /// setting rather than something learnt.
+    /// ports rather than a negotiation, so `tls` is a setting rather than
+    /// something negotiated.
     pub address: String,
     pub tls: bool,
     pub password: Option<String>,
     pub connect_timeout: Duration,
-    /// What to ask the server to compress images with, or `None` for whatever
-    /// it does by itself — which for QEMU is `auto_glz`.
+    /// What to ask the server to compress images with, or `None` for the
+    /// server's default (`auto_glz` for QEMU).
     pub compression: Option<u8>,
     pub view_only: bool,
     /// Where the guest's sound goes, or `None` for a session that never
-    /// opens the playback channel — which is what keeps a server from
-    /// encoding sound nobody hears.
+    /// opens the playback channel, so the server does not encode sound that
+    /// is never played.
     pub audio: Option<Arc<dyn Outputs>>,
-    /// Whether the playback channel is opened at the start, where the server
-    /// has one: where the session's Enable switch starts. The switch opens
-    /// and closes the channel from then on.
+    /// Whether the playback channel is opened at the start, if the server has
+    /// one. This is the initial state of the session's Enable switch, which
+    /// opens and closes the channel from then on.
     pub sound: bool,
 }
 
-/// Everything the connection panel can be told about a live session.
+/// What the connection panel shows about a live session.
 #[derive(Clone, Default)]
 pub struct Info {
     pub desktop_name: String,
@@ -81,9 +80,8 @@ pub struct Info {
     pub connection: String,
     pub security: String,
     pub encoding: String,
-    /// Which channels linked, which is a row nothing else here has: a SPICE
-    /// session is several connections and what it can do depends on which of
-    /// them came up.
+    /// Which channels linked. A SPICE session is several connections, and
+    /// what it can do depends on which of them came up.
     pub channels: String,
     /// Whether the guest is running `spice-vdagent`, which decides whether
     /// there is a clipboard, a resize or a client-mode pointer at all.
@@ -91,7 +89,7 @@ pub struct Info {
     pub display: String,
 }
 
-/// What the input threads leave for the session.
+/// Requests from other threads to the session task.
 enum Command {
     Pointer { x: i32, y: i32, buttons: i32 },
     PointerRelative { dx: i32, dy: i32, buttons: i32 },
@@ -101,12 +99,10 @@ enum Command {
     Focus(bool),
     Compression(u8),
     Clipboard(String),
-    /// The layout this end is asking the guest for: `x, y, width, height` per
-    /// head, in the order of the heads' ids; one of no size is a head asked
-    /// to be off.
+    /// The layout to ask the guest for: `x, y, width, height` per head, in
+    /// the order of the heads' ids; a zero-size entry turns that head off.
     Monitors(Vec<(i32, i32, u32, u32)>),
-    /// The session's sound switch, turned: the playback channel opened, or
-    /// closed.
+    /// The session's sound switch: open or close the playback channel.
     Sound(bool),
     Close,
 }
@@ -125,18 +121,17 @@ pub struct Client {
     /// How many heads the device can have, as its last `MONITORS_CONFIG` said;
     /// zero before it has.
     max_heads: Arc<AtomicU32>,
-    /// Whether the guest's agent is there and will take a size, which is a fact
-    /// about this session rather than about the protocol — so the seam polls it
-    /// and it can turn true seconds after the picture arrives.
+    /// Whether the guest agent is running and accepts a size. This depends on
+    /// the session rather than the protocol, so it is polled, and it can turn
+    /// true seconds after the picture arrives.
     resizable: Arc<AtomicBool>,
-    /// Whether the guest's agent is there and takes a clipboard, the same
-    /// kind of fact: without it an offered clipboard goes nowhere, and only
-    /// this end can say so.
+    /// Whether the guest agent is running and accepts a clipboard. Without it
+    /// an offered clipboard is dropped, and only this client can report that.
     clipboard: Arc<AtomicBool>,
-    /// What `close` rings. The command queue says the same, but only the
-    /// running session reads it: everything before that — four dials, four
-    /// links, a TLS handshake each — is a step with a deadline and nothing
-    /// else, so a close that waited for the queue waited for those too.
+    /// Signalled by `close`. `Command::Close` does the same, but only the
+    /// running session reads the queue: before that, connecting (four dials,
+    /// four links, a TLS handshake each) only has per-step deadlines, so a
+    /// close sent only through the queue would wait for all of them.
     closing: tokio::sync::Notify,
 }
 
@@ -168,7 +163,7 @@ impl Client {
         self.info.lock().unwrap().clone()
     }
 
-    /// Received and sent, in protocol bytes over all four channels.
+    /// Received and sent, in protocol bytes over all channels.
     pub fn traffic(&self) -> (u64, u64) {
         (
             self.received.load(Ordering::Relaxed),
@@ -176,8 +171,8 @@ impl Client {
         )
     }
 
-    /// The far end's monitors as `x, y, width, height` each, or empty where it
-    /// has not published a layout.
+    /// The guest's monitors as `x, y, width, height` each, or empty if it has
+    /// not reported a layout.
     pub fn monitors(&self) -> Vec<i32> {
         self.monitors.lock().unwrap().chunks_exact(5).flat_map(|m| [m[1], m[2], m[3], m[4]]).collect()
     }
@@ -191,35 +186,35 @@ impl Client {
         self.relative.load(Ordering::Relaxed)
     }
 
-    /// Whether the far end will take a desktop size right now, which for this
-    /// protocol means a guest with the agent running in it.
+    /// Whether the guest accepts a desktop size now, which requires its agent
+    /// to be running.
     pub fn can_resize(&self) -> bool {
         self.resizable.load(Ordering::Relaxed)
     }
 
-    /// Whether a clipboard offered now has somewhere to go, which for this
-    /// protocol means a guest whose agent has said it takes one.
+    /// Whether a clipboard offered now reaches the guest, which requires its
+    /// agent to have reported clipboard support.
     pub fn has_clipboard(&self) -> bool {
         self.clipboard.load(Ordering::Relaxed)
     }
 
-    /// Ask the guest for a desktop this size. A request: what answers it is a
-    /// new size, a different one, or nothing.
+    /// Asks the guest for a desktop this size. The guest may answer with this
+    /// size, a different one, or nothing.
     pub fn request_desktop_size(&self, width: u32, height: u32) {
         self.request_monitors(&[(0, 0, width, height)]);
     }
 
-    /// The same request with more than one head in it, which is the shape the
-    /// message actually has, a head at the place its id names: it is how a
-    /// second monitor is made to exist at all, since a QXL device reports one
-    /// connected head until a client says otherwise.
+    /// The same request with several heads, each at the list position its id
+    /// names, which is the message's actual form. This is the only way to add
+    /// a second monitor, since a QXL device reports one connected head until a
+    /// client asks for more.
     pub fn request_monitors(&self, monitors: &[(i32, i32, u32, u32)]) {
         let _ = self.commands.send(Command::Monitors(monitors.to_vec()));
     }
 
-    /// A layout of these screens, `id, x, y, width, height` each, by the
-    /// heads' ids (see `heads_for`): the guest's own heads moved or resized,
-    /// and new ones numbered here.
+    /// Requests a layout of `screens` (`id, x, y, width, height` each),
+    /// matched to the guest's heads by id (see `heads_for`): existing heads
+    /// are moved or resized, and new ones are numbered here.
     pub fn request_layout(&self, screens: &[(u32, i32, i32, u32, u32)]) {
         let have: Vec<u32> = self.monitors.lock().unwrap().chunks_exact(5).map(|m| m[0] as u32).collect();
         let heads = heads_for(screens, &have, self.max_heads.load(Ordering::Relaxed) as usize);
@@ -228,7 +223,7 @@ impl Client {
         }
     }
 
-    /// What this phone has on its clipboard, offered to the guest.
+    /// Offers the local clipboard text to the guest.
     pub fn set_clipboard(&self, text: String) {
         let _ = self.commands.send(Command::Clipboard(text));
     }
@@ -236,8 +231,8 @@ impl Client {
     pub fn set_view_only(&self, view_only: bool) {
         self.view_only.store(view_only, Ordering::Relaxed);
         if view_only {
-            // Whatever is held at the far end is this end's doing, and the
-            // switch that stops sending input must not leave a key down there.
+            // Keys held on the guest were pressed by this client, and turning
+            // on view only must not leave one down.
             let _ = self.commands.send(Command::ReleaseAllKeys);
         }
     }
@@ -268,8 +263,8 @@ impl Client {
         let _ = self.commands.send(Command::Focus(focused));
     }
 
-    /// The image compression the server is asked for, live: one message, and
-    /// the server encodes the next image with it.
+    /// Sets the image compression the server is asked for; the server uses it
+    /// from the next image it encodes.
     pub fn set_compression(&self, compression: u8) {
         let _ = self.commands.send(Command::Compression(compression));
     }
@@ -282,8 +277,8 @@ impl Client {
         let _ = self.commands.send(Command::Close);
     }
 
-    /// Connect, and then run the session until it ends. Blocks the calling
-    /// thread, which is the session's own.
+    /// Connects, then runs the session until it ends. Blocks the calling
+    /// thread, which becomes the session's thread.
     pub fn run(&self, config: &Config, handler: &mut dyn Handler) -> Result<()> {
         self.view_only.store(config.view_only, Ordering::Relaxed);
         let inbox = self
@@ -295,25 +290,26 @@ impl Client {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
-        // The whole session raced against the close, rather than the close
-        // being one more thing the session listens for: dropping the session
-        // is what ends a dial, a handshake or a read wherever it has got to,
-        // and the runtime going with it ends the channels' reader tasks.
+        // The whole session is raced against the close, rather than the
+        // session listening for it: dropping the session future ends a dial,
+        // handshake or read wherever it is, and dropping the runtime ends the
+        // channels' reader tasks.
         let ended = runtime.block_on(async {
             tokio::select! {
                 ended = self.session(config, handler, inbox) => ended,
                 () = self.closing.notified() => Err(Error::Closed),
             }
         });
-        // No switch past the session, and nothing more for it to ask.
+        // The sound switch goes away with the session.
         if let Some(audio) = &config.audio {
             audio.controls().withdraw();
         }
         ended
     }
 
-    /// The session's sound switch as an Enable switch, `on` or not: turned,
-    /// it asks the session's loop to open or close the playback channel.
+    /// Offers the session's sound switch as an Enable switch, initially `on`
+    /// or off. Turning it asks the session loop to open or close the playback
+    /// channel.
     fn offer_sound(&self, audio: &Arc<dyn Outputs>, on: bool) {
         let commands = self.commands.clone();
         audio.controls().offer_enable(
@@ -340,9 +336,9 @@ impl Client {
             false => None,
         };
 
-        // 64 messages of slack between the readers and this task. The ack
-        // window is the real flow control and it is 20, so this is deep enough
-        // that a queue is never the thing that stops a server.
+        // 64 messages of buffer between the readers and this task. The ack
+        // window (20) is the real flow control, so this queue never stalls a
+        // server.
         let (queue, mut messages) = mpsc::channel::<Message>(64);
         let (ends, mut ended) = mpsc::channel::<Ended>(4);
 
@@ -364,8 +360,8 @@ impl Client {
             playback: None,
         };
 
-        // The main channel first, and everything else with the id its INIT
-        // hands out: that id is the whole of what ties four sockets into one
+        // The main channel first, then the others with the session id from
+        // its INIT, which is the only thing tying the sockets into one
         // session.
         let main = session
             .connect(Kind::Main, 0, config, connector.as_ref(), 0, handler, &queue, &ends)
@@ -385,12 +381,12 @@ impl Client {
                 .await?;
             session.channels.insert(kind, channel);
         }
-        // The guest's sound, where the server has some and this session has
-        // somewhere to play it: the session's switch is an Enable switch from
-        // here on, since the channel can be closed and opened again at any
-        // time, and the option says whether it opens now. A channel that will
-        // not open costs the sound and not the session, as one that ends
-        // later does.
+        // The guest's sound, if the server has a playback channel and the
+        // session has an audio output. The session's switch is an Enable
+        // switch from here on, since the channel can be closed and reopened at
+        // any time; the option sets whether it opens now. A playback channel
+        // that fails to open, or ends later, loses the sound but not the
+        // session.
         let audio = config.audio.clone().filter(|_| sound);
         if let Some(audio) = &audio {
             let on = config.sound
@@ -400,9 +396,9 @@ impl Client {
             self.offer_sound(audio, on);
         }
 
-        // What the display channel is told before it says anything: how much of
-        // the server's image cache this end promises to keep, and how big a GLZ
-        // window it can look back through.
+        // Sent before the display channel sends anything: how much of the
+        // server's image cache this client keeps, and the size of its GLZ
+        // window.
         let mut payload = Vec::new();
         DisplayInit {
             cache_id: 1,
@@ -419,9 +415,8 @@ impl Client {
         session.describe(config, connector.as_ref());
         session.describe_channels();
         loop {
-            // A stream that has gone quiet is closed after whichever turn of
-            // the loop finds it so, and the half-second wake below finds it
-            // on a session where nothing else is arriving.
+            // `tick` closes a playback stream that has gone quiet. The
+            // half-second wake below runs it when nothing else is arriving.
             if let Some(playback) = &mut session.playback {
                 playback.tick();
             }
@@ -432,8 +427,8 @@ impl Client {
                     let Some(message) = message else { return Ok(()) };
                     session.message(message, handler).await?;
                     // Drain whatever else has arrived before ending the frame:
-                    // a screenful is a burst of draws and the drawing thread
-                    // wants one repaint out of it rather than one each.
+                    // a screenful is a burst of draws, and it should cause one
+                    // repaint rather than one per draw.
                     while let Ok(message) = messages.try_recv() {
                         session.message(message, handler).await?;
                     }
@@ -445,9 +440,9 @@ impl Client {
                 command = inbox.recv() => {
                     match command {
                         None | Some(Command::Close) => return Err(Error::Closed),
-                        // The switch, which needs what the channels were
-                        // opened with, so it is answered here rather than
-                        // among the input.
+                        // The switch needs what the channels were opened
+                        // with, so it is handled here rather than in
+                        // `command`.
                         Some(Command::Sound(on)) => {
                             let Some(audio) = &audio else { continue };
                             if on && session.playback.is_none() {
@@ -460,10 +455,10 @@ impl Client {
                                 }
                                 session.describe_channels();
                             } else if !on && session.playback.is_some() {
-                                // Closing the channel is the whole of asking
-                                // the server to stop: it sends a channel that
-                                // is not there nothing, and the stream goes
-                                // with what is queued.
+                                // Closing the channel is how the server is
+                                // asked to stop: it sends nothing to a closed
+                                // channel, and the stream is dropped with
+                                // whatever it has queued.
                                 log::info!("playback: closing the channel");
                                 session.channels.remove(&Kind::Playback);
                                 session.playback = None;
@@ -475,10 +470,9 @@ impl Client {
                 }
                 end = ended.recv() => {
                     if let Some(end) = end {
-                        // Except for the sound, which the session can do
-                        // without.
-                        // The switch goes off with it, so that turning it on
-                        // again tries the channel again.
+                        // The playback channel ending does not end the
+                        // session. The switch turns off with it, so turning
+                        // it on again retries the channel.
                         if end.kind == Kind::Playback {
                             log::warn!("playback ended ({:?}); the guest's sound is not played", end.error);
                             session.channels.remove(&Kind::Playback);
@@ -489,10 +483,10 @@ impl Client {
                             }
                             continue;
                         }
-                        // Any other channel ending ends the session: three of
-                        // the four are the picture, the pointer and the
-                        // keyboard, and a session missing one of those is not
-                        // one.
+                        // Any other channel ending ends the session: besides
+                        // main, they carry the picture, the cursor and the
+                        // input, and the session cannot work without any of
+                        // them.
                         log::info!("{} ended", end.kind.name());
                         return match end.error {
                             Some(e) => Err(e),
@@ -505,9 +499,8 @@ impl Client {
     }
 }
 
-/// The shape `runtime::Runner` runs: the inherent `run` and `close` are the
-/// implementation, and this is them written down for a session that does not
-/// know which protocol it has.
+/// For `runtime::Runner`, which drives any protocol's client: delegates to
+/// the inherent `run` and `close`.
 impl runtime::Client for Client {
     type Config = Config;
     type Error = Error;
@@ -532,44 +525,45 @@ impl Default for Client {
     }
 }
 
-/// What `DISPLAY_INIT` promises the server this end will keep, which is what
-/// spice-gtk promises: the server counts against it and a client that keeps
-/// less than it said is a client whose cache misses.
+/// The image cache size `DISPLAY_INIT` promises the server, the same as
+/// spice-gtk's. The server counts against it, so a client that keeps less than
+/// it promised gets cache misses.
 const IMAGE_CACHE: usize = 20 * 1024 * 1024;
-/// And how far back a GLZ image may refer.
+/// How far back a GLZ image may refer.
 const GLZ_WINDOW: usize = 3 * 1024 * 1024;
 
-/// The session's own state, which nothing outside this file touches.
+/// The session task's state, private to this file.
 struct Session<'a> {
     client: &'a Client,
-    /// Where every channel of this session dials, read out of the address once.
+    /// The host and port every channel of this session dials, parsed from the
+    /// address once.
     server: (String, u16),
     channels: HashMap<Kind, Channel>,
     display: Display,
     cursors: Cursors,
-    /// The guest's own program, which is where the clipboard and the resize
-    /// live. Its messages travel inside the main channel's.
+    /// The guest agent (`spice-vdagent`), which handles the clipboard and
+    /// resizing. Its messages travel inside the main channel's.
     agent: Agent,
-    /// What is held at the far end, by the seam's key id, so that a release
-    /// names the key rather than the keysym — which is what makes auto-repeat
-    /// and a chord work.
+    /// Keys held on the guest, by the caller's key id, so that a release names
+    /// the pressed key rather than a keysym; this makes auto-repeat and chords
+    /// work.
     keys: HashMap<i64, Key>,
-    /// Whether this end has put Shift down to make a character, which must not
-    /// be taken away from a Shift the person is holding.
+    /// Whether this client pressed Shift to type a shifted character. It is
+    /// released once no shifted key is held.
     shift_held: bool,
     buttons: u16,
     mouse_modes: u32,
     focused: bool,
     connected: bool,
-    /// What the panel was last told about the picture — the encodings seen, the
-    /// live streams and the draws dropped — so that the rows are rebuilt when
+    /// What the panel was last told about the picture (the encodings seen, the
+    /// live streams and the draws dropped), so that the rows are rebuilt when
     /// one of them changes rather than on every frame.
     described: (usize, usize, u64),
-    /// The ticket every channel is opened with: the configured one until a
-    /// person answers a refusal, and then the answer. A session is several
-    /// connections, and each presents the ticket, so a password typed for
-    /// the main channel has to be the one the others present too — or each
-    /// of them is refused and asks again.
+    /// The ticket every channel is opened with: the configured one until the
+    /// user answers a refusal, and then the answer. A session is several
+    /// connections, and each presents the ticket, so a password typed for the
+    /// main channel has to be presented by the others too, or each of them is
+    /// refused and prompts again.
     ticket: Option<String>,
     /// The guest's sound, while the session plays it: `None` where the
     /// server has none, there is nowhere to play it, the switch is off, or
@@ -591,14 +585,14 @@ impl Session<'_> {
         ends: &mpsc::Sender<Ended>,
     ) -> Result<Channel> {
         let mut password = self.ticket.clone();
-        // The certificate is asked about once, on the first channel: the other
-        // three reach the same server moments later and must present it again
-        // (`tls::Connector::admit`), which they are held to without a question.
+        // The user is asked about the certificate once, on the main channel:
+        // the others reach the same server moments later and must present the
+        // same certificate (`tls::Connector::admit`), without asking again.
         let mut asked = false;
         loop {
-            // The borrow of `handler` the trust question needs ends with this
+            // The borrow of `handler` for the trust question ends with this
             // block, so that a refused ticket can ask the same handler for a
-            // password on the next turn round the loop.
+            // password on the next iteration.
             let opened = {
                 let mut ask = |fingerprint: &str| handler.trust(fingerprint);
                 let trust: Option<&mut dyn FnMut(&str) -> bool> = if session_id == 0 && !asked {
@@ -607,9 +601,9 @@ impl Session<'_> {
                 } else {
                     None
                 };
-                // No deadline around this call: the one inside it is around
-                // each step of the connection and not around the question it
-                // may stop to ask.
+                // No deadline around this call: `Channel::open` applies one to
+                // each step of the connection, but not to the trust question it
+                // may ask.
                 Channel::open(
                     kind,
                     caps,
@@ -630,14 +624,12 @@ impl Session<'_> {
             };
 
             match opened {
-                // A refused ticket is the one error with a person on the other
-                // end of it. The key it was encrypted to is generated per
-                // connection, so asking again means dialling again — there is
-                // nothing on this socket left to retry with.
+                // A refused ticket is the one error the user can fix. The key
+                // it was encrypted to is generated per connection, so retrying
+                // means dialling again; this socket cannot be reused.
                 Err(Error::Refused(_)) => {
                     log::info!("{}: the ticket was refused", kind.name());
-                    // A ticket is the whole of what a SPICE server asks for:
-                    // there is no user name in the protocol.
+                    // SPICE has only the ticket, no user name.
                     match handler.credentials(false).map(|c| c.password) {
                         Some(answer) => password = Some(answer),
                         None => return Err(Error::Cancelled),
@@ -652,7 +644,7 @@ impl Session<'_> {
         }
     }
 
-    /// The panel's channels row, which the sound switch changes.
+    /// Updates the panel's channels row, which changes with the sound switch.
     fn describe_channels(&self) {
         let mut kinds: Vec<Kind> = self.channels.keys().copied().collect();
         kinds.sort_by_key(|kind| kind.channel_type() as u8);
@@ -689,10 +681,10 @@ impl Session<'_> {
         }
     }
 
-    /// The main channel up to the point where the rest of the session can be
-    /// opened: its `INIT` carries the session id, and the channel list says
-    /// what the server has — of which the one that may be missing is the
-    /// sound, the second answer.
+    /// Runs the main channel until the rest of the session can be opened: its
+    /// `INIT` carries the session id, and the channel list says which channels
+    /// the server has. Returns the session id and whether the server has a
+    /// playback channel.
     async fn handshake(
         &mut self,
         messages: &mut mpsc::Receiver<Message>,
@@ -715,10 +707,9 @@ impl Session<'_> {
                     );
                     self.mouse_mode(init.current_mouse_mode, handler).await?;
                     self.send(Kind::Main, main_client::ATTACH_CHANNELS, &[]).await?;
-                    // A guest that was already running the agent when this
-                    // session started, which is the ordinary case: the token
-                    // count is in `INIT` and there is no `AGENT_CONNECTED` to
-                    // wait for.
+                    // The agent was already running when this session started
+                    // (the usual case): the token count is in `INIT` and no
+                    // `AGENT_CONNECTED` follows.
                     if init.agent_connected != 0 {
                         self.agent_up(init.agent_tokens).await?;
                     } else {
@@ -753,8 +744,8 @@ impl Session<'_> {
                 return Ok(());
             }
             main_server::PING => {
-                // Their ping carries filler so that a client can measure a link
-                // with it, which on an idle session is most of the traffic.
+                // The server's ping carries padding for measuring the link,
+                // which is most of the traffic on an idle session.
                 let ping = Ping::read(&message.body)?;
                 let mut payload = Vec::new();
                 ping.write_pong(&mut payload)?;
@@ -814,8 +805,8 @@ impl Session<'_> {
                 }
             }
             main_server::NAME => {
-                // The one place a SPICE server says what the machine is called,
-                // and it is optional: a QEMU without `-name` never sends it.
+                // The only message with the machine's name, and it is
+                // optional: QEMU without `-name` never sends it.
                 let name = String::from_utf8_lossy(
                     message.body.get(4..).unwrap_or_default().split(|b| *b == 0).next().unwrap_or_default(),
                 )
@@ -825,9 +816,9 @@ impl Session<'_> {
                 }
             }
             main_server::AGENT_CONNECTED | main_server::AGENT_CONNECTED_TOKENS => {
-                // The tokens are in the message only for a client that asked to
-                // be told; without them this end has none and waits to be
-                // granted some, which the server does as soon as it has any.
+                // Only `AGENT_CONNECTED_TOKENS` carries tokens, for a client
+                // that asked for them; without them this client has none and
+                // waits for an `AGENT_TOKEN`.
                 let tokens = match message.body.len() >= 4 {
                     true => u32::from_le_bytes(message.body[0..4].try_into().unwrap()),
                     false => 0,
@@ -835,8 +826,9 @@ impl Session<'_> {
                 self.agent_up(tokens).await?;
             }
             main_server::AGENT_DISCONNECTED => {
-                // A guest logging out or the program being killed. What it can
-                // do goes with it, so the panel and `canResize` both change.
+                // The guest logged out or the agent was killed. Its clipboard
+                // and resize support go with it, so the panel, `can_resize` and
+                // `has_clipboard` change.
                 self.agent.disconnected();
                 self.client.resizable.store(false, Ordering::Relaxed);
                 self.client.clipboard.store(false, Ordering::Relaxed);
@@ -870,14 +862,14 @@ impl Session<'_> {
         Ok(())
     }
 
-    /// The agent came up — with the session, or minutes later when somebody
-    /// logged into the guest.
+    /// The agent came up, with the session or later when a user logged into
+    /// the guest.
     ///
-    /// `AGENT_START` is what opens the channel to it, and its one field is how
-    /// many chunks the *guest* may send this end before waiting. It is
-    /// everything, which is what spice-gtk does: metering a clipboard would
-    /// cost a token message per chunk of it and buy nothing on a link that is
-    /// already flow-controlled by the ack window.
+    /// `AGENT_START` opens the channel to it, and its one field is how many
+    /// chunks the *guest* may send this client before waiting. It is
+    /// unlimited, as in spice-gtk: metering a clipboard would cost a token
+    /// message per chunk and gain nothing on a link already flow-controlled by
+    /// the ack window.
     async fn agent_up(&mut self, tokens: u32) -> Result<()> {
         log::info!("agent: connected, with {tokens} token(s) to send on");
         self.agent.connected(tokens);
@@ -887,7 +879,7 @@ impl Session<'_> {
         self.flush_agent().await
     }
 
-    /// Whatever the agent has to say, as far as the tokens go. What is left
+    /// Sends the agent's queued messages as far as the tokens allow. The rest
     /// stays queued until the server grants more.
     async fn flush_agent(&mut self) -> Result<()> {
         while let Some(piece) = self.agent.next_piece() {
@@ -896,9 +888,8 @@ impl Session<'_> {
         Ok(())
     }
 
-    /// The panel's row for it, which is the difference between a session with a
-    /// clipboard and one without — and the place somebody finds out why Paste
-    /// does nothing.
+    /// Updates `has_clipboard` and the panel's guest agent row, which shows
+    /// whether the session has a clipboard (and so why Paste may do nothing).
     fn describe_agent(&self) {
         self.client
             .clipboard
@@ -918,14 +909,13 @@ impl Session<'_> {
         };
     }
 
-    /// Which end owns the pointer, and the request that decides it where the
-    /// server will take one.
+    /// Tracks which end owns the pointer, and asks for client mode where the
+    /// server supports it.
     ///
-    /// Client mode is the absolute pointer every other backend here has, and it
-    /// is what this asks for. Server mode is the far end owning the cursor, and
-    /// a guest with no tablet attached offers nothing else — so the seam is
-    /// told, and the app switches to the relative pointer it has had since the
-    /// stage that built it for QEMU's *other* protocol.
+    /// Client mode is the absolute pointer every other backend here uses. In
+    /// server mode the guest owns the cursor, and a guest with no tablet
+    /// attached offers only that, so the handler is told and the app switches
+    /// to its relative pointer.
     async fn mouse_mode(&mut self, current: u32, handler: &mut dyn Handler) -> Result<()> {
         if current == MOUSE_MODE_SERVER && self.mouse_modes & MOUSE_MODE_CLIENT != 0 {
             self.send(
@@ -979,24 +969,23 @@ impl Session<'_> {
             Command::ReleaseAllKeys => self.release_all_keys().await?,
             Command::Focus(focused) => self.focus(focused).await?,
             Command::Compression(compression) => self.compression(compression).await?,
-            // The far end's clipboard is the far end's, and replacing it is
-            // driving rather than watching — which is the answer every client
-            // here gives.
+            // Replacing the guest's clipboard is input, so view only blocks
+            // it, as in every other backend here.
             Command::Clipboard(text) if !view_only => {
                 self.agent.offer_clipboard(text);
                 self.flush_agent().await?;
             }
-            // A resize is not gated the same way: it is the size of the picture
-            // being looked at rather than something done inside the guest, and
-            // no other backend here gates it either.
+            // View only does not block a resize: it changes the size of the
+            // picture rather than acting inside the guest, and no other backend
+            // here blocks it either.
             Command::Monitors(monitors) => {
                 log::info!("agent: asking the guest for {monitors:?}");
                 self.agent.request_monitors(&monitors);
                 self.flush_agent().await?;
             }
             Command::Close => return Err(Error::Closed),
-            // View only, and the seam's own switch has already stopped most of
-            // this: what gets here is a pointer that was in flight.
+            // View only. The app already stops sending input, so what arrives
+            // here was in flight when it was turned on.
             _ => {
                 let _ = handler;
             }
@@ -1004,8 +993,9 @@ impl Session<'_> {
         Ok(())
     }
 
-    /// Presses and releases for whatever changed in the button mask, since
-    /// SPICE has a message per transition where the seam has a state.
+    /// Sends a press or release for each button that changed in the mask,
+    /// since SPICE has a message per transition where the backend API passes
+    /// the button state.
     async fn mouse_buttons(&mut self, mask: i32) -> Result<()> {
         let wanted = buttons_of(mask);
         for bit in 0..BUTTONS {
@@ -1034,15 +1024,14 @@ impl Session<'_> {
     async fn key_down(&mut self, keysym: u32, id: i64) -> Result<()> {
         let Some(key) = keymap::scancode(keysym) else {
             // There is no Unicode key event in this protocol, so a character
-            // with no place on a US keyboard is not sent rather than sent
-            // wrongly.
-            // At trace: a keysym is what was typed, and a log is no place
-            // for that.
+            // with no place on a US keyboard is dropped rather than sent
+            // wrongly. Logged at trace only, since the keysym reveals what was
+            // typed.
             log::trace!("no scancode for keysym {keysym:#x}");
             return Ok(());
         };
-        // Auto-repeat is a second press of a key already down, which is what
-        // the far end wants and what must not put a second Shift under it.
+        // Auto-repeat is a second press of a key already down. The guest
+        // expects it, but it must not press Shift again.
         let repeat = self.keys.insert(id, key).is_some();
         if let Key::Scancode { shift: true, .. } = key
             && !self.shift_held
@@ -1073,7 +1062,7 @@ impl Session<'_> {
         Ok(())
     }
 
-    /// Let go of everything this session still has down at the far end: a
+    /// Releases everything this session still holds down on the guest: a
     /// screen taken away mid-chord, an event stream that stopped between a
     /// press and its release.
     async fn release_all_keys(&mut self) -> Result<()> {
@@ -1106,11 +1095,10 @@ impl Session<'_> {
 
     /// The session left the screen, or came back.
     ///
-    /// There is no pause message in SPICE, so what stands in for one is the
-    /// protocol's own flow control: the server stops after a window of
-    /// unacknowledged messages, so a session nobody is looking at stops
-    /// acknowledging and the pixels stop. What is already in flight still
-    /// arrives, which is the window and no more.
+    /// There is no pause message in SPICE, so the protocol's flow control
+    /// stands in for one: the server stops after a window of unacknowledged
+    /// messages, so an unfocused session stops acking and the picture stops.
+    /// What is already in flight still arrives, up to one window.
     async fn focus(&mut self, focused: bool) -> Result<()> {
         if self.focused == focused {
             return Ok(());
@@ -1139,9 +1127,6 @@ impl Session<'_> {
         let Some(channel) = self.channels.get_mut(&message.kind) else {
             return Ok(());
         };
-        // A borrow of the channel cannot be held across the send, since the
-        // send is a method on it: the count is taken here and the message goes
-        // out under the channel's own lock.
         channel.acknowledge(ack).await
     }
 
@@ -1177,8 +1162,8 @@ impl Session<'_> {
         };
     }
 
-    /// The connection panel's fixed rows, taken once at connect time — the ones
-    /// that change afterwards are filled in as they do.
+    /// The connection panel's fixed rows, set once at connect time; the rows
+    /// that change later are filled in as they change.
     fn describe(&self, config: &Config, connector: Option<&tls::Connector>) {
         let mut info = self.client.info.lock().unwrap();
         info.protocol = VERSION.into();
@@ -1189,10 +1174,10 @@ impl Session<'_> {
         info.security = if config.tls {
             "TLS, pinned · ticket".into()
         } else {
-            // The row this backend has to be honest in. On a plain port the
-            // ticket is encrypted to a key the server made for this connection
-            // and handed over in the clear a moment earlier, so it is proof
-            // against nothing that was listening.
+            // On a plain port the ticket is encrypted to a key the server made
+            // for this connection and sent in the clear a moment earlier. That
+            // protects it from a passive observer, but not from anyone able to
+            // replace the key.
             "None · ticket, in the clear".into()
         };
         if info.desktop_name.is_empty() {
@@ -1207,11 +1192,11 @@ const SHIFT: Key = Key::Scancode {
     shift: false,
 };
 
-/// The seam's button mask is RFB's, and SPICE's first five bits are the same
-/// five buttons in the same order — left, middle, right, wheel up, wheel down.
-/// RFB's buttons 8 and 9, a mouse's side buttons (back and forward), are
-/// SPICE's next two, side and extra; RFB's horizontal wheel (bits 5 and 6)
-/// has no place in this protocol and is dropped rather than sent as them.
+/// The backend API's button mask is RFB's, and SPICE's first five bits are the
+/// same five buttons in the same order: left, middle, right, wheel up, wheel
+/// down. RFB's buttons 8 and 9, a mouse's side buttons (back and forward), are
+/// SPICE's next two, side and extra. RFB's horizontal wheel (bits 5 and 6) has
+/// no equivalent in this protocol and is dropped.
 fn buttons_of(mask: i32) -> u16 {
     let mut buttons = (mask & 0x1f) as u16;
     if mask & 0x80 != 0 {
@@ -1275,14 +1260,13 @@ pub fn compression_of(name: &str) -> Option<u8> {
     })
 }
 
-/// The agent's request for a layout of `screens`, `id, x, y, width,
-/// height` each: the agent's message names no head, a head is its place in
-/// the list, so each screen goes at the place its id names and a place no
-/// screen takes is a head of no size, which the guest turns off. An id the
-/// guest has (`have`) is that head; an unknown or repeated one is a new head,
-/// at the lowest place neither list uses, which is RFB's rule for a new
-/// screen too. Past `max` heads, where the device has said how many it has,
-/// a screen has nowhere to go and is left out.
+/// The agent's request for a layout of `screens` (`id, x, y, width, height`
+/// each). The agent's message has no head ids: a head is its position in the
+/// list, so each screen goes at the position its id names, and an unused
+/// position is a zero-size head, which the guest turns off. An id the guest
+/// has (`have`) is that head; an unknown or repeated id is a new head at the
+/// lowest position neither list uses, as RFB does for a new screen. Past
+/// `max` heads, if the device has reported a maximum, a screen is left out.
 fn heads_for(screens: &[(u32, i32, i32, u32, u32)], have: &[u32], max: usize) -> Vec<(i32, i32, u32, u32)> {
     let mut placed: Vec<Option<(i32, i32, u32, u32)>> = Vec::new();
     let mut taken: Vec<u32> = Vec::new();
@@ -1326,8 +1310,8 @@ mod tests {
             heads_for(&[(1, 0, 0, 1024, 768), (0, 1024, 0, 1280, 800)], &[0, 1], 4),
             vec![(1024, 0, 1280, 800), (0, 0, 1024, 768)]
         );
-        // A new screen is the lowest head nobody has; one of the guest's
-        // left out is a head of no size, which turns it off.
+        // A new screen is the lowest unused head; one of the guest's heads
+        // left out is a zero-size head, which turns it off.
         assert_eq!(
             heads_for(&[(1, 0, 0, 1280, 800), (u32::MAX, 1280, 0, 800, 600)], &[0, 1], 4),
             vec![(0, 0, 0, 0), (0, 0, 1280, 800), (1280, 0, 800, 600)]

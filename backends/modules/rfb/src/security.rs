@@ -15,31 +15,32 @@ pub const SEC_NONE: u8 = 1;
 pub const SEC_VNC_AUTH: u8 = 2;
 pub const SEC_VENCRYPT: u8 = 19;
 
-/// VeNCrypt's sub-types, of which we speak the X.509 half.
+/// VeNCrypt's sub-types, of which this client supports the X.509 ones.
 ///
-/// The other half — 257 `TLSNone`, 258 `TLSVnc`, 259 `TLSPlain` — is
-/// **anonymous** TLS: a Diffie-Hellman exchange with no certificate at all.
-/// The other two VNC clients here offer them and ask about them; this one
-/// cannot, and the reason is the stack rather than the position.
+/// The others (257 `TLSNone`, 258 `TLSVnc`, 259 `TLSPlain`) are **anonymous**
+/// TLS: a Diffie-Hellman exchange with no certificate at all. The libvncclient
+/// and TigerVNC backends offer them and ask the user about them; this one
+/// can't, because of its TLS library rather than by choice.
 ///
 /// A gnutls server offering an anonymous sub-type answers a ClientHello with
-/// `TLS_ECDH_anon_WITH_AES_256_CBC_SHA` and nothing else: measured against
+/// `TLS_ECDH_anon_WITH_AES_256_CBC_SHA` and nothing else (measured against
 /// TigerVNC 1.15, whose `+ANON-ECDH:+ANON-DH` leaves the GCM anon suites
-/// unreachable, and it drops the connection outright if the offer contains a
+/// unreachable), and drops the connection outright if the offer contains a
 /// certificate suite it has no credentials for. `rustls` has no anonymous key
 /// exchange (`KeyExchangeAlgorithm` is ECDHE or DHE), no CBC MAC-then-encrypt
 /// suite by policy, and a TLS 1.2 client that reaches `ExpectCertificate`
-/// whatever was agreed. So this is a second TLS library or a TLS 1.2 written
-/// by hand, for a case the two borrowed clients already cover.
+/// whatever was agreed. Supporting them would take a second TLS library or a
+/// hand-written TLS 1.2, for a case the libvncclient and TigerVNC backends
+/// already cover.
 ///
-/// And there would still be nothing to pin. Anonymous TLS encrypts the line
-/// and proves nothing about who is at the end of it, so a man in the middle is
-/// undetectable by construction.
+/// And there would still be nothing to pin. Anonymous TLS encrypts the
+/// connection but proves nothing about the far end, so a man in the middle is
+/// undetectable by design.
 pub const VENCRYPT_X509_NONE: u32 = 260;
 pub const VENCRYPT_X509_VNC: u32 = 261;
 pub const VENCRYPT_X509_PLAIN: u32 = 262;
 
-/// What a connection is willing to accept.
+/// What a connection accepts.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Security {
     /// TLS where the server offers it, and a plain connection where it does not.
@@ -47,12 +48,12 @@ pub enum Security {
     Prefer,
     /// TLS or nothing.
     Require,
-    /// Never TLS — for a link that is already private, or a server whose
+    /// Never TLS: for a link that is already private, or a server whose
     /// certificate is more trouble than the LAN it is on.
     Plain,
 }
 
-/// `RFB 003.00x`, as a pair, because three of them behave differently.
+/// `RFB 003.00x` as a pair, because the three versions behave differently.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct Version(pub u8, pub u8);
 
@@ -66,7 +67,7 @@ impl Version {
     }
 }
 
-/// Agree a version: the highest both ends know, floored at 3.3.
+/// Agrees a version: the highest both ends know, at least 3.3.
 pub fn handshake_version(r: &mut Reader<impl Read>, w: &mut Writer<impl Write>) -> Result<Version> {
     let mut buf = [0u8; 12];
     r.read_exact(&mut buf)?;
@@ -90,32 +91,30 @@ pub fn handshake_version(r: &mut Reader<impl Read>, w: &mut Writer<impl Write>) 
     Ok(agreed)
 }
 
-/// What the server will accept, and what we did about it.
+/// The security type negotiated with the server.
 pub struct Chosen {
     /// For the connection panel: "None", "VNC password (VeNCrypt)".
     pub description: String,
 }
 
-/// The two questions a handshake may have to put to a person.
+/// The two questions a handshake may need to ask the user.
 ///
-/// Both are asked lazily, and that laziness is the whole design: either answer
-/// is allowed to take as long as somebody takes to read a dialog, because that
-/// is what is on the other side of it. The protocol thread simply sits here —
-/// which is also why nothing else may be waiting on this thread.
+/// Both are asked lazily, by design: either answer may take as long as the
+/// user takes to read a dialog. The protocol thread waits here, which is also
+/// why nothing else may be waiting on this thread.
 ///
 /// One trait rather than two closures because both end up at the same
-/// `Handler`, and two closures over one `&mut` is a thing Rust will not have.
+/// `Handler`, and Rust doesn't allow two closures over one `&mut`.
 pub trait Ask {
-    /// `needs_user` asks for a user name as well. VncAuth has no notion of one,
-    /// so a dialog that shows the field is asking for something nobody can
-    /// answer.
+    /// `needs_user` asks for a user name as well. VncAuth has no user name, so
+    /// a dialog showing the field would ask for something that can't be used.
     fn credentials(&mut self, needs_user: bool) -> Option<Credentials>;
 
-    /// The server's certificate fingerprint. `false` gives up the connection.
+    /// The server's certificate fingerprint. `false` abandons the connection.
     fn trust(&mut self, fingerprint: &str) -> bool;
 }
 
-/// Negotiate a security type, run it, and read the result.
+/// Negotiates a security type, runs it, and reads the result.
 pub fn handshake_security(
     wire: &mut Wire,
     version: Version,
@@ -165,10 +164,10 @@ pub fn handshake_security(
         }
     };
 
-    // 3.3 and 3.7 send no result for None at all; 3.8 always does, and is the
-    // only one that says why. VeNCrypt is never None as far as this rule is
-    // concerned — the result comes down the tunnel even when the sub-type
-    // inside it authenticated nobody.
+    // 3.3 and 3.7 send no result for None; 3.8 always does, and is the only
+    // one that gives a reason. VeNCrypt never counts as None for this rule: the
+    // result comes through the tunnel even when the sub-type inside it
+    // authenticated nothing.
     let expect_result = version >= Version::V3_8 || kind != SEC_NONE;
     if expect_result {
         let result = wire.r.u32()?;
@@ -192,11 +191,11 @@ pub fn handshake_security(
     Ok(Chosen { description })
 }
 
-/// Which of the offered types to take.
+/// Which of the offered types to use.
 ///
-/// VeNCrypt first wherever it is allowed, because the alternative to an
-/// encrypted session is a session in which the desktop and every keystroke are
-/// on the wire in the clear. `Security::Plain` is the way to say that is fine.
+/// VeNCrypt first wherever allowed, because the alternative to an encrypted
+/// session is one in which the desktop and every keystroke cross the network
+/// unencrypted. `Security::Plain` is how to accept that.
 fn choose(offered: &[u8], policy: Security) -> Result<u8> {
     let has = |t: u8| offered.contains(&t);
     if policy != Security::Plain && has(SEC_VENCRYPT) {
@@ -220,8 +219,8 @@ fn choose(offered: &[u8], policy: Security) -> Result<u8> {
     )))
 }
 
-/// VeNCrypt 0.2: agree a version, pick a sub-type, put TLS under it, and run
-/// whatever authentication the sub-type names inside the tunnel.
+/// VeNCrypt 0.2: agree a version, pick a sub-type, start TLS, and run the
+/// authentication the sub-type names inside the tunnel.
 fn vencrypt(wire: &mut Wire, host: &str, ask: &mut dyn Ask) -> Result<String> {
     let major = wire.r.u8()?;
     let minor = wire.r.u8()?;
@@ -248,8 +247,8 @@ fn vencrypt(wire: &mut Wire, host: &str, ask: &mut dyn Ask) -> Result<String> {
         offered.push(wire.r.u32()?);
     }
     // X509Vnc before X509Plain before X509None: prefer the sub-type that
-    // authenticates *us* to the server, since a tunnel proves who the server is
-    // and says nothing about who is using it.
+    // authenticates *this client* to the server, since a tunnel proves the
+    // server's identity and says nothing about the client's.
     let chosen = *[VENCRYPT_X509_VNC, VENCRYPT_X509_PLAIN, VENCRYPT_X509_NONE]
         .iter()
         .find(|t| offered.contains(t))
@@ -263,15 +262,15 @@ fn vencrypt(wire: &mut Wire, host: &str, ask: &mut dyn Ask) -> Result<String> {
     wire.w.write_all(&chosen.to_be_bytes())?;
     wire.w.flush()?;
 
-    // One plain byte says the sub-type was accepted — and it arrives *after*
-    // our ClientHello, which is the single most surprising thing in this
-    // protocol. TigerVNC writes it into a buffered stream and then goes
-    // straight into the TLS handshake, so nothing flushes it until the server
-    // has something to say; a client that waits for it before starting TLS
-    // waits for ever, and one that never reads it feeds `01` to its TLS parser
-    // and is told the record is corrupt. Measured against the server rather
-    // than read out of a specification: a refused sub-type is not a zero here,
-    // it is the connection closing.
+    // One plain byte says the sub-type was accepted, and it arrives *after*
+    // our ClientHello, which is the most surprising thing in this protocol.
+    // TigerVNC writes it into a buffered stream and goes straight into the TLS
+    // handshake, so nothing flushes it until the server has something to send;
+    // a client that waits for it before starting TLS waits forever, and one
+    // that never reads it feeds `01` to its TLS parser and gets a
+    // corrupt-record error. Measured against the server rather than taken
+    // from a specification: a refused sub-type is not a zero here, but the
+    // connection closing.
     wire.start_tls(host, &mut |socket| {
         let mut ack = [0u8; 1];
         socket.read_exact(&mut ack)?;
@@ -315,8 +314,8 @@ fn vnc_auth_exchange(wire: &mut Wire, ask: &mut dyn Ask) -> Result<()> {
     Ok(())
 }
 
-/// VeNCrypt's `Plain`: a user name and a password, in the clear — which is why
-/// this client will only run it inside a tunnel it has already pinned.
+/// VeNCrypt's `Plain`: a user name and a password in the clear, which is why
+/// this client only runs it inside a tunnel it has already pinned.
 fn plain_exchange(wire: &mut Wire, ask: &mut dyn Ask) -> Result<()> {
     let credentials = ask.credentials(true).ok_or(Error::Cancelled)?;
     let user = to_latin1(&credentials.user);
@@ -330,11 +329,11 @@ fn plain_exchange(wire: &mut Wire, ask: &mut dyn Ask) -> Result<()> {
 }
 
 /// VncAuth: DES-ECB over the 16-byte challenge, keyed with the first eight
-/// bytes of the password — with every byte's *bits reversed*.
+/// bytes of the password, with every byte's *bits reversed*.
 ///
-/// That reversal is not a quirk of ours to explain away: it is what the
-/// original AT&T implementation did, by feeding a DES routine that took the key
-/// least-significant-bit first, and every server on earth now matches it.
+/// The reversal comes from the original AT&T implementation, which fed a DES
+/// routine that took the key least significant bit first, and every server
+/// now matches it.
 fn vnc_auth(password: &str, challenge: &[u8; 16]) -> [u8; 16] {
     let mut key = [0u8; 8];
     for (slot, byte) in key.iter_mut().zip(crate::proto::to_latin1(password)) {
@@ -353,8 +352,8 @@ fn vnc_auth(password: &str, challenge: &[u8; 16]) -> [u8; 16] {
 mod tests {
     use super::*;
 
-    /// Password "test", all-zero challenge, checked against an implementation
-    /// that is not ours:
+    /// Password "test", all-zero challenge, checked against another
+    /// implementation:
     ///
     /// ```text
     /// $ printf '\0\0\0\0\0\0\0\0' | openssl enc -des-ecb -K 2ea6ce2e00000000 \
@@ -362,9 +361,9 @@ mod tests {
     /// 77dfa81c9fd7b407
     /// ```
     ///
-    /// `2ea6ce2e` is `test` with each byte's bits reversed, which is the only
-    /// part of this that is VNC's rather than DES's — so the test is really of
-    /// [`u8::reverse_bits`] being applied at all, and openssl supplies the rest.
+    /// `2ea6ce2e` is `test` with each byte's bits reversed, the only part of
+    /// this that is VNC's rather than DES's, so the test really checks that
+    /// [`u8::reverse_bits`] is applied, and openssl supplies the rest.
     #[test]
     fn vnc_auth_known_answer() {
         let out = vnc_auth("test", &[0u8; 16]);

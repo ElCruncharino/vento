@@ -4,12 +4,8 @@
 //! libavcodec through `runtime::media::video`, against clips whose picture is
 //! known: the colour that comes out, which rows a frame says it moved, and that
 //! the rows it does not name are left alone. How the clips were made, and what
-//! is in them, is `fixtures/generate.sh`.
-//!
-//! Each clip is fed the way a protocol delivers it — one encoded frame per
-//! call — so IVF is walked by its frame headers and Annex B is cut at its
-//! access unit delimiters, rather than handed to a demuxer that would do the
-//! framing a protocol does not.
+//! is in them, is `fixtures/generate.sh`. Each clip is fed one encoded frame
+//! per call, as `clips` cuts it.
 
 #![cfg(not(target_os = "android"))]
 
@@ -33,7 +29,7 @@ const UNTOUCHED: u32 = 0x0012_3456;
 /// How far a pixel may be from the colour it was encoded as, per channel: the
 /// encoders are lossy and the round trip through 8-bit YUV is not exact. Two
 /// tolerances, because the mean over a flat area is much closer than any one
-/// pixel, and is what tells the right matrix from the wrong one — those are
+/// pixel, and is what tells the right matrix from the wrong one: those are
 /// four to six levels apart on these colours.
 const PIXEL: i32 = 10;
 const MEAN: f64 = 2.5;
@@ -132,7 +128,7 @@ fn clip(codec: Codec, frames: &[&[u8]]) {
     assert_colour(&out, W, 0..H, 0..W, BACKGROUND, name);
 
     // The second moves the band, and whatever around it the encoder chose to
-    // touch up inside the same block — but nothing in the bottom half, which
+    // touch up inside the same block, but nothing in the bottom half, which
     // no block of the band's reaches; and whatever it does not name is left as
     // it was.
     out.fill(UNTOUCHED);
@@ -158,8 +154,8 @@ fn clip(codec: Codec, frames: &[&[u8]]) {
     );
 
     // The third repeats the second. A row marked on the way in is converted
-    // whether it moved or not — which is how a caller whose buffer is out of
-    // step asks for it — and still nothing unmarked is written.
+    // whether it moved or not (which is how a caller whose buffer is out of
+    // step asks for it), and still nothing unmarked is written.
     out.fill(UNTOUCHED);
     changed.reset(H);
     changed.mark(H - 4, 0, W);
@@ -192,7 +188,7 @@ fn vp9_untagged_is_bt601() {
     clip(Codec::Vp9, &ivf(&fixture("vp9-untagged.ivf")));
 }
 
-/// 4:4:4, which on hardware is software's: `hardware.rs`.
+/// 4:4:4, which VAAPI leaves to software (see `hardware.rs`).
 #[test]
 fn av1_444() {
     clip(Codec::Av1, &ivf(&fixture("av1-444.ivf")));
@@ -229,7 +225,7 @@ fn h265() {
 }
 
 /// The same picture as BT.601 full range, which is a long way from BT.709
-/// limited — so a decoder that ignored the stream's tags fails on colour.
+/// limited, so a decoder that ignored the stream's tags fails on colour.
 #[test]
 fn h264_bt601_full_range() {
     clip(
@@ -238,9 +234,9 @@ fn h264_bt601_full_range() {
     );
 }
 
-/// Ten bits a sample, narrowed to eight on the way: a High 10 stream is
-/// something a peer's encoder can be set to, and refused it was a session
-/// with no picture from then on.
+/// Ten bits per sample, narrowed to eight on the way: a peer's encoder can be
+/// set to send High 10, and refusing it would leave the session with no
+/// picture from then on.
 #[test]
 fn h264_high10() {
     clip(
@@ -304,8 +300,8 @@ fn a_picture_of_another_size_writes_what_overlaps() {
     }
 }
 
-/// A frame that is not one is refused rather than taken for a picture, and
-/// the decoder is still a decoder afterwards.
+/// Garbage is refused rather than taken for a picture, and the decoder still
+/// decodes afterwards.
 #[test]
 fn garbage_is_no_picture() {
     let bytes = fixture("h264.h264");

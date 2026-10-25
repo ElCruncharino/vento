@@ -4,42 +4,42 @@
 //! The far end's sound, where a protocol sends it: the format a stream is
 //! in, what a platform's output promises, and the policy between the two.
 //!
-//! A protocol asks for a stream and does not know whose it is, as with
-//! [`video::Decoders`](crate::media::video::Decoders): what it holds is an
-//! [`Outputs`], handed to it by whoever started the session — AAudio in
+//! A protocol asks for a stream without knowing which implementation it gets,
+//! as with [`video::Decoders`](crate::media::video::Decoders): what it holds
+//! is an [`Outputs`], passed to it by the session's creator (AAudio in
 //! `platform_android`, PipeWire or ALSA in `platform_linux`, [`NoOutputs`]
-//! for a test with neither. Before this each backend that had sound had a sink of its
-//! own on each platform (TigerVNC's ALSA and AAudio ones, FreeRDP's
-//! PulseAudio and OpenSL ES ones), each with its own idea of how much to
-//! queue, and none that a window could mute.
+//! for a test with neither). Before this each backend that had sound had a
+//! sink of its own on each platform (TigerVNC's ALSA and AAudio ones,
+//! FreeRDP's PulseAudio and OpenSL ES ones), each with its own idea of how
+//! much to queue, and none that a window could mute.
 //!
 //! What every platform does alike is here, in [`Queue`]: a protocol thread
-//! writes into it and never waits, and the platform's device drains it on a
-//! thread of the device's own. The queue keeps as little in front of the
-//! device as keeps it from running dry — a period of the device's, what the
-//! far end's own rhythm of writes has needed of late, and a margin that
-//! starts higher and comes down over a stream's first clean seconds, grows
-//! when the far end's sound turns out later than that and shrinks back
-//! after a long while of it not — and the device's own buffer is behind
-//! that; never more than [`LIMIT`] together — past that the queue drops the
-//! oldest, so that a burst or a stall costs a skip rather than a lag that
-//! grows for the rest of the session — and the queue plays silence when it
-//! runs dry until it has its target again. The gain and the mute are applied
-//! as the device takes the samples, so a mute is heard at once rather than
-//! after what is queued, and [`Controls`] can be set from any thread: a
-//! window's toolbar, while the protocol thread writes.
+//! writes into it and never waits, and the platform's device drains it on the
+//! device's own thread. The queue keeps as little in front of the device as
+//! keeps it from running dry: a period of the device's, what the far end's
+//! own rhythm of writes has needed recently, and a margin that starts higher
+//! and comes down over a stream's first clean seconds, grows when the far
+//! end's sound arrives later than that and shrinks back after a long while
+//! without. The device's own buffer is behind that, and the two together
+//! never hold more than [`LIMIT`]: past that the queue drops the oldest, so
+//! that a burst or a stall costs a skip rather than a lag that grows for the
+//! rest of the session. When it runs dry the queue plays silence until it has
+//! its target again. The gain and the mute are applied as the device takes
+//! the samples, so a mute is heard at once rather than after what is queued,
+//! and [`Controls`] can be set from any thread (a window's toolbar, while the
+//! protocol thread writes).
 //!
-//! The same controls carry the session's sound switch ([`Sound`]): what
-//! the backend has said the far end can be asked — to stop sending its
-//! sound and to send it again ([`Switch::Enable`]), where the protocol has
-//! a message for that, or nothing, so that the switch only mutes it here
-//! ([`Switch::Mute`]) — said as soon as the protocol says the far end may
-//! send any, so that a window shows the switch from then on rather than
-//! from the first sound.
+//! The same controls carry the session's sound switch ([`Sound`]): what the
+//! backend has said the far end can be asked, which is to stop sending its
+//! sound and to send it again ([`Switch::Enable`]) where the protocol has a
+//! message for that, or nothing, so that the switch only mutes it here
+//! ([`Switch::Mute`]). The backend says it as soon as the protocol says the
+//! far end may send any, so that a window shows the switch from then on
+//! rather than from the first sound.
 //!
 //! A platform's half is small for that: [`Outputs::device`] starts whatever
-//! drains a queue — opening the device where opening takes the time rather
-//! than on the caller's thread — and [`Outputs::open`] builds the
+//! drains a queue (opening the device where opening takes the time, rather
+//! than on the caller's thread), and [`Outputs::open`] builds the
 //! [`Stream`] a protocol writes to around it. Where the far end's sound
 //! arrives compressed, the platform's decoders for it ([`decode`]) are the
 //! same object's, [`Outputs::decoders`]: one thing a session is handed for
@@ -67,7 +67,7 @@ use decode::Codec;
 
 /// The least margin a queue keeps: what it keeps beyond the device's period
 /// and what the far end's rhythm has needed of late ([`Queue`] works those
-/// out), for a write later than any of late. Measured on an idle machine
+/// out), for a write later than any recent one. Measured on an idle machine
 /// (`linux/claude-notes.md`'s Sound paragraph has the rest): minute-long
 /// sessions to Windows and SPICE ran dry with no margin in three of four and
 /// with 5 ms in one of four; with 10 ms, one of seventeen sessions across the
@@ -117,8 +117,8 @@ pub const MARGIN_STEP: Duration = Duration::from_millis(5);
 pub const CLEAN: Duration = Duration::from_secs(30);
 
 /// How much sound the queue and the device hold together before the queue
-/// drops the oldest, back down to its target — or twice the target, for a
-/// far end whose own rhythm needs more than half of this (Windows' PCM).
+/// drops the oldest, back down to its target (or twice the target, for a
+/// far end whose own rhythm needs more than half of this: Windows' PCM).
 /// TigerVNC's viewer kept a second, and a stream that ran even slightly
 /// faster than the device lagged further behind the picture for as long as
 /// it ran.
@@ -186,9 +186,9 @@ impl Gain {
     }
 }
 
-/// What a session's sound is played at, which whoever holds the session can
+/// What a session's sound is played at, which the session's holder can
 /// change while it plays, from any thread: a gain over every stream, a mute,
-/// and whether anything is playing at all — and what the far end can be
+/// and whether anything is playing at all; and what the far end can be
 /// asked about its sound, which the backend says ([`offer_mute`],
 /// [`offer_enable`]) and a window's switch sets ([`set_enabled`]).
 ///
@@ -305,14 +305,14 @@ impl Sound {
     }
 
     /// A debug overlay's line for the sound, where the session has a switch:
-    /// what plays — what is queued in front of the device, what the queue
+    /// what plays (what is queued in front of the device, what the queue
     /// aims to keep there and the margin in that, and the device's own
-    /// buffer (named for the output where the platform says which, as
-    /// "PipeWire 11 ms"), the queue and the device together how far behind
-    /// what arrived it is heard, and what the queue has had to do about the
-    /// far end's timing — or that nothing does; and DISABLED while the far
+    /// buffer, named for the output where the platform says which, as
+    /// "PipeWire 11 ms"; the queue and the device together are how far behind
+    /// what arrived it is heard), and what the queue has had to do about the
+    /// far end's timing, or that nothing plays; and DISABLED while the far
     /// end is asked not to send its sound, MUTED while it is muted here. Both
-    /// clients' overlays say it in these words.
+    /// clients' overlays use this line.
     pub fn line(&self, playback: Option<Playback>) -> Option<String> {
         self.switch?;
         let what = match playback {
@@ -474,8 +474,8 @@ impl Controls {
 
     /// The backend's: the far end may send sound from now on, and nothing
     /// can ask it to stop during the session, so the session's switch is a
-    /// mute ([`Switch::Mute`]). Said as early as the protocol says it — an
-    /// RDP server's list of formats, of which this end plays one — so that
+    /// mute ([`Switch::Mute`]). Said as early as the protocol says it (an
+    /// RDP server's list of formats, of which this end plays one), so that
     /// the switch is there before the first sound rather than with it.
     pub fn offer_mute(&self) {
         *self.enable.lock().unwrap() = None;
@@ -486,7 +486,7 @@ impl Controls {
     /// and to send it again ([`Switch::Enable`]); `enabled` is whether it is
     /// asked to now. `enable` asks it, and is called whenever the session's
     /// switch is turned ([`set_enabled`](Controls::set_enabled)), on that
-    /// thread — a window's — so it hands the question to the protocol's own
+    /// thread (a window's), so it hands the question to the protocol's own
     /// thread and returns, and never calls into these controls. Said again,
     /// it replaces what was said before, as when a backend finds its far end
     /// would not do what it was asked.
@@ -495,9 +495,9 @@ impl Controls {
         self.set_offer(Some(Switch::Enable), enabled);
     }
 
-    /// The backend's: the far end will send no more sound in this session —
-    /// its sound's channel has ended, its permission is gone, the session is
-    /// over — so there is no switch. Once this returns the `enable` handed
+    /// The backend's: the far end will send no more sound in this session
+    /// (its sound's channel has ended, its permission is gone, the session is
+    /// over), so there is no switch. Once this returns the `enable` handed
     /// to [`offer_enable`](Controls::offer_enable) is not called again, and
     /// is dropped: a backend withdraws before what it captured goes away.
     pub fn withdraw(&self) {
@@ -515,11 +515,11 @@ impl Controls {
         self.changed();
     }
 
-    /// The person's switch: asks the far end to send its sound (`on`) or
+    /// The user's switch: asks the far end to send its sound (`on`) or
     /// to stop, where the backend offered that ([`Switch::Enable`]). The
     /// backend is asked only for a change; whether it is (a switch that
     /// does something) is the answer. What was queued plays out or is
-    /// dropped as the backend sees fit — every backend here closes its
+    /// dropped as the backend sees fit; every backend here closes its
     /// stream at once when told to stop.
     pub fn set_enabled(&self, on: bool) -> bool {
         {
@@ -543,8 +543,8 @@ impl Controls {
     }
 
     /// The session's sound as a switch shows it. A stream playing with no
-    /// switch offered — a backend that never said — is a mute switch, the
-    /// one any sound can have.
+    /// switch offered (a backend that never said) is a mute switch, the one
+    /// any sound can have.
     pub fn sound(&self) -> Sound {
         let playing = self.playing();
         let offer = self.offer.lock().unwrap();
@@ -577,7 +577,7 @@ impl Controls {
         })
     }
 
-    /// What the far end's sound arrives as, said by whoever decodes it
+    /// What the far end's sound arrives as, said by its decoder's owner
     /// (`api`'s table for a C backend, at a decoder's opening and
     /// closing): for [`playback`](Controls::playback)'s words, since the
     /// stream it plays on is handed samples and never sees the codec.
@@ -586,9 +586,9 @@ impl Controls {
     }
 
     /// `listener` is told the session's [`Sound`] whenever any of it
-    /// changes — a stream's first write or last closing on the protocol
+    /// changes (a stream's first write or last closing on the protocol
     /// thread, an offer from the backend, the switch or the mute from a
-    /// window — on the thread that changed it, so it must not block, and
+    /// window), on the thread that changed it, so it must not block, and
     /// must not set a listener here. The session hands over one that says
     /// it as an event. Replaces any listener before it.
     pub fn on_sound(&self, listener: Box<dyn Fn(Sound) + Send + Sync>) {
@@ -636,9 +636,9 @@ impl Default for Controls {
 
 /// A platform's side of one stream: whatever drains its queue into the
 /// platform's output, for as long as it is held. Dropping it stops the
-/// device **without waiting for it** — a device still opening, or one
+/// device **without waiting for it** (a device still opening, or one
 /// blocked on a sound server that has gone away, closes itself on its own
-/// thread when it gets there — since the stream is dropped on the protocol
+/// thread when it gets there), since the stream is dropped on the protocol
 /// thread, which must not wait on sound.
 pub trait Device: Send {
     /// How long a sample the device has taken from the queue takes to be
@@ -653,7 +653,7 @@ pub trait Device: Send {
 /// session's streams share.
 ///
 /// Shared between the protocol thread, which opens and writes streams, and
-/// whoever holds the session, which sets the controls.
+/// the session's holder, which sets the controls.
 pub trait Outputs: Send + Sync {
     /// The session's controls, which every stream opened here plays under.
     fn controls(&self) -> &Arc<Controls>;
@@ -662,7 +662,7 @@ pub trait Outputs: Send + Sync {
     /// keeps it draining. Must not wait on the device: opening it, where
     /// that talks to a sound server, is done on a thread of the device's
     /// own, and until it is open the queue fills to its limit and drops the
-    /// oldest like any other queue nobody is draining. An error is a platform
+    /// oldest like any other undrained queue. An error is a platform
     /// that cannot even start (no thread), and is a stream with no sound.
     fn device(&self, queue: Arc<Queue>) -> Result<Box<dyn Device>, String>;
 
@@ -673,7 +673,7 @@ pub trait Outputs: Send + Sync {
         None
     }
 
-    /// A stream in `format`, writable at once — whether or not the device
+    /// A stream in `format`, writable at once, whether or not the device
     /// behind it has opened yet, or ever does. `None` where the format is
     /// not one [`Format::new`] takes, or the platform has no output.
     fn open(&self, format: Format) -> Option<Stream> {
@@ -907,7 +907,7 @@ mod tests {
 
         let mut a = outputs.open(format).unwrap();
         let mut b = outputs.open(format).unwrap();
-        // Open is not playing: a stream nobody writes to is no sound.
+        // Open is not playing: an unwritten stream is no sound.
         assert!(!outputs.controls().playing());
         a.write(&[1, 2]);
         b.write_bytes(&[0, 1]);

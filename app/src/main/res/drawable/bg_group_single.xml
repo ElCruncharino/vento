@@ -4,8 +4,7 @@
     SPDX-License-Identifier: GPL-3.0-or-later
 
     A row that is a group of one: every corner large. The other three are the
-    same drawable with a different pair of ends — see RowGroups, which is what
-    chooses between them.
+    same drawable with different ends; RowGroups chooses between them.
 -->
 <ripple xmlns:android="http://schemas.android.com/apk/res/android"
     android:color="?attr/colorControlHighlight">

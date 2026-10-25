@@ -3,19 +3,19 @@
 
 //! The TLS port, pinned rather than verified.
 //!
-//! `runtime::tls::pinning`'s verifier, which is the same one the RFB and RDP
-//! clients use and the whole of what "trusted" means in this app: nothing
-//! vouches for a hypervisor's certificate, so the identity is the key and the
-//! app remembers it per address. What is different here is only that the
-//! handshake is async, so it is `tokio-rustls` rather than the blocking
-//! connection `runtime::tls::stream` wraps.
+//! `runtime::tls::pinning`'s verifier, the same one the RFB and RDP clients
+//! use, and the whole of what "trusted" means in this app: no CA vouches for a
+//! hypervisor's certificate, so the identity is the key, and the app remembers
+//! it per address. The only difference here is that the handshake is async,
+//! so it uses `tokio-rustls` rather than the blocking connection
+//! `runtime::tls::stream` wraps.
 //!
 //! **A plain SPICE port and a TLS SPICE port are different ports**, not a
-//! negotiation, so whether a session is encrypted is a fact about what somebody
-//! typed rather than about what the server offered. It matters more here than
+//! negotiation, so whether a session is encrypted depends on the connection's
+//! settings rather than on what the server offered. It matters more here than
 //! elsewhere: on the plain port the ticket is encrypted to a key the server
-//! generates per connection and hands over in the clear immediately before, so
-//! anyone on the path reads the password.
+//! generates per connection and sends in the clear immediately before, so
+//! anyone able to replace that key on the path reads the password.
 
 use crate::error::{Error, Result};
 use std::sync::{Arc, Mutex};
@@ -24,7 +24,8 @@ use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 use tokio_rustls::client::TlsStream;
 
-/// A configured connector, and the certificate the session's person accepted.
+/// A configured connector, and the certificate the user accepted for the
+/// session.
 pub struct Connector {
     connector: TlsConnector,
     host: String,
@@ -40,13 +41,12 @@ pub struct Connector {
 impl Connector {
     pub fn new(host: &str) -> Result<Connector> {
         // The protocol crate takes its signature algorithms from the
-        // process-wide provider rather than naming one, which is what its patch
-        // is about — so this install is what decides that both halves of the
-        // session use `ring`.
+        // process-wide provider rather than naming one (the point of its
+        // patch), so this install makes both halves of the session use `ring`.
         let _ = rustls::crypto::ring::default_provider().install_default();
-        // The verifier is not asked what it saw: it remembers the last
-        // handshake of the four or five this connector makes, where each
-        // connection's own peer certificate is that connection's.
+        // The verifier is not asked what it saw: it remembers only the last
+        // of the four or five handshakes this connector makes, whereas each
+        // connection's own peer certificate belongs to that connection.
         let (config, _) = pinning::client_config().map_err(|e| Error::Protocol(e.to_string()))?;
         Ok(Connector {
             connector: TlsConnector::from(Arc::new(config)),
@@ -57,7 +57,7 @@ impl Connector {
     }
 
     /// The handshake, and the SHA-256 of the leaf certificate it presented:
-    /// what the app pins, and what a person is asked about when it changes.
+    /// what the app pins, and what the user is asked about when it changes.
     pub async fn connect(&self, tcp: TcpStream) -> Result<(TlsStream<TcpStream>, Option<String>)> {
         let name = pinning::server_name(&self.host);
         let stream = self.connector.connect(name, tcp).await?;
@@ -73,17 +73,16 @@ impl Connector {
     /// Whether a connection that presented `fingerprint` may carry the session
     /// on, before its ticket goes out.
     ///
-    /// The session's first channel asks `trust`, and what it accepts is
-    /// remembered. Every channel after it — the other three, the sound
+    /// The session's first channel asks `trust`, and the fingerprint it
+    /// accepts is remembered. Every later channel (the other three, the sound
     /// channel opened later, and the main channel dialled again after a
-    /// refused ticket — reaches the same server moments later and is not
-    /// asked about again, so it must present that same certificate: one that
-    /// is different is refused without a question, since the person was asked
-    /// about one server and a channel that reaches another is not it (and its
-    /// ticket would go to whoever that is).
+    /// refused ticket) reaches the same server moments later without asking
+    /// again, so it must present the same certificate. A different one is
+    /// refused without asking, since the user approved one server, and a
+    /// channel reaching another would send its ticket there.
     pub fn admit(&self, fingerprint: Option<&str>, trust: Option<&mut dyn FnMut(&str) -> bool>) -> Result<()> {
-        // rustls finishes no handshake without a server certificate, so this
-        // is not one of theirs.
+        // rustls completes no handshake without a server certificate, so
+        // this does not come from rustls.
         let Some(fingerprint) = fingerprint else {
             return Err(Error::Protocol("the TLS handshake presented no certificate".into()));
         };

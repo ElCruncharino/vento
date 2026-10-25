@@ -1,11 +1,11 @@
-// A keyboard the phone believes is real.
+// A keyboard the phone treats as real.
 //
 // Registers a USB HID keyboard on the device over uhid and drives it from HTTP,
 // so a script can hold a chord, toggle Num Lock and read the lock state back.
 // `adb shell input keyevent` cannot do any of that: it synthesises an event
 // with an empty metaState from a virtual device, so nothing that depends on a
 // lock, on a modifier being held, or on a key's own layout is reachable through
-// it. This is a real HID device as far as Android's input stack is concerned —
+// it. This is a real HID device as far as Android's input stack is concerned:
 // it has a KeyCharacterMap, it tracks its own lock state, and its left and
 // right modifiers are different keys.
 //
@@ -53,7 +53,7 @@ var (
 // keyboard and report 2 is a consumer control. Everything is one array field of
 // usages, and the keyboard's is 8 bits wide over the whole page rather than the
 // boot descriptor's 101, since F13-F24, the international keys and the
-// Japanese/Korean ones are the point of the exercise.
+// Japanese/Korean ones are what it is for.
 var descriptor = []byte{
 	0x05, 0x01, 0x09, 0x06, 0xA1, 0x01, // Generic Desktop / Keyboard / Application
 	0x85, 0x01, //   Report ID 1
@@ -83,10 +83,10 @@ var descriptor = []byte{
 
 // The consumer page as bit positions in report 2, in descriptor order.
 //
-// A bitmap of named usages rather than an array over the page, which is what it
-// was first: the kernel has no key for a usage it does not recognise, so an
-// array field over 0x000-0x29C becomes an absolute axis, and the device
-// arrives at Android as a keyboard, a stylus and a joystick at once.
+// A bitmap of named usages rather than an array over the page: the kernel has
+// no key for a usage it does not recognise, so an array field over 0x000-0x29C
+// becomes an absolute axis, and the device arrives at Android as a keyboard, a
+// stylus and a joystick at once.
 var consumer = map[string]uint{
 	"SCANNEXT": 0, "SCANPREV": 1, "STOP": 2, "EJECT": 3,
 	"PLAYPAUSE": 4, "MUTE": 5, "VOLUMEUP": 6, "VOLUMEDOWN": 7,
@@ -146,7 +146,7 @@ var keys = map[string]byte{
 	"RCTRL": 0xE4, "RSHIFT": 0xE5, "RALT": 0xE6, "RGUI": 0xE7,
 }
 
-// What somebody types rather than what the page calls it.
+// Common names for keys, mapped to the names above.
 var aliases = map[string]string{
 	"CTRL": "LCTRL", "SHIFT": "LSHIFT", "ALT": "LALT",
 	"GUI": "LGUI", "META": "LGUI", "SUPER": "LGUI", "WIN": "LGUI",
@@ -160,8 +160,8 @@ var aliases = map[string]string{
 // A phone carries ~170 per-device key layouts and key character maps, matched
 // on vendor and product, and one of them decides whether this is a keyboard at
 // all: Android reads the layout, asks it for the scancode behind `Q` and marks
-// the device alphabetic only if it has one. 18d1:4f80 — Google's own vendor id
-// and a plausible product — is `Vendor_18d1_Product_4f80.kl`, "Android Stylus",
+// the device alphabetic only if it has one. 18d1:4f80 (Google's own vendor id
+// and a plausible product) is `Vendor_18d1_Product_4f80.kl`, "Android Stylus",
 // under which the keyboard arrives as a non-alphabetic stylus, Caps Lock and
 // Num Lock are never tracked and the LEDs are never written. So the pair has to
 // be one nothing claims. pid.codes' 1209 is not allocated to anything on a
@@ -298,8 +298,8 @@ func parseKeys(s string) ([]byte, error) {
 		}
 		u, ok := keys[n]
 		if !ok {
-			// A raw usage as well as a name, so a key this table has never
-			// heard of is still reachable.
+			// A raw usage as well as a name, so a key missing from this table
+			// is still reachable.
 			if v, err := strconv.ParseUint(n, 0, 8); err == nil {
 				out = append(out, byte(v))
 				continue
@@ -314,8 +314,8 @@ func parseKeys(s string) ([]byte, error) {
 	return out, nil
 }
 
-// The hid command reports what the host wrote to the device — the LED report is
-// the one that matters here — as JSON objects on its stdout.
+// The hid command reports what the host wrote to the device (the LED report is
+// the one that matters here) as JSON objects on its stdout.
 func (k *keyboard) readOutputs(r io.Reader, verbose bool) {
 	dec := json.NewDecoder(r)
 	for {

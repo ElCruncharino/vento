@@ -4,11 +4,11 @@
 //! X11's stand-in for the keyboard shortcuts inhibitor: an active keyboard
 //! grab on the window while it has focus and a session takes input
 //! (connected, not view only, no prompt up) and the pointer is not on the
-//! toolbar, so the window manager's
-//! chords (Alt+Tab, Super+…) reach the far end.
+//! toolbar, so the window manager's chords (Alt+Tab, Super+…) reach the far
+//! end.
 //!
-//! It is sent over winit's own connection — the Xlib display from the raw
-//! handle, as XCB — because X reports a grabbed key only to the client that
+//! It is sent over winit's own connection (the Xlib display from the raw
+//! handle, as XCB) because X reports a grabbed key only to the client that
 //! grabbed it: a connection of our own would take every key away from
 //! winit. Xlib keeps owning the event queue; this only sends requests and
 //! waits for their replies, never reads events, which libxcb is safe for.
@@ -16,8 +16,8 @@
 //! `owner_events` on, winit keeps receiving every key on its window as an
 //! ordinary `KeyboardInput`.
 //!
-//! The grab can be refused — the window manager's Alt+Tab switcher or a
-//! menu holds the keyboard — and is then asked for again every
+//! The grab can be refused (the window manager's Alt+Tab switcher or a
+//! menu holds the keyboard), and is then asked for again every
 //! [`RETRY`] while it is still wanted; the overlay says why meanwhile.
 //! The way out of a grabbed window is the mouse: a click elsewhere has the
 //! window manager move the focus, and the focus-out ends the grab.
@@ -36,7 +36,7 @@
 //! And whether the window is viewable at all ([`Viewable`]): a window
 //! manager that unmaps a window's frame to put its workspace away (i3's
 //! workspaces not on any output and its scratchpad, Openbox's other
-//! desktops) tells the window nothing — the unmap is the frame's, X sends
+//! desktops) tells the window nothing: the unmap is the frame's, X sends
 //! no visibility event for a window that stops being viewable, and i3 sets
 //! `_NET_WM_STATE_HIDDEN` only on a tab that is not the active one. The
 //! server knows, though, and says so to a `GetWindowAttributes`, which
@@ -302,14 +302,14 @@ impl Drop for Keyboard {
 /// is made of raw motion. A barrier changes nothing of what is delivered:
 /// raw motion is the device's, measured before the barrier clamps the
 /// pointer, so a move into the edge still reaches the far end at its full
-/// length. They only hold relative motion — a warp passes, which is what the
+/// length. They only hold relative motion: a warp passes, which is what the
 /// centring and the restore are, and so does an absolute device, which
 /// relative mode cannot use anyway.
 ///
 /// Made over winit's connection like the keyboard grab, so they are gone
 /// with the process whatever becomes of it. XFixes 5 is needed, asked for on
 /// that connection (winit itself uses no XFixes); without it the capture
-/// works as before, unfenced.
+/// works unfenced.
 pub struct Fence {
     conn: XCBConnection,
     window: u32,
@@ -448,9 +448,9 @@ impl Drop for Fence {
 pub const ASK: Duration = Duration::from_secs(1);
 
 /// Asks the X server whether the window is viewable: mapped, and every
-/// window above it in the tree too. The window manager's frame unmapped —
-/// a workspace put away, i3's scratchpad, Openbox's other desktops — is
-/// what makes it not. Over winit's connection like the keyboard grab.
+/// window above it in the tree too. The window manager's frame unmapped (a
+/// workspace put away, i3's scratchpad, Openbox's other desktops) is what
+/// makes it not. Over winit's connection like the keyboard grab.
 pub struct Viewable {
     conn: XCBConnection,
     window: u32,
@@ -474,7 +474,7 @@ impl Viewable {
 /// What the window's viewability is taken to be: the last answer, and when
 /// the next one is due. A visibility event is the server's word that the
 /// window is viewable (it sends none for one that is not), so one ends an
-/// "unviewable" at once, without waiting for the next ask — a workspace
+/// "unviewable" at once, without waiting for the next ask: a workspace
 /// brought back is live the moment its frame is mapped.
 #[derive(Debug, Default)]
 pub struct Viewability {

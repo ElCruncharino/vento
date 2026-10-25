@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// The FreeRDP backend's probe: `vento_freerdp_config` from the command
-// line, over the body in `backends/platform/linux/probe`.
+// The FreeRDP backend's probe: fills `vento_freerdp_config` from the command
+// line and runs the shared probe in `backends/platform/linux/probe`.
 //
 //   vento_freerdp_probe HOST --trust --user proto --password protopass --out shot.ppm
 
@@ -102,13 +102,13 @@ int main(int argc, char **argv) {
     if (!config.address) {
         usage();
     }
-    /* The directory the session hands the library (vento/freerdp.h). Nothing
-       is written there — no known hosts, since every certificate goes to the
-       trust question and nowhere else — but it is made, as the app's is, so
-       that the probe's session is given what a real one is. */
+    /* The config directory passed to the library (vento/freerdp.h). Nothing
+       is written there (no known hosts, since every certificate goes to the
+       trust prompt), but it is created as the app's is, so the probe's
+       session gets what a real one does. */
     mkdir(config.config_path, 0700);
-    /* The user name and the password are asked for rather than given, so
-       that the probe exercises the question every real session asks. */
+    /* The user name and password are not in the config, so the probe answers
+       the credentials prompt (--user, --password) as a real session does. */
     printf("%s\n", vento_freerdp_version());
     return vento_probe_run(&probe, create, &config);
 }

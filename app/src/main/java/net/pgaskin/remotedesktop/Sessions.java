@@ -9,26 +9,26 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Every session that has been opened and not yet let go of, keyed by what it is
- * a session <em>of</em>.
+ * Every session that has been opened and not yet closed, keyed by its target.
  *
- * <p>There is one of these rather than one live session because a window is not
- * the connection: each session has a window of its own in the recents list, two
- * of them side by side in a split screen are both live, and a session with no
- * window at all is the ordinary case the foreground service exists for. What a
- * key names is a machine, so the same connection opened twice attaches to what
- * is already running instead of dialling it again.
+ * <p>A registry rather than a single live session because a window is not the
+ * connection: each session has its own window in the recents list, two side by
+ * side in split screen are both live, and a session with no window is the usual
+ * case the foreground service exists for. A key names a target, so opening the
+ * same connection twice attaches to the running session instead of
+ * reconnecting.
  *
- * <p>Main thread only. Everything that reaches it — a screen opening or
- * finishing, a state callback the seam has already posted — is there already.
+ * <p>Main thread only. Everything that calls it (a screen opening or
+ * finishing, a state callback the backend has already posted) runs there.
  */
 public final class Sessions {
 
     /**
-     * Told when the set changes or when anything in it changes what it says
-     * about itself. One notification for the lot: both listeners rebuild from
-     * the whole set anyway, and a per-session callback would mean the service
-     * subscribing and unsubscribing as sessions come and go.
+     * Called when the set changes or when a session in it changes state. One
+     * callback for the whole set: both watchers (the service and the home
+     * screen) rebuild from the whole set anyway, and a per-session callback
+     * would mean the service subscribing and unsubscribing as sessions come and
+     * go.
      */
     public interface Watcher {
         void sessionsChanged();
@@ -41,11 +41,10 @@ public final class Sessions {
     }
 
     /**
-     * What a session of a saved connection is keyed by, and what a session of a
-     * bare address is. Here rather than at either caller because the home
-     * screen asks whether a connection is live and the session screen answers
-     * to the same question, and two spellings of one key would be two
-     * screens quietly disagreeing.
+     * The key for a saved connection's session, and ({@link #keyForAddress})
+     * for an address without a saved connection. Defined here rather than at
+     * either caller because the home screen and the session screen both look
+     * up sessions by it, and must build it the same way.
      */
     public static String keyFor(String connectionId) {
         return "id:" + connectionId;
@@ -55,7 +54,7 @@ public final class Sessions {
         return "addr:" + address;
     }
 
-    /** Whatever is registered for {@code key}, alive or ended, or null. */
+    /** The session registered for {@code key}, alive or ended, or null. */
     public static Session byKey(String key) {
         return key == null ? null : live.get(key);
     }
@@ -66,9 +65,9 @@ public final class Sessions {
     }
 
     /**
-     * The ones still worth a notification: connected, or on their way there. A
-     * session that has ended stays registered until its screen lets go of it,
-     * so that the screen can go on showing the reason it stopped.
+     * The sessions that need a notification: connected, or connecting. A
+     * session that has ended stays registered until its screen closes it, so
+     * that the screen can keep showing the reason it stopped.
      */
     public static List<Session> alive() {
         final List<Session> out = new ArrayList<>(live.size());
@@ -92,8 +91,8 @@ public final class Sessions {
     }
 
     static void remove(Session s) {
-        // Only if it is still the one registered: closing a session that has
-        // already been replaced by a reconnect must not unregister the new one.
+        // Only if it is still the registered one: closing a session that a
+        // reconnect has already replaced must not unregister the new one.
         if (live.get(s.key()) == s) {
             live.remove(s.key());
         }
@@ -101,9 +100,9 @@ public final class Sessions {
     }
 
     /**
-     * The session timeout has been set, imported or reset, so every live
-     * session's deadline moves with it — including one already off screen for
-     * longer than the new answer, which closes now.
+     * The session timeout setting has been changed, imported or reset, so every
+     * session's deadline moves with it, including one already off screen for
+     * longer than the new timeout, which closes now.
      */
     public static void timeoutChanged() {
         for (Session s : all()) {

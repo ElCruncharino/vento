@@ -1,9 +1,8 @@
-# What the phone's Java is generated from: a host tool that writes the
-# sources a build's modules compile, out of `remotedesktop-api`, so that
-# what Rust says a backend is — its name, its options, the shape of its JNI
-# surface — is said once. Gradle runs it as a generated-source task
-# (`GenerateJavaTask` in `backends/buildSrc`); nothing it writes is kept in
-# the tree.
+# Generates the Android app's Java: a host tool that writes the sources each
+# module compiles from `remotedesktop-api`, so a backend's name, options and
+# JNI surface are defined once, in Rust. Gradle runs it as a generated-source
+# task (`GenerateJavaTask` in `backends/buildSrc`); its output is not checked
+# in.
 [package]
 name = "remotedesktop-codegen"
 version.workspace = true
@@ -17,6 +16,6 @@ path = "src/main.rs"
 
 [dependencies]
 remotedesktop-api.workspace = true
-# Only its `surface` table, which is all of it that builds on a host: the
-# natives each module's class declares.
+# Only its `surface` table (the natives each module's class declares), the
+# only part of it that builds on a host.
 remotedesktop-platform-android.workspace = true

@@ -2,24 +2,25 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Two builds from one file. Under Gradle this is a root, configured by the NDK
-# toolchain, and makes `libremotedesktop_realvnc.so`: the one native thing the
-# phone's half of this module has, the estimator read in `realvnc_traffic.c`,
-# which links against nothing — the viewer core is already in the process,
-# and what it reads through is a pointer their own Java handed us rather than
-# a symbol of theirs. Under `backends/CMakeLists.txt` it is a subdirectory on
-# a Linux host and makes `vento_realvnc`: the session in `realvnc_session.cxx`
-# over the hosting layer in `host/`, which runs the core's Android build in a
-# glibc process, with a probe in front of it.
+# toolchain, and builds `libremotedesktop_realvnc.so`: the only native code in
+# the phone's side of this module, the estimator read in `realvnc_traffic.c`.
+# It links against nothing: the viewer core is already in the process, and
+# the read goes through a pointer obtained from the core's own Java rather
+# than through a symbol of the core's. Under `backends/CMakeLists.txt` it is a
+# subdirectory on a Linux host and builds `vento_realvnc`: the session in
+# `realvnc_session.cxx` over the hosting layer in `host/`, which runs the
+# core's Android build in a glibc process, with a probe in front of it.
 #
-# The host half needs clang: libc-shim does not compile under GCC (its
+# The host side needs clang: libc-shim does not compile under GCC (its
 # `vector::insert` overloads trip -Wchanges-meaning, as of GCC 16), and the
-# root skips this module when the compiler is anything else. It also needs
-# the two libraries at run time, out of the viewer's APK — see README.md —
-# and nothing of theirs at build time.
+# root skips this module under any other compiler. At run time it needs the
+# two libraries from the viewer's APK (linux/claude-notes.md, section
+# "RealVNC", says how to extract them), and nothing of RealVNC's at build
+# time.
 #
-# The four submodules the host half takes are the host's only and are in no
-# APK or licence page; each is pinned at the commit the hosting layer was
-# proven with:
+# The four submodules below are used only by the host side and are in no APK
+# or licence page; each is pinned at the commit the hosting layer was tested
+# with:
 #
 #   logger               minecraft-linux/logger          The Unlicense (public domain)
 #   libc-shim            minecraft-linux/libc-shim       no licence file; GitHub lists none.
@@ -48,16 +49,16 @@ if(ANDROID)
 else()
     include("${VENTO_BACKENDS}/platform/linux/cmake/vento_linux.cmake")
 
-    # Off by default: every JNI call the core makes, as the jnivm trace prints
-    # it, is how a class or method the stand-ins lack is found — the line
-    # `Call Unknown ... Class=... Method=... Signature=...` before the core's
-    # own assertion says exactly what to add — and is several thousand lines
-    # a session otherwise.
+    # Off by default. The jnivm trace prints every JNI call the core makes,
+    # which shows a class or method missing from the stand-ins in
+    # `host/Classes.cxx` (the line `Call Unknown ... Class=... Method=...
+    # Signature=...` before the core's own assertion says exactly what to
+    # add), but it is several thousand lines per session.
     option(VENTO_REALVNC_TRACE "Trace every JNI call the RealVNC core makes" OFF)
 
-    # Position-independent, as the other three modules ask of their trees: the
-    # four below are static archives, and under VENTO_SHARED they are linked
-    # into a shared library.
+    # Position-independent, as the other three modules set for their trees:
+    # the four submodules below are static archives, and under VENTO_SHARED
+    # they are linked into a shared library.
     set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
     foreach(sub logger libc-shim mcpelauncher-linker libjnivm)
@@ -69,20 +70,20 @@ else()
         message(FATAL_ERROR "third_party/mcpelauncher-linker's own submodules are empty — run `git submodule update --init --recursive`")
     endif()
 
-    # Theirs, as they come: the logger first, since libc-shim and jnivm link
-    # it by name. jnivm's garbage collection and debug codegen stay at their
-    # defaults, which is what the hosting layer was proven with.
+    # The submodules, unmodified: the logger first, since libc-shim and jnivm
+    # link it by name. jnivm's garbage collection and debug codegen stay at
+    # their defaults, as the hosting layer was tested with.
     set(JNIVM_ENABLE_TRACE ${VENTO_REALVNC_TRACE} CACHE BOOL "" FORCE)
     add_subdirectory("${THIRD_PARTY}/logger" logger EXCLUDE_FROM_ALL)
     # libc-shim links `atomic` by name where its 24-byte atomics need it,
-    # which is libatomic.so.1 at run time: a library of GCC's that a desktop
-    # need not have installed (Debian and Ubuntu images do not), for a few
-    # lock-based functions. The compiler's static libatomic.a, where it has
-    # one, answers the name instead — position-independent on x86_64, so it
-    # links into the shared library, whose exports `--exclude-libs` keeps it
-    # out of. Where there is none (a distribution
-    # that packages it apart, as Fedora does in libatomic-static), the name
-    # is left to the linker and the shared one, as before.
+    # which is libatomic.so.1 at run time: a GCC library, for a few lock-based
+    # functions, that a desktop may not have installed (Debian and Ubuntu
+    # images do not). Where the compiler has a static libatomic.a, it
+    # satisfies the name instead; it is position-independent on x86_64, so it
+    # links into the shared library, and `--exclude-libs` keeps it out of the
+    # exports. Where there is none (a distribution that packages it
+    # separately, as Fedora does in libatomic-static), the linker resolves the
+    # name to the shared library.
     execute_process(COMMAND ${CMAKE_C_COMPILER} -print-file-name=libatomic.a
             OUTPUT_VARIABLE _atomic OUTPUT_STRIP_TRAILING_WHITESPACE)
     if(IS_ABSOLUTE "${_atomic}" AND EXISTS "${_atomic}" AND NOT TARGET atomic)
@@ -96,10 +97,10 @@ else()
         remotedesktop_vendored_warnings("${THIRD_PARTY}/${sub}")
     endforeach()
 
-    # The pins, out of the one place they are stated: `Library.java` is where
-    # the hashes of the build these declarations were read from live, and the
-    # session refuses any other. Generated at configure time so that a moved
-    # pin cannot leave a stale copy here.
+    # The pins, read from the only place they are stated: `Library.java` holds
+    # the hashes of the build the declarations were read from, and the session
+    # refuses any other. Generated at configure time so that a changed pin
+    # cannot leave a stale copy here.
     set(LIBRARY_JAVA "${REPO}/realvnc/src/main/java/com/realvnc/vncviewer/jni/Library.java")
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${LIBRARY_JAVA}")
     file(READ "${LIBRARY_JAVA}" _library_java)
@@ -111,8 +112,8 @@ else()
     string(APPEND _pins "#define VENTO_REALVNC_VERSION \"${_pin_version}\"\n")
     foreach(abi arm64-v8a x86_64)
         foreach(lib libvncviewer libc++_shared)
-            # The key as the map has it, then the first quoted hex string after
-            # it: no regex over a name with `++` in it.
+            # Finds the map key, then the first quoted hex string after it, to
+            # avoid a regex over a name containing `++`.
             string(FIND "${_library_java}" "\"${abi}/${lib}.so\"," _at)
             if(_at LESS 0)
                 message(FATAL_ERROR "no SHA-256 for ${abi}/${lib}.so in ${LIBRARY_JAVA}")
@@ -132,11 +133,11 @@ else()
     endforeach()
     file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/gen/realvnc_pins.h" CONTENT "${_pins}")
 
-    # The session and the hosting layer, for whatever desktop process links
-    # them: the neutral include directory is the interface, and `vento_log` is
-    # left to the platform — the probe's `vento_linux`, or the library's own
-    # copy of it under VENTO_SHARED (vento_linux.cmake). The hosting layer's
-    # headers are its own and not on the interface.
+    # The session and the hosting layer, for any desktop process linking
+    # them: the neutral include directory is the interface, and `vento_log`
+    # comes from the platform (the probe's `vento_linux`, or the library's own
+    # copy of it under VENTO_SHARED; see vento_linux.cmake). The hosting
+    # layer's headers are private and not on the interface.
     vento_backend_library(vento_realvnc GLOBAL realvnc_session.cxx
             host/DesktopCore.cxx host/Loader.cxx host/Looper.cxx host/Classes.cxx host/Files.cxx)
     target_compile_features(vento_realvnc PRIVATE cxx_std_17)

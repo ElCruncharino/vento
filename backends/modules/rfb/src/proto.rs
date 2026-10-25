@@ -7,32 +7,31 @@ use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// The longest run of bytes a length field may claim before it is treated as a
-/// protocol error rather than as a string: how much a server can make this end
-/// allocate by saying so.
+/// The longest byte run a length field may claim before it is treated as a
+/// protocol error rather than a string: the most a server can make this end
+/// allocate by claiming it.
 pub const MAX_STRING: usize = 1 << 20;
 
-/// The most of the far end's clipboard this end takes, in bytes on the wire:
-/// [`runtime::MAX_CLIPBOARD`], the bound every backend shares. The same size
-/// as [`MAX_STRING`], for the same reason, but past it the message is skipped
-/// rather than refused: the length is there to skip by, and a large copy at
-/// the far end is somebody's ordinary afternoon, not a server that has
-/// stopped making sense. TigerVNC's viewer does the same past its
-/// `MaxCutText`.
+/// The most of the far end's clipboard this end accepts, in bytes on the
+/// wire: [`runtime::MAX_CLIPBOARD`], the limit every backend shares. The same
+/// size as [`MAX_STRING`], for the same reason, but past it the message is
+/// skipped rather than refused: the length allows skipping, and a large copy
+/// at the far end is ordinary use, not a misbehaving server. TigerVNC's viewer
+/// does the same past its `MaxCutText`.
 pub const MAX_CUT_TEXT: usize = runtime::MAX_CLIPBOARD;
 
-/// How much has gone past, kept where more than one thread can read it: the
-/// reader ends up on the protocol thread and the writer on its own, and what
-/// asks for the total is neither of them. Shared rather than per-stream so that
-/// a TLS upgrade — which replaces both — carries its counts over instead of
-/// starting the session's total again at the handshake.
+/// A byte count readable from more than one thread: the reader ends up on the
+/// protocol thread and the writer on its own, and the caller asking for the
+/// total is on neither. Shared rather than per stream so a TLS upgrade, which
+/// replaces both streams, carries the counts over instead of restarting the
+/// session's total at the handshake.
 pub type Counter = Arc<AtomicU64>;
 
 /// A buffered reader with the fixed-width reads the protocol is made of.
 pub struct Reader<R: Read> {
     inner: BufReader<R>,
-    /// Everything that has come off the socket, for the line-speed estimate
-    /// and for what the panel says the session has moved.
+    /// Every byte read from the socket, for the line-speed estimate and the
+    /// traffic the panel reports.
     count: Counter,
 }
 
@@ -45,8 +44,8 @@ impl<R: Read> Read for Reader<R> {
 }
 
 impl<R: Read> Reader<R> {
-    /// A reader that counts for nobody but itself. Tests only: a session's two
-    /// counters are the connection's, not a stream's.
+    /// A reader with its own counter. Tests only: a session's two counters
+    /// belong to the connection, not a stream.
     #[cfg(test)]
     pub fn new(inner: R) -> Reader<R> {
         Reader::counting(inner, Counter::default())
@@ -67,10 +66,10 @@ impl<R: Read> Reader<R> {
         self.count.load(Ordering::Relaxed)
     }
 
-    /// What has been read off the socket and not yet consumed. Zero everywhere
-    /// the protocol is in step; the one caller that asks is the TLS upgrade,
-    /// where anything held here would be a byte of the encrypted stream about
-    /// to be read as clear text (see `transport::Wire::start_tls`).
+    /// Bytes read from the socket and not yet consumed. Zero whenever the
+    /// protocol is in sync; the only caller is the TLS upgrade, where anything
+    /// buffered here would be encrypted bytes about to be read as plain text
+    /// (see `transport::Wire::start_tls`).
     pub fn buffered(&self) -> usize {
         self.inner.buffer().len()
     }
@@ -129,12 +128,12 @@ impl<R: Read> Reader<R> {
 }
 
 /// A buffered writer. Every message is written whole and then flushed, because
-/// a half-written message on a socket nobody flushes is a hang.
+/// a half-written message left unflushed on a socket is a hang.
 pub struct Writer<W: Write> {
     inner: BufWriter<W>,
-    /// Everything handed to the socket, counted here rather than at the far
-    /// end of the buffer: every message is flushed as it is written, so the
-    /// two differ by at most the message in hand.
+    /// Every byte passed to the socket, counted here rather than after the
+    /// buffer: every message is flushed as it is written, so the two differ by
+    /// at most the current message.
     count: Counter,
 }
 

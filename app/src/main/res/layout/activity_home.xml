@@ -3,13 +3,13 @@
     SPDX-FileCopyrightText: 2026 Patrick Gaskin
     SPDX-License-Identifier: GPL-3.0-or-later
 
-    Title, add, settings, and the connections — cards or rows, which the bar
-    chooses — scrolling behind the bar. The bar is the window's own background
-    colour rather than transparent: an item sliding under a see-through bar is
-    legible enough to look like a bug and not legible enough to read.
+    The bar, the add button, and the connections (as cards or rows, chosen in
+    the bar) scrolling behind the bar. The bar uses the window's background
+    colour rather than being transparent: items showing through a transparent
+    bar look like a rendering bug and are not readable.
 
-    The side padding is HomeActivity's, since it belongs to the shape: a card
-    carries its own margin and a row takes the group inset instead.
+    HomeActivity sets the side padding, since it depends on the view mode: a
+    card has its own margin and a row uses the group inset instead.
 -->
 <androidx.coordinatorlayout.widget.CoordinatorLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
@@ -26,11 +26,8 @@
         android:scrollbars="none" />
 
     <!--
-        Nothing saved yet, which is what this screen looks like exactly once.
-        A picture of the thing there are none of, what there are none of, and
-        what to do about it — the button it names is on the screen underneath
-        this, which is why the description points at it rather than repeating
-        it as a second button.
+        No saved connections yet. The description points at the add button
+        below rather than repeating it as a second button.
     -->
     <LinearLayout
         android:id="@+id/empty"
@@ -67,8 +64,7 @@
             android:textAppearance="?attr/textAppearanceBodyMedium"
             android:textColor="?android:attr/textColorSecondary" />
 
-        <!-- The other way in, which only matters when there is no other way in:
-             the playground needs no machine at all. -->
+        <!-- The playground needs no machine, so it is offered here too. -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/playground"
             style="@style/Widget.Material3.Button.TextButton"
@@ -88,10 +84,10 @@
         app:title="@string/app_name" />
 
     <!--
-        Adding a connection is the one thing this screen is for when it is
-        empty, and the only action on it that makes something; the bar keeps
-        settings, which is a way out rather than an action. The list's bottom
-        padding is what keeps the last row clear of it (HomeActivity).
+        Adding a connection is the only action on this screen that creates
+        something, so it gets the floating button; settings stays in the bar.
+        HomeActivity gives the list bottom padding to keep the last row clear
+        of it.
     -->
     <com.google.android.material.floatingactionbutton.FloatingActionButton
         android:id="@+id/add"

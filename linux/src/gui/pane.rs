@@ -22,14 +22,12 @@
 //! (Return, or the window manager's close, either of which gives the
 //! monitor back to the main window). A pop-out is an ordinary new window:
 //! where it goes is the window manager's or the compositor's to say, and
-//! the user's to change. A pop-out's toolbar has
-//! what is a window's own — the scale, the monitor, fullscreen — and view
-//! only, which is the session's; the panel, the prompts and the
-//! disconnect are the main window's alone.
+//! the user's to change. A pop-out's toolbar has what is a window's own (the
+//! scale, the monitor, fullscreen) and view only, which is the session's;
+//! the panel, the prompts and the disconnect are the main window's alone.
 //!
 //! A child of the session's module, though a file beside it, so that a
-//! pane's frame can read and drive the session's state as it did when the
-//! two were one.
+//! pane's frame can read and drive the session's private state.
 
 use super::super::cursor::{Key, Native};
 use super::super::desktop::Desktop;
@@ -82,13 +80,13 @@ impl MonitorKey {
 
     /// The same monitor in `monitors`, the layout as it is now: the one
     /// with the same id, which is the far end's own name for it and stays
-    /// with it through a resize or a move — the follower resizing each
-    /// monitor to its window is exactly that; failing that the one with the
+    /// with it through a resize or a move (the follower resizing each
+    /// monitor to its window is exactly that); failing that the one with the
     /// same rectangle wherever it is in the list, since a far end that
     /// renumbered its screens may still have this one where it was; failing
     /// that the one at the same place in the list; and failing all three,
-    /// none — it is gone. (Where a protocol has no ids the id is the index,
-    /// and its order is the only identity it gives a screen.)
+    /// none, as it is gone. (Where a protocol has no ids the id is the
+    /// index, and its order is the only identity it gives a screen.)
     pub fn find(self, monitors: &[Monitor]) -> Option<MonitorKey> {
         let index = monitors
             .iter()
@@ -123,8 +121,8 @@ pub fn may_send(owner: Option<PaneId>, pane: PaneId) -> bool {
     owner.is_none_or(|o| o == pane)
 }
 
-/// Who holds the pointer once `pane` has sent `mask`: the pane, while any
-/// button is down; nobody, once every button is up.
+/// Which pane holds the pointer once `pane` has sent `mask`: the pane,
+/// while any button is down; none, once every button is up.
 pub fn owner_after(pane: PaneId, mask: i32) -> Option<PaneId> {
     (mask != 0).then_some(pane)
 }
@@ -258,7 +256,7 @@ impl Pane {
     }
 
     /// This pane's frame: the desktop, the pointer over it, the toolbar,
-    /// and the overlay — and in the main window the panel and the prompts,
+    /// and the overlay, and in the main window the panel and the prompts,
     /// which are only ever there.
     pub fn frame(&mut self, s: &mut Session, root: &mut egui::Ui, host: &mut Host) {
         let ctx = &root.ctx().clone();
@@ -613,8 +611,8 @@ impl Pane {
 
     /// The toolbar's buttons: Material Symbols and no words, each with its
     /// name and its state in its tooltip. A button with a state shows it in
-    /// its icon — one per scale mode, all monitors or one, view only on or
-    /// off — and the tooltip says the rest (which monitor or display);
+    /// its icon (one per scale mode, all monitors or one, view only on or
+    /// off) and the tooltip says the rest (which monitor or display);
     /// Info and view only are highlighted while they are on, Sound while
     /// off or muted.
     ///
@@ -696,8 +694,8 @@ impl Pane {
             s.set_option("ViewOnly", if view_only { "false" } else { "true" });
         }
 
-        // Whenever the far end may send sound — from when its protocol says
-        // so, which for most is before the first sound — so that a session
+        // Whenever the far end may send sound (from when its protocol says
+        // so, which for most is before the first sound), so that a session
         // without any (a protocol with none, RDP's Sound off) has no button
         // that does nothing. What it does is the backend's to say: ask the
         // far end to stop and to send again where the protocol can, mute
@@ -817,8 +815,8 @@ impl Pane {
 
     /// `SessionHud.draw`'s lines, in its order where they apply here: the
     /// state and the pixel path, the cursor, the physical mouse and
-    /// keyboard, and the things this window has that the phone has not —
-    /// the session's, the same in every window — and under them this
+    /// keyboard, and the things this window has that the phone has not
+    /// (the session's, the same in every window), and under them this
     /// window's own: which window it is and what it shows, on which output,
     /// its frame rate and uploads, its view, its shortcuts and the capture.
     fn hud_lines(&mut self, s: &mut Session, host: &Host, layout: Option<&Layout>, pixels_per_point: f32) -> Vec<String> {
@@ -1071,7 +1069,7 @@ fn icon_only(symbol: &'static str) -> egui::Button<'static> {
 
 /// A toolbar button that is on or off: flat while off, and while on framed
 /// at rest too (as `Button::selectable` is), in the selection's colours, so
-/// that on reads from across the toolbar without a hover — its icon in the
+/// that on reads from across the toolbar without a hover: its icon in the
 /// selection's colour, on a fill of the selection's blue at about half its
 /// strength rather than all of it, which three buttons on at once made the
 /// loudest thing on the screen.
@@ -1199,7 +1197,7 @@ mod tests {
     fn a_drag_belongs_to_the_pane_it_was_pressed_in() {
         let main = ViewportId::ROOT;
         let other = ViewportId::from_hash_of("pop-out");
-        // Nobody holds the pointer: anyone may send.
+        // No pane holds the pointer: any may send.
         assert!(may_send(None, main));
         assert!(may_send(None, other));
         // A press in the main window makes it the holder; the other window
@@ -1208,7 +1206,7 @@ mod tests {
         assert_eq!(owner, Some(main));
         assert!(may_send(owner, main));
         assert!(!may_send(owner, other));
-        // Every button up: nobody again.
+        // Every button up: no pane again.
         assert_eq!(owner_after(main, 0), None);
         assert!(may_send(owner_after(main, 0), other));
         // Moving with nothing pressed holds nothing.

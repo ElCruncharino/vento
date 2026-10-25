@@ -3,21 +3,20 @@
 
 // The Android and `java.*` classes the core resolves by name on its way to a
 // connected session, each as a C++ struct with the members it calls hooked.
-// What the core asks of them is small — a bitmap to draw a cursor into, a
-// map to read its options out of, a proxy selector that says "direct", a
-// locale, a build fingerprint, an asset list that is empty — and each
-// answer here is the one a stock phone would give, or the plainest one that
-// gets past the call. Nothing here is RealVNC's: it is the Android SDK's
-// surface, answered.
+// The core needs little of them (a bitmap to draw a cursor into, a map to
+// read its options from, a proxy selector that says "direct", a locale, a
+// build fingerprint, an empty asset list), and each answer here is the one a
+// stock phone would give, or the simplest one that satisfies the call.
+// Nothing here is RealVNC's: it implements the Android SDK's surface.
 //
 // Two jnivm rules shape the code. A constructor is hooked as a *static*
 // `"<init>"` returning the object, not as an instance function. And a hook
-// whose self parameter is a typed `T*` is only ever given an object whose
-// C++ type is `T`, with the derived JNI signature keyed on the C++ types of
-// the parameters — so a class that several interface names resolve to (a
-// map, a set, an iterator) is hooked under each name with an `Object*` self
-// and a `dynamic_cast`, and each name gets a lambda of its own type, since
-// one lambda type installed under several names silently installs once.
+// with a typed `T*` self parameter is only given objects of C++ type `T`,
+// with the derived JNI signature keyed on the C++ types of the parameters.
+// So a class that several interface names resolve to (a map, a set, an
+// iterator) is hooked under each name with an `Object*` self and a
+// `dynamic_cast`, and each name gets a lambda of its own type, since one
+// lambda type installed under several names is silently installed once.
 
 #include <algorithm>
 #include <memory>
@@ -54,8 +53,8 @@ struct List final : jnivm::Object {
 struct Set final : jnivm::Object {
     std::vector<std::shared_ptr<Entry>> items;
 };
-/* `java.util.Map<String, String>`, which is what both `initApp`'s
-   parameters and `createSession`'s options are; the core walks `entrySet`. */
+/* `java.util.Map<String, String>`, the type of both `initApp`'s parameters
+   and `createSession`'s options; the core walks `entrySet`. */
 struct Map final : jnivm::Object {
     std::vector<std::pair<std::string, std::string>> entries;
 };
@@ -91,8 +90,8 @@ struct PrintStream final : jnivm::Object {
 };
 std::shared_ptr<PrintStream> PrintStream::err = std::make_shared<PrintStream>();
 
-/* What the core reads of the device: nothing it does depends on these
-   beyond a line in its log, so they say what this is. */
+/* Device details the core reads: nothing it does depends on them beyond a
+   line in its log, so they describe a Linux desktop. */
 struct DisplayMetrics final : jnivm::Object {
     jfloat density = 1.0f, scaledDensity = 1.0f, xdpi = 96.0f, ydpi = 96.0f;
     jint densityDpi = 160, widthPixels = 1920, heightPixels = 1080;
@@ -147,7 +146,7 @@ std::shared_ptr<Iterator> iteratorOver(const std::vector<std::shared_ptr<T>> &it
 
 // ---- hooks under several names ------------------------------------------------------
 
-/* The `N` is what gives each name its own lambda types. */
+/* `N` gives each name its own lambda types. */
 template <int N>
 void mapHooks(jnivm::ENV *E, const std::shared_ptr<jnivm::Class> &c) {
     c->HookInstanceFunction(E, "entrySet", [](jnivm::ENV *, jnivm::Object *self) {
@@ -201,7 +200,7 @@ void setHooks(jnivm::ENV *E, const std::shared_ptr<jnivm::Class> &c) {
 
 } // namespace
 
-/* `Map` is made by `DesktopCore.cxx` for the two calls that take one. */
+/* Used by `DesktopCore.cxx` to make a `Map` for the two calls that take one. */
 std::shared_ptr<jnivm::Object> makeMap(const std::vector<std::pair<std::string, std::string>> &entries) {
     auto m = std::make_shared<Map>();
     m->entries = entries;
@@ -261,11 +260,11 @@ void registerClasses(jnivm::VM &vm, const std::shared_ptr<Context> &context) {
             ->Hook(E, "createBitmap",
                    [](jnivm::ENV *, jnivm::Class *, jint w, jint h, std::shared_ptr<BitmapConfig>) {
                        auto b = std::make_shared<Bitmap>();
-                       // The cursor's size is the server's, and its pixels are
-                       // allocated by it: past runtime::MAX_CURSOR_SIDE (the
-                       // other backends' bound) the bitmap is made empty, which
-                       // the pixel lock (Loader.cxx) refuses, and the core
-                       // draws no cursor rather than allocating gigabytes.
+                       // The server sets the cursor's size, and this allocates
+                       // its pixels: past runtime::MAX_CURSOR_SIDE (the other
+                       // backends' limit) the bitmap is left empty, which the
+                       // pixel lock (Loader.cxx) refuses, so the core draws no
+                       // cursor rather than allocating gigabytes.
                        if (w < 0 || h < 0 || w > MAX_CURSOR_SIDE || h > MAX_CURSOR_SIDE) {
                            LOGW("a cursor of %dx%d is past %d a side; not drawn", w, h, MAX_CURSOR_SIDE);
                            return b;
@@ -415,7 +414,7 @@ void registerClasses(jnivm::VM &vm, const std::shared_ptr<Context> &context) {
                 return std::make_shared<DisplayMetrics>();
             });
     // The core looks for its translations (`strings.en_US.po`) among the
-    // assets; none, and it stays in English, which is what the phone has.
+    // assets; there are none, so it stays in English, as on the phone.
     env->GetClass("android/content/res/AssetManager")
             ->HookInstanceFunction(E, "list", [](jnivm::ENV *, jnivm::Object *, std::shared_ptr<jnivm::String>) {
                 return std::make_shared<jnivm::Array<jnivm::String>>((jsize) 0);
@@ -430,7 +429,7 @@ void registerClasses(jnivm::VM &vm, const std::shared_ptr<Context> &context) {
         dm->Hook(E, "widthPixels", &DisplayMetrics::widthPixels);
         dm->Hook(E, "heightPixels", &DisplayMetrics::heightPixels);
     }
-    // The device id the core salts something with; any fixed string does.
+    // The device id, which the core uses as a salt; any fixed string works.
     env->GetClass("android/provider/Settings$Secure")
             ->Hook(E, "getString",
                    [](jnivm::ENV *, jnivm::Class *, std::shared_ptr<jnivm::Object>, std::shared_ptr<jnivm::String>) {
@@ -472,7 +471,7 @@ void registerClasses(jnivm::VM &vm, const std::shared_ptr<Context> &context) {
     }
     {
         // The core loads its callback classes through the context class
-        // loader rather than `FindClass`, which is why there is one.
+        // loader rather than `FindClass`, so one is provided.
         auto thr = env->GetClass("java/lang/Thread");
         thr->Hook(E, "currentThread", [](jnivm::ENV *, jnivm::Class *) { return std::make_shared<Thread>(); });
         thr->HookInstanceFunction(E, "getContextClassLoader",
@@ -505,8 +504,8 @@ void registerClasses(jnivm::VM &vm, const std::shared_ptr<Context> &context) {
                 });
     }
     {
-        // What the core prints of an exception it caught, which with jnivm
-        // is a class rather than a thrown object.
+        // Used when the core prints a caught exception, which under jnivm is
+        // a class rather than a thrown object.
         env->GetClass("java/lang/Throwable")->HookInstanceFunction(E, "toString", [](jnivm::ENV *, jnivm::Object *self) {
             auto *c = dynamic_cast<jnivm::Class *>(self);
             return jstr(c ? c->getName() : "java.lang.Throwable");

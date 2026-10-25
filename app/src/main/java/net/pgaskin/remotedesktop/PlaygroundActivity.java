@@ -12,12 +12,11 @@ import android.view.WindowManager;
 import net.pgaskin.remotedesktop.control.playground.PlaygroundView;
 
 /**
- * The fake desktop, as a screen inside the app rather than as the app.
+ * The fake desktop the input stack was built against.
  *
- * <p>It was the whole app before there was a protocol to speak, and is now
- * reachable from the settings tree: a test surface with known geometry for
- * exercising the input options, and — for a phone that has asked to be a
- * developer — where the fixture recorder lives.
+ * <p>Reachable from the settings tree: a test surface with known geometry for
+ * trying the input options and, with developer mode on, where the fixture
+ * recorders live.
  */
 public final class PlaygroundActivity extends Activity {
 
@@ -32,15 +31,14 @@ public final class PlaygroundActivity extends Activity {
         getWindow().setDecorFitsSystemWindows(false);
         // adb shell am start -n net.pgaskin.remotedesktop/.PlaygroundActivity --ez record true
         final boolean record = getIntent().getBooleanExtra("record", false);
-        // ... and --ez keys true for the key trace, which is what a keyboard walk reads.
+        // ... and --ez keys true for the key trace, which a keyboard walk reads.
         final boolean keys = getIntent().getBooleanExtra("keys", false);
-        // The two recorders are the playground's developer half: they write raw
-        // touch and key streams to a folder to be pulled off the phone, which is
-        // of no use to somebody who came here to try the controls. So the
-        // squares are there for a phone that has asked to be a developer — or
-        // for a launch that asked for one by name, since arriving with an extra
-        // means adb, and adb is developer access however this app has been told
-        // about it. That is what keeps the fixture scripts working unchanged.
+        // The two recorders write raw touch and key streams to a folder to be
+        // pulled off the phone, which is of no use for trying the controls. So
+        // their squares are shown in developer mode, or when the launch asks
+        // for a recorder by extra: an extra means adb, which is developer
+        // access regardless of this app's setting. This keeps the fixture
+        // scripts working unchanged.
         final PlaygroundView view = new PlaygroundView(this,
                 InputSettings.config(this, getResources().getDisplayMetrics().density),
                 AppSettings.developerMode(this) || record || keys);

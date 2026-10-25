@@ -4,12 +4,12 @@
 //! The hardware decoders against the software ones, on the clips `decode.rs`
 //! decodes: each picture the same within a level, whether the hardware's
 //! came out as NV12, P010 or XV30; the profile the device has no decoder for
-//! decoded in software with the reason said; one device for every decoder;
-//! and a hardware failure mid-stream a software decoder and a key frame
-//! asked for.
+//! decoded in software with the reason given; one device for every decoder;
+//! and a hardware failure mid-stream replaced by a software decoder with a key
+//! frame requested.
 //!
-//! **Skipped where there is no VAAPI device** — each test then passes with a
-//! note on stderr — since a machine that builds this need not have a GPU, and
+//! **Skipped where there is no VAAPI device** (each test then passes with a
+//! note on stderr), since a machine that builds this need not have a GPU, and
 //! a clip a device has no decoder for is compared all the same, in software,
 //! with a note. `VENTO_TEST_HW=require` makes both failures instead, for a
 //! machine known to have the device and the profiles (Intel's iHD has every
@@ -257,7 +257,7 @@ fn a_held_main10_picture_is_p010() {
     held("h265-main10.h265", [fourcc::R16, fourcc::GR1616]);
 }
 
-/// What cannot be held is converted as ever: software's pictures, and
+/// What cannot be held is converted as usual: software's pictures, and
 /// VAAPI's in XV30.
 #[test]
 fn what_cannot_be_held_is_converted() {
@@ -309,8 +309,8 @@ fn a_held_picture_that_fails_falls_back_to_software() {
 
 /// A hardware failure mid-stream whose software decoder will not open
 /// either leaves no decoder: the frame and every one after it refused, said
-/// once, no key frame asked for (it would be refused too), and the device's
-/// context let go of rather than kept and tried again on every packet.
+/// once, no key frame requested (it would be refused too), and the device's
+/// context freed rather than kept and tried again on every packet.
 #[test]
 fn a_fallback_that_will_not_open_is_the_end_of_the_decoder() {
     if !vaapi("a_fallback_that_will_not_open_is_the_end_of_the_decoder") {
@@ -423,7 +423,7 @@ fn a_failure_mid_stream_falls_back_to_software() {
     let mut changed = Changes::new();
     changed.reset(H);
     // The frame after the key frame refers to a picture the new decoder never
-    // saw: whether anything comes out of it is libavcodec's business.
+    // saw: whether anything comes out of it is up to libavcodec.
     let _ = hw.decode(&frames[1], &mut out, W, H, &mut changed);
     assert!(hw.take_key_frame_request(), "the fallback asked for no key frame");
     assert!(!hw.take_key_frame_request(), "asked twice");
@@ -473,9 +473,9 @@ fn without_a_device_it_is_software() {
 /// `VENTO_BENCH` names (comma-separated Annex B `.h264`/`.h265` at
 /// `VENTO_BENCH_SIZE`, or IVF, which says its own size): the decoder's own
 /// time (decode, and on hardware the wait for it and the map) as `status`
-/// has it, the whole of
-/// `decode` with every row converted, and the CPU the process spent. Run
-/// with `--release --ignored --nocapture`, since the conversion is Rust's.
+/// has it, the whole of `decode` with every row converted, and the CPU the
+/// process spent. Run with `--release --ignored --nocapture`, since the
+/// conversion is Rust's.
 /// `VENTO_BENCH_FRAMES` decodes only the first so many, and
 /// `VENTO_BENCH_GAP_MS` waits that long before each, untimed, as a quiet
 /// desktop does between updates (and a GPU idles, clocking down).

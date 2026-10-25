@@ -5,13 +5,13 @@
 //! on the command line, and what a session returns to when it ends.
 //!
 //! A backend to pick, the four fields every backend takes, and under them
-//! that backend's options drawn from the registry in `api::options` — the
+//! that backend's options drawn from the registry in `api::options`: the
 //! same rows `-o` checks against, rendered by their kind and nothing else,
 //! so the dialog knows no option by name. Under those, the client's own
 //! settings (`settings.rs`), which are not the connection's: they are one
 //! answer for every connection, so they are drawn once, apart, and not
 //! filled in from a request. Nothing is saved: there are no connections to
-//! keep and no file to keep them in, which is the brief.
+//! keep and no file to keep them in.
 
 use super::settings::Settings;
 use super::Request;

@@ -4,14 +4,13 @@
 //! The picture, where a protocol sends it as video: which codecs there are,
 //! what a decoder promises, and what happens to its planes afterwards.
 //!
-//! A protocol asks for a decoder and does not know whose it is. What it holds
-//! is a [`Decoders`], handed to it by whoever started the session: the phone's
+//! A protocol asks for a decoder without knowing which implementation it gets.
+//! What it holds is a [`Decoders`], passed to it by the session's creator:
 //! MediaCodec in `platform_android`, libavcodec in `platform_linux`, and
-//! [`NoDecoders`] for a test that has neither. Which one that is was a
+//! [`NoDecoders`] for a test that has neither. The choice was a
 //! `cfg(target_os)` inside the protocol until a second platform could decode,
-//! and the answer is the platform's rather than the protocol's — the same
-//! RustDesk session wants VP9 on both, and only the thing that gets the
-//! picture out of VP9 differs.
+//! and it belongs to the platform rather than the protocol: the same RustDesk
+//! session wants VP9 on both, and only the VP9 decoder differs.
 //!
 //! Everything after the decode is here and is the same for every decoder: a
 //! decoder gets its planes into a [`convert::Frame`] and hands it to an
@@ -62,7 +61,7 @@ impl Codec {
     }
 }
 
-/// How a desktop's decoders may decode: on the GPU or not. The person's
+/// How a desktop's decoders may decode: on the GPU or not. The user's
 /// choice (a setting, `--hw-decode`), off unless asked for.
 ///
 /// Here rather than beside the desktop's decoder because it is what a
@@ -79,8 +78,8 @@ pub enum Hardware {
     /// Software, and nothing of a device opened or loaded: the default.
     #[default]
     Off,
-    /// The platform's hardware decoder, by name — on the Linux client
-    /// VAAPI, through libva — and software for a stream it cannot take.
+    /// The platform's hardware decoder, by name (on the Linux client VAAPI,
+    /// through libva), and software for a stream it cannot take.
     On,
     /// Per stream: the GPU where it takes the stream, whatever decodes
     /// there, else software. The same as [`On`](Self::On) where a platform
@@ -105,8 +104,8 @@ impl Hardware {
 ///
 /// Not `Send`: a decoder is made, fed and dropped on the protocol thread, and
 /// the trait asks no more of a platform's decoder than that (MediaCodec's
-/// happens to be `Send`; libavcodec's is a raw context nothing here has
-/// declared so). The one caller that moves one anyway is TigerVNC's, whose
+/// happens to be `Send`; libavcodec's is a raw context not declared `Send`).
+/// The one caller that moves one anyway is TigerVNC's, whose
 /// library decodes each rectangle on whichever of its worker threads is
 /// free: one call at a time, never two at once, and that promise is written
 /// down where it is made (`api::c::video`), with why both platforms'
@@ -122,9 +121,9 @@ pub trait Decoder {
     /// they moved or not, which is how a caller whose buffer is out of step
     /// with the picture on screen asks for a whole frame.
     ///
-    /// A decoder whose picture is not the session's size — which is every
-    /// frame between a resize being asked for and arriving — writes the part
-    /// the two have in common and leaves the rest alone.
+    /// A decoder whose picture is not the session's size (every frame
+    /// between a resize being asked for and arriving) writes the part the two
+    /// have in common and leaves the rest alone.
     fn decode(
         &mut self,
         data: &[u8],
@@ -141,19 +140,19 @@ pub trait Decoder {
         None
     }
 
-    /// A line for an overlay about how this decoder is decoding — the codec,
+    /// A line for an overlay about how this decoder is decoding (the codec,
     /// the method and what a frame costs, and why it is software where
-    /// hardware was asked for (the Linux client's `H.264 vaapi map 2.1 ms`,
+    /// hardware was asked for: the Linux client's `H.264 vaapi map 2.1 ms`,
     /// `H.264 sw 3.4 ms (vaapi: no device)`; a phone's `H.264
-    /// c2.exynos.h264.decoder`) — or `None` where it has nothing to say.
+    /// c2.exynos.h264.decoder`), or `None` where it has nothing to say.
     fn status(&self) -> Option<String> {
         None
     }
 
     /// True, once, after the decoder lost the pictures the stream refers back
-    /// to — a hardware decoder that failed mid-stream and was replaced by a
+    /// to (a hardware decoder that failed mid-stream and was replaced by a
     /// software one, or MediaCodec dropping a frame too large for its input
-    /// buffers — so that the caller asks the far end for a key frame rather
+    /// buffers), so that the caller asks the far end for a key frame rather
     /// than waiting for the next one. Polled after [`decode`].
     ///
     /// [`decode`]: Decoder::decode
@@ -181,8 +180,8 @@ pub trait Decoder {
     /// leave where the hardware decoded it is left there and handed back
     /// rather than converted into `out`: what a caller that draws on the
     /// same GPU asks for, which then has no picture in `out` to read and
-    /// no conversion to pay for. Every other picture — software's, one in a
-    /// format the GPU picture cannot describe, the first after a fallback —
+    /// no conversion to pay for. Every other picture (software's, one in a
+    /// format the GPU picture cannot describe, the first after a fallback)
     /// is converted as [`decode`](Decoder::decode) converts it, so a caller
     /// has to take either. The default is a decoder that never can.
     fn decode_picture(
@@ -213,7 +212,7 @@ pub enum Decoded {
 }
 
 /// A decoded picture left in the memory the hardware decoded it into, for
-/// whoever draws on the same GPU to import and convert there. What that
+/// the renderer on the same GPU to import and convert there. What that
 /// memory is, and how it is imported, are the platform's alone
 /// ([`platform`](Self::platform)): on the Linux client a VAAPI surface,
 /// which `platform_linux` exports as DMA-BUFs for the window's Vulkan
@@ -250,8 +249,8 @@ pub trait GpuPicture: Send + Sync {
 
     /// The picture converted on the processor into `out`, `width * height`
     /// words as [`Decoder::decode`] writes them (the part both sizes have,
-    /// every row of it): for whoever needs it in memory after all, which
-    /// costs the readback this picture was left on the GPU to save.
+    /// every row of it): for a caller that needs it in memory after all,
+    /// which costs the readback this picture was left on the GPU to save.
     fn read(&self, out: &mut [u32], width: usize, height: usize) -> bool;
 }
 
@@ -264,11 +263,11 @@ pub trait Decoders: Send + Sync {
     /// Whether this codec can be decoded here at all. It is what the far end
     /// is told before it picks one: a peer told this end takes H.265 and
     /// sending it to a phone with no HEVC decoder is a session with a login, a
-    /// cursor and no picture. Cheap to ask again — an implementation that has
+    /// cursor and no picture. Cheap to ask again: an implementation that has
     /// to probe probes once.
     fn decodable(&self, codec: Codec) -> bool;
 
-    /// A decoder for this codec at this size, or `None` where there is none —
+    /// A decoder for this codec at this size, or `None` where there is none,
     /// which is a session with no picture and is reported as such rather than
     /// retried.
     fn decoder(&self, codec: Codec, width: usize, height: usize) -> Option<Box<dyn Decoder>>;
@@ -277,8 +276,8 @@ pub trait Decoders: Send + Sync {
     /// `hardware` says rather than as these decoders do now: what a caller
     /// that holds many decoders at once (TigerVNC keeps up to 64) uses to
     /// keep all but a few of them off the GPU. A platform whose decoders take
-    /// no such choice — the phone's MediaCodec, which is whatever the phone
-    /// has — makes the one it always makes.
+    /// no such choice (Android's MediaCodec, which is whatever the phone has)
+    /// makes the one it always makes.
     fn decoder_as(
         &self,
         codec: Codec,
@@ -298,7 +297,7 @@ pub trait Decoders: Send + Sync {
         Hardware::Off
     }
 
-    /// Whether whoever draws the session can take pictures on the GPU
+    /// Whether the session's renderer can take pictures on the GPU
     /// ([`Decoder::decode_picture`]), which it says by setting it where the
     /// platform's decoders can be told (the desktop's window, when its
     /// device can import them). A caller that can hand such a picture on

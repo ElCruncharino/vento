@@ -34,11 +34,11 @@ import dalvik.system.PathClassLoader;
 /**
  * Which backends this build has.
  *
- * <p>Nobody writes the list: it is every {@link BackendProvider} on the
- * classpath, which is every protocol module the build depends on, plus every
- * one found in an installed add-on ({@link #discover}). That is what makes
+ * <p>The list is not written anywhere: it is every {@link BackendProvider} on
+ * the classpath, which is every protocol module the build depends on, plus
+ * every one found in an installed add-on ({@link #discover}). That makes
  * "what can this app connect with?" a question about a dependency line and an
- * installed package rather than about a class somebody has to remember to edit.
+ * installed package rather than about a class that has to be edited by hand.
  *
  * <p>An id this build does not have is not an error anywhere except
  * {@link #create}: a connection record naming one still has to draw on the home
@@ -50,32 +50,31 @@ public final class Backends {
     private static final String TAG = "Backends";
 
     /**
-     * What an add-on's manifest declares, on a component nothing ever starts,
-     * and what the app's {@code <queries>} matches. An action rather than a
-     * package name so that neither side names the other, which is the whole
-     * point of the arrangement: the app knows there may be add-ons and never
-     * what any of them is for.
+     * What an add-on's manifest declares, on a component that is never
+     * started, and what the app's {@code <queries>} matches. An action rather
+     * than a package name so that neither side names the other: the app knows
+     * there may be add-ons and never what any of them is for.
      */
     public static final String PLUGIN_ACTION =
             "net.pgaskin.remotedesktop.action.BACKEND_PLUGIN";
 
     /**
-     * What an add-on may say on its {@code <application>} about where a build of
-     * itself for another version of the app can be got: a URL with
-     * {@link #PLUGIN_UPDATE_VERSION} standing in for the version code wanted,
-     * and beside it the SHA-256 of the signing certificate the APK at that URL
-     * carries.
+     * What an add-on may declare on its {@code <application>} about where to get
+     * a build of itself for another version of the app: a URL with
+     * {@link #PLUGIN_UPDATE_VERSION} standing in for the wanted version code,
+     * and beside it the SHA-256 of the signing certificate of the APK at that
+     * URL.
      *
-     * <p>Manifest meta-data rather than anything in its dex, because the add-on
-     * this is for is precisely the one whose dex is never loaded: an add-on
-     * built for another version of the app is a manifest and nothing else as far
-     * as this process is concerned ({@link PluginState#INCOMPATIBLE}).
+     * <p>Manifest meta-data rather than anything in its dex, because this is for
+     * an add-on whose dex is never loaded: an add-on built for another version
+     * of the app is only a manifest as far as this process is concerned
+     * ({@link PluginState#INCOMPATIBLE}).
      *
-     * <p>Both are optional, and an add-on that names one without the other has
-     * said nothing. The signature is the add-on's <em>claim</em> about a file
-     * nobody has yet, and is worth nothing on its own: what makes it usable is
-     * the app weighing it against the key it will only install an add-on signed
-     * with, which is the app's own business and is done there.
+     * <p>Both are optional, and naming one without the other counts as naming
+     * neither. The signature is the add-on's <em>claim</em> about a file not yet
+     * downloaded, and is worth nothing on its own: it becomes usable when the
+     * app checks it against the only key it installs add-ons signed with, which
+     * the app does itself.
      */
     public static final String PLUGIN_UPDATE_URL = "net.pgaskin.remotedesktop.plugin.updateUrl";
 
@@ -90,7 +89,7 @@ public final class Backends {
     public enum PluginState {
         /** Its providers are in the list. */
         LOADED,
-        /** Signed by us, but not this build's companion, or it declares nothing. */
+        /** Signed with our key, but built for another app version, or it has no backend. */
         INCOMPATIBLE,
         /** It loaded and then threw. */
         FAILED,
@@ -99,7 +98,7 @@ public final class Backends {
     /**
      * One add-on the app can see. A package that fails the signature check is
      * not one of these and is never reported: there is nothing useful to offer
-     * about an impostor, and naming it invites somebody to interact with it.
+     * about an impostor, and naming it invites the user to interact with it.
      */
     public record Plugin(String packageName, PluginState state, String detail) {
     }
@@ -131,7 +130,7 @@ public final class Backends {
      * <p>Installed from {@code AppComponentFactory} before anything else runs.
      * It has to be the app's *own* loader rather than a child of it because
      * that is the one the platform hands to native code that asks for a class
-     * from a thread of its own — a borrowed core resolving its callbacks — and
+     * from a thread of its own (a native library resolving its callbacks), and
      * such a lookup has no Java frame to take a loader from.
      */
     public static ClassLoader classLoader(ClassLoader app) {
@@ -203,18 +202,18 @@ public final class Backends {
     public static synchronized void discover(Context context) {
         if (providers != null) {
             // Something read the list before this ran, so no add-on can be in
-            // it. Loud, because it is a mistake in the app rather than in an
-            // add-on — and not thrown, for the same reason the whole body below
-            // is guarded.
+            // it. Logged as an error, because it is a mistake in the app rather
+            // than in an add-on, but not thrown, for the same reason the whole
+            // body below is guarded.
             Log.e(TAG, "the backend list was read before discovery",
                     new IllegalStateException("too late"));
             return;
         }
-        // Nothing here may be the reason the app will not start. This runs in
-        // `Application.onCreate`, so a throw is every entry point gone — the
-        // home screen, the session's service, and a timeout alarm's receiver
-        // landing in a process that has nothing else in it. An app with no
-        // add-ons is a worse app; an app that will not start is not one.
+        // Nothing here may stop the app from starting. This runs in
+        // `Application.onCreate`, so a throw takes every entry point with it:
+        // the home screen, the session's service, and a timeout alarm's
+        // receiver landing in a process that has nothing else in it. The app
+        // still works without its add-ons.
         try {
             find(context);
         } catch (Throwable t) {
@@ -253,8 +252,7 @@ public final class Backends {
                         "Built for app version " + info.getLongVersionCode() + "."));
                 continue;
             }
-            // Everything from here is somebody else's code being asked to
-            // construct itself.
+            // Everything from here runs the add-on's code.
             try {
                 final List<BackendProvider> mine = load(info.applicationInfo, taken);
                 if (mine.isEmpty()) {
@@ -269,8 +267,8 @@ public final class Backends {
                 Log.i(TAG, "loaded " + mine.size() + " backend(s) from " + pkg);
             } catch (Throwable t) {
                 Log.e(TAG, "loading " + pkg, t);
-                // Its own words where it has any, as everywhere else a plugin's
-                // failure is repeated: a class name on a card helps nobody.
+                // Its own message where it has one, as everywhere else a
+                // plugin's failure is shown: a class name on a card is no help.
                 final String said = t.getMessage();
                 found.add(new Plugin(pkg, PluginState.FAILED,
                         said == null || said.isEmpty() ? String.valueOf(t) : said));
@@ -283,9 +281,9 @@ public final class Backends {
     /** The providers this build was compiled with, in no particular order. */
     private static List<BackendProvider> builtIn() {
         final List<BackendProvider> own = new ArrayList<>();
-        // The classloader is named rather than defaulted: the thread context
-        // one is the app's here, but it is not ours to assume. (A minified
-        // build would need these kept — nothing here is referenced by name.)
+        // The classloader is passed rather than defaulted: the thread context
+        // one is the app's here, but that is not guaranteed. (A minified build
+        // would need these kept: nothing here is referenced by name.)
         for (BackendProvider p : ServiceLoader.load(
                 BackendProvider.class, Backends.class.getClassLoader())) {
             own.add(p);
@@ -297,14 +295,15 @@ public final class Backends {
      * The packages that declare {@link #PLUGIN_ACTION} and are signed with our
      * key, in a stable order.
      *
-     * <p>An unsigned-like package is dropped here and never mentioned again.
+     * <p>A package signed with another key is dropped here and never mentioned
+     * again.
      * {@code checkSignatures} compares certificate sets, which is what "the same
      * key" means across an app and an add-on released together.
      */
-    // The <queries> declaration this needs is the app's, since a library has no
-    // say in what the app it is linked into can see — and the app has exactly
-    // one: this action, and no package name, which is what keeps an add-on's
-    // identity out of the app.
+    // The <queries> declaration this needs is the app's, since a library cannot
+    // change what the app it is linked into can see. The app declares only this
+    // action, and no package name, which keeps an add-on's identity out of the
+    // app.
     @SuppressLint("QueryPermissionsNeeded")
     private static Set<String> signedLikeUs(PackageManager pm, String self) {
         final Set<String> candidates = new LinkedHashSet<>();
@@ -325,18 +324,18 @@ public final class Backends {
     /**
      * The add-on's dex, under a loader parented to ours.
      *
-     * <p>The parent is the point, and {@code createPackageContext} will not do:
+     * <p>The parent matters, and {@code createPackageContext} does not work:
      * its loader hangs off the boot classloader, which cannot see
      * {@link BackendProvider}, so nothing in the add-on would resolve. Splits
      * are included because an installer may have made some.
      *
-     * @param taken every id already spoken for, this build's own included
+     * @param taken every id already taken, this build's own included
      */
     private static List<BackendProvider> load(ApplicationInfo info, Set<String> taken) {
         // Without the chain an add-on's classes are reachable from Java and
-        // from nothing else: a borrowed core resolving a callback by name from
-        // a thread of its own is answered with the app's own loader, which
-        // cannot see this dex. Half of that is worse than none of it.
+        // from nothing else: a native library resolving a callback by name
+        // from a thread of its own is answered with the app's own loader, which
+        // cannot see this dex. An add-on that half works is worse than none.
         if (chain == null) {
             throw new IllegalStateException("This build of the app cannot load plugins.");
         }
@@ -358,8 +357,8 @@ public final class Backends {
             // Against this build's own ids as well as the other add-ons': a
             // saved connection names an id, the list is sorted by `order` and
             // answered first-match, so an add-on free to claim `rfb` at a lower
-            // order is one that replaces that client for every connection on
-            // the phone.
+            // order would replace that client for every connection on the
+            // phone.
             if (taken.contains(p.id())) {
                 throw new IllegalStateException("Another backend is already called " + p.id() + ".");
             }
@@ -379,10 +378,10 @@ public final class Backends {
     /**
      * Which add-on a class was loaded from, or null for anything of the app's.
      *
-     * <p>An add-on's code sometimes has to reach its own package — its
-     * provider, its setup screen — and asking a {@link Context} gives the
-     * app's package, since that is the process it is running in. This is the
-     * only thing that knows, because it is what built the loader.
+     * <p>An add-on's code sometimes has to reach its own package (its provider,
+     * its setup screen), and asking a {@link Context} gives the app's package,
+     * since that is the process it is running in. Only this class knows,
+     * because it built the loader.
      */
     public static String packageOf(ClassLoader loader) {
         return loader instanceof Plugins p ? p.packageName : null;
@@ -397,8 +396,8 @@ public final class Backends {
     /**
      * What {@link #discover} made of each add-on, for a screen that says so,
      * with anything that has since thrown ({@link #failed}) folded in: an
-     * add-on that loaded and then failed is a failed one, and the difference
-     * between the two moments is of no interest to whoever has to deal with it.
+     * add-on that loaded and then failed is shown as failed, since the
+     * difference between the two moments does not matter to the user.
      */
     public static synchronized List<Plugin> plugins() {
         if (failedAtUse.isEmpty()) {
@@ -414,13 +413,12 @@ public final class Backends {
     }
 
     /**
-     * Somebody else's code threw where a screen called it.
+     * A backend's code threw where a screen called it.
      *
-     * <p>Recorded against the add-on it came from, so that the failure has
-     * somewhere to be said and something to be done about it — the screen that
-     * caught it says so once and is gone, and the card the add-on grows is what
-     * offers to uninstall it. A backend of the app's own has neither, and is
-     * logged and nothing more.
+     * <p>Recorded against the add-on it came from, so that the failure is shown
+     * somewhere and can be acted on: the screen that caught it says so once and
+     * is gone, and the add-on's card offers to uninstall it. A backend of the
+     * app's own has neither, and is only logged.
      */
     public static void failed(String id, Throwable t) {
         Log.e(TAG, "backend " + id, t);
@@ -443,9 +441,9 @@ public final class Backends {
     private static synchronized List<BackendProvider> providers() {
         List<BackendProvider> found = providers;
         if (found == null) {
-            // Whatever `discover` weighed the add-ons against, so that the id
-            // it refused a clash on is the id in this list. Its own only where
-            // discovery never ran at all.
+            // The built-in list `discover` checked the add-ons' ids against, so
+            // an id it refused as a clash is the one in this list. Loaded here
+            // only where discovery never ran at all.
             final List<BackendProvider> loaded =
                     new ArrayList<>(builtIn != null ? builtIn : builtIn());
             loaded.addAll(discovered);
@@ -476,7 +474,7 @@ public final class Backends {
     }
 
     /**
-     * Empty for a backend this build does not have — a card for one still has
+     * Empty for a backend this build does not have: a card for one still has
      * to draw, and naming something that cannot be opened is worse than saying
      * nothing.
      */
@@ -507,29 +505,28 @@ public final class Backends {
      * offer {@link #setup} instead of what it would otherwise do.
      *
      * <p><b>Asked on a thread of its own and answered on the main one.</b> A
-     * provider answers this by looking at what it was given — hashing somebody
-     * else's library, or asking the process that holds it — and a screen asks
+     * provider answers this by looking at what it was given (hashing a
+     * library, or asking the process that holds it), and a screen asks
      * every time it resumes, so the question does not belong on the thread
      * drawing it. The answer is delivered <em>at once</em>, before this returns,
-     * where it is already known: a screen that asks in {@code onCreate} is then
-     * not a frame behind itself in the ordinary case.
+     * where it is already known, so a screen that asks in {@code onCreate} is
+     * not a frame behind in the ordinary case.
      *
      * <p><b>One call at a time per backend</b>, however many screens ask: a
      * second asker joins the first's answer rather than starting a second hash.
-     * A yes is remembered for the life of the process, since what a yes means is
-     * that a file is in place and the load verifies it again anyway; a no never
-     * is, because re-asking after {@link #setup} is the whole mechanism.
+     * A yes is remembered for the life of the process, since a yes means a file
+     * is in place and the load verifies it again anyway; a no never is, because
+     * re-asking after {@link #setup} is the whole mechanism.
      *
-     * <p>True for an id this build does not have, which is a case its callers
-     * already have a sentence for. A throw is the backend saying no in the only
-     * other way it can, and is recorded ({@link #failed}) — where {@link #setup}
-     * is a person pressing a button, and lets the throw out so that they hear
-     * about it.
+     * <p>True for an id this build does not have, which its callers already
+     * report. A throw is the backend saying no the only other way it can, and
+     * is recorded ({@link #failed}), whereas {@link #setup} is the user pressing
+     * a button, and lets the throw out so that they see it.
      *
-     * <p><b>An answer for a screen that has gone is dropped here</b>, so that
-     * four call sites do not need four opinions about it: what every one of
-     * them would do with a late answer is open a screen or write on one, and
-     * the context it asked with is what says whether there is one.
+     * <p><b>An answer for a screen that has gone is dropped here</b>, so the
+     * call sites do not each need to handle it: every one of them would open a
+     * screen or write on one with a late answer, and the context it asked with
+     * tells whether there is one.
      */
     public static void isSetup(Context context, String id, Consumer<Boolean> answer) {
         final Consumer<Boolean> to = whileThereIsAScreen(context, answer);
@@ -572,11 +569,11 @@ public final class Backends {
             }
             final boolean said = ok;
             MAIN.post(() -> {
-                // One at a time, guarded: these are four unrelated screens, and
-                // one of them throwing must not be the others never hearing.
+                // One at a time, guarded: these may be unrelated screens, and
+                // one of them throwing must not keep the others from hearing.
                 // The home screen counts its answers down to decide when to
-                // draw, so a lost one is a list that is wrong until the process
-                // ends.
+                // draw, so a lost one leaves a list that is wrong until the
+                // process ends.
                 for (Consumer<Boolean> c : waiting) {
                     try {
                         c.accept(said);
@@ -589,9 +586,9 @@ public final class Backends {
     }
 
     /**
-     * The rule, in one place. A context that is not a screen — the application,
-     * a service — is one nothing can have navigated away from, and its answer
-     * always arrives.
+     * Wraps {@code answer} to drop it once the screen is gone. A context that is
+     * not a screen (the application, a service) cannot have been navigated away
+     * from, and its answer always arrives.
      */
     private static Consumer<Boolean> whileThereIsAScreen(Context context, Consumer<Boolean> answer) {
         if (!(context instanceof Activity host)) {
@@ -614,26 +611,26 @@ public final class Backends {
     /**
      * Forget every remembered yes, so that the next asker asks the backend again.
      *
-     * <p>{@link #isSetup} keeps a yes for the life of the process because what a
-     * yes means is that a file is in place, and nothing takes one away. The app
-     * deleting its own copies of an add-on's libraries is the one thing that
-     * does, and it says so here — otherwise a screen goes on holding an answer
-     * about a file that is gone: no card where there should be one, and a
-     * session that fails where it should have offered to set the backend up.
+     * <p>{@link #isSetup} keeps a yes for the life of the process because a yes
+     * means a file is in place, and files are not normally removed. The app
+     * deleting its own copies of an add-on's libraries is the exception, and it
+     * calls this; otherwise a screen keeps an answer about a file that is gone:
+     * no card where there should be one, and a session that fails where it
+     * should have offered to set the backend up.
      */
     public static void setupChanged() {
         setUp.clear();
     }
 
     /**
-     * Every server this phone has accepted, forgotten — the shared store and
+     * Forget every server this phone has accepted: the shared store and
      * whatever each backend keeps of its own.
      *
      * <p>Both halves, because "which machines am I no longer asked about?" is
      * one question and a screen offering to answer half of it would be worse
      * than one offering nothing. A backend that throws is recorded and the rest
-     * still run, for the same reason the loop over four screens' callbacks is
-     * guarded: one add-on must not be the others being left pinned.
+     * still run, as in the guarded loop over the callbacks in {@link #isSetup}:
+     * one failing add-on must not leave the others pinned.
      */
     public static void forgetHosts(Context context) {
         final Context app = context.getApplicationContext();

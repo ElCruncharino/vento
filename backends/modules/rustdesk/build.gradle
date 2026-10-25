@@ -5,11 +5,11 @@ plugins {
     id 'com.android.library'
 }
 
-// Both halves of the RustDesk backend: the crate at this directory's root
-// (`Cargo.toml`, `src/`), our own client, as the library the AAR carries, and
-// `java/`'s provider, which holds a session on it as a `NativeBackend` through
-// the natives class generated below. What ships it is `plugins/rustdesk` rather
-// than the app.
+// The RustDesk backend has two parts: the crate at this directory's root
+// (`Cargo.toml`, `src/`), our own client, built as the library the AAR
+// carries; and the provider in `java/`, which holds a session as a
+// `NativeBackend` through the natives class generated below. It ships in
+// `plugins/rustdesk` rather than in the app.
 android {
     namespace = 'net.pgaskin.remotedesktop.backend.rustdesk'
     compileSdk 36
@@ -25,9 +25,8 @@ android {
     }
 
     // Not AGP's `src/main/`: `src/` here is the crate's. The Java is in
-    // `java/`, the files themselves with no package directories over them
-    // (javac goes by the `package` line), and the provider's registration is
-    // in `resources/`.
+    // `java/`, with no package directories (javac goes by the `package`
+    // line), and the provider's registration is in `resources/`.
     sourceSets.main {
         java.srcDirs = ['java']
         resources.srcDirs = ['resources']
@@ -41,14 +40,14 @@ android {
 }
 
 dependencies {
-    // The only thing of the app's this module may name. `api` because a
-    // session here is a `Backend` and whoever holds one says so.
+    // The only app project this module may depend on. `api` because sessions
+    // here are `Backend`s, so consumers need the type too.
     api project(':backends')
 }
 
 // `libremotedesktop_rustdesk.so`, compiled by cargo-ndk into a generated
-// jniLibs directory the AAR packages — which the add-on's APK then carries and
-// the app loads out of that package's own library directory.
+// jniLibs directory the AAR packages. The add-on's APK carries it, and the
+// app loads it from that package's library directory.
 androidComponents {
     onVariants(selector().all()) { variant ->
         final cap = variant.name.substring(0, 1).toUpperCase(Locale.ROOT) + variant.name.substring(1)
@@ -69,9 +68,9 @@ androidComponents {
         }
         variant.sources.jniLibs?.addGeneratedSourceDirectory(cargoBuild) { it.outputDir }
 
-        // `RustDeskCatalog`, what the catalog says this backend is, and
-        // `RustDeskNatives`, what the library registers its natives on — a class
-        // of this module's, loaded from the add-on's own APK: see :backends.
+        // `RustDeskCatalog`, this backend's catalog entry, and
+        // `RustDeskNatives`, the class the library registers its natives on,
+        // loaded from the add-on's APK: see :backends.
         seam.generateCatalog(project, variant, 'rustdesk', 'RustDeskCatalog')
         seam.generateNatives(project, variant, 'RustDeskNatives', 'remotedesktop_rustdesk')
     }

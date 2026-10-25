@@ -45,16 +45,15 @@ public final class Bindings {
                                       LogMode logMode);
 
     /**
-     * The second half of the bootstrap. It takes four callbacks, all four of
-     * them about RealVNC accounts — signing in, syncing connection records,
-     * browsing a team directory, naming team labels — and this client supports
-     * none of that.
+     * The second part of the bootstrap. It takes four callbacks, all about
+     * RealVNC accounts (signing in, syncing connection records, browsing a team
+     * directory, naming team labels), and this client supports none of that.
      *
      * <p>So the four objects are made here and never leave: {@link NoCloud}
-     * answers every one of them with nothing, and a caller sees a bootstrap
-     * call with no arguments instead of a cloud API it would have to implement
-     * in order to ignore. The interfaces exist because the core resolves them
-     * by name, and are package-private for the same reason.
+     * ignores every call, and a caller sees a bootstrap call with no arguments
+     * instead of a cloud API it would have to implement only to ignore. The
+     * interfaces exist only because the core resolves them by name, and are
+     * package-private because no caller needs them.
      */
     public static void initViewer() {
         final NoCloud stub = new NoCloud();
@@ -67,12 +66,12 @@ public final class Bindings {
                                        LabelBindings.Callback labelCallback);
 
     /**
-     * One object for all four, since it says the same thing to each.
+     * One object for all four, since it does the same for each.
      *
      * <p>Every method is declared on the class rather than left to a default on
-     * the interface: the core reaches these through {@code GetMethodID} on this
-     * object's own class, and inherited defaults are not worth betting a native
-     * lookup on.
+     * the interface: the core looks these up with {@code GetMethodID} on this
+     * object's own class, and a native lookup should not depend on inherited
+     * defaults.
      */
     private static final class NoCloud implements SignInMgrBindings.SignInUi,
             SyncMgrBindings.Callback, DirectoryBrowserBindings.Callback, LabelBindings.Callback {

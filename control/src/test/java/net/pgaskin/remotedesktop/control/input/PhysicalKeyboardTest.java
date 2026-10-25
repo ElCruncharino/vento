@@ -16,11 +16,10 @@ import java.util.List;
 /**
  * The physical keyboard, against a stand-in for a US layout.
  *
- * <p>{@link PhysicalKeyboard.CharMap} is the seam that makes this testable at
- * all: on a device it is the {@code KeyCharacterMap} of whichever keyboard sent
- * the event, and here it is {@link #US} — twenty lines that behave the way a
- * layout does, including the part that matters, which is that the modifiers it
- * is <em>shown</em> decide the character it returns.
+ * <p>{@link PhysicalKeyboard.CharMap} makes this testable: on a device it is
+ * the {@code KeyCharacterMap} of whichever keyboard sent the event, and here it
+ * is {@link #US}, a few lines that behave the way a layout does. In particular,
+ * the modifiers it is <em>shown</em> decide the character it returns.
  */
 public class PhysicalKeyboardTest {
 
@@ -43,9 +42,7 @@ public class PhysicalKeyboardTest {
     /**
      * A layout: letters, the digit row, and one AltGr character so the third
      * level can be told apart from the first two. Ctrl and left Alt are
-     * deliberately <em>not</em> handled — a real {@code KeyCharacterMap} returns
-     * the plain character for Ctrl+C too, and the point of the test is that the
-     * lookup never sees those bits at all.
+     * deliberately <em>not</em> handled: the lookup never sees those bits.
      */
     private static final PhysicalKeyboard.CharMap US = (keyCode, metaState) -> {
         final boolean shift = (metaState & M_SHIFT) != 0;
@@ -105,7 +102,7 @@ public class PhysicalKeyboardTest {
     }
 
     /**
-     * The one that decides whether shortcuts work at all. A layout asked about
+     * This decides whether shortcuts work at all. A layout asked about
      * Ctrl+C usually answers with nothing, so a mapping that hands the whole
      * metaState to the lookup sends no key and Ctrl+C silently does not exist.
      */
@@ -133,9 +130,9 @@ public class PhysicalKeyboardTest {
         tap(altGr, A, M_ALT | M_ALT_RIGHT);
         assertEquals(List.of("key down AltGr", "key down á", "key up á"), altGr.keys);
 
-        // And a key with nothing on the third level — which on a US layout is
-        // every key — sends its own character rather than nothing, so the far
-        // end can apply a level this phone's layout does not have.
+        // And a key with nothing on the third level (on a US layout, every key)
+        // sends its own character rather than nothing, so the far end can apply
+        // a level this phone's layout does not have.
         final Harness empty = kb();
         down(empty, ALT_R, 0);
         tap(empty, B, M_ALT | M_ALT_RIGHT);
@@ -189,8 +186,8 @@ public class PhysicalKeyboardTest {
 
     /**
      * The whole list, written out from the Android keycode names rather than
-     * from the code: this is the set that keeps a phone a phone, and a key
-     * quietly joining or leaving it is a behaviour change nothing else would
+     * from the code: these are the keys the phone keeps for itself, and a key
+     * joining or leaving the set is a behaviour change no other test would
      * catch.
      */
     @Test
@@ -250,9 +247,9 @@ public class PhysicalKeyboardTest {
     /**
      * The repeat bug that is only visible at the far end. Android reports a
      * repeat with the modifiers as they are <em>now</em>, so pressing Shift
-     * during a held "a" would look like a press of "A" — and since the far end
-     * keys its held-key map on the id, that press would overwrite the entry and
-     * the release would let go of "A" while "a" stayed down for ever.
+     * during a held "a" would look like a press of "A". Since the far end keys
+     * its held-key map on the id, that press would overwrite the entry and the
+     * release would let go of "A" while "a" stayed down for ever.
      */
     @Test
     public void aRepeatResendsTheKeysymItWentDownWith() {
@@ -285,9 +282,8 @@ public class PhysicalKeyboardTest {
 
     @Test
     public void aReleaseNamesTheKeyRatherThanTheKeysym() {
-        // Two keys whose keysym is the same one — a layout is free to put a
-        // character on more than one key — and releasing one must not let go of
-        // the other's.
+        // Two keys with the same keysym (a layout is free to put a character on
+        // more than one key); releasing one must not let go of the other's.
         final PhysicalKeyboard.CharMap oneCharacter = (keyCode, metaState) -> 'a';
         final Harness h = kb();
         h.physicalKeys.keyDown(A, 0, 0, oneCharacter);
@@ -300,9 +296,9 @@ public class PhysicalKeyboardTest {
 
     /**
      * The right-hand modifiers are keys of their own at the far end, which is
-     * what Android says they are and what every backend here can carry — and
-     * they are still modifiers, or one of them would spend a one-shot armed on
-     * the extension row.
+     * what Android says they are and what every backend here can carry. They
+     * are still modifiers, or one of them would spend a one-shot armed on the
+     * extension row.
      */
     @Test
     public void theRightHandModifiersAreTheirOwnKeys() {
@@ -336,8 +332,8 @@ public class PhysicalKeyboardTest {
 
     /**
      * The cross-keyboard merge from the other side. The extension row holds Ctrl
-     * — which is the whole reason it exists — and the character comes from the
-     * physical keyboard, exactly as it comes from the system IME.
+     * (its main purpose) and the character comes from the physical keyboard,
+     * exactly as it comes from the system IME.
      */
     @Test
     public void aRowModifierAndAPhysicalKeyMeetAtTheFarEnd() {

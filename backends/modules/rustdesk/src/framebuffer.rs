@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The desktop as pixels: the picture two threads share, and the buffer the
-//! next one is decoded into.
+//! The desktop's pixels: the picture shared by two threads, and the buffer the
+//! next picture is decoded into.
 
 use std::sync::Arc;
 
@@ -13,17 +13,17 @@ use runtime::media::video::{Changes, GpuPicture};
 ///
 /// Written by the protocol thread under a write lock and read by the drawing
 /// thread under a read lock, and the write is a **pointer swap**: this protocol
-/// has no damage rectangles, so a key frame is a whole 1920×1200 picture and
-/// converting one into place under the lock would stop the drawing thread for
-/// the length of that conversion — a third of a frame's time at 30 fps. The
-/// decoder converts into a buffer of its own and [`swap`](Self::swap) puts it
-/// in, which holds the lock for a `Vec` swap. What that buffer costs when a
-/// frame converts only part of itself is [`Back`].
+/// has no damage rectangles, so a key frame is a whole 1920×1200 picture, and
+/// converting it in place under the lock would block the drawing thread for
+/// the whole conversion, a third of a frame's time at 30 fps. The decoder
+/// converts into its own buffer and [`swap`](Self::swap) installs it, holding
+/// the lock only for a `Vec` swap. [`Back`] handles the cost of that buffer
+/// when a frame converts only part of itself.
 ///
-/// Or the picture is on the GPU ([`show_gpu`](Self::show_gpu)), where a
-/// window that draws there asked for it to be left: then the pixels here
-/// are behind it until somebody reads them, and a read
-/// ([`catch_up`](Self::catch_up)) converts it in first, once.
+/// Alternatively the picture is on the GPU ([`show_gpu`](Self::show_gpu)),
+/// when a window that draws there asked for it to stay there: the pixels here
+/// are then out of date until read, and the first read
+/// ([`catch_up`](Self::catch_up)) converts the picture into them, once.
 pub struct Framebuffer {
     width: usize,
     height: usize,
@@ -52,7 +52,7 @@ impl Framebuffer {
     }
 
     /// Nothing is preserved: a desktop that has changed size is repainted from
-    /// a key frame, which is the only kind of update this protocol has.
+    /// a key frame.
     pub fn resize(&mut self, width: usize, height: usize) {
         self.width = width;
         self.height = height;
@@ -62,12 +62,12 @@ impl Framebuffer {
         self.behind = false;
     }
 
-    /// Take `next` as the picture, handing back the buffer that was there for
-    /// the decoder to draw the following frame into.
+    /// Installs `next` as the picture, returning the previous buffer for the
+    /// decoder to draw the following frame into.
     ///
-    /// A size that does not match is refused rather than resized: the caller
-    /// resizes when the far end says the desktop changed, and a frame that
-    /// arrives between the two is one frame of the old size.
+    /// A mismatched size is refused rather than resized: the caller resizes
+    /// when the far end reports a desktop change, and a frame arriving in
+    /// between is one frame of the old size.
     pub fn swap(&mut self, next: &mut Vec<u32>) -> bool {
         if next.len() != self.width * self.height || self.width == 0 {
             return false;
@@ -78,8 +78,8 @@ impl Framebuffer {
         true
     }
 
-    /// Take a picture left on the GPU as the picture. Refused, as a swap
-    /// is, where it is not this desktop's size.
+    /// Installs a picture left on the GPU as the picture. Refused, as a swap
+    /// is, if it is not this desktop's size.
     pub fn show_gpu(&mut self, picture: Arc<dyn GpuPicture>) -> bool {
         if (picture.width(), picture.height()) != (self.width, self.height) || self.width == 0 {
             return false;
@@ -89,21 +89,21 @@ impl Framebuffer {
         true
     }
 
-    /// The picture, where it is on the GPU.
+    /// The picture, if it is on the GPU.
     pub fn gpu(&self) -> Option<Arc<dyn GpuPicture>> {
         self.gpu.clone()
     }
 
-    /// Whether the pixels here are behind a picture on the GPU, and a read
-    /// of them has to [`catch_up`](Self::catch_up) first.
+    /// Whether the pixels here are older than a picture on the GPU, so a read
+    /// has to [`catch_up`](Self::catch_up) first.
     pub fn behind(&self) -> bool {
         self.behind
     }
 
-    /// The picture on the GPU read back into the pixels here, if they are
-    /// behind it: the readback it was left there to save, paid only by
-    /// whoever reads them. Where it cannot be read the pixels stay as they
-    /// were, rather than being asked for again on every read.
+    /// Reads the picture on the GPU back into the pixels here, if they are
+    /// out of date: leaving it on the GPU avoids this readback unless the
+    /// pixels are read. If it cannot be read the pixels stay as they were,
+    /// rather than retrying on every read.
     pub fn catch_up(&mut self) {
         if !std::mem::take(&mut self.behind) {
             return;
@@ -115,12 +115,12 @@ impl Framebuffer {
         }
     }
 
-    /// Copy the rows `behind` names out of the picture here into `dst`, which
-    /// is the buffer the next [`swap`](Self::swap) will take. False, and
-    /// nothing copied, where `dst` is not this desktop's size.
+    /// Copies the rows selected by `behind` from the picture here into `dst`,
+    /// the buffer the next [`swap`](Self::swap) will take. Returns false, with
+    /// nothing copied, if `dst` is not this desktop's size.
     ///
-    /// This is what a frame that converts only part of itself owes the buffer
-    /// it converts into: see [`Back`].
+    /// A frame that converts only part of itself needs this to fill in the
+    /// rest of its buffer: see [`Back`].
     pub fn carry_rows(&self, dst: &mut [u32], behind: impl Fn(usize) -> bool) -> bool {
         if self.width == 0 || dst.len() != self.width * self.height {
             return false;
@@ -135,10 +135,10 @@ impl Framebuffer {
         true
     }
 
-    /// Copy a desktop rectangle out as `R, G, B, A` bytes, one row at a time
-    /// into a destination of its own stride. False if there is nothing to read
-    /// or the rectangle is not wholly inside the desktop — a partial answer
-    /// would be a half-drawn tile on screen.
+    /// Copies a desktop rectangle out as `R, G, B, A` bytes, one row at a time,
+    /// into a destination with its own stride. False if there is nothing to
+    /// read or the rectangle is not wholly inside the desktop, since a partial
+    /// result would show as a half-drawn tile.
     pub fn read_rgba(
         &self,
         x: usize,
@@ -195,30 +195,29 @@ impl Default for Framebuffer {
     }
 }
 
-/// The buffer a frame is decoded into, and what the last two frames wrote to
-/// it.
+/// The buffer a frame is decoded into, and the rows the last two frames wrote
+/// to it.
 ///
-/// [`Framebuffer::swap`] takes this buffer and hands back the one that was on
-/// screen, so a buffer that has just been swapped in holds the frame **before**
-/// last. That costs nothing while every frame is converted whole, and is the
-/// whole of the difficulty once a frame converts only the rows that moved: a
-/// row this frame does not touch is two pictures behind rather than one.
+/// [`Framebuffer::swap`] takes this buffer and returns the one that was on
+/// screen, so a buffer just returned holds the frame **before** last. That
+/// does not matter while every frame is converted whole, but once a frame
+/// converts only the rows that changed, a row it does not touch is two
+/// pictures out of date rather than one.
 ///
-/// So the rows the *last* frame converted are brought forward out of the
-/// picture now on screen, before the swap takes it away — every other row is
-/// one the last two frames both left alone, and is therefore already right.
+/// So the rows the *last* frame converted are copied from the picture now on
+/// screen before the swap takes it; every other row was left alone by both of
+/// the last two frames, and is therefore already correct.
 pub struct Back {
     pub pixels: Vec<u32>,
-    /// What this frame converted, and what the last one did.
+    /// The rows this frame converted, and the rows the last one did.
     pub changed: Changes,
     carried: Changes,
-    /// Whether these pixels are related to the picture on screen at all. Set
-    /// where a frame did not go on screen, and answered by converting the whole
-    /// of the next one, since a buffer nothing is known about cannot be
-    /// repaired a row at a time.
+    /// Whether these pixels have lost track of the picture on screen. Set when
+    /// a frame did not go on screen, and cleared by converting the next one
+    /// whole, since an unknown buffer cannot be repaired row by row.
     stale: bool,
-    /// Rows the last frame that went on screen was worth, which is what a frame
-    /// costs and the one thing a session's own log cannot work out.
+    /// Rows converted by the last frame that went on screen, which measures
+    /// the frame's cost for the session's cost log.
     converted: usize,
 }
 
@@ -240,7 +239,7 @@ impl Back {
         self.stale = true;
     }
 
-    /// Start an update: nothing has moved in it yet, unless these pixels have
+    /// Starts an update: nothing has changed yet, unless these pixels have
     /// lost track of the picture on screen, in which case all of it has.
     pub fn begin(&mut self, width: usize, height: usize) {
         self.changed.reset(height);
@@ -250,10 +249,10 @@ impl Back {
         }
     }
 
-    /// Bring the rows this frame did not convert up to the picture on screen,
-    /// which is every row the last frame converted and this one did not. False
-    /// where that picture is not this buffer's size, and the buffer is then
-    /// stale rather than half right.
+    /// Updates the rows this frame did not convert from the picture on screen:
+    /// every row the last frame converted and this one did not. False if that
+    /// picture is not this buffer's size, and the buffer is then marked stale
+    /// rather than left half correct.
     pub fn carry(&mut self, from: &Framebuffer) -> bool {
         let Back {
             pixels,
@@ -269,21 +268,21 @@ impl Back {
         true
     }
 
-    /// The picture went on screen: what this frame converted is what the next
-    /// one will have to bring forward.
+    /// The picture went on screen: the rows this frame converted are the ones
+    /// the next frame will have to copy.
     pub fn swapped(&mut self) {
         self.converted = self.changed.count();
         std::mem::swap(&mut self.changed, &mut self.carried);
         self.stale = false;
     }
 
-    /// How many rows the last frame put on screen, and none for a frame that
-    /// did not.
+    /// How many rows the last frame put on screen, or zero for a frame that
+    /// did not go on screen.
     pub fn converted(&self) -> usize {
         self.converted
     }
 
-    /// The picture did not, so the next frame is converted whole.
+    /// The picture did not go on screen, so the next frame is converted whole.
     pub fn lost(&mut self) {
         self.stale = true;
     }
@@ -354,7 +353,7 @@ pub mod tests {
         assert_eq!(u32::from_le_bytes(out[0..4].try_into().unwrap()), 7);
         // A picture of another size is refused, as a swap would be.
         assert!(!fb.show_gpu(flat(3, 2, 1)));
-        // A picture converted on the processor is the picture again.
+        // A picture converted on the CPU replaces it.
         let mut next = vec![1u32, 2, 3, 4];
         assert!(fb.swap(&mut next));
         assert!(fb.gpu().is_none() && !fb.behind());
@@ -369,7 +368,7 @@ pub mod tests {
         fb.resize(2, 2);
         let mut next = vec![1u32, 2, 3, 4];
         assert!(fb.swap(&mut next));
-        // The old buffer comes back, which is what makes the next frame free.
+        // The old buffer is returned, so the next frame needs no allocation.
         assert_eq!(next.len(), 4);
         let mut out = [0u8; 16];
         assert!(fb.read_rgba(0, 0, 2, 2, &mut out, 8));
@@ -388,8 +387,8 @@ pub mod tests {
     const W: usize = 4;
     const H: usize = 4;
 
-    /// One update, with a picture of one colour a row: the rows `moved` names
-    /// are converted and the rest are left, which is what a decoder does.
+    /// One update of a picture with one colour per row: the rows in `moved`
+    /// are converted and the rest are left alone, as a decoder does.
     fn frame(fb: &mut Framebuffer, back: &mut Back, picture: &[u32; H], moved: &[usize]) {
         back.begin(W, H);
         for &row in moved {
@@ -409,10 +408,9 @@ pub mod tests {
         std::array::from_fn(|row| fb.pixels[row * W])
     }
 
-    /// The one thing converting part of a frame has to get right: the buffer
-    /// that comes back from a swap is the frame *before* last, so a row the new
-    /// frame does not convert has to be brought forward from the picture that
-    /// has just gone on screen.
+    /// The key requirement of converting part of a frame: the buffer returned
+    /// by a swap holds the frame *before* last, so a row the new frame does not
+    /// convert has to be copied from the picture that has just gone on screen.
     #[test]
     fn a_row_that_is_not_converted_comes_forward() {
         let mut fb = Framebuffer::new();
@@ -421,15 +419,15 @@ pub mod tests {
         back.resize(W, H);
 
         let mut picture = [1u32; H];
-        frame(&mut fb, &mut back, &picture, &[]); // the first one is all of it
+        frame(&mut fb, &mut back, &picture, &[]); // the first frame is converted whole
         assert_eq!(on_screen(&fb), [1, 1, 1, 1]);
 
         picture[1] = 2;
         frame(&mut fb, &mut back, &picture, &[1]);
         assert_eq!(on_screen(&fb), [1, 2, 1, 1]);
 
-        // Row 1 is the one at stake: it moved last frame and not this one, so
-        // the buffer being drawn into still holds what it was before that.
+        // Row 1 is the one tested: it changed in the last frame and not in
+        // this one, so the buffer being drawn into still holds its older value.
         picture[2] = 3;
         frame(&mut fb, &mut back, &picture, &[2]);
         assert_eq!(on_screen(&fb), [1, 2, 3, 1]);

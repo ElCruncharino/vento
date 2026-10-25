@@ -7,10 +7,10 @@
 // TigerVNC makes a decoder context per H.264 rectangle with nothing but the
 // rectangle (`H264DecoderContext::createContext`, static, on a worker
 // thread), so a context cannot be told which session it decodes for. What
-// it is handed, at every decode, is the framebuffer — the session's own
-// class — and that is where a context finds the platform's decoders, a cap
+// it is handed, at every decode, is the framebuffer (the session's own
+// class), and that is where a context finds the platform's decoders, a cap
 // on how many contexts may hold a hardware decoder, and somewhere to leave
-// what the facts and the overlay say about the last picture.
+// what the connection panel and the overlay show about the last picture.
 
 #ifndef VENTO_TIGERVNC_VIDEO_H
 #define VENTO_TIGERVNC_VIDEO_H
@@ -67,7 +67,8 @@ public:
     /** How a decoder opened now would decode, as the header numbers it. */
     int mode() const { return has_ && table_.mode != nullptr ? table_.mode(table_.user) : 0; }
 
-    /** One of the hardware places, or false where they are all taken. */
+    /** Claims one of the `MAX_HARDWARE` hardware slots, or returns false if
+        they are all taken. */
     bool claimHardware() {
         int held = hardwareHeld_.load();
         while (held < MAX_HARDWARE) {

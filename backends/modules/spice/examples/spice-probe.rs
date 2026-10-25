@@ -2,12 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 /*
- * This client, driven off a phone: the same `Client` the JNI half creates,
- * against a real server, with the events printed and the picture written out.
- *
- * The 46a probe (`scripts/measure/spice-probe`) asked whether the crates work;
- * this one asks whether *this* session layer does, which is a different
- * question and the one that has to be re-asked after every change here.
+ * This crate's `Client` (the one the backend wraps), run on the host against a
+ * real server, with the events printed and the picture written out. It tests
+ * this session layer, and is worth re-running after every change here.
  *
  *   cargo run -p remotedesktop-spice --features probe --example spice-probe -- 10.33.0.200:5930 spicepass
  *
@@ -16,29 +13,29 @@
  *   SPICE_TLS      dial the TLS port, pinning whatever certificate arrives
  *   SPICE_OUT      where to write the picture (default /tmp/spice-backend.ppm)
  *   SPICE_KEYS     type this string at the guest, one key at a time
- *   SPICE_MOVE     `dx,dy`, sent ten times, which is how the pointer is checked
- *                  against a guest that draws its own cursor
- *   SPICE_COMPRESS what to ask the server to compress images with, which is
- *                  the one live option this backend has
+ *   SPICE_MOVE     `dx,dy`, sent ten times, to check the pointer against a
+ *                  guest that draws its own cursor
+ *   SPICE_COMPRESS the image compression to ask the server for, which can be
+ *                  changed live
  *   SPICE_CHORD    keysyms pressed together and released in reverse, as
- *                  `0xffe3,0xffe1` — the way a modifier is checked against a
- *                  guest that shows what it did with it
- *   SPICE_PAUSE    measure what a session costs on screen, off it and back on,
- *                  which is the whole of what this protocol's ack window can
- *                  be made to do instead of a pause message
- *   SPICE_COPY     offer this text to the guest's clipboard, which needs an
- *                  agent in there and does nothing without one
- *   SPICE_RESIZE   `1280x800`, asked of the same agent
+ *                  `0xffe3,0xffe1`, to check a modifier against a guest that
+ *                  shows what it did with it
+ *   SPICE_PAUSE    measure traffic focused, unfocused and focused again;
+ *                  unfocusing holds back acks, which is all this protocol has
+ *                  instead of a pause message
+ *   SPICE_COPY     offer this text to the guest's clipboard, which needs the
+ *                  guest agent
+ *   SPICE_RESIZE   `1280x800`, also through the guest agent
  *   SPICE_HEADS    a layout rather than a size, `1024x768+0+0,800x600+1024+0`,
- *                  which is how a second monitor is made to exist
+ *                  which is how a second monitor is added
  */
 use remotedesktop_spice::{Client, Config, Credentials, Handler};
 use std::sync::Arc;
 use std::time::Duration;
 
-/// The client logs where a phone would have logcat, and a picture with a hole
-/// in it is a warning rather than a failure — so the probe needs somewhere for
-/// those to go, and it is four lines rather than a dependency.
+/// The client logs where Android would use logcat, and a picture with a hole
+/// in it is a warning rather than a failure, so the probe needs somewhere for
+/// those to go; four lines rather than a dependency.
 struct Stderr;
 
 impl log::Log for Stderr {
@@ -125,7 +122,7 @@ fn main() {
             .ok()
             .and_then(|name| remotedesktop_spice::compression_of(&name)),
         view_only: false,
-        // The picture is what this example is about; the client's own probe
+        // This example checks the picture; the Linux client's probe
         // (`vento --probe`) plays the sound.
         audio: None,
         sound: false,
@@ -186,14 +183,12 @@ fn main() {
         }
     }
 
-    // The two the guest's agent carries, and nothing else here has a far end
-    // that can be asked for either.
+    // The clipboard and the resize both go through the guest agent.
     if let Ok(text) = std::env::var("SPICE_COPY") {
         client.set_clipboard(text);
     }
-    // More than one head, which nothing above the crate asks for and which is
-    // the only way to make a second one exist: a QXL device reports one until a
-    // client says otherwise.
+    // More than one head, which is the only way to add a second one: a QXL
+    // device reports one until a client asks for more.
     if let Ok(heads) = std::env::var("SPICE_HEADS") {
         let monitors: Vec<(i32, i32, u32, u32)> = heads
             .split(',')

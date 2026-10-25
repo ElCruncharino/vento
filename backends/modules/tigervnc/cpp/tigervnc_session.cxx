@@ -1,17 +1,17 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// TigerVNC's own client as a `vento_session`, so that above this file it is
-// the same shape as the other two RFB backends and a comparison is between
-// the clients. Nothing in here names a platform: the far end's sound is played
-// on the platform's output, handed over in the config as `vento/audio.h`'s
-// table (`VentoAudio.h` beside this file), and H.264 is decoded by the
-// platform's own video decoders, handed over the same way as `vento/video.h`'s
-// table and reached by the decoder context beside this file
-// (`H264VentoDecoderContext`, which `H264_VENTO` selects in their factory)
-// — and what the phone needs of the rest is the Rust adapter in
-// the module's `src/`, linked into the same library, which the one JNI layer in
-// `backends/platform/android` stands in front of, as it does every backend.
+// TigerVNC's own client as a `vento_session`, so that above this file it has
+// the same shape as the other RFB backends and a comparison is between the
+// clients. Nothing in here names a platform: the server's sound is played on
+// the platform's output, passed in the config as `vento/audio.h`'s table
+// (`VentoAudio.h` beside this file), and H.264 is decoded by the platform's
+// own video decoders, passed the same way as `vento/video.h`'s table and
+// reached by the decoder context beside this file (`H264VentoDecoderContext`,
+// which `H264_VENTO` selects in their factory). On Android the rest is the
+// Rust adapter in the module's `src/`, linked into the same library, which
+// the JNI layer in `backends/platform/android` wraps, as it does every
+// backend.
 //
 // Five things here are the shim's rather than the library's, and each is forced
 // by what TigerVNC's client code does and does not do:
@@ -21,26 +21,26 @@
 //      thread: the reader and the writer share a socket, and a decode may be
 //      in flight on the decoder's own threads.
 //   2. There are two framebuffers. The decoders write into TigerVNC's, which
-//      has no lock, and the seam promises pixels may be read from the drawing
-//      thread at any moment; so the damaged region is copied into a second
+//      has no lock, and the backend API lets the drawing thread read pixels
+//      at any moment; so the damaged region is copied into a second
 //      buffer under a writer lock once the update is complete, and reads are
 //      served from that.
 //   3. The alpha byte is filled in during that copy. RFB's 32-bit formats leave
 //      the fourth byte undefined and a decoder writes whatever the wire said;
-//      the seam promises an opaque one.
+//      the backend API requires an opaque one.
 //   4. The socket is opened here rather than by network::TcpSocket, whose
-//      connect() is blocking and has no deadline — a mistyped address would be
-//      a spinner for as long as the kernel keeps retrying. TcpSocket adopts the
-//      descriptor afterwards, so everything above that is theirs.
+//      connect() is blocking and has no deadline, so a mistyped address would
+//      show a spinner for as long as the kernel keeps retrying. TcpSocket
+//      adopts the descriptor afterwards, so everything above that is theirs.
 //   5. The certificate check. Their library hands a certificate that did not
 //      verify to the client and stops there (and, patched, one that did, so
 //      that it can be asked about too). Their viewer would then look in its
 //      own known-hosts file and ask in its own words; here nothing of the sort
 //      is kept or asked. What cannot be excused is refused, and everything
 //      else goes to `trust_needed` as its fingerprint, like every other
-//      backend's, so that the caller's store — the phone's KnownHosts, the
-//      Linux client's known_hosts — is the one place a server is pinned, and
-//      one server reached through libvnc or this is one pin.
+//      backend's, so that the caller's store (the Android app's KnownHosts,
+//      the Linux client's known_hosts) is the one place a server is pinned,
+//      and one server reached through libvnc or this backend is one pin.
 //
 // Their DecodeManager decodes on one thread per core up to four, which is not a
 // parameter and is unique here: the other clients in this repository decode on
@@ -49,11 +49,11 @@
 // taken over the whole process rather than over a protocol thread.
 //
 // Two of their features are deliberately not asked for, because each would
-// argue with something above this file: the **LED state** of the far end's lock
-// keys, which this end owns, and the **cursor position** pseudo-encoding,
+// conflict with something above this file: the **LED state** of the server's
+// lock keys, which this end owns, and the **cursor position** pseudo-encoding,
 // which is a server moving the pointer, where the whole gesture stack is built
 // on this end owning it. A third, the **QEMU extended key event**, is in the
-// list whatever we do — their updateEncodings always offers it — but every key
+// list regardless (their updateEncodings always offers it), but every key
 // goes out as a plain KeyEvent anyway, because this shim passes no scancode and
 // their writer falls back when the code is zero. This end owns the layout, so
 // there is no scancode to pass. **Audio**, QEMU's extension, is asked for where
@@ -125,13 +125,13 @@
 
 namespace {
 
-/// As many commands as the other shim's ring holds, and bounded for the same
-/// reason: nothing is drained until the connection is up.
+/// As many commands as libvnc's shim's ring holds (`CMD_RING`), and bounded for
+/// the same reason: nothing is drained until the connection is up.
 constexpr size_t CMD_QUEUE_MAX = 512;
 
-// What the seam's framebuffer is: four bytes per pixel, red first in memory. A
-// little-endian pixel with red at shift 0 puts them in that order, which is
-// what makes every read from the framebuffer a memcpy.
+// The backend API's framebuffer format: four bytes per pixel, red first in
+// memory. A little-endian pixel with red at shift 0 puts them in that order,
+// which is what makes every read from the framebuffer a memcpy.
 const rfb::PixelFormat seamPF(32, 24, false, true, 255, 255, 255, 0, 8, 16);
 
 // The two reduced formats, which are their own viewer's low and very low
@@ -159,7 +159,7 @@ const rfb::PixelFormat &colourPF(int level, unsigned bps) {
 }
 
 /**
- * Above 16 Mbit/s — a LAN — the second highest JPEG quality, which should be
+ * Above 16 Mbit/s (a LAN), the second highest JPEG quality, which should be
  * perceptually lossless; below it, a lossier one. Theirs, thresholds included.
  */
 int qualityFor(int level, unsigned bps) {
@@ -169,7 +169,7 @@ int qualityFor(int level, unsigned bps) {
 // ---- logging -------------------------------------------------------------
 
 // TigerVNC says why it gave up in far better words than this shim could work
-// out from the outside — "Unsupported security types" and which ones — and its
+// out from the outside ("Unsupported security types" and which ones), and its
 // exceptions carry most of that. This catches the rest, which is what a
 // certificate or a protocol complaint arrives as, and hands it to whichever
 // platform is behind `vento_log`.
@@ -198,19 +198,18 @@ void initLogging() {
 /**
  * Once for the process, and before the first connection is built: their
  * Security reads the list in its constructor, so a list installed afterwards is
- * a list nothing ever consults — which is what had been happening, silently,
- * with their default in force. Once rather than per session because the value
- * never differs, and a second session writing the parameter while a first reads
- * it is a race over a string for no gain.
+ * never consulted, and their default stays in force. Once rather than per
+ * session because the value never differs, and a second session writing the
+ * parameter while a first reads it is a race over a string for no gain.
  *
  * Their default list includes Plain, which sends the password in the clear when
- * it is not inside a TLS stack — and as a *top-level* type that is exactly what
+ * it is not inside a TLS stack, and as a *top-level* type that is exactly what
  * it would be. The TLS* family is here: VeNCrypt over an anonymous key
  * exchange, which is encrypted against a passive listener and worth nothing
- * against an active one, since nothing about the far end is proved. It is
+ * against an active one, since nothing about the server is proved. It is
  * offered because a stock server with TLS switched on and no certificate
- * arranged is an ordinary setup and refusing deletes the whole session, and
- * every one of them arrives at a question ({@code Conn::confirmAnonymousTLS}).
+ * arranged is an ordinary setup and refusing it fails the whole session, and
+ * every such connection leads to a question ({@code Conn::confirmAnonymousTLS}).
  * X509* is the same encryption with a certificate to check, and the patched
  * sub-type choice takes one of those wherever a server offers both.
  *
@@ -220,8 +219,8 @@ void initLogging() {
  * variant wins wherever a server offers both. DH and MSLogonII are left out:
  * 64-bit Diffie-Hellman is not a check of anything in 2026.
  *
- * Conditional because an unknown name is rejected as a whole list, leaving their
- * default — which is the list this one exists to replace.
+ * Conditional because an unknown name rejects the whole list, leaving their
+ * default, which is the list this one exists to replace.
  */
 void installSecurityTypes() {
     static std::once_flag once;
@@ -284,7 +283,7 @@ enum CmdType {
 struct Cmd {
     CmdType type;
     int a = 0, b = 0, c = 0;
-    int64_t id = 0;     // the key's identity, which is the seam's and not the keysym
+    int64_t id = 0;     // the caller's key id, not the keysym
     std::string text{}; // every post but the clipboard's leaves this out
     std::vector<int32_t> screens{}; // a layout's, five ints a screen as the header has them
 };
@@ -352,8 +351,8 @@ public:
         open stream would only keep the device running on silence. */
     void endAudio();
 
-    /** The session's Enable switch, turned: the server is asked to send its
-        sound again, or to stop. */
+    /** The session's Enable switch: ask the server to send its sound again,
+        or to stop. */
     void setSound(bool on);
 
 private:
@@ -455,11 +454,10 @@ public:
                     && queue_.back().type == CMD_POINTER && queue_.back().c == cmd.c) {
                 queue_.back() = std::move(cmd);
             } else {
-                // Bounded like the other shim's ring, and for the same reason:
+                // Bounded like the libvnc shim's ring, and for the same reason:
                 // nothing is drained until the connection is up, and answering
-                // a password prompt can take as long as somebody likes. The
-                // oldest goes, since the newest is what the far end still needs
-                // to be told.
+                // a password prompt can take any amount of time. The oldest
+                // goes, since the newest is what the server still needs.
                 if (queue_.size() >= CMD_QUEUE_MAX) {
                     queue_.pop_front();
                 }
@@ -479,27 +477,27 @@ public:
         wake();
         // The doorbell is only looked at between messages, and a read that has
         // started blocks inside their stream until the rest of the message
-        // arrives — so a server that accepts the connection and then stalls
-        // would hold whoever called destroy(), which on the phone is the main
+        // arrives, so a server that accepts the connection and then stalls
+        // would block whoever called destroy(), which on Android is the main
         // thread. The descriptor stays TcpSocket's; only the shutdown is ours,
         // and it is made under the lock the protocol thread closes the socket
-        // under, so it is never made on a descriptor that is closed by then —
-        // a number the next socket or pipe opened anywhere in the process may
-        // already have been handed.
+        // under, so it is never made on a descriptor that is closed by then,
+        // whose number the next socket or pipe opened anywhere in the process
+        // may already have been given.
         const std::lock_guard<std::mutex> guard(fdLock_);
         if (fd_ >= 0) {
             ::shutdown(fd_, SHUT_RDWR);
         }
     }
 
-    // Stop reading the socket, which in the other two RFB backends is the whole
-    // pause: an RFB server sends nothing that was not asked for, so leaving the
-    // last update unread is what makes it wait. Not here — this client turns
-    // continuous updates on, so the server pushes without being asked. What
-    // stops it instead is TigerVNC's own congestion control: it sends fences
-    // and waits for the replies, which a client that is not reading does not
-    // send. Same effect, different mechanism, and worth knowing before
-    // measuring a backgrounded session against the other two.
+    // Stop reading the socket, which in the libvnc and rfb backends is the
+    // whole pause: an RFB server sends nothing that was not asked for, so
+    // leaving the last update unread makes it wait. Not here: this client
+    // turns continuous updates on, so the server pushes without being asked.
+    // What stops it instead is TigerVNC's own congestion control: it sends
+    // fences and waits for the replies, which a client that is not reading
+    // does not send. Same effect, different mechanism, and worth knowing
+    // before measuring a backgrounded session against those two.
     void setFocus(bool focused) {
         {
             const std::lock_guard<std::mutex> guard(lock_);
@@ -515,7 +513,7 @@ public:
     /** Set from the protocol thread, read from whichever asks. */
     void setCanResize(bool can) { canResize_ = can; }
 
-    /** The far end's screen layout, flattened five ints per screen: the
+    /** The server's screen layout, flattened five ints per screen: the
         server's id, then x, y, width, height. */
     void setScreens(std::vector<int32_t> screens) {
         const std::lock_guard<std::mutex> guard(screensLock_);
@@ -561,8 +559,7 @@ public:
         wake();
     }
 
-    /** Blocks the protocol thread until the session is answered: a dialog and
-        a person. */
+    /** Blocks the protocol thread until the user answers the prompt. */
     bool askCredentials(bool needsUserName, std::string *user, std::string *password) {
         {
             const std::lock_guard<std::mutex> guard(lock_);
@@ -618,7 +615,7 @@ public:
         return questionYes_ && !quit_;
     }
 
-    /** The same wait again, for a far end with no identity to show at all. */
+    /** The same wait again, for a server with no identity to show at all. */
     bool askUnverified(const char *why) {
         {
             const std::lock_guard<std::mutex> guard(lock_);
@@ -692,8 +689,8 @@ public:
         conn->setQualityLevel(quality);
         // Safe at any moment, which is the library's doing rather than ours:
         // their setPF only records the format, and the connection switches to it
-        // where nothing is in flight — for continuous updates by stopping them
-        // and waiting for the end-of-continuous-updates message. libvncclient
+        // where nothing is in flight (for continuous updates, by stopping them
+        // and waiting for the end-of-continuous-updates message). libvncclient
         // has no such point, which is why the same row is not live there.
         const rfb::PixelFormat &pf = colourPF(colorLevel, conn->bandwidth());
         if (!requestedPF_ || !(*requestedPF_ == pf)) {
@@ -701,9 +698,10 @@ public:
             conn->setPF(pf);
             setViewerPF(pf);
             // A format decides how the *next* rectangle arrives, and a desktop
-            // that is not changing sends none — so the whole picture is asked
-            // for again, or moving this row does nothing anybody can see. Their
-            // own refresh, which knows to wait where an update is in flight.
+            // that is not changing sends none, so the whole picture is asked
+            // for again; otherwise changing this row has no visible effect.
+            // Their own refresh, which knows to wait where an update is in
+            // flight.
             conn->refreshFramebuffer();
         }
     }
@@ -771,7 +769,7 @@ public:
         }
         // Through the sanitiser: an auth_error's text quotes the reason string
         // the *server* sent, so these are not bytes this file chose, and the
-        // seam promises UTF-8.
+        // backend API requires UTF-8.
         char *utf8 = vento_utf8_from_bytes(detail.c_str());
         cb_.closed(cb_.user, utf8 ? utf8 : "");
         free(utf8);
@@ -809,7 +807,7 @@ private:
     int qualityLevel_;
     int colorLevel_;
     // The format last asked for, which is not the connection's until it has
-    // somewhere safe to switch — so the comparison that decides whether
+    // somewhere safe to switch, so the comparison that decides whether
     // anything changed has to be against this rather than against server.pf().
     std::optional<rfb::PixelFormat> requestedPF_;
     bool h264_;
@@ -979,9 +977,9 @@ void Conn::setName(const char *name) {
 }
 
 // Called for every desktop-size rectangle, which a server sends at the head of
-// every *non-incremental* update — so this is only a resize when the size has
-// actually changed, and treating it as one otherwise asks for a full update
-// that provokes the next one.
+// every *non-incremental* update, so this is only a resize when the size has
+// actually changed; treating it as one otherwise asks for a full update that
+// provokes the next one.
 void Conn::resizeFramebuffer() {
     if (framebuffer() != nullptr && framebuffer()->width() == server.width()
             && framebuffer()->height() == server.height()) {
@@ -994,7 +992,7 @@ void Conn::resizeFramebuffer() {
 }
 
 // The library's own handler sets server.supportsSetDesktopSize and, where the
-// answer is yes, the new size — which reaches the seam through
+// answer is yes, the new size, which reaches the session through
 // resizeFramebuffer like any other. What is added here is the flag that may be
 // read at any moment, and the one thing the library does not carry out of the
 // protocol thread: the result code, which is the only place a refusal is
@@ -1047,8 +1045,8 @@ void Conn::framebufferUpdateEnd() {
         s->audioOutput()->offerEnable(soundOn_, &Session::soundSwitched, s);
     }
 
-    // An H.264 decoder that lost its reference pictures — replaced after a
-    // hardware failure, or remade in a new mode — has nothing to draw until
+    // An H.264 decoder that lost its reference pictures (replaced after a
+    // hardware failure, or remade in a new mode) has nothing to draw until
     // the next key frame, and RFB has no message asking for one. A
     // non-incremental request for the whole screen is the nearest thing:
     // neatvnc (wayvnc) answers it by restarting its encoder, which is a key
@@ -1078,7 +1076,7 @@ void Conn::framebufferUpdateEnd() {
 
     // Where anything about the picture follows the line speed, this is where
     // the viewer moves it too: the estimate has just changed, and setting a
-    // quality or a format here only marks it — both go out with the request for
+    // quality or a format here only marks it; both go out with the request for
     // the next update rather than into the middle of this one.
     if (s->picturesItself()) {
         s->applyPicture(this);
@@ -1107,9 +1105,9 @@ void Conn::setCursor(int width, int height, const core::Point &hotspot,
                      const uint8_t *data) {
     rfb::CConnection::setCursor(width, height, hotspot, data);
 
-    // Four bytes a pixel, red first — the order the cursor readers write
-    // whichever encoding carried it, and the seam's own. Copied into words
-    // rather than cast, since their buffer promises no alignment.
+    // Four bytes a pixel, red first: the order the cursor readers write
+    // whichever encoding carried it, and the backend API's own. Copied into
+    // words rather than cast, since their buffer promises no alignment.
     std::vector<uint32_t> pixels;
     if (width > 0 && height > 0 && data != nullptr) {
         pixels.resize((size_t) width * (size_t) height);
@@ -1140,21 +1138,21 @@ void Conn::getUserPasswd(bool /*secure*/, std::string *user, std::string *passwo
 }
 
 /**
- * What a certificate can have wrong that a person may overrule by accepting it:
- * their viewer's list — an unknown or unusable issuer, not yet or no longer
- * valid, an insecure algorithm, a name it is not for. Anything else GnuTLS
- * reports is refused without asking, as their viewer refuses it.
+ * What a certificate can have wrong that the user may overrule by accepting
+ * it, from their viewer's list: an unknown or unusable issuer, not yet or no
+ * longer valid, an insecure algorithm, a name it is not for. Anything else
+ * GnuTLS reports is refused without asking, as their viewer refuses it.
  */
 constexpr unsigned EXCUSABLE_PROBLEMS = GNUTLS_CERT_INVALID | GNUTLS_CERT_SIGNER_NOT_FOUND
         | GNUTLS_CERT_SIGNER_NOT_CA | GNUTLS_CERT_NOT_ACTIVATED | GNUTLS_CERT_EXPIRED
         | GNUTLS_CERT_INSECURE_ALGORITHM | GNUTLS_CERT_UNEXPECTED_OWNER;
 
 // Reached for every certificate, one that verified included (status 0): the
-// patch on their checkSession hands it over too, because an authority's word
-// is who the server says it is and not that it is the one reached last time.
-// What cannot be excused is refused here; the rest is the caller's, through
-// `trust_needed`, whose store has the answer or whose person does. Nothing is
-// read from or written to their viewer's x509_known_hosts: a store of this
+// patch on their checkSession hands it over too, because a CA vouches for who
+// the server says it is, not that it is the one reached last time. What
+// cannot be excused is refused here; the rest goes to the caller through
+// `trust_needed`, whose store has the answer or whose user gives one. Nothing
+// is read from or written to their viewer's x509_known_hosts: a store of this
 // backend's own would be a second place a server is pinned, one the app's
 // list of known servers does not show.
 bool Conn::verifyCertificate(unsigned int status, const uint8_t *certificate,
@@ -1192,8 +1190,7 @@ bool Conn::verifyCertificate(unsigned int status, const uint8_t *certificate,
 }
 
 // An RSA-AES key's fingerprint, in their viewer's words. Asked every time: their
-// viewer keeps nothing for these either, so there is no store here to be the
-// same as.
+// viewer keeps nothing for these either, so there is no store here to match.
 bool Conn::verifyHostKey(const uint8_t * /*key*/, size_t /*length*/, const char *fingerprint) {
     const std::string text =
             std::string("The server has provided the following identifying information:\n\n"
@@ -1208,8 +1205,8 @@ bool Conn::verifyHostKey(const uint8_t * /*key*/, size_t /*length*/, const char 
 //
 // The refusal is here rather than in the offer because the type list is one
 // string for the process: the sub-types are always offered and a connection
-// that does not want them says so at this point, one handshake later than it
-// would like and before anything has been authenticated inside it.
+// that does not want them says so at this point, one handshake later than
+// ideal and before anything has been authenticated inside it.
 void Conn::confirmAnonymousTLS() {
     if (!s->anonymousTls()) {
         throw std::runtime_error(
@@ -1226,8 +1223,8 @@ void Conn::handleClipboardAnnounce(bool available) {
     }
 }
 
-// Their reader guarantees the text is valid UTF-8, which is what the seam
-// promises, so it crosses as it is.
+// Their reader guarantees the text is valid UTF-8, as the backend API
+// requires, so it is passed on as it is.
 void Conn::handleClipboardData(const char *data) {
     if (data != nullptr) {
         s->cb().clipboard(s->cb().user, data);
@@ -1240,8 +1237,8 @@ void Conn::handleClipboardRequest() {
     }
 }
 
-// A server sends audio only while something is playing — QEMU from the moment
-// the guest starts its sound card's stream to the moment it stops it — so a
+// A server sends audio only while something is playing (QEMU from the moment
+// the guest starts its sound card's stream to the moment it stops it), so a
 // session can have any number of these. The stream is opened at the first and
 // written as samples arrive, which is all a backend does: the queue behind the
 // table keeps as much ahead of the device as the server's rhythm needs and
@@ -1250,10 +1247,10 @@ void Conn::handleClipboardRequest() {
 //
 // At the end the stream is not closed at once, since closing drops what is
 // still queued, which is the last few tens of milliseconds of whatever the
-// guest played. Nor is it kept open for good, since an open stream that nobody
-// writes to keeps the device running on silence — a sound server's node that
-// never suspends, an AAudio stream on a phone in somebody's pocket — and keeps
-// the session saying that it is playing. So it is closed once its tail has
+// guest played. Nor is it kept open for good, since an open stream with
+// nothing written to it keeps the device running on silence (a sound server's
+// node that never suspends, an AAudio stream on a phone in a pocket) and keeps
+// the session reporting that it is playing. So it is closed once its tail has
 // been heard and two seconds more have passed without the server beginning
 // again, which is a guest between two sounds rather than a guest that has
 // gone quiet.
@@ -1291,7 +1288,7 @@ void Conn::endAudio() {
 }
 
 // QEMU's disable takes the client's capture off the guest's card, so nothing
-// more is sent until an enable puts it back — and no AudioEnd either, so the
+// more is sent until an enable puts it back, and no AudioEnd either, so the
 // stream is closed here rather than waiting for one. An enable while the
 // guest plays sends samples straight away, often with no AudioBegin before
 // them, which is why a write opens the stream. Before the server has said it
@@ -1313,7 +1310,7 @@ void Conn::setSound(bool on) {
 
 // ---- the protocol thread -------------------------------------------------
 
-// A layout asked for — five ints a screen, id, x, y, width, height — as the
+// A layout asked for (five ints a screen: id, x, y, width, height) as the
 // ScreenSet to send, against the server's own: a screen whose id the server
 // has is that screen, moved or resized, and keeps its flags, which is what
 // makes this a change to the desktop that is there rather than a new one; a
@@ -1361,19 +1358,20 @@ void Session::runCmd(Conn *conn, Cmd &cmd) {
     switch (cmd.type) {
         case CMD_POINTER:
             if (!viewOnly_) {
-                // Bits 0–8: the seam's mask is RFB's, and TigerVNC carries the
-                // eighth and ninth through the extended pointer message when
-                // the server has asked for it.
+                // Bits 0–8: the backend API's mask is RFB's, and TigerVNC
+                // carries the eighth and ninth through the extended pointer
+                // message when the server has asked for it.
                 conn->writer()->writePointerEvent(core::Point(cmd.a, cmd.b),
                                                   (uint16_t) (cmd.c & 0x1FF));
             }
             break;
         case CMD_KEY_DOWN:
             if (!viewOnly_) {
-                // The key's identity is the seam's `keyId`, which is exactly
-                // what TigerVNC's `systemKeyCode` is for: it keeps the map of
-                // held keys itself and releases the keysym recorded at press
-                // time. The other two clients need that map in the shim.
+                // The key's identity is the backend API's `key_id`, which is
+                // exactly what TigerVNC's `systemKeyCode` is for: it keeps the
+                // map of held keys itself and releases the keysym recorded at
+                // press time. The other RFB clients keep that map in their own
+                // code.
                 conn->sendKeyPress((int) cmd.id, 0, (uint32_t) cmd.a);
             }
             break;
@@ -1455,7 +1453,7 @@ void Session::runCmd(Conn *conn, Cmd &cmd) {
 }
 
 // `host::port` is the one unbracketed address with two colons in it that is not
-// an IPv6 literal somebody left the brackets off.
+// an IPv6 literal written without brackets.
 static bool bareLiteral(const std::string &address) {
     const size_t first = address.find(':');
     const size_t last = address.rfind(':');
@@ -1467,10 +1465,10 @@ static bool bareLiteral(const std::string &address) {
 
 // An address is `host`, `host:port`, `[literal]` or `[literal]:port`. A bare
 // IPv6 literal is refused in words rather than guessed at, because `:1` is a
-// display number here and `::1:1` cannot be an address and a display at once —
-// what the guess used to produce was `::`, which is the wildcard address. The
-// split itself is upstream's: it has the display rule, the `host::port` escape
-// from it, and unit tests, none of which is worth writing again beside it.
+// display number here and `::1:1` cannot be an address and a display at once,
+// and a guess can produce `::`, which is the wildcard address. The split itself
+// is upstream's: it has the display rule, the `host::port` escape from it, and
+// unit tests, none of which is worth writing again beside it.
 static bool splitAddress(const std::string &address, std::string *host, int *port,
                          std::string *why) {
     const size_t from = address.find_first_not_of(" \t");
@@ -1537,8 +1535,8 @@ int Session::openSocket(std::string *why) {
         // The doorbell is in this poll so that a disconnect while the socket is
         // still opening does not have to wait out the deadline. But the app
         // rings it for every command it queues, and one queued during the
-        // connect — a focus change, the options the session screen sets on the
-        // way in — is not a cancellation: it has to be drained and waited past,
+        // connect (a focus change, the options the session screen sets on the
+        // way in) is not a cancellation: it has to be drained and waited past,
         // or the very first connection of a session reports a server that never
         // answered while the second one works.
         for (;;) {
@@ -1584,7 +1582,7 @@ int Session::openSocket(std::string *why) {
             fd = candidate;
             break;
         }
-        // An empty reason is what the caller reads as "somebody asked for this".
+        // An empty reason is what the caller reads as a requested disconnect.
         *why = cancelled ? ""
                 : err == ETIMEDOUT ? "The server did not answer"
                 : std::string("Could not connect: ") + strerror(err);
@@ -1632,10 +1630,10 @@ void Session::run() {
         std::deque<Cmd> pending;
         // Set when the last read stopped for want of bytes. What is buffered
         // then is the front of a message, so the buffer's having data is no
-        // longer a reason to skip the wait: without this the thread went
-        // straight back to processMsg(), which tried the socket and gave up
-        // again, as fast as it could, for as long as the rest of a large
-        // rectangle took to arrive.
+        // longer a reason to skip the wait: without this the thread would go
+        // straight back to processMsg(), which tries the socket and gives up
+        // again, as fast as it can, for as long as the rest of a large
+        // rectangle takes to arrive.
         bool starved = false;
         for (;;) {
             bool paused;
@@ -1647,8 +1645,8 @@ void Session::run() {
                 paused = paused_;
                 // Held rather than dropped until the connection is up: every
                 // command below needs a writer, and there is none until the
-                // handshake finishes — which can take as long as somebody
-                // takes to answer a question about a certificate.
+                // handshake finishes, which can take as long as the user takes
+                // to answer a question about a certificate.
                 if (connected_) {
                     pending.swap(queue_);
                 }
@@ -1676,10 +1674,9 @@ void Session::run() {
             setTraffic((int64_t) conn->getInStream()->pos(),
                        (int64_t) conn->getOutStream()->length());
 
-            // Anything already in the buffer is a message nobody is going to
-            // be told about by poll(). The buffer asked is the one the
-            // messages are read from, which under TLS is the decrypted one
-            // and not the socket's.
+            // poll() does not report a message already in the buffer. The
+            // buffer asked is the one the messages are read from, which under
+            // TLS is the decrypted one and not the socket's.
             const bool buffered = !paused && !starved && conn->getInStream()->hasData(1);
             if (!buffered) {
                 struct pollfd fds[2];
@@ -1731,8 +1728,8 @@ void Session::run() {
         LOGW("the connection ended: %s", e.what());
         detail = "The connection was lost";
     } catch (rfb::auth_cancelled &e) {
-        // Somebody said no, which needs no words — or a certificate was
-        // refused without anybody being asked, which does.
+        // The user declined, which needs no message, or a certificate was
+        // refused without asking, which does.
         detail = conn ? conn->refusal() : "";
     } catch (rfb::auth_error &e) {
         detail = std::string("Authentication failed: ") + e.what();
@@ -1753,8 +1750,8 @@ void Session::run() {
         }
         conn->endAudio();
     }
-    // No switch past the end, and none of its calls after this: the session
-    // they post to is about to go.
+    // The sound switch goes with the session, and none of its calls arrive
+    // after this: the session they post to is about to be deleted.
     audioOutput_.withdraw();
 
     {
@@ -1771,9 +1768,10 @@ void Session::run() {
         shadowW_ = shadowH_ = 0;
     }
 
-    // A requested ending says nothing, whatever it was caught as: disconnect
-    // shuts the socket down under the read, so the stream's end — or a
-    // half-read message's error — is this side's own doing and not a reason.
+    // A requested ending reports nothing, whatever it was caught as:
+    // disconnect shuts the socket down under the read, so the stream's end
+    // (or a half-read message's error) is this side's own doing and not a
+    // reason.
     closed(asked ? "" : (detail.empty() ? "The connection was lost" : detail));
 }
 
@@ -1823,7 +1821,7 @@ bool Session::readThumbnail(int step, void *dst, size_t stride, int dstW, int ds
 }
 
 // Desktop name, protocol, connection, security, the encoding the server last
-// used, the line speed, and the two pixel formats — the order the Rust
+// used, the line speed, and the two pixel formats: the order the Rust
 // adapter's `info` labels them in.
 bool Session::info(vento_strings *out) {
     std::string desktop, protocol, security, serverPF, viewerPF;
@@ -1846,8 +1844,8 @@ bool Session::info(vento_strings *out) {
     snprintf(speed, sizeof(speed), "%u kbit/s", infoLineSpeed_.load() / 1000);
 
     // The desktop name is the server's, and their reader guarantees only that
-    // it is valid UTF-8 — which the seam promises too, so it crosses as it is.
-    // The rest of these the library printed.
+    // it is valid UTF-8, as the backend API requires, so it is passed on as it
+    // is. The library printed the rest of these.
     const char *values[] = {
             desktop.c_str(),
             protocol.c_str(),

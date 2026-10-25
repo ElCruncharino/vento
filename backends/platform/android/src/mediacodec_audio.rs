@@ -17,14 +17,13 @@
 //! Opus decoder is told them.
 //!
 //! **No call waits long.** A packet goes in as soon as there is an input
-//! buffer for it (a few milliseconds at most; a decoder that has none has
-//! what it finished taken from it, which frees one, and is asked again, and
-//! one that still has none is a dropped packet rather than a stalled
-//! channel), and what comes out is
-//! whatever the decoder has finished by then, waiting a moment for the first
-//! of it: a decoder that hands a frame back a packet late has it collected
-//! on the next call, a packet's worth later, rather than the caller waiting
-//! for it.
+//! buffer for it (a few milliseconds at most). A decoder with no free input
+//! buffer has its finished output taken, which frees one, and is asked again;
+//! if it still has none, the packet is dropped rather than the channel
+//! stalled. What comes out is whatever the decoder has finished by then,
+//! waiting a moment for the first of it: a frame the decoder hands back a
+//! packet late is collected on the next call, a packet's worth later, rather
+//! than the caller waiting for it.
 //!
 //! [`AAudio`]: crate::aaudio::AAudio
 //! [`mediacodec`]: crate::mediacodec
@@ -132,7 +131,7 @@ struct Audio {
     /// What the decoder's output is, from its last output format.
     output: Format,
     float: bool,
-    /// The next packet's timestamp, which MediaCodec wants and nothing reads.
+    /// The next packet's timestamp, which MediaCodec requires; otherwise unused.
     pts_us: u64,
 }
 
@@ -221,9 +220,9 @@ impl Decoder for Audio {
         if index < 0 {
             // Every input buffer can be held by a decoder with nowhere to put
             // what it decoded: its output buffers all waiting to be taken, and
-            // only a call that got an input buffer took them — so one packet
-            // too many while the outputs were full was a decoder that took
-            // nothing ever after. What it has finished is taken now, without
+            // only a call that got an input buffer took them, so one packet
+            // too many while the outputs were full left a decoder that never
+            // took input again. What it has finished is taken now, without
             // waiting, which frees it to take input, and then once more.
             self.drain(out, &mut format, 0);
             index = unsafe { AMediaCodec_dequeueInputBuffer(self.codec.raw(), INPUT_TIMEOUT_US) };

@@ -26,12 +26,12 @@ import java.util.regex.Pattern
  * {@code <abi>/} directory each, holding the crate's library.
  *
  * <p>That library is a {@code cdylib} for a backend whose library is its Rust
- * crate, and a {@code staticlib} for one whose library CMake links — the C
+ * crate, and a {@code staticlib} for one whose library CMake links: the C
  * backends, where the crate is the adapter and the JNI layer that go into the
- * C's {@code .so}, and CMake is told where to find it. The crate type is given
- * on the command line ({@code cargo rustc --crate-type}) rather than declared
- * in the crate, so that the host build, which links the crate as an ordinary
- * dependency, does not make a static library of it nobody links.
+ * C library's {@code .so}, and CMake is told where to find it. The crate type
+ * is given on the command line ({@code cargo rustc --crate-type}) rather than
+ * declared in the crate, so that the host build, which links the crate as an
+ * ordinary dependency, does not also build an unused static library of it.
  *
  * <p>Three things here are not a {@code cargo} invocation. The NDK comes from
  * {@code androidComponents.sdkComponents.ndkDirectory}, so {@code ndkVersion} is
@@ -40,8 +40,8 @@ import java.util.regex.Pattern
  * is scrubbed, because an ambient {@code CC} or {@code RUSTFLAGS} would silently
  * change what is linked into the APK.
  *
- * <p>Not up-to-date checked: cargo does its own incremental build, and Gradle
- * second-guessing it is how a stale {@code .so} gets packaged.
+ * <p>Not up-to-date checked: cargo does its own incremental build, and a
+ * second up-to-date check in Gradle could package a stale {@code .so}.
  */
 abstract class CargoBuildTask extends DefaultTask {
 

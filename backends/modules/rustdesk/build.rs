@@ -1,19 +1,20 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Their two `.proto` files, compiled into this crate.
+//! Compiles RustDesk's two `.proto` files into this crate.
 //!
-//! The protocol *is* those files: there is no specification and no second
-//! implementation to read a disagreement against, so a hand-typed copy would be
-//! a derivative work with worse provenance and 1032 lines of message definitions
-//! to keep in step by eye. They are a submodule at `third_party/hbb_common`.
+//! The protocol is defined only by those files: there is no specification and
+//! no second implementation to check against, so a hand-typed copy would be a
+//! derivative work with worse provenance and 1032 lines of message definitions
+//! to keep in sync by hand. They come from the submodule at
+//! `third_party/hbb_common`.
 //!
-//! It is pinned at the last upstream commit that still has both. On 2026-09-07
-//! `message.proto` moved out of hbb_common, which they share with their server,
-//! and into rustdesk's own tree as `libs/base/protos/message.proto` (rustdesk
-//! b50fde6); what stayed is what the server names. So this cannot follow
+//! It is pinned at the last upstream commit that has both. On 2026-09-07
+//! `message.proto` moved out of hbb_common, which RustDesk's client and server
+//! share, into rustdesk's own tree as `libs/base/protos/message.proto`
+//! (rustdesk b50fde6); only what the server uses stayed. So this cannot follow
 //! hbb_common's main branch past 3d6fb2c without a second source for that
-//! file, and a `message.proto` missing below is what trying looks like.
+//! file, and doing so shows up as a missing `message.proto` below.
 
 use std::path::PathBuf;
 
@@ -40,9 +41,9 @@ fn main() {
         .run()
         .expect("generating the protobuf modules");
 
-    // Their generated files open with inner attributes, which `include!` cannot
-    // carry into a module. Dropped here and reapplied as outer attributes on
-    // the modules in `protos.rs`, which is the same set.
+    // The generated files start with inner attributes, which `include!` cannot
+    // carry into a module. They are dropped here, and the same set is applied
+    // as outer attributes on the modules in `protos.rs`.
     for f in ["message.rs", "rendezvous.rs"] {
         let path = out.join(f);
         let src = std::fs::read_to_string(&path).unwrap();

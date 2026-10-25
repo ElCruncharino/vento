@@ -3,12 +3,11 @@
 
 //! X11 keysyms in, PC/AT scancodes out.
 //!
-//! The one place the protocol does not match the stack. Everything above
-//! `CursorController` speaks keysyms, because that is RFB's vocabulary and the
-//! extension keyboard was built against it; SPICE's keyboard is the **AT
-//! keyboard's own wire**, set 1, with an `E0` prefix for the keys the original
-//! PC did not have — closer to RDP's model than to RFB's, and this is that
-//! table in a third dialect.
+//! The backend API speaks keysyms, because that is RFB's vocabulary and the
+//! extension keyboard was built against it. SPICE's keyboard is the **AT
+//! keyboard's own wire format**, set 1, with an `E0` prefix for the keys the
+//! original PC did not have. That is closer to RDP's model than to RFB's, so
+//! this is a scancode table like the RDP backends'.
 //!
 //! Two things follow, and the second is a limit rather than a decision:
 //!
@@ -19,17 +18,16 @@
 //!    held, so a mapping is a position *and* whether the layout needs Shift,
 //!    and the caller synthesises the modifier.
 //! 2. **What the layout cannot place cannot be sent at all.** RDP has a
-//!    Unicode keyboard event to fall back to and SPICE has nothing of the kind
-//!    — the inputs channel carries scancodes and only scancodes. So an IME's
-//!    `é` reaches a Windows RDP guest and does not reach a SPICE one, and the
-//!    same is true of spice-gtk. What a phone can type here is what a US
-//!    keyboard has keys for, until the agent's clipboard makes paste the way
-//!    round it (46c).
+//!    Unicode keyboard event to fall back to and SPICE has nothing of the
+//!    kind: the inputs channel carries only scancodes. So an IME's `é` reaches
+//!    a Windows RDP guest and does not reach a SPICE one, and the same is true
+//!    of spice-gtk. Only what a US keyboard has keys for can be typed; anything
+//!    else has to be pasted through the guest agent's clipboard.
 //!
 //! The wire form is a `u32` holding the bytes a keyboard would put on the wire,
 //! least significant first: `0x1E` for A, `0xE04B` for Left, and the break code
-//! is the make code with bit 7 set — `0x9E`, `0xE0CB`. That is what spice-gtk
-//! sends and what their own `make_scancode` builds.
+//! is the make code with bit 7 set (`0x9E`, `0xE0CB`). That is what spice-gtk
+//! sends and what ryll's `make_scancode` builds.
 
 /// What a keysym turns into on the wire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,7 +36,7 @@ pub enum Key {
     /// produce the character that keysym names. `code` is the set-1 scancode
     /// with [`EXTENDED`] set for the `E0` half of the keyboard.
     Scancode { code: u16, shift: bool },
-    /// Pause, which is not a scancode at all — see [`Key::press`].
+    /// Pause, which is not a scancode at all; see [`Key::press`].
     Pause,
 }
 
@@ -51,9 +49,9 @@ impl Key {
     pub fn press(self) -> u32 {
         match self {
             Key::Scancode { code, .. } => wire(code, false),
-            // The one key that never had a scancode of its own: what a keyboard
-            // puts on the wire for it is the `E1` sequence `1D 45`, and there is
-            // no break code at all — the keyboard sends the release in the same
+            // The one key that never had a scancode of its own: a keyboard
+            // sends the `E1` sequence `1D 45` for it, and there is no break
+            // code at all, since the keyboard sends the release in the same
             // burst. Packed like an extended key, least significant byte first.
             Key::Pause => 0x45_1d_e1,
         }
@@ -84,7 +82,7 @@ const fn ext(code: u8) -> u16 {
 /// The named keys: modifiers, editing, navigation, function keys, the keypad.
 ///
 /// Both hands, since a physical keyboard's right Shift is a keysym of its own
-/// and the extension row's is the left one.
+/// and the extension keyboard's is the left one.
 fn named(keysym: u32) -> Option<u16> {
     Some(match keysym {
         0xffe1 => 0x2a,               // Shift_L
@@ -92,7 +90,7 @@ fn named(keysym: u32) -> Option<u16> {
         0xffe3 => 0x1d,               // Control_L
         0xffe4 => ext(0x1d),          // Control_R
         0xffe9 => 0x38,               // Alt_L
-        0xffea | 0xfe03 => ext(0x38), // Alt_R, ISO_Level3_Shift — both AltGr
+        0xffea | 0xfe03 => ext(0x38), // Alt_R, ISO_Level3_Shift: both AltGr
         0xffeb => ext(0x5b),          // Super_L
         0xffec => ext(0x5c),          // Super_R
         0xff67 => ext(0x5d),          // Menu
@@ -122,14 +120,14 @@ fn named(keysym: u32) -> Option<u16> {
         0xffc8 => 0x57, // F11
         0xffc9 => 0x58, // F12
         // F13–F23 run from 0x64; F24 does not follow them, and the position
-        // that would be F24 is what a keyboard type calls VK_OEM_PA3.
+        // that would be F24 is VK_OEM_PA3 on some keyboard types.
         0xffca..=0xffd4 => 0x64 + (keysym - 0xffca) as u16,
         0xffd5 => 0x76, // F24
 
         // The keypad. Each key appears twice, once under each Num Lock state,
-        // and both spellings are the same position — which is the whole of what
-        // a scancode can say. Which of the two the guest produces is decided by
-        // the guest's own Num Lock and not by ours.
+        // and both spellings are the same position, which is all a scancode
+        // can express. The guest's own Num Lock decides which of the two it
+        // produces.
         0xffb7 | 0xff95 => 0x47, // KP_7, KP_Home
         0xffb8 | 0xff97 => 0x48, // KP_8, KP_Up
         0xffb9 | 0xff9a => 0x49, // KP_9, KP_Prior
@@ -148,8 +146,8 @@ fn named(keysym: u32) -> Option<u16> {
         0xff8d => ext(0x1c),     // KP_Enter
         0xffac => 0x7e,          // KP_Separator, the Brazilian keypad comma
 
-        // The unambiguous three of a Japanese board's conversion keys, which
-        // are the three `Keysym` sends.
+        // The unambiguous three of a Japanese keyboard's conversion keys,
+        // which are the three the app's `Keysym` sends.
         0xff27 => 0x70, // Hiragana_Katakana
         0xff23 => 0x79, // Henkan_Mode
         0xff22 => 0x7b, // Muhenkan
@@ -216,7 +214,7 @@ const US_LAYOUT: &[(u8, char, char)] = &[
 ];
 
 /// What to send for a keysym, or `None` for one this keyboard has no position
-/// for — which here means it is not sent at all.
+/// for, which is then not sent at all.
 pub fn scancode(keysym: u32) -> Option<Key> {
     if keysym == 0xff13 {
         return Some(Key::Pause);

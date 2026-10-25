@@ -12,36 +12,34 @@
 //! in twenty years. **Loaded, not linked**, as PipeWire's library is: it is
 //! opened with `dlopen` when the first stream wants ALSA, and the functions
 //! looked up by name, so the binary starts where libasound is not installed
-//! (a container, a minimal system) and runs without sound there — a stream
-//! that cannot have ALSA is one whose sound is dropped, with the loader's
-//! reason in the log, and everything else works. So the Linux client links
-//! no sound library at all: TigerVNC's QEMU audio and FreeRDP's rdpsnd play
-//! through `runtime::media::audio` (handed to their sessions as
-//! `vento/audio.h`'s table), and neither `libvento_tigervnc.so`, whose own ALSA sink this
-//! replaced, nor `libvento_freerdp.so`, whose PulseAudio device it replaced,
-//! links a sound library at all.
+//! (a container, a minimal system) and runs without sound there: a stream
+//! that cannot have ALSA has its sound dropped, with the loader's reason in
+//! the log, and everything else works. So the Linux client links no sound
+//! library at all: TigerVNC's QEMU audio and FreeRDP's rdpsnd play through
+//! `runtime::media::audio` (handed to their sessions as `vento/audio.h`'s
+//! table) in place of TigerVNC's own ALSA sink and FreeRDP's PulseAudio
+//! device, so neither `libvento_tigervnc.so` nor `libvento_freerdp.so` links
+//! a sound library.
 //!
 //! **A thread per stream does everything that can wait.** Opening the
 //! device is a round trip to the sound server, which can take a while and,
 //! with a server that has hung, forever; writing to it blocks until the
 //! device has room. Both happen on the stream's own thread, which takes
 //! from the stream's queue a period at a time, so the protocol thread only
-//! ever queues. That is the off-thread open TigerVNC's old
-//! `AlsaAudioOutput` did, carried over, with the policy it kept per sink (a
-//! second's buffer, a pre-roll) replaced by the queue's: its non-blocking
-//! writes into that second's buffer filled it with whatever arrived at once
-//! (a pause's backlog, a late read), and a stream that the device drained
-//! no faster than the server sent kept that delay for good — a session
-//! paused for a moment on the rig played everything a second late from
-//! then on.
+//! ever queues. The off-thread open comes from TigerVNC's
+//! `AlsaAudioOutput`, but its per-sink policy (a second's buffer, a
+//! pre-roll) is replaced by the queue's: its non-blocking writes into that
+//! second's buffer filled it with whatever arrived at once (a pause's
+//! backlog, a late read), and a stream that the device drained no faster
+//! than the server sent kept that delay for good (a session paused for a
+//! moment on the rig played everything a second late from then on).
 //!
-//! The device's own buffer is kept short — 50 ms requested — since the
-//! queue in front of it is what absorbs the network's jitter; it is delay on
-//! top of what the queue keeps, which the queue is told with the period it
-//! takes at once (part of what the queue keeps). The device is fed
-//! silence while the queue has nothing to play, so it never runs dry and
-//! never has to be restarted mid-stream; a stream that is open is a device
-//! that is running.
+//! The device's own buffer is kept short (50 ms requested), since the queue
+//! in front of it absorbs the network's jitter; the device's buffer is delay
+//! on top of the queue's, and the queue is told its size along with the
+//! period taken at once. The device is fed silence while the queue has
+//! nothing to play, so it never runs dry and never has to be restarted
+//! mid-stream; while a stream is open its device is running.
 
 use std::ffi::{CStr, c_char, c_int, c_long, c_uint, c_ulong, c_void};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -111,8 +109,8 @@ fn load() -> Result<Api, String> {
     })
 }
 
-/// What ALSA calls the device the sound server stands behind, on every
-/// desktop that has one.
+/// ALSA's name for the sound server's device, on every desktop that has
+/// one.
 const DEVICE: &CStr = c"default";
 
 /// The device buffer asked for; see the module's comment.
@@ -122,17 +120,17 @@ const DEVICE_LATENCY: Duration = Duration::from_millis(50);
 /// or stopped working, a second apart, before the stream goes without sound
 /// for the rest of its life. A sound server restarting is back well within
 /// that; one that is not coming back is not worth a thread that never ends.
-/// Failures count in a row: a device that played in between starts the
-/// count again, or the fourth restart of the sound server in a session left
-/// it silent.
+/// Only consecutive failures count: a device that played in between starts
+/// the count again, or the fourth restart of the sound server in a session
+/// would leave it silent.
 const ATTEMPTS: u32 = 3;
 
 fn error(api: &Api, err: c_int) -> String {
     unsafe { CStr::from_ptr((api.strerror)(err)) }.to_string_lossy().into_owned()
 }
 
-/// What [`crate::audio::Audio`] calls this output, in the facts row and the
-/// overlay.
+/// This output's name for the queue (`Queue::set_output`), shown in the
+/// facts row and the overlay.
 pub const NAME: &str = "ALSA";
 
 /// Starts draining `queue` into ALSA's default device, on a thread of the
@@ -193,11 +191,10 @@ impl Drop for Pcm {
     }
 }
 
-/// The device, set up for `format` where it takes it — and where it does
-/// not, at the format nearest it that it does, which the queue converts to.
-/// No resampling of ALSA's own is allowed: the plug layer's would be a second
-/// resampler in front of the sound server's, where the queue's is only ever
-/// the one there is.
+/// The device, set up for `format` where it takes it, and otherwise for the
+/// nearest format it does take, which the queue converts to. ALSA's own
+/// resampling is not allowed: the plug layer's would be a second resampler
+/// in front of the sound server's, while the queue's is the only one.
 fn open(api: &'static Api, format: Format) -> Result<(Pcm, Format), String> {
     let mut pcm = std::ptr::null_mut();
     let err = unsafe { (api.pcm_open)(&mut pcm, DEVICE.as_ptr(), SND_PCM_STREAM_PLAYBACK, 0) };
@@ -283,7 +280,7 @@ fn play(pcm: &Pcm, device: Format, queue: &Queue, shared: &Shared) -> Result<(),
     }
     // Writes block until there is room, so the buffer is full from the first
     // few periods on: delay behind the queue. A period at a time is taken
-    // from the queue, which it has to have left when it is.
+    // from the queue, which has to have that much left when it is taken.
     queue.set_device(device.duration(buffer as usize), device.duration(period as usize));
     queue.set_output(NAME);
     let format = queue.format();

@@ -1,24 +1,24 @@
-# The port in backends/platform/android/ports/openssl, answered as a find_package: FreeRDP asks
-# for OpenSSL through its own find_feature, and CMake's own FindOpenSSL would
-# either fail against a sysroot that has none or — worse — find the host's.
+# Provides the port in backends/platform/android/ports/openssl as the result of
+# find_package(OpenSSL): FreeRDP asks for OpenSSL through its own find_feature,
+# and CMake's FindOpenSSL would either fail against a sysroot without it or,
+# worse, find the host's.
 #
-# It sets what FreeRDP reads and nothing more; the imported targets are here
-# because a find module is expected to define them, not because anything in this
-# build uses them.
+# It sets only what FreeRDP reads; the imported targets are defined because a
+# find module is expected to define them, not because this build uses them.
 if(NOT TARGET openssl)
     add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../../platform/android/ports/openssl" openssl)
 endif()
 
 set(OPENSSL_FOUND TRUE)
-# Both spellings: this is include()d rather than found, so nothing maps the
-# module's upper-case answer onto the name FreeRDP checks.
+# Both spellings: this file is include()d rather than found, so nothing maps
+# the upper-case variable onto the name FreeRDP checks.
 set(OpenSSL_FOUND TRUE)
 set(OPENSSL_INCLUDE_DIR "")
 set(OPENSSL_SSL_LIBRARY openssl_ssl)
 set(OPENSSL_CRYPTO_LIBRARIES openssl_crypto)
 set(OPENSSL_LIBRARIES openssl)
-# Read out of the submodule rather than repeated: FreeRDP prints it, and one
-# place where a pin is written down is the whole of why it is a submodule.
+# Read from the submodule rather than repeated: FreeRDP prints it, and the
+# submodule's pin is meant to be the only place the version is recorded.
 file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/../../../../../third_party/openssl/VERSION.dat"
         _openssl_version_dat)
 foreach(line ${_openssl_version_dat})

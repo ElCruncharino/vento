@@ -3,20 +3,16 @@
     SPDX-FileCopyrightText: 2026 Patrick Gaskin
     SPDX-License-Identifier: GPL-3.0-or-later
 
-    The pinned connections, in the order they sit in at the top of the home
-    screen, to be dragged into another one.
+    The pinned connections, in their order at the top of the home screen, for
+    reordering by drag.
 
-    A sheet of its own rather than a mode over the list, because the list is
-    where a card is pressed to open a machine and long-pressed to edit it, and
-    a third meaning for the same finger on the same card is one too many. What
-    is here is only the pinned ones and only their names: a reorder is about
-    which is first, so a picture of each desktop would be the largest thing on
-    a screen that nobody opened to look at desktops.
+    A separate sheet rather than a mode over the list, because on the list a
+    press already opens a connection and a long press edits it. Only the pinned
+    connections and only their names are shown: reordering is about which
+    comes first, so desktop previews would only take up space.
 
-    Wrap content, not a weight: the sheet is as tall as however many pins there
-    are, and the list scrolls only once that is more than the screen holds —
-    which is what measuring the rows against the height the sheet is offered
-    does for us.
+    Wrap content, not a weight: the sheet is as tall as the pinned rows, and the
+    list scrolls only once they no longer fit on screen.
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"

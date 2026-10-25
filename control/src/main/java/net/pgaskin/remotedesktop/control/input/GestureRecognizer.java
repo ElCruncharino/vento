@@ -17,7 +17,7 @@ package net.pgaskin.remotedesktop.control.input;
  *       last finger lifts and auto-released {@link Config#clickHoldMs} later.
  *   <li><b>A touch-down inside that release window cancels the release</b>, so
  *       the button stays held. That single rule produces double-click,
- *       double-tap-drag <i>and</i> two-finger-tap-then-drag as right-drag —
+ *       double-tap-drag <i>and</i> two-finger-tap-then-drag as right-drag;
  *       there is no double-tap timer or tap counter anywhere.
  *   <li><b>Two-finger mode is decided once per gesture</b> from
  *       {@code |Δseparation| / totalTravel}: above 0.7 it is a pinch, below 0.2
@@ -25,8 +25,9 @@ package net.pgaskin.remotedesktop.control.input;
  *       the next move.
  * </ol>
  *
- * <p>Deviations from the original are all behind {@link Config} flags; the
- * structural ones (always on) are float coordinates and pointer-id-keyed slots.
+ * <p>Most deviations from the original are behind {@link Config} flags; the
+ * structural ones (always on) include float coordinates and pointer-id-keyed
+ * slots.
  */
 public final class GestureRecognizer implements TouchRouter.Listener {
 
@@ -142,10 +143,9 @@ public final class GestureRecognizer implements TouchRouter.Listener {
      * Which end owns the cursor, which the host learns from the far end and
      * tells the cursor controller at the same time.
      *
-     * <p>The state machine itself does not care — a finger is a finger — but
-     * everything that decides <em>how far</em> a cursor goes for a given finger
-     * belongs to whichever end owns it, and that is
-     * {@link Config#rawMotionWhenRelative}.
+     * <p>The state machine itself does not depend on it, but everything that
+     * decides <em>how far</em> a cursor goes for a given finger belongs to
+     * whichever end owns it, and that is {@link Config#rawMotionWhenRelative}.
      */
     public void setRelative(boolean relative) {
         this.relative = relative;
@@ -153,8 +153,8 @@ public final class GestureRecognizer implements TouchRouter.Listener {
 
     /**
      * The far end has changed the shape of its cursor, which is the one thing
-     * it ever says about what is under the pointer — see
-     * {@code ARCHITECTURE.md} §3.20. Ignored where the far end owns the cursor:
+     * it ever says about what is under the pointer (see
+     * {@code ARCHITECTURE.md} §3.20). Ignored where the far end owns the cursor:
      * nothing here is shaping that motion, and a picture with a pointer drawn
      * into it has no shape to arrive anyway.
      *
@@ -168,7 +168,7 @@ public final class GestureRecognizer implements TouchRouter.Listener {
     }
 
     /**
-     * Tell the state machine that something outside it — the mouse overlay — is
+     * Tell the state machine that something outside it (the mouse overlay) is
      * holding a mouse button down. The only thing it changes is that bump
      * scroll (§1.6) arms for a drag started while that button is held, which is
      * the case the original cannot have: its only way to hold a button is the
@@ -205,7 +205,7 @@ public final class GestureRecognizer implements TouchRouter.Listener {
         return accel.lastFactor();
     }
 
-    /** Smoothed finger speed, px/ms — what the adaptive gate and axis lock read. */
+    /** Smoothed finger speed, px/ms, as the adaptive gate and axis lock read it. */
     public float accelSpeed() {
         return accel.speed();
     }
@@ -214,7 +214,7 @@ public final class GestureRecognizer implements TouchRouter.Listener {
         return accel.axisLock();
     }
 
-    /** How far the direction has turned recently — the axis lock's curve test. */
+    /** How far the direction has turned recently (the axis lock's curve test). */
     public float turnDegrees() {
         return accel.turnDegrees();
     }
@@ -265,7 +265,7 @@ public final class GestureRecognizer implements TouchRouter.Listener {
             }
         } else if (down == 0) {
             // First finger of a new gesture. If a click release is still
-            // pending, cancel it — the button stays held, which is what turns
+            // pending, cancel it: the button stays held, which is what turns
             // tap+drag into a button drag and tap+tap into a double click.
             final boolean resumed = pendingRelease != null;
             if (resumed) {
@@ -356,16 +356,16 @@ public final class GestureRecognizer implements TouchRouter.Listener {
     }
 
     /**
-     * Everything this recognizer can still be doing with no finger on the
-     * screen, stopped — for a session going away while the remote is left
-     * holding whatever we last sent it.
+     * Stops everything this recognizer can still be doing with no finger on the
+     * screen, for a session going away while the remote is left holding
+     * whatever we last sent it.
      *
      * <p>Deliberately more than {@link #touchCancelled}, which is the touch
-     * stream ending and nothing else. Three things outlive a gesture by design —
-     * the button a tap holds for {@link Config#clickHoldMs}, a glide, and bump
-     * scroll's timer — and all three are wrong once nobody is looking at the
-     * screen, because a button held here is held at the far end for as long as
-     * the session lives.
+     * stream ending and nothing else. Three things outlive a gesture by design
+     * (the button a tap holds for {@link Config#clickHoldMs}, a glide, and bump
+     * scroll's timer), and all three are wrong once the screen is gone, because
+     * a button held here is held at the far end for as long as the session
+     * lives.
      */
     public void cancelAll(long t) {
         touchCancelled(t);
@@ -394,7 +394,7 @@ public final class GestureRecognizer implements TouchRouter.Listener {
     /**
      * The original reads slot 0's flag whenever one finger is down, which
      * silently breaks a one-finger drag continued after lifting the
-     * <em>first</em> of two fingers. Use whichever slot is actually still down.
+     * <em>first</em> of two fingers. Use whichever slot is still down.
      */
     private boolean isMoving() {
         if (down == 1) {
@@ -534,7 +534,7 @@ public final class GestureRecognizer implements TouchRouter.Listener {
 
         if (slotMoved[0] || slotMoved[1] || cancelled) {
             // It was a drag: no click, but maybe a flick. Not where the motion
-            // went out raw — nothing sampled it, and the samples still in there
+            // went out raw: nothing sampled it, and the samples still in there
             // are an older gesture's.
             if (!cancelled && !(relative && cfg.rawMotionWhenRelative) && flickCount >= 2
                     && dist(flickX[0], flickY[0], flickX[1], flickY[1]) > cfg.flickMinDistPx) {
@@ -581,7 +581,7 @@ public final class GestureRecognizer implements TouchRouter.Listener {
         handler.postDelayed(pendingRelease, cfg.clickHoldMs);
     }
 
-    /** End of gesture. Note {@code heldButton} deliberately survives. */
+    /** End of gesture. {@code heldButton} survives on purpose. */
     private void reset() {
         down = 0;
         maxDown = 0;

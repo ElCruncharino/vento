@@ -23,19 +23,19 @@ import java.util.IdentityHashMap;
 import java.util.Map;
 
 /**
- * The six prompt families, and the three "please persist this" notifications,
- * bridged onto {@link Prompt}.
+ * The six prompt families and the four notifications (two of them asking for
+ * something to be saved), bridged onto {@link Prompt}.
  *
  * <p>Factories are process-wide, so this is where the {@code Session} a prompt
- * carries is turned back into the backend that owns it. There is one wrinkle:
- * a prompt can arrive <em>during</em> {@code createSession}, before the handle
- * it is keyed on exists. Since every {@code createSession} happens on the one
- * session thread, at most one can be in flight, so a single {@link #pending}
- * slot covers that window exactly.
+ * carries is mapped back to the backend that owns it. A prompt can arrive
+ * <em>during</em> {@code createSession}, before the handle it is keyed on
+ * exists. Since every {@code createSession} runs on the one session thread, at
+ * most one can be in progress, so a single {@link #pending} slot covers that
+ * window exactly.
  *
- * <p>Answers go back on the session thread, as the original does — the result
- * natives are static and take only the cookie, so the only ordering that
- * matters is that they are called at all.
+ * <p>Answers are posted to the session thread, as the original does; the result
+ * natives are static and take only the cookie, so no ordering matters beyond
+ * their being called.
  */
 final class RealVncPrompts {
 
@@ -86,11 +86,12 @@ final class RealVncPrompts {
         SecurityDlgBindings.setSecurityDlgFactory(RealVncPrompts::createSecurity);
         MsgBoxBindings.setMsgBoxFactory(RealVncPrompts::createMsgBox);
 
-        // The three below are answered without asking anyone. Interactive
+        // The three below are handled without prompting. Interactive
         // authentication needs a form UI, and choosing a client identity needs
-        // identities we never enrol; both decline rather than hang, which is
-        // the difference between "this server is not supported yet" and "the
-        // app froze". Both become real prompts when something needs them.
+        // enrolled identities, and this app enrols none; both decline rather
+        // than hang, which is the difference between "this server is not
+        // supported yet" and "the app froze". Both become real prompts when
+        // something needs them.
         InteractiveTextDlgBindings.setInteractiveTextDlgFactory((session, cookie) ->
                 new InteractiveTextDlgBindings.InteractiveTextDlg() {
                     @Override
@@ -167,15 +168,12 @@ final class RealVncPrompts {
                 Log.i(RealVncCore.TAG, "security banner: " + text + " (" + background + ")"));
     }
 
-    // ---- the three we actually ask -----------------------------------------
+    // ---- the three prompts shown to the user --------------------------------
 
     /**
-     * The seven arguments are not what their names in the decompile suggest.
-     * Read off which field of the original's own password dialog each one is
-     * put in, they are: an unused first string, the server
-     * name, the user name — <em>null when the scheme has none</em>, which is
-     * what hides the field — a "wants a password" flag, the catchphrase, the
-     * signature, and the instructions.
+     * The arguments are as {@link PasswdDlgBindings.PasswdDlg#getUserPasswd}
+     * documents them, not as their names in a decompile suggest. The user name
+     * is <em>null when the scheme has none</em>, which hides the field.
      */
     private static PasswdDlgBindings.PasswdDlg createPasswd(
             SessionBindings.Session session, long cookie, String unused) {
@@ -207,10 +205,10 @@ final class RealVncPrompts {
     }
 
     /**
-     * Same lesson as {@link #createPasswd}: the string order here is
-     * signature, catchphrase, server name, matching server name — read off the
-     * fields the original's own security dialog puts each one in, not off the
-     * parameter names, which a decompiler invented.
+     * As with {@link #createPasswd}, the string order here is signature,
+     * catchphrase, server name, matching server name, read off the fields the
+     * original's own security dialog puts each one in, not off the parameter
+     * names, which come from a decompiler.
      */
     private static SecurityDlgBindings.SecurityDlg createSecurity(
             SessionBindings.Session session, long cookie) {
@@ -226,8 +224,8 @@ final class RealVncPrompts {
                     return;
                 }
                 // The identity is the first argument and the encryption the
-                // second, which is the opposite of what their names in a
-                // decompiled signature suggest — see SecurityDlgBindings.
+                // second, the opposite of what the names in a decompiled
+                // signature suggest (see SecurityDlgBindings).
                 Log.i(RealVncCore.TAG, "promptSecurity id=" + identityState
                         + " enc=" + encryptionState + " name=" + name);
                 backend.ask(new Prompt.Trust(name, encryption(encryptionState),
@@ -235,7 +233,7 @@ final class RealVncPrompts {
                     @Override
                     protected void deliver(boolean accept, boolean remember) {
                         // The two save flags are identity and encryption; the
-                        // encryption decision is not one we want remembered
+                        // encryption decision should not be remembered
                         // silently, so only the identity is offered.
                         answered(backend, () ->
                                 SecurityDlgBindings.securityResult(cookie, accept, remember, false));

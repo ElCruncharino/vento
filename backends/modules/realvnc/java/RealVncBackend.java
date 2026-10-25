@@ -31,14 +31,14 @@ import java.util.function.Consumer;
 
 /**
  * A {@link Backend} on RealVNC's own viewer core, whose JNI surface is
- * declared in {@code :realvnc-jni}. What is interesting here is the thread
- * discipline that library imposes.
+ * declared in {@code :realvnc-jni}. Most of this class follows from the
+ * threading rules that library imposes.
  *
- * <p>Two threads touch this object, not the three that were expected:
+ * <p>Two threads use this object:
  *
  * <ul>
  *   <li><b>The session thread</b> ({@link RealVncCore}) owns every call into
- *       the library — and <em>also delivers every callback</em>, which is not
+ *       the library, and <em>also delivers every callback</em>, which is not
  *       what the original's posting asymmetry suggests. The core registers its
  *       socket on that thread's {@code ALooper}, which is why the thread must
  *       have a running {@code Looper}, and why long work posted to it delays
@@ -49,14 +49,14 @@ import java.util.function.Consumer;
  * </ul>
  *
  * <p>The app still sees the main thread for everything but damage rectangles:
- * that is this class's promise, not the library's.
+ * this class guarantees that, not the library.
  *
- * <p>That last one needs its own lock, for a sharper reason than "shared
- * state": {@code copyScaledRegion} takes a native mutex, but the allocator
- * behind {@code setScaleBufferSize} does not (0x2405e4 rewrites the vector at
- * +0x148 with no lock at all), so a resize racing a copy is a use-after-free
- * inside the library. {@link #pixels} makes the pair mutually exclusive on our
- * side, which is the only place it can be done.
+ * <p>The drawing thread's calls need their own lock, for a more specific reason
+ * than shared state: {@code copyScaledRegion} takes a native mutex, but the
+ * allocator behind {@code setScaleBufferSize} does not (0x2405e4 rewrites the
+ * vector at +0x148 with no lock at all), so a resize racing a copy is a
+ * use-after-free inside the library. {@link #pixels} makes the pair mutually
+ * exclusive on this side, the only place it can be done.
  */
 public final class RealVncBackend implements Backend,
         SessionBindings.DesktopCallback, SessionBindings.SessionCallback {
@@ -78,8 +78,8 @@ public final class RealVncBackend implements Backend,
     private volatile int desktopHeight;
 
     /**
-     * The received count, and how often it is taken. Session thread only, which
-     * is where both of its callers already are.
+     * The received count, and how often it is sampled. Session thread only,
+     * where both of its callers run.
      */
     private final RealVncTraffic traffic = new RealVncTraffic();
     private static final long SAMPLE_INTERVAL_MS = 1000;
@@ -94,20 +94,21 @@ public final class RealVncBackend implements Backend,
     private volatile boolean dead; // destroy() has run: every native call is a no-op after
 
     /**
-     * How long to wait for {@code connSuccess} before giving up. Load-bearing:
-     * a connect that fails reports <em>nothing</em> — a refused port logs
-     * {@code CConnection: close} internally and then the session sits there,
-     * with no {@code sessionClosed}, no {@code MsgBox}, no status change and no
-     * retry, so a mistyped address is a spinner that never stops.
+     * How long to wait for {@code connSuccess} before giving up. Required: a
+     * connect that fails reports <em>nothing</em>. A refused port logs
+     * {@code CConnection: close} internally and then the session stays as it
+     * is, with no {@code sessionClosed}, no {@code MsgBox}, no status change and
+     * no retry, so without a timeout a mistyped address shows a spinner that
+     * never stops.
      */
     private static final long CONNECT_TIMEOUT_MS = 20_000;
 
     private final Runnable connectTimeout = this::onConnectTimeout;
 
     /**
-     * Prompts on screen. The timeout is about a session that has gone silent,
-     * and a session waiting for a password has not: it is waiting for a person,
-     * who is entitled to take longer than twenty seconds to find one. Counted
+     * Prompts on screen. The timeout is for a session that has gone silent, and
+     * a session waiting for a password has not: it is waiting for the user, who
+     * may take longer than twenty seconds to find one. Counted
      * rather than a flag because the security prompt and the password prompt
      * both arrive before {@code connSuccess}, and the second can open while the
      * first is still up. Session thread only.
@@ -122,7 +123,7 @@ public final class RealVncBackend implements Backend,
         }
     }
 
-    /** Stop the clock: something is being asked of the person holding the phone. */
+    /** Pauses the connect timeout while a prompt waits for the user. */
     private void promptShown() {
         RealVncCore.post(() -> {
             outstandingPrompts++;
@@ -130,7 +131,7 @@ public final class RealVncBackend implements Backend,
         });
     }
 
-    /** Start it again, from the top, once the last dialog is gone. */
+    /** Restarts the connect timeout from the beginning once the last prompt is answered. */
     void promptAnswered() {
         RealVncCore.post(() -> {
             outstandingPrompts = Math.max(0, outstandingPrompts - 1);
@@ -145,13 +146,13 @@ public final class RealVncBackend implements Backend,
         this.context = context.getApplicationContext();
         this.address = address;
         // Empty is not a password: the core authenticates with whatever it is
-        // given, so "" fails the connection outright instead of asking. Null is
-        // how it is told there is nothing stored.
+        // given, so "" fails the connection outright instead of asking. Null
+        // tells it there is no stored password.
         this.password = password == null || password.isEmpty() ? null : password;
         this.options = new LinkedHashMap<>();
 
-        // Every offered parameter at its default, then whatever the caller has
-        // stored over the top. The list, the defaults and the wording all live
+        // Every offered parameter at its default, then the caller's stored
+        // values over them. The list, the defaults and the wording all live
         // in RealVncProvider, so the settings screen and the connect path cannot
         // drift apart.
         options.putAll(RealVncProvider.defaults());
@@ -161,20 +162,20 @@ public final class RealVncBackend implements Backend,
         if (extraOptions != null) {
             options.putAll(extraOptions);
         }
-        // What this server was last accepted as. The core's own security
-        // prompt is silent for an identity it recognises, which is the same
-        // "accepted once, loud if it changes" rule the others get from
-        // api::trust over KnownHosts — the difference being that this one
-        // is an opaque blob the core makes rather than a fingerprint anybody
-        // else could compare.
+        // The identity this server was last accepted with. The core's own
+        // security prompt is silent for an identity it recognises, the same
+        // "accept once, warn if it changes" rule the other backends get from
+        // api::trust over KnownHosts; the difference is that this is an opaque
+        // blob the core makes rather than a fingerprint other code could
+        // compare.
         final String identity = identities(context).getString(address == null ? "" : address, null);
         if (identity != null && !options.containsKey("Identity")) {
             options.put("Identity", identity);
         }
-        // Whether the colour depth is this connection's own choice. The store
-        // keeps only what differs from the default, so the key being present *is*
-        // the statement that somebody set it — and a depth somebody set must not
-        // be moved out from under them by the quality control.
+        // Whether the colour depth was chosen for this connection. The store
+        // keeps only values that differ from the default, so the key's presence
+        // means it was set, and a depth that was set must not be changed by the
+        // quality control.
         this.colorLevelPinned = extraOptions != null && extraOptions.containsKey("ColorLevel");
         if (!colorLevelPinned) {
             options.put("ColorLevel",
@@ -247,16 +248,16 @@ public final class RealVncBackend implements Backend,
     }
 
     /**
-     * Close it <em>and</em> retire the handle, which is what stops the close
-     * happening twice.
+     * Closes the session <em>and</em> retires the handle, which prevents a
+     * second close.
      *
-     * <p>The core's own {@code sessionClosed} is what usually retires it, and it
-     * arrives on the session thread some time later — so a screen that leaves
-     * immediately after asking to disconnect, which is exactly what the Back
-     * gesture does, reaches {@link #destroy} while the handle is still live and
-     * closes it again. A second {@code closeSession} is a <b>SIGSEGV inside the
-     * core</b> rather than an error it reports, and it takes the process with
-     * it, so the app disappears just as the connection list comes up.
+     * <p>The handle is usually retired by the core's own {@code sessionClosed},
+     * which arrives on the session thread some time later, so a screen that
+     * leaves immediately after asking to disconnect (as the Back gesture does)
+     * reaches {@link #destroy} while the handle is still live and closes it
+     * again. A second {@code closeSession} is a <b>SIGSEGV inside the core</b>
+     * rather than a reported error, and it takes the process with it, so the
+     * app disappears just as the connection list comes up.
      */
     @Override
     public void disconnect() {
@@ -274,17 +275,17 @@ public final class RealVncBackend implements Backend,
     }
 
     /**
-     * Retire the handle: nothing new can be posted for it, and what is already
+     * Retires the handle: nothing new can be posted for it, and what is already
      * queued is skipped by {@link #onSession}'s identity check.
      *
      * <p><b>Nothing is ever freed.</b> {@code destroySession} exists, and calling
-     * it on a session the core has closed is a SIGSEGV inside the core — the
+     * it on a session the core has closed is a SIGSEGV inside the core: the
      * same fault, at the same offset, as closing one twice. The core tears its
      * session down in {@code sessionClosed} and what is left is a handle that
      * may only be dropped, which is exactly what the original does: it never
      * calls {@code destroySession} at all and lets the native registry keep
-     * every session the process ever opened. That is a leak, and it is theirs;
-     * the alternative is a crash on the way out of every connection.
+     * every session the process ever opened. That is a leak in the core; the
+     * alternative is a crash at the end of every connection.
      */
     private void reap(boolean close) {
         RealVncCore.cancel(connectTimeout);
@@ -296,10 +297,10 @@ public final class RealVncBackend implements Backend,
         RealVncPrompts.detach(s);
         final boolean doClose = close;
         RealVncCore.post(() -> {
-            // The pixel lock as well as the session thread: a fetch in flight
-            // on the drawing thread must not be looking at the buffer this
-            // frees, and the native allocator does not lock (see the class
-            // comment).
+            // Holds the pixel lock as well as running on the session thread: a
+            // read in progress on the drawing thread must not be using the
+            // buffer this frees, and the native allocator does not lock (see
+            // the class comment).
             synchronized (pixels) {
                 buffer = null;
                 bufferWidth = 0;
@@ -310,7 +311,7 @@ public final class RealVncBackend implements Backend,
                     scratchCanvas = null;
                 }
                 try {
-                    // Not once the core has said it is closed: it tears the
+                    // Not after the core has reported it closed: it tears the
                     // session down in `sessionClosed`, and a close after that
                     // faults in the same place a second one does.
                     if (doClose && state != State.CLOSED) {
@@ -324,7 +325,7 @@ public final class RealVncBackend implements Backend,
     }
 
     /**
-     * Run something on the session thread with the live handle, or return false
+     * Runs something on the session thread with the live handle, or returns false
      * if there is none. The handle is captured now and re-checked then, so a
      * call posted before {@link #reap} runs after it is dropped rather than
      * reaching a freed session.
@@ -358,12 +359,11 @@ public final class RealVncBackend implements Backend,
     }
 
     /**
-     * The size and the view-only answer, and nothing else: this library exposes
-     * no monitor layout, offers no second display, and its {@code
-     * ServerResizeSupported} is not reachable through the binding surface this
-     * backend has. Answered all the same rather than left to a default, because
-     * a record that disagreed with {@link #viewOnly()} would be worse than one
-     * that admits to knowing little.
+     * Only the size and the view-only state: this library exposes no monitor
+     * layout, offers no second display, and its {@code ServerResizeSupported} is
+     * not reachable through this backend's bindings. Reported anyway rather than
+     * left to a default, because facts that disagreed with {@link #viewOnly()}
+     * would be worse than facts that say little.
      */
     @Override
     public Facts facts() {
@@ -372,13 +372,13 @@ public final class RealVncBackend implements Backend,
     }
 
     /**
-     * Everything {@code ConnectionInfoBindings} knows, gathered on the session
-     * thread and handed back on the main one.
+     * Everything {@code ConnectionInfoBindings} reports, gathered on the session
+     * thread and returned on the main one.
      *
-     * <p>Every one of these is a string the library formats itself, and two of
-     * them move on their own: {@code getLastUsedEncoding} follows the quality
-     * group and {@code getLineSpeed} is a running measurement. That is what
-     * makes the panel's poll worth having rather than a snapshot.
+     * <p>Each is a string the library formats itself, and two of them change
+     * over time: {@code getLastUsedEncoding} follows the quality group and
+     * {@code getLineSpeed} is a running measurement. So the panel polls rather
+     * than taking one snapshot.
      */
     @Override
     public void connectionInfo(Consumer<List<ConnectionFact>> callback) {
@@ -405,9 +405,9 @@ public final class RealVncBackend implements Backend,
                         ConnectionInfoBindings.getLastUsedEncoding(s)));
                 facts.add(ConnectionFact.of(ConnectionFact.Field.LINE_SPEED, "Line speed",
                         ConnectionInfoBindings.getLineSpeed(s)));
-                // Received only, and no row at all where there is no
-                // trustworthy number: the core counts one direction and has no
-                // count of the other anywhere, and a zero would be a claim.
+                // Received only, and no row at all without a trustworthy
+                // number: the core counts one direction and has no count of
+                // the other, and reporting zero would claim nothing was sent.
                 final long received = traffic.received();
                 if (received >= 0) {
                     facts.add(ConnectionFact.data(received, -1));
@@ -427,13 +427,13 @@ public final class RealVncBackend implements Backend,
     }
 
     /**
-     * A live option change. Which keys need the second call is
-     * {@link RealVncProvider#needsApply}'s business — the interface does not
-     * carry it, because "re-read the parameters that affect the encoder" is a
-     * fact about this library and not about remote desktops.
+     * A live option change. {@link RealVncProvider#needsApply} decides which
+     * keys need the second call; the interface does not carry it, because
+     * "re-read the parameters that affect the encoder" is a fact about this
+     * library and not about remote desktops.
      *
-     * <p>With no session yet, the value simply joins the map {@link #connect}
-     * will hand to {@code createSession}.
+     * <p>With no session yet, the value joins the map {@link #connect} passes to
+     * {@code createSession}.
      */
     @Override
     public void setOption(String key, String value) {
@@ -443,20 +443,19 @@ public final class RealVncBackend implements Backend,
             return;
         }
         options.put(key, value);
-        // Same rule as the constructor's: a depth somebody has set is theirs,
-        // whether they set it before the session or during it.
+        // Same rule as the constructor's: a depth set explicitly, before the
+        // session or during it, is kept.
         colorLevelPinned |= "ColorLevel".equals(key);
         final boolean group = RealVncProvider.needsApply(key);
-        // The quality group goes over as a group, always: the core re-reads the
-        // three together on applyOptions, and the three decide one thing
-        // between them — which encodings to ask for and which pixel format.
-        // Colour depth first, quality last, which is the order the pair was
-        // seen to work in.
+        // The quality group is always sent together: the core re-reads the
+        // three on applyOptions, and together they decide which encodings and
+        // which pixel format to request. Colour depth first, quality last, the
+        // order found to work.
         final Map<String, String> alsoSet = new LinkedHashMap<>();
         if (group) {
-            // And the depth is the quality's, unless this connection chose one
+            // The depth follows the quality unless this connection chose one
             // (RealVncProvider.colorLevelFor). Only a quality change moves it,
-            // so a depth set in the panel is the one that goes over.
+            // so a depth set in the panel is the one sent.
             if (!colorLevelPinned && "Quality".equals(key)) {
                 options.put("ColorLevel", RealVncProvider.colorLevelFor(value));
             }
@@ -485,14 +484,14 @@ public final class RealVncBackend implements Backend,
     }
 
     /**
-     * Which keys are down at the far end.
+     * The keys held down at the far end.
      *
-     * <p>The core keeps this map too — it is what makes a release name the key
-     * its press named — but its JNI surface has no "let go of everything", and
-     * nothing here can enumerate a map that lives in the library. So the ids
-     * are kept on this side as well, purely so that
-     * {@link #focus focus(false)} can do what every other backend does.
-     * Session thread only, which is where every one of these calls runs.
+     * <p>The core keeps this map too (it makes a release name the same key as
+     * its press), but its JNI surface has no "release everything" call, and the
+     * map inside the library cannot be enumerated from here. So the ids are
+     * tracked on this side as well, so that {@link #releaseAllKeys} works as in
+     * every other backend. Session thread only, where every one of these calls
+     * runs.
      */
     private final java.util.Set<Integer> held = new java.util.LinkedHashSet<>();
 
@@ -529,8 +528,9 @@ public final class RealVncBackend implements Backend,
 
     @Override
     public void clipboardToRemote(String text) {
-        // The core pulls ours through getClipboard() rather than being pushed,
-        // so there is nothing to send: remember it and answer when asked.
+        // The core pulls the local clipboard through getClipboard() rather than
+        // having it pushed, so there is nothing to send: it is stored and
+        // returned when asked for.
         clipboard = text;
     }
 
@@ -539,21 +539,22 @@ public final class RealVncBackend implements Backend,
     // ---- pixels ------------------------------------------------------------
 
     /**
-     * The one method here that cannot do what the seam asks for directly.
+     * The only method here that cannot do what the seam asks for directly.
      *
-     * <p>Everything this library gives us goes through {@code copyScaledRegion},
-     * which writes to the front of a buffer <em>it</em> owns, and
+     * <p>All pixels from this library come through {@code copyScaledRegion},
+     * which writes to the front of a buffer <em>the library</em> owns, and
      * {@code Bitmap.copyPixelsFromBuffer}, which fills the whole destination
      * from the front of that buffer. Neither takes an offset, and the second one
-     * overwrites every pixel of the bitmap it is given — so a read of part of a
+     * overwrites every pixel of the bitmap it is given, so reading part of a
      * tile straight into that tile would blank the rest of it.
      *
-     * <p>So the offset is emulated here, in the one backend that needs it: a
-     * scratch bitmap read into and blitted into place. It is the
-     * <em>destination's</em> size and not the region's, which looks wasteful and
-     * is not — the scaler writes at the buffer's row stride, so a buffer whose
-     * width changed from read to read would be re-allocated natively every time,
-     * and the per-call {@code memset} covers the whole buffer regardless.
+     * <p>So the offset is emulated here, in the only backend that needs it: the
+     * region is read into a scratch bitmap and blitted into place. The scratch
+     * bitmap is the <em>destination's</em> size and not the region's, which
+     * looks wasteful but is not: the scaler writes at the buffer's row stride, so
+     * a buffer whose width changed from read to read would be reallocated
+     * natively every time, and the per-call {@code memset} covers the whole
+     * buffer regardless.
      */
     @Override
     public boolean readRegion(int x, int y, int width, int height,
@@ -591,8 +592,8 @@ public final class RealVncBackend implements Backend,
             scratchDst.set(dstX, dstY, dstX + width, dstY + height);
             scratchCanvas.setBitmap(dst);
             scratchCanvas.drawBitmap(scratch, scratchSrc, scratchDst, null);
-            // Not left holding the caller's bitmap: a Canvas keeps its bitmap
-            // alive, and the caller's are the biggest things in the app.
+            // Releases the caller's bitmap: a Canvas keeps its bitmap alive, and
+            // the caller's bitmaps are the largest objects in the app.
             scratchCanvas.setBitmap(null);
             return true;
         }
@@ -609,14 +610,14 @@ public final class RealVncBackend implements Backend,
         if (w <= 0 || h <= 0 || maxWidth <= 0 || maxHeight <= 0) {
             return null;
         }
-        // Powers of two only, and that is not a quality decision. The native step
-        // is (int)(1/scale), so the scale we pass has to survive a round trip
+        // Powers of two only, and not for quality reasons. The native step is
+        // (int)(1/scale), so the scale passed has to survive a round trip
         // through a float reciprocal exactly: 1f/3 is 0.33333334, whose
-        // reciprocal is 2.99999994, which truncates to a step of *2* — the scaler
+        // reciprocal is 2.99999994, which truncates to a step of *2*. The scaler
         // then walks the source in half the intended stride and writes 960 pixels
-        // a row into a 640-wide buffer, which is a native crash on the way out of
-        // every session. 1/2, 1/4 and 1/8 are exact in binary; the original's own
-        // tile pyramid is powers of two for presumably the same reason.
+        // a row into a 640-wide buffer, which crashes in native code at the end
+        // of every session. 1/2, 1/4 and 1/8 are exact in binary; the original's
+        // own tile pyramid uses powers of two, presumably for the same reason.
         // Tested against what is allocated below rather than against the floor
         // of the same division: at w = 1001 and maxWidth = 500, 1001 / 2 is not
         // greater than 500 and the bitmap is 501 wide, which the seam's "no
@@ -638,12 +639,12 @@ public final class RealVncBackend implements Backend,
     }
 
     /**
-     * The one place pixels come from. Deliberately built on
+     * The only source of pixels. Deliberately built on
      * {@code copyScaledRegion} rather than {@code getScaledBitmap}, even for
      * the whole framebuffer: the scaler memsets {@code scaleBufH × callerStride}
      * bytes of the destination on every call, which for {@code getScaledBitmap}
      * means clearing past the end of a bitmap smaller than the scratch buffer.
-     * Going through the buffer we own makes that arithmetic ours.
+     * Going through a buffer sized by this class keeps that arithmetic here.
      */
     private boolean read(int x, int y, int width, int height, float scale, Bitmap dst) {
         if (dst == null || dst.getConfig() != Bitmap.Config.ARGB_8888) {
@@ -721,9 +722,10 @@ public final class RealVncBackend implements Backend,
     }
 
     /**
-     * Which thread, for the one-off logs that record where the high-traffic
-     * callbacks arrive: nothing in the library says, and one log line settles
-     * it. The name alone is not identity — two threads may share one.
+     * The current thread, for the one-off logs recording where the
+     * high-traffic callbacks arrive: the library does not document it, and one
+     * log line settles it. The name alone does not identify a thread (two
+     * threads may share one).
      */
     @SuppressWarnings("deprecation") // Thread.threadId() is Java 19; Android 14 is 17
     private static String thread() {
@@ -753,10 +755,10 @@ public final class RealVncBackend implements Backend,
             loggedEndThread = true;
             Log.i(TAG, "framebufferUpdateEnd on " + thread());
         }
-        // Where the received count is sampled, because this is the edge that
+        // The received count is sampled here, because this is the edge that
         // moves it: the estimator's window is the update this call ends. Once a
-        // second is enough — the mark is cumulative, so a skipped update costs
-        // nothing at all.
+        // second is enough: the mark is cumulative, so a skipped update loses
+        // nothing.
         final long now = SystemClock.uptimeMillis();
         if (now - lastSample >= SAMPLE_INTERVAL_MS) {
             lastSample = now;
@@ -770,7 +772,7 @@ public final class RealVncBackend implements Backend,
 
     @Override
     public void setCursor(Object bitmap, int negHotX, int negHotY) {
-        // The two ints are the negated hotspot: their RFB parser rewrites a
+        // The two ints are the negated hotspot: the core's RFB parser rewrites a
         // cursor rectangle to Rect(-hot, size - hot) on arrival and this
         // callback forwards that rectangle's origin. There is no hotspot
         // variable anywhere in the library to compare it against.
@@ -817,9 +819,9 @@ public final class RealVncBackend implements Backend,
     public void sessionClosed(SessionBindings.Session ended) {
         Log.i(TAG, "sessionClosed on " + Thread.currentThread().getName());
         if (ended != null && session != null && ended != session) {
-            return; // not ours: the identity check the rest of this class is built on
+            return; // another session: the identity check the rest of this class relies on
         }
-        // Already closed by definition, so do not close it again.
+        // Already closed, so it must not be closed again.
         reap(false);
         closed(null);
     }
@@ -852,24 +854,24 @@ public final class RealVncBackend implements Backend,
     }
 
     /**
-     * The core's reconnect banner coming down again, which it raises for a
-     * moment on a session it then keeps. Only the banner said the connection
-     * was going; {@link #state} never moved, so this is what it still is —
-     * without it a session that recovered says "Connecting…" for ever.
+     * The core's reconnect banner being hidden again; the core shows it briefly
+     * on a session it then keeps. Only the banner reported the connection
+     * dropping; {@link #state} never changed, so it is reported again here.
+     * Without this, a recovered session would show "Connecting…" forever.
      */
     void reconnected() {
         onMain(() -> fireState(state, null));
     }
 
     void saveCredentials(String userName, String password) {
-        // The connection store is where these belong, and nothing here has a
-        // way to reach it: saying so is better than silently dropping them.
+        // These belong in the connection store, which this class cannot reach;
+        // logging the request is better than dropping it silently.
         Log.i(TAG, "server asked to save credentials for " + userName);
     }
 
     void saveIdentity(String identity) {
-        // Answering the prompt with "remember" is what makes the core send
-        // this; storing it is what makes the next connection silent.
+        // The core sends this when the prompt is answered with "remember";
+        // storing it skips the prompt on the next connection.
         identities(context).edit().putString(address == null ? "" : address, identity).apply();
     }
 
@@ -879,17 +881,17 @@ public final class RealVncBackend implements Backend,
     }
 
     /**
-     * Every identity this core has been told to remember, forgotten, so that the
-     * next connection to each is asked about again.
+     * Forgets every identity this core has been told to remember, so that the
+     * next connection to each server prompts again.
      *
-     * <p>The other half of what clearing {@link KnownHosts} means, which does
-     * not reach either of these: what is stored is the core's own blob rather
-     * than a fingerprint, and only the core can compare one.
+     * <p>The RealVNC part of clearing {@link KnownHosts}, which does not reach
+     * either of these stores: what is stored is the core's own blob rather than
+     * a fingerprint, and only the core can compare one.
      *
-     * <p>Two stores because there are two. The one above is what this class
-     * hands back as {@code Identity} on the next connection; the core keeps its
-     * own beside its keys, under the directory it was given, and a server it
-     * still recognises there is a server it does not ask about.
+     * <p>Both stores are cleared. The one above holds what this class passes
+     * back as {@code Identity} on the next connection; the core keeps its own
+     * beside its keys, under the directory it was given, and does not prompt
+     * for a server it still recognises there.
      */
     static void forgetIdentities(Context context) {
         identities(context).edit().clear().apply();

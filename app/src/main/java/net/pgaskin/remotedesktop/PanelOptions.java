@@ -30,16 +30,12 @@ import java.util.List;
 import java.util.function.Predicate;
 
 /**
- * {@link BackendOption}s as rows in a sheet — the one renderer both panels use.
+ * {@link BackendOption}s as hand-built rows, the renderer used by both
+ * {@link ConnectionPanel} and {@link ConnectionEditorPanel}.
  *
- * <p>There were two: this one, inline in {@link ConnectionPanel}, and the
- * androidx {@code Preference} one in {@link OptionScreen}. The editor was the
- * second renderer's only reason to exist for a <em>connection</em>, and when
- * the editor became a sheet it came here: one description, one thing that
- * draws it.
- * {@link OptionScreen} still exists because the settings tree is a real
- * preference screen — a backend's global options and the input stack's tunables
- * — and that is a different screen rather than a second reading of this one.
+ * <p>{@link OptionScreen} is the other renderer, for the settings tree, which
+ * is a real androidx preference screen (a backend's global options and the
+ * input stack's tunables). Per-connection options are only drawn here.
  *
  * <p>The switch over {@link BackendOption.Type} is an expression with no
  * {@code default}, here and in {@link OptionScreen}, so a type added later is a
@@ -59,8 +55,8 @@ final class PanelOptions {
 
         /**
          * The effective value of another option, for a choice that depends on
-         * one. Answering null hides every dependent choice, which is the right
-         * answer for a caller that cannot see the option being asked about.
+         * one. Returning null hides every dependent choice, which suits a
+         * caller that cannot see the option asked about.
          */
         default String get(String key) {
             return null;
@@ -116,11 +112,11 @@ final class PanelOptions {
                     if (o.type() == BackendOption.Type.INT) {
                         box.setInputType(InputType.TYPE_CLASS_NUMBER);
                     }
-                    // `writing` is what keeps a refresh from looking like typing.
-                    // Without it the first refresh — the one in this
-                    // constructor, filling a saved connection in — reports every
-                    // field as a change back to the caller, before the caller
-                    // has finished building the thing it would report them to.
+                    // `writing` keeps a refresh from being reported as typing.
+                    // Without it the first refresh (the one in this constructor,
+                    // filling in a saved connection) reports every field as a
+                    // change to the caller before the caller has finished
+                    // building what it would report them to.
                     final boolean[] writing = {false};
                     box.addTextChangedListener(new Watcher(() -> {
                         if (!writing[0]) {
@@ -130,9 +126,10 @@ final class PanelOptions {
                     yield new Row(o, field) {
                         @Override
                         void refresh() {
-                            // A field somebody is typing in is not refreshed
-                            // under them, and one whose text already matches is
-                            // left alone — setText moves the caret to the end.
+                            // A focused field is not refreshed while being
+                            // typed in, and one whose text already matches is
+                            // left alone, since setText moves the caret to the
+                            // end.
                             final String want = value(o);
                             final String has = box.getText() == null ? "" : box.getText().toString();
                             if (!box.hasFocus() && !want.equals(has)) {
@@ -153,12 +150,13 @@ final class PanelOptions {
             into.addView(row.view);
             rows.add(row);
         }
-        // The container is the group, so what a row looks like depends on the
-        // ones either side of it and cannot be decided while it is being built.
+        // The container is the group, so a row's background depends on the
+        // rows either side of it and cannot be set while it is being built.
         RowGroups.apply(into);
-        // A choice can arrive stranded as well as become it: the editor's
-        // switch for one is the backend's, in another screen, and a session
-        // can be opened with a saved choice whose switch has since gone off.
+        // A choice can already be stranded when the rows are built: the switch
+        // for one of the editor's choices is the backend's, on another screen,
+        // and a session can be opened with a saved choice whose switch has
+        // since been turned off.
         settle();
         refresh();
     }
@@ -168,11 +166,11 @@ final class PanelOptions {
     }
 
     /**
-     * Write the current values into the rows, and take out the rows that the
-     * current values leave nothing to say.
+     * Writes the current values into the rows, and hides the rows whose gate
+     * the current values close.
      *
-     * <p>The group is re-formed afterwards because its shape is its members:
-     * hiding the row before last makes the one above it the last.
+     * <p>The group is re-applied afterwards because row backgrounds depend on
+     * which rows are visible: hiding the last row makes the one above it last.
      */
     void refresh() {
         boolean moved = false;
@@ -194,10 +192,10 @@ final class PanelOptions {
     }
 
     /**
-     * Whether the rows mean anything at all. The connection panel greys them
-     * against a session that is connecting or gone: the backend would take the
-     * change and hold it for a connection that may never happen, and a switch
-     * that moves and does nothing is a lie.
+     * Whether the rows can be used. The connection panel disables them while
+     * the session is connecting or gone: the backend would accept a change and
+     * hold it for a connection that may never happen, and a switch that moves
+     * but has no effect is misleading.
      */
     void setEnabled(boolean enabled) {
         for (Row r : rows) {
@@ -205,7 +203,7 @@ final class PanelOptions {
         }
     }
 
-    /** The text field a row owns, for a caller that wants to mark it wrong. */
+    /** The text field of a row, for a caller that shows an error on it. */
     TextInputLayout fieldFor(String key) {
         for (Row r : rows) {
             if (r.option.key().equals(key) && r.view instanceof TextInputLayout f) {
@@ -238,16 +236,15 @@ final class PanelOptions {
     }
 
     /**
-     * Put every choice whose switch is off back to what the option falls back
-     * to ({@link BackendOption#stranded}), through the caller's own
-     * {@link Values#set} — so the editor stores it and the live panel tells
-     * the backend — rather than leave it selected: a choice that is not on
-     * offer is not what the backend will do either.
+     * Resets every choice whose switch is off to the option's fallback
+     * ({@link BackendOption#stranded}) through the caller's {@link Values#set},
+     * so the editor stores it and the live panel sends it to the backend,
+     * rather than leaving it selected: the backend would not use a choice that
+     * is not offered either.
      *
-     * <p>A switch the caller cannot see is taken as on, the opposite of what
-     * {@link #choices} does with it: hiding a choice there costs nothing, but
-     * rewriting one here would be changing an answer nobody can see the reason
-     * for.
+     * <p>A switch the caller cannot see is taken as on, the opposite of
+     * {@link #choices}: hiding a choice there costs nothing, but changing one
+     * here would happen for a reason not visible to the user.
      */
     private void settle() {
         final Predicate<String> on = key -> {
@@ -259,12 +256,11 @@ final class PanelOptions {
     }
 
     /**
-     * A menu under the row's own button, or a dialog where the values have more
-     * to say than a label.
+     * A menu under the row's own button, or a dialog when the choices have
+     * descriptions as well as labels.
      *
-     * <p>Which one is decided by the choices rather than by the key, so the row
-     * that opens a window over the sheet is the row whose values could not be
-     * told apart in a menu. Only the protocol has any today.
+     * <p>Decided by the choices rather than by the key, so only a row whose
+     * choices need their descriptions opens a second window.
      */
     private void chooser(View anchor) {
         final BackendOption o = (BackendOption) anchor.getTag();
@@ -294,16 +290,15 @@ final class PanelOptions {
     }
 
     /**
-     * The same choice as a list of items, each with its line under it.
+     * The same choice as a list of items, each with its description under it.
      *
-     * <p>A tap on a row is the answer and closes the dialog, so there is no
-     * button to confirm one: the radios say which is chosen now, and picking a
-     * value is the whole of what this asks.
+     * <p>Tapping a row selects it and closes the dialog, so there is no confirm
+     * button: the radio buttons show the current choice.
      *
-     * <p>It goes when its own row does. This is a second window over a sheet
-     * whose owner does not hold a reference to these rows, and a rotation takes
-     * the sheet with the activity — so the row being detached is what closes
-     * this, which covers both that and the rebuild a changed protocol causes.
+     * <p>It is dismissed when its row is detached. This is a second window over
+     * a panel or editor whose owner holds no reference to these rows, and a
+     * rotation destroys that window with the activity; detaching the row covers
+     * both that and the rebuild a changed backend causes.
      */
     private void described(View anchor, BackendOption o, List<BackendOption.Choice> choices) {
         final Context ctx = anchor.getContext();
@@ -363,7 +358,7 @@ final class PanelOptions {
         }
     }
 
-    /** {@link TextWatcher} is three methods and every caller wants one. */
+    /** A {@link TextWatcher} that only needs {@code afterTextChanged}. */
     static final class Watcher implements TextWatcher {
         private final Runnable changed;
 

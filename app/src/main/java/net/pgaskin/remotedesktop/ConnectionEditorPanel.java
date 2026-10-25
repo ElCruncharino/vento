@@ -40,30 +40,29 @@ import java.util.Objects;
 import java.util.UUID;
 
 /**
- * The connection editor: one sheet over the home screen, with a Save.
+ * The connection editor: a full-screen dialog over the home screen, with a
+ * Save button.
  *
  * <p>A preference row writes as it is touched, which is why this is not a
- * {@code PreferenceFragment} and why it can have a Save at all: every row here
+ * {@code PreferenceFragment} and why it can have a Save button: every row here
  * writes into a map, the maps reach {@link Connections} only from {@link #save},
- * and leaving with changes asks first. Three things follow from being a sheet
- * rather than a screen:
+ * and leaving with changes asks first.
  *
  * <ol>
- *   <li><b>Nothing opens a second window</b> — the same rule
- *       {@link ConnectionPanel} follows. A choice drops a menu under its own
- *       row and text is typed in the field itself, where the preference screen
- *       opened a dialog over the very form the value belongs to. The protocol
- *       is the exception, and it is one because its values need a line of prose
- *       each: two clients of the same protocol differ in what they are for, and
- *       a menu has room for a label and nothing else.
+ *   <li><b>Values are edited in place</b>, as in {@link ConnectionPanel}. A
+ *       choice opens a menu under its own row and text is typed in the field
+ *       itself, rather than in a dialog over the form as on a preference
+ *       screen. The exceptions are choices that need a description each, such
+ *       as the backend: two clients of the same protocol differ in what they
+ *       are for, and a menu only has room for a label.
  *   <li><b>The record's own fields are described the way a backend describes
  *       its options</b>, so the whole form is one list and {@link PanelOptions}
- *       never learns which half it is drawing. They stay in
- *       {@link #record separate maps} all the same, because a backend is free to
- *       have a parameter called {@code name} and the two must not share a slot.
- *   <li><b>It survives a rotation by hand.</b> A dialog does not, so the
+ *       does not distinguish the two. They are still kept in
+ *       {@link #record separate maps}, because a backend may have a parameter
+ *       called {@code name} and the two must not collide.
+ *   <li><b>Rotation is handled by hand.</b> A dialog does not survive it, so the
  *       activity keeps {@link #saveState} in its own instance state and shows
- *       the sheet again.
+ *       the editor again.
  * </ol>
  */
 final class ConnectionEditorPanel {
@@ -74,8 +73,6 @@ final class ConnectionEditorPanel {
     private static final String USER = "user";
     private static final String PASSWORD = "password";
     private static final String BACKEND = "backend";
-
-    /** A sheet on a phone; a centred card once there is room for one. */
 
     private final Activity activity;
     private final Runnable onChanged;
@@ -91,11 +88,11 @@ final class ConnectionEditorPanel {
     private final TextView credentialsSummary;
     private final MaterialButton pin;
     private final MaterialButton homeScreen;
-    /** Whether the launcher takes shortcuts, asked once: it cannot change while
-     * a sheet is open, and the answer is a binder call. */
+    /** Whether the launcher accepts pinned shortcuts, checked once: it cannot
+     * change while the editor is open, and checking is a binder call. */
     private final boolean canPin;
-    /** Whether this connection is pinned, which the toggle beside Save both
-     * shows and sets; see the listener for why it does not wait for Save. */
+    /** Whether this connection is pinned, which the toggle beside Save shows
+     * and sets; see its listener for why it does not wait for Save. */
     private boolean pinned;
 
     private String id;
@@ -105,19 +102,19 @@ final class ConnectionEditorPanel {
     private final Map<String, String> record = new LinkedHashMap<>();
     private final Map<String, String> chosen = new LinkedHashMap<>();
 
-    /** What both looked like when it was opened, so "changed" is a comparison. */
+    /** Both maps as they were when opened, to detect changes by comparison. */
     private final Map<String, String> openedRecord = new LinkedHashMap<>();
     private final Map<String, String> openedChosen = new LinkedHashMap<>();
 
     private PanelOptions fieldRows;
-    /** What the address field is labelled now, so a change to it can rebuild. */
+    /** The address field's current label, so a change to it can rebuild. */
     private String addressLabel;
     private PanelOptions optionRows;
 
     /**
      * @param id        an existing connection, or null for a new one
-     * @param onChanged run after anything is written — the list behind the sheet
-     *                  is showing what was just edited
+     * @param onChanged run after anything is written, so the list behind the
+     *                  editor can show the change
      */
     static ConnectionEditorPanel show(Activity activity, String id, Runnable onChanged) {
         final ConnectionEditorPanel panel = new ConnectionEditorPanel(activity, id, onChanged);
@@ -135,8 +132,8 @@ final class ConnectionEditorPanel {
         replace(panel.chosen, fromJson(state.getString("chosen", "{}")));
         replace(panel.openedRecord, fromJson(state.getString("openedRecord", "{}")));
         replace(panel.openedChosen, fromJson(state.getString("openedChosen", "{}")));
-        // After the fields, because both of these are answers to "is this a
-        // connection that already exists" and the constructor was told no.
+        // After the fields, because both depend on whether the connection
+        // already exists, and the constructor was given no id.
         panel.applyIdentity();
         panel.applyCredentials();
         panel.rebuild();
@@ -148,10 +145,10 @@ final class ConnectionEditorPanel {
         final Bundle b = new Bundle();
         b.putString("id", id);
         b.putBoolean("existing", existing);
-        // Sealed on the way out and opened on the way back in: a saved instance
-        // state crosses into the system process and stays there for the life of
-        // the task, and a rotation is not one of the two moments this app has
-        // decided a password may be in the clear.
+        // Encrypted when saved and decrypted when restored: a saved instance
+        // state is passed to the system process and kept there for the life of
+        // the task, and a rotation is no reason to keep a password there in the
+        // clear.
         final Map<String, String> saved = new LinkedHashMap<>(record);
         final String sealed = Secrets.protect(saved.get(PASSWORD));
         saved.put(PASSWORD, sealed == null ? "" : sealed);
@@ -167,8 +164,8 @@ final class ConnectionEditorPanel {
     }
 
     void dismiss() {
-        // The questions this sheet asks are dialogs of their own, and one still
-        // showing when the activity goes is a leaked window.
+        // The editor's confirmations are separate dialogs, and one still
+        // showing when the activity is destroyed is a leaked window.
         for (AlertDialog d : new ArrayList<>(asked)) {
             d.dismiss();
         }
@@ -177,18 +174,16 @@ final class ConnectionEditorPanel {
     }
 
     /**
-     * Go away, having first put the keyboard down.
+     * Dismisses the editor after hiding the keyboard.
      *
-     * <p>The keyboard is not this window's decoration, it is a <em>request</em>
-     * the window is holding, and a window dismissed while still holding one
-     * hands it on: the insets controls change owner, whoever receives them
-     * re-applies the request that arrived with them, and the keyboard appears
-     * for a frame over the screen behind before something else takes it away
-     * again. So every way out of this sheet goes through here, and nothing calls
+     * <p>The keyboard is a <em>request</em> the window holds, and a window
+     * dismissed while still holding one passes it on: the insets controls
+     * change owner, the new owner re-applies the request, and the keyboard
+     * appears for a frame over the screen behind before it is hidden again. So
+     * every way out of the editor goes through here, and nothing calls
      * {@code dialog.dismiss()} directly.
      *
-     * <p>Focus first, then the keyboard: a field that still has focus is a
-     * window that still wants one.
+     * <p>Focus first, then the keyboard: a focused field keeps requesting it.
      */
     private void dismissSheet() {
         final View focused = dialog.getCurrentFocus();
@@ -212,9 +207,9 @@ final class ConnectionEditorPanel {
     }
 
     // SOFT_INPUT_ADJUST_RESIZE is deprecated in favour of a window that does not
-    // fit system windows and applies the IME inset itself. That is what this
-    // sheet must not do: it would apply the keyboard twice — see the inset
-    // listener below.
+    // fit system windows and applies the IME inset itself. This dialog must not
+    // do that, since it would apply the keyboard twice; see the inset listener
+    // below.
     //
     // The form's root has no parent to be measured against either: the dialog's
     // window supplies the layout parameters and the ones in the file are not read.
@@ -245,18 +240,17 @@ final class ConnectionEditorPanel {
         final View content = LayoutInflater.from(dialog.getContext())
                 .inflate(R.layout.sheet_editor, null);
         dialog.setContentView(content);
-        // A form is not left by a stray tap outside it: that is how typing gets
-        // lost. What leaves is the ✕, Save, and back — and back asks.
-        // Cancellable it stays, because that is what routes back through the
-        // dispatcher below rather than straight to Dialog.cancel.
+        // A stray tap outside must not close the form and lose what was typed.
+        // It closes with the close button, Save, or back, and back asks first.
+        // It stays cancellable, because that routes back through the dispatcher
+        // below rather than straight to Dialog.cancel.
         dialog.setCanceledOnTouchOutside(false);
         if (dialog.getWindow() != null) {
             dialog.getWindow().setLayout(WindowManager.LayoutParams.MATCH_PARENT,
                     WindowManager.LayoutParams.MATCH_PARENT);
             // UNCHANGED rather than the UNSPECIFIED that setting ADJUST_RESIZE
-            // alone leaves behind: unspecified is an invitation for the system
-            // to decide, and the only thing that should raise this form's
-            // keyboard is a finger on one of its fields.
+            // alone leaves: with unspecified the system decides, and this form's
+            // keyboard should only open when one of its fields is tapped.
             dialog.getWindow().setSoftInputMode(
                     WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
                             | WindowManager.LayoutParams.SOFT_INPUT_STATE_UNCHANGED);
@@ -267,11 +261,11 @@ final class ConnectionEditorPanel {
                 close();
             }
         });
-        // Its own window, so it gets no system bars for free — and now it fills
-        // the screen, so the status bar is in the sum as well as the navigation
-        // one. The keyboard is *not*: the window is already resized to sit above
-        // it (SOFT_INPUT_ADJUST_RESIZE above), so adding the IME inset as
-        // padding would take a second keyboard's height out of the form.
+        // Its own window, so it inherits no system bar insets, and it fills the
+        // screen, so both the status bar and the navigation bar are padded. The
+        // keyboard is *not*: the window is already resized to sit above it
+        // (SOFT_INPUT_ADJUST_RESIZE above), so adding the IME inset as padding
+        // would take a second keyboard's height out of the form.
         ViewCompat.setOnApplyWindowInsetsListener(content, (v, insets) -> {
             final Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
             v.setPadding(v.getPaddingLeft(), bars.top, v.getPaddingRight(), bars.bottom);
@@ -287,11 +281,10 @@ final class ConnectionEditorPanel {
         homeScreen.setOnClickListener(v -> addToHomeScreen());
         pin = content.findViewById(R.id.pin);
         pin.setOnClickListener(v -> {
-            // Written straight through rather than held until Save: pinning is
-            // about where a card sits in the list and not about what the
-            // connection *is*, so it has no business being lost by a cancel or
-            // being one of the things an unsaved-changes question is asking
-            // about.
+            // Written immediately rather than held until Save: pinning is about
+            // where a card sits in the list, not about the connection itself,
+            // so it should not be lost by a cancel or count as an unsaved
+            // change.
             pinned = !pinned;
             Connections.setPinned(activity, java.util.Set.of(id), pinned);
             applyIdentity();
@@ -320,42 +313,37 @@ final class ConnectionEditorPanel {
     }
 
     /**
-     * The two things that depend on whether this connection exists yet: what the
-     * sheet is called, and whether there is anything to delete. Both move when a
-     * new connection is saved, and both have to be re-applied to a sheet rebuilt
-     * from a bundle by {@link #restore}.
+     * Everything that depends on whether this connection exists yet: the title,
+     * and the delete, pin and home screen buttons. These change when a new
+     * connection is saved, and have to be re-applied to an editor rebuilt from
+     * a bundle by {@link #restore}.
      */
     private void applyIdentity() {
         title.setText(existing ? R.string.editor_edit : R.string.editor_new);
         delete.setVisibility(existing ? View.VISIBLE : View.GONE);
-        // Nothing to pin until there is a record to pin, which is the same
-        // condition the delete has and for the same reason.
+        // Nothing to pin until the record exists, as with delete.
         pin.setVisibility(existing ? View.VISIBLE : View.GONE);
-        // Checked rather than a second icon: the button is "pinned", and what a
-        // press does to it is the toggle's business rather than the icon's.
+        // The checked state rather than a second icon: the button shows
+        // "pinned", and the toggle state shows whether it is.
         pin.setChecked(pinned);
         pin.setContentDescription(activity.getString(
                 pinned ? R.string.home_unpin : R.string.home_pin));
         pin.setTooltipText(pin.getContentDescription());
-        // The same "there has to be a record" as the other two, and one more
-        // condition: a launcher that does not take shortcuts is not offered a
-        // button that can only fail.
+        // Needs a record like the other two, and a launcher that accepts
+        // pinned shortcuts, since otherwise the button can only fail.
         homeScreen.setVisibility(existing && canPin ? View.VISIBLE : View.GONE);
     }
 
     /**
-     * Offer this connection to the launcher as an icon of its own.
+     * Offers this connection to the launcher as a home screen icon.
      *
-     * <p>The stored record rather than what is in the form, which is the same
-     * rule the credentials button follows: what goes to the launcher is a name
-     * and an address, and half-typed ones are not those yet. Nothing is lost by
-     * that — {@link Shortcuts} rewrites every shortcut whenever the list is
-     * written, so a Save afterwards reaches the icon, and the only cost of
-     * pinning first is a label that is right a moment later.
+     * <p>Uses the stored record rather than the form, as the credentials button
+     * does: the launcher gets a name and an address, and half-typed ones are not
+     * ready. Nothing is lost: {@link Shortcuts} rewrites every shortcut whenever
+     * the list is written, so a later Save updates the icon.
      *
-     * <p>Nothing is said when it works: what happens then is the system's own
-     * dialog asking whether to add it, which is a better answer than anything
-     * this sheet could put underneath it.
+     * <p>No message on success: the system shows its own dialog asking whether
+     * to add it.
      */
     private void addToHomeScreen() {
         final Connection stored = Connections.byId(activity, id);
@@ -370,7 +358,7 @@ final class ConnectionEditorPanel {
 
     // ---- the credentials ----------------------------------------------------
 
-    /** Whether there is anything to clear, which is what the button reads. */
+    /** Whether there is anything to clear, which enables the button. */
     private boolean hasCredentials() {
         return !value(USER).isEmpty() || !value(PASSWORD).isEmpty();
     }
@@ -383,15 +371,14 @@ final class ConnectionEditorPanel {
     }
 
     /**
-     * Forget the user name and the password, on the record as it is stored.
+     * Clears the user name and the password on the stored record.
      *
-     * <p>Written straight through rather than held until Save, and asked about
-     * first, which are two halves of one decision: this is the only control here
-     * that destroys something, so it must not be reachable by accident and must
-     * not be undone by a Discard that the person leaving meant to apply to the
-     * fields above it. The record it writes is {@link Connections}' own with two
-     * fields emptied — not one built from this form — so an address being edited
-     * at the time is neither saved nor lost.
+     * <p>Written immediately rather than held until Save, and confirmed first:
+     * this is the only control here that deletes something, so it must not
+     * happen by accident, and must not be undone by a Discard meant for the
+     * fields above it. It writes the stored record with two fields emptied,
+     * not one built from this form, so an address being edited at the time is
+     * neither saved nor lost.
      */
     private void confirmClearCredentials() {
         track(new MaterialAlertDialogBuilder(activity, R.style.ThemeOverlay_RemoteDesktop_Dialog)
@@ -403,8 +390,8 @@ final class ConnectionEditorPanel {
                     if (stored != null) {
                         Connections.save(activity, stored.withCredentials("", ""));
                     }
-                    // Both maps, so that a form which has changed nothing else
-                    // still leaves without a question.
+                    // Both maps, so a form with no other changes still closes
+                    // without asking.
                     record.put(USER, "");
                     record.put(PASSWORD, "");
                     openedRecord.put(USER, "");
@@ -417,8 +404,8 @@ final class ConnectionEditorPanel {
     // ---- the rows -----------------------------------------------------------
 
     /**
-     * Both halves of the form. Rebuilt whole when the protocol changes, since
-     * the options below it belong to the backend that was chosen before.
+     * Both halves of the form. Rebuilt whole when the backend changes, since
+     * the options below belong to the previously chosen backend.
      */
     private void rebuild() {
         fields.removeAllViews();
@@ -426,8 +413,8 @@ final class ConnectionEditorPanel {
         options.removeAllViews();
 
         // One reader for two lists, because they are one list with the
-        // credentials between them: what this connection is, what is kept for
-        // it, and what speaks to it.
+        // credentials between them: the connection's identity, its stored
+        // credentials, and its backend.
         final PanelOptions.Values recordValues = recordValues();
         fieldRows = new PanelOptions(fields, recordFields(), recordValues);
         final List<BackendOption> protocolField = protocolField();
@@ -435,10 +422,10 @@ final class ConnectionEditorPanel {
         protocol.setVisibility(protocolField.isEmpty() ? View.GONE : View.VISIBLE);
 
         final String backendId = value(BACKEND);
-        // What an untouched option would actually do: the backend's own global
-        // setting, or the schema's default where nothing has ever been set. Not
-        // the schema default alone — the editor has to show what would happen,
-        // rather than what the schema says.
+        // What an untouched option would actually be: the backend's own global
+        // setting, or the schema's default where nothing has been set. Not the
+        // schema default alone, since the editor has to show the effective
+        // value.
         final Map<String, String> defaults = Options.inherited(activity, backendId);
         final List<BackendOption> connectionOptions = new ArrayList<>(
                 Backends.options(backendId).stream()
@@ -446,9 +433,8 @@ final class ConnectionEditorPanel {
                         .map(o -> o.scope() == BackendOption.Scope.LAYERED
                                 ? withAppDefault(o, defaults.get(o.key())) : o)
                         .toList());
-        // Last, and after the backend's own: what the app wants to know per
-        // machine is a smaller category than what a protocol does, and it reads
-        // as an afterthought because it is one.
+        // Last, after the backend's own: the app's per-connection options are
+        // fewer and less central than the protocol's.
         connectionOptions.addAll(AppOptions.options(activity));
         optionRows = new PanelOptions(options, connectionOptions, optionValues(defaults));
         final int vis = optionRows.isEmpty() ? View.GONE : View.VISIBLE;
@@ -457,11 +443,11 @@ final class ConnectionEditorPanel {
     }
 
     /**
-     * The upper half's reader: the form's own fields, whose answers are the
-     * record being edited and whose unanswered state is the schema's default.
+     * The upper half's reader: the form's own fields, whose values are the
+     * record being edited and whose unset state is the schema's default.
      *
-     * <p>Two of the keys do something as well as being stored, which is why
-     * this is not a plain map view.
+     * <p>Two of the keys have side effects as well as being stored, which is
+     * why this is not a plain map view.
      */
     private PanelOptions.Values recordValues() {
         return new PanelOptions.Values() {
@@ -473,10 +459,10 @@ final class ConnectionEditorPanel {
 
             @Override
             public void set(BackendOption o, String value) {
-                // A row writes back what it was shown, merely by being bound —
-                // so a form nobody has touched would otherwise fill this map
-                // with answers nobody gave, and read as edited on the way out.
-                // A write that does not change the answer is not recorded.
+                // A row writes back its displayed value when bound, so an
+                // untouched form would otherwise fill this map with values the
+                // user never set and count as edited when closed. A write that
+                // does not change the value is not recorded.
                 if (record.containsKey(o.key()) || !value.equals(o.defaultValue())) {
                     record.put(o.key(), value);
                 }
@@ -488,10 +474,9 @@ final class ConnectionEditorPanel {
                 }
                 if (o.key().equals(BACKEND)) {
                     rebuild();
-                    // Choosing one that is waiting for something is one of the
-                    // ways to ask for it. The choice is kept either way: a
-                    // connection can be saved now and set up later, and the
-                    // setup screen has no answer to give back.
+                    // Choosing a backend that needs setup starts its setup. The
+                    // choice is kept either way: a connection can be saved now
+                    // and set up later, and the setup screen returns no result.
                     Backends.isSetup(activity, value, ready -> {
                         if (!ready) {
                             Plugins.setup(activity, value);
@@ -503,12 +488,12 @@ final class ConnectionEditorPanel {
     }
 
     /**
-     * The lower half's: this connection's own answers over what an unanswered
-     * option would actually do.
+     * The lower half's reader: this connection's own values over the inherited
+     * ones.
      *
-     * @param defaults what {@link Options#inherited} said for this backend,
-     *                 read at the rebuild that made these rows — the rows are
-     *                 thrown away and remade when it could have moved
+     * @param defaults what {@link Options#inherited} returned for this backend
+     *                 at the rebuild that made these rows; the rows are rebuilt
+     *                 whenever it could have changed
      */
     private PanelOptions.Values optionValues(Map<String, String> defaults) {
         return new PanelOptions.Values() {
@@ -518,11 +503,11 @@ final class ConnectionEditorPanel {
                 if (own != null) {
                     return own;
                 }
-                // A layered option that has not been answered shows the answer
-                // it has not given, rather than the one it would inherit: the
-                // row's first choice is that, and it says where it comes from.
-                // getOrDefault, for an app option: there is no backend under
-                // one to have a default of its own, so the schema's is it.
+                // An unset layered option shows the empty "default" choice
+                // rather than the value it would inherit: that is the row's
+                // first choice, and its label names the inherited value.
+                // getOrDefault, for an app option: no backend provides a
+                // default for one, so the schema's default applies.
                 return o.scope() == BackendOption.Scope.LAYERED
                         ? "" : defaults.getOrDefault(o.key(), o.defaultValue());
             }
@@ -530,14 +515,14 @@ final class ConnectionEditorPanel {
             @Override
             public void set(BackendOption o, String value) {
                 // The same rule as the fields above, against this row's own
-                // idea of unanswered — which for a layered option is the empty
-                // string it shows rather than the schema's default.
+                // unset value, which for a layered option is the empty string
+                // rather than the schema's default.
                 if (chosen.containsKey(o.key()) || !value.equals(get(o))) {
                     chosen.put(o.key(), value);
                 }
-                // An option can decide what the address field is asking for,
-                // and a row's label is fixed when the row is built — so the
-                // form is rebuilt where the answer has moved.
+                // An option can change what the address field asks for, and a
+                // row's label is fixed when the row is built, so the form is
+                // rebuilt when the label changes.
                 if (!Objects.equals(addressLabel, Backends.addressLabel(value(BACKEND), chosen))) {
                     rebuild();
                 }
@@ -552,14 +537,13 @@ final class ConnectionEditorPanel {
     }
 
     /**
-     * A layered option as the editor offers it: its own answers under an
-     * explicit unanswered one, which names what the backend would do.
+     * A layered option as the editor offers it: its own values after an
+     * explicit "default" entry, whose label names the inherited value.
      *
-     * <p>The alternative is what this was first — no such entry, and an answer
-     * stored only where it differs from the backend's — which reads the same
-     * until the backend's answer moves: agreeing with it silently meant
-     * following it. Empty is the answer that is not one, and a switch has to
-     * become a menu to have three states.
+     * <p>Without that entry, a value would be stored only where it differs from
+     * the backend's, so choosing the same value as the backend would silently
+     * follow later changes to it. The empty value is the default entry, and a
+     * switch becomes a menu so it can have three states.
      */
     private BackendOption withAppDefault(BackendOption o, String inherited) {
         final List<BackendOption.Choice> choices = new ArrayList<>();
@@ -581,8 +565,8 @@ final class ConnectionEditorPanel {
                                 o.labelFor(inherited))));
                 choices.addAll(o.choices());
             }
-            // A field left empty is already the unanswered case, and its default
-            // is in the helper text under it rather than in a list of one.
+            // An empty field is already the unset case, and its default is in
+            // the helper text under it.
             case INT, TEXT -> {
                 return o;
             }
@@ -592,45 +576,38 @@ final class ConnectionEditorPanel {
     }
 
     /**
-     * The record's own fields, described the way a backend describes an option.
-     *
-     * <p>{@link OptionScreen} already turns two descriptions into one kind of
-     * row; this is a third producer of the same description, and what it buys is
-     * one list and one renderer rather than a hand-built form above a generated
-     * one.
+     * The record's own fields, described the way a backend describes an option,
+     * so the form is one list drawn by one renderer rather than a hand-built
+     * form above a generated one.
      */
     private List<BackendOption> recordFields() {
         final List<BackendOption> out = new ArrayList<>();
-        // No summaries: two fields whose label already says the whole of what
-        // goes in them, and the address carries its own format.
+        // No summaries: the labels say what goes in each field.
         out.add(BackendOption.text(NAME, activity.getString(R.string.editor_name),
                 null, "", BackendOption.Scope.CONNECTION, false));
-        // The backend's word for it where it has one: one protocol here reaches
-        // a machine by digits rather than by a host and a port, and which of
-        // those the box holds moves with an option below it.
+        // The backend's label where it has one: one protocol here can reach a
+        // machine by an ID rather than a host and port, depending on an option
+        // further down.
         addressLabel = Backends.addressLabel(value(BACKEND), chosen);
         out.add(BackendOption.text(ADDRESS,
                 addressLabel != null ? addressLabel : activity.getString(R.string.editor_address),
                 null, "", BackendOption.Scope.CONNECTION, false));
-        // No user name and no password: both are kept in {@link #record} and
-        // written back by {@link #save} untouched, but neither is a field here.
-        // See the credentials button, which is the whole of what this form does
-        // about them.
+        // No user name and no password fields: both are kept in `record` and
+        // written back unchanged by save(). The credentials button is the only
+        // control for them.
         return out;
     }
 
     /**
-     * The protocol picker, which is a list so that it can be an empty one: one
-     * backend is not a choice, and a picker offering it would be a row that can
-     * only say what it already says.
+     * The backend picker, as a list so that it can be empty: with one backend
+     * there is nothing to choose.
      *
-     * <p>Its own list rather than the last of {@link #recordFields}, because it
-     * is rendered under the credentials and they are between the two.
+     * <p>A separate list rather than the last of {@link #recordFields}, because
+     * the credentials are rendered between the two.
      *
-     * <p>Every backend carries its own line, so this row is the one that opens a
-     * dialog: two clients of the same protocol are told apart by what each is
-     * for, and a menu of six names says that to somebody who already knows it
-     * and to nobody else.
+     * <p>Every backend has a description, so this row opens a dialog: two
+     * clients of the same protocol differ in what each is for, which a menu of
+     * names alone does not show.
      */
     private List<BackendOption> protocolField() {
         if (Backends.ids().size() <= 1) {
@@ -646,15 +623,14 @@ final class ConnectionEditorPanel {
 
     // ---- leaving ------------------------------------------------------------
 
-    /** True once nothing here would be lost by closing. */
+    /** True if nothing would be lost by closing. */
     private boolean unchanged() {
         return record.equals(openedRecord) && chosen.equals(openedChosen);
     }
 
     /**
-     * The way out that is not Save. An untouched form just closes; an edited one
-     * asks — because silently committing and silently discarding are both
-     * answers the person leaving may not have meant to give.
+     * Closing without Save. An untouched form just closes; an edited one asks,
+     * because the user may not have meant either to save or to discard.
      */
     private void close() {
         if (unchanged()) {
@@ -662,8 +638,8 @@ final class ConnectionEditorPanel {
             return;
         }
         if (value(ADDRESS).isEmpty()) {
-            // There is nothing to offer to keep: an address is what makes this a
-            // connection. So the question is the other one.
+            // Without an address it cannot be saved, so the only question is
+            // whether to discard.
             track(new MaterialAlertDialogBuilder(activity, R.style.ThemeOverlay_RemoteDesktop_Dialog)
                     .setTitle(R.string.editor_discard_title)
                     .setMessage(R.string.editor_address_required)
@@ -684,7 +660,7 @@ final class ConnectionEditorPanel {
                 .show());
     }
 
-    /** @return whether it was written; false leaves the sheet open on the problem */
+    /** @return whether it was written; false leaves the editor open on the problem */
     private boolean save() {
         if (value(ADDRESS).isEmpty()) {
             final TextInputLayout field = fieldRows.fieldFor(ADDRESS);
@@ -695,20 +671,19 @@ final class ConnectionEditorPanel {
             return false;
         }
         final String backendId = value(BACKEND);
-        // Only what somebody chose, and only what this backend understands — the
-        // map may still hold whatever was chosen before the protocol was
-        // changed. For a layered option, chosen is exactly what the row says it
-        // is: an empty answer is the app default and stores nothing, and any
-        // other answer is stored even where it agrees with the default, because
-        // the point of picking it is that it stays picked when the default
-        // moves. For the rest, an untouched row is one that still equals the
-        // default it was drawn with.
+        // Only values the user set, and only this backend's options: the map
+        // may still hold values chosen before the backend was changed. For a
+        // layered option, `chosen` holds exactly what the row shows: empty means
+        // the default and stores nothing, and any other value is stored even if
+        // it matches the default, so it stays chosen when the default changes.
+        // For the rest, an untouched row still equals the default it was drawn
+        // with.
         final Map<String, String> defaults = Options.inherited(activity, backendId);
         final Map<String, String> options = new LinkedHashMap<>();
         final List<BackendOption> saveable = new ArrayList<>(Backends.options(backendId));
-        // The app's own per-connection options ride in the same map, so they are
-        // written by the same loop; their default is the schema's, since there
-        // is no backend underneath one to have an opinion.
+        // The app's own per-connection options are stored in the same map, so
+        // the same loop writes them; their default is the schema's, since no
+        // backend provides one.
         saveable.addAll(AppOptions.options(activity));
         for (BackendOption o : saveable) {
             if (o.scope() == BackendOption.Scope.GLOBAL) {
@@ -723,9 +698,8 @@ final class ConnectionEditorPanel {
                 options.put(o.key(), v);
             }
         }
-        // The form does not carry the pin, so it has to be read rather than
-        // rebuilt: a record written from these fields alone would quietly unpin
-        // whatever was being edited.
+        // The form does not hold the pin, so it is read from the stored record:
+        // a record written from these fields alone would unpin the connection.
         final Connection prior = Connections.byId(activity, id);
         Connections.save(activity, new Connection(id, value(NAME), backendId, value(ADDRESS),
                 value(USER), "", options, prior != null && prior.pinned())

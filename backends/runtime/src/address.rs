@@ -1,14 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! What somebody typed into the address field, split into a host and a port.
+//! The text of the address field, split into a host and a port.
 //!
-//! One implementation for the four clients written here, because the four had
-//! four and they did not agree: the same literal reached one of them as an
-//! address, another as a host with a port after it, and a third as nothing it
-//! could resolve. The three shims over somebody else's client have the same
-//! rule written again in their own language, which is as close to sharing as C
-//! and Rust get.
+//! One implementation for the four Rust clients, which each had their own and
+//! did not agree: the same literal reached one of them as an address, another
+//! as a host with a port after it, and a third as nothing it could resolve.
+//! The three C session files over vendored clients implement the same rule in
+//! C.
 
 /// What a number after the colon means, which is a fact about the protocol
 /// rather than about the address.
@@ -16,8 +15,8 @@
 pub enum Ports {
     /// A number is a port.
     Plain,
-    /// Under 100 is a display number, the way `:1` has meant since the 1990s,
-    /// and `host::port` is how somebody says they meant the port.
+    /// Under 100 is a display number, as `:1` has meant since the 1990s, and
+    /// `host::port` is an explicit port.
     Display,
 }
 
@@ -25,14 +24,13 @@ pub enum Ports {
 /// a name or an IPv4 literal.
 ///
 /// **An IPv6 literal is bracketed, always.** Unbracketed it cannot be told from
-/// a host with a port after it — `fdb7::1` is either an address or `fdb7` on
+/// a host with a port after it: `fdb7::1` is either an address or `fdb7` on
 /// port 1, and under [`Ports::Display`] `::1:1` would have to be an address and
-/// a display at once. Every available guess lands somewhere real: on a
-/// different machine, or on the wildcard address, which is where two of these
-/// clients used to end up. So more than one colon outside brackets is refused,
-/// and the only unbracketed address with two of them that is not is
-/// `host::port`, which is older than the ambiguity and is the escape from the
-/// display rule.
+/// a display at once. Every possible guess connects somewhere unintended: a
+/// different machine, or the wildcard address, which is where two of these
+/// clients used to connect. So more than one colon outside brackets is
+/// refused, except in `host::port`, which predates the ambiguity and is the
+/// escape from the display rule.
 ///
 /// The error is a sentence rather than a code because it is shown as the reason
 /// a session closed.
@@ -52,8 +50,8 @@ pub fn split(address: &str, default_port: u16, ports: Ports) -> Result<(String, 
     }
     // `host::port` before the split below, since it is the one form where the
     // last colon is not where the port starts. Not with no host before it:
-    // `::1` is IPv6's loopback unbracketed, and is told so below rather than
-    // that it has no host.
+    // `::1` is IPv6's loopback unbracketed, and gets the bracket error below
+    // rather than a missing-host one.
     if ports == Ports::Display
         && let Some((host, tail)) = address.split_once("::")
         && !host.is_empty()
@@ -140,7 +138,7 @@ mod tests {
         assert_eq!(rdp("[::1]:3390").unwrap(), ("::1".into(), 3390));
     }
 
-    /// The whole of the reason the brackets are not optional.
+    /// The reason the brackets are required.
     #[test]
     fn a_bare_literal_is_refused_in_words() {
         for address in ["2001:db8::1", "fdb7:aebd:7160:0:cfb9:d78:95a7:251e", "::1:1", "::1"] {

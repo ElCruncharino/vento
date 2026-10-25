@@ -16,9 +16,9 @@ namespace vento_realvnc {
 
 namespace {
 
-/* How long a parked descriptor sits out. Long enough that a refused UDP
-   socket costs a few polls rather than a core's worth, short enough that a
-   real error on a real socket is seen almost at once. */
+/* How long a parked descriptor stays out of the epoll set. Long enough that
+   a refused UDP socket costs a few polls rather than a whole CPU core, short
+   enough that a real error on a real socket is seen almost at once. */
 constexpr auto PARK = std::chrono::milliseconds(50);
 
 thread_local Looper *tlLooper = nullptr;
@@ -29,8 +29,9 @@ uint32_t epollEvents(int events) {
            | (events & LOOPER_EVENT_HANGUP ? EPOLLHUP : 0u);
 }
 
-/* What an event carries: the registration's number above, the descriptor
-   below. The wake descriptor's number is 0, which no registration has. */
+/* An event's data: the registration's number in the upper 32 bits, the
+   descriptor in the lower. The wake descriptor's number is 0, which no
+   registration has. */
 uint64_t tag(int fd, uint32_t seq) {
     return ((uint64_t) seq << 32) | (uint32_t) fd;
 }
@@ -72,7 +73,7 @@ int Looper::addFd(int fd, int ident, int events, ALooper_callbackFunc callback, 
     }
     int r = epoll_ctl(epfd_, exists ? EPOLL_CTL_MOD : EPOLL_CTL_ADD, fd, &ev);
     if (r < 0 && exists && errno == ENOENT) {
-        // Android's tolerance: the descriptor registered under this number
+        // As Android tolerates it: the descriptor registered under this number
         // was closed without being removed, which takes it out of the epoll
         // set, and this is a new one that happens to have its number.
         r = epoll_ctl(epfd_, EPOLL_CTL_ADD, fd, &ev);
@@ -130,7 +131,7 @@ void Looper::unparkDue() {
 void Looper::wake() {
     const uint64_t one = 1;
     if (write(wakefd_, &one, sizeof one) < 0) {
-        // EAGAIN: the counter is already saturated, which is already awake.
+        // EAGAIN: the counter is saturated, so the looper is already woken.
     }
 }
 
@@ -139,7 +140,7 @@ int Looper::pollOnce(int timeoutMs, int *outFd, int *outEvents, void **outData) 
     {
         const std::lock_guard<std::mutex> guard(lock_);
         if (!parked_.empty() && (timeoutMs < 0 || timeoutMs > 50)) {
-            timeoutMs = 50; // somebody has to put them back
+            timeoutMs = 50; // so that the parked descriptors are put back
         }
     }
     epoll_event evs[16];
@@ -168,7 +169,7 @@ int Looper::pollOnce(int timeoutMs, int *outFd, int *outEvents, void **outData) 
             if (it == fds_.end() || it->second.seq != seq) {
                 // Removed, or removed and its number given to another
                 // descriptor, by a callback earlier in this batch: the event
-                // is the old one's and nobody's now.
+                // belongs to the old registration and is dropped.
                 continue;
             }
             e = it->second;
@@ -194,7 +195,7 @@ int Looper::pollOnce(int timeoutMs, int *outFd, int *outEvents, void **outData) 
     return woken ? LOOPER_POLL_WAKE : LOOPER_POLL_CALLBACK;
 }
 
-// ---- the symbol table's ------------------------------------------------------
+// ---- libandroid.so symbol table entries --------------------------------------
 
 void *looperForThread() {
     return Looper::forThread();
@@ -217,8 +218,8 @@ int looperPollOnce(int timeoutMs, int *outFd, int *outEvents, void **outData) {
     return Looper::forThread()->pollOnce(timeoutMs, outFd, outEvents, outData);
 }
 
-/* `pollAll` differs from `pollOnce` in repeating until something other than
-   a callback happened; one call is as much as the core has needed. */
+/* `pollAll` differs from `pollOnce` by repeating until something other than
+   a callback happens; a single call has been enough for the core. */
 int looperPollAll(int timeoutMs, int *outFd, int *outEvents, void **outData) {
     return Looper::forThread()->pollOnce(timeoutMs, outFd, outEvents, outData);
 }

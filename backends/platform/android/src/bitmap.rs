@@ -5,18 +5,17 @@
 //! `Bitmap`.
 //!
 //! Declared here rather than taken from the `ndk` crate: it is three functions
-//! with a stable ABI, and `#[link]` on the extern block is the whole of the
-//! build configuration. What it buys is the thing `Backend.readRegion` promises
-//! — the drawing thread gets a row copy out of the framebuffer into the bitmap
-//! it is about to draw, with no intermediate buffer and no allocation.
+//! with a stable ABI, and `#[link]` on the extern block is the only build
+//! configuration needed. They give what `Backend.readRegion` promises: the
+//! drawing thread gets a row copy out of the framebuffer into the bitmap it is
+//! about to draw, with no intermediate buffer and no allocation.
 //!
-//! It is also what makes the destination offset free here and emulated there.
-//! The RealVNC path cannot do either: `copyScaledRegion` writes into a
-//! `ByteBuffer` their library allocates, so every region goes through a second
-//! copy in `Bitmap.copyPixelsFromBuffer` — and that copy fills the whole
-//! destination, so a read of part of a bitmap needs a scratch and a blit on
-//! top. Here the offset
-//! is `&mut bytes[dst_y * stride + dst_x * 4..]`.
+//! They also make the destination offset free here. The RealVNC path has
+//! neither: `copyScaledRegion` writes into a `ByteBuffer` RealVNC's library
+//! allocates, so every region goes through a second copy in
+//! `Bitmap.copyPixelsFromBuffer`, and that copy fills the whole destination,
+//! so a read of part of a bitmap needs a scratch bitmap and a blit on top.
+//! Here the offset is `&mut bytes[dst_y * stride + dst_x * 4..]`.
 
 use jni::sys::{JNIEnv, jobject};
 use std::ffi::c_void;
@@ -45,8 +44,7 @@ unsafe extern "C" {
 /// A locked bitmap's pixels, unlocked when this is dropped.
 ///
 /// The unlock has to happen on every path out, including the one where the
-/// region turns out not to fit — a bitmap left locked is one Java can never
-/// draw again.
+/// region turns out not to fit: Java can never draw a bitmap left locked.
 pub struct Locked {
     env: *mut JNIEnv,
     bitmap: jobject,

@@ -5,7 +5,7 @@
 # A client's monitors config does not reach `spice-vdagent` at all when the
 # guest's display is a QXL device: the SPICE server intercepts it and hands it
 # to the virtual hardware, so what arrives in here is a **preferred RandR mode
-# per output** — and a second head asked for arrives as an output that has
+# per output**, and a second head asked for arrives as an output that has
 # become *connected*. Something has to switch to them, and GNOME and KDE do it
 # from their own display managers.
 #

@@ -3,10 +3,10 @@
     SPDX-FileCopyrightText: 2026 Patrick Gaskin
     SPDX-License-Identifier: GPL-3.0-or-later
 
-    The whole of a window there is no session for: a connection with no address,
-    a backend this build does not have, a plugin whose constructor threw, or one
-    that has to be set up before it can dial. A sentence, and sometimes one
-    thing to do about it.
+    The session window's content when there is no session: a connection with
+    no address, a backend this build does not have, a plugin whose constructor
+    threw, or one that has to be set up before it can connect. A message, and
+    sometimes one action.
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
@@ -22,8 +22,8 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content" />
 
-    <!-- No outline: a thing to tap under the words it is about, not a second
-         panel on an otherwise empty screen. -->
+    <!-- Borderless, so it does not look like a second panel on an otherwise
+         empty screen. -->
     <com.google.android.material.button.MaterialButton
         android:id="@+id/action"
         style="?attr/borderlessButtonStyle"

@@ -46,7 +46,7 @@ public class TapRegionsTest {
         assertEquals(TapRegions.KEYBOARD, t.hit(1000, 1000, 2400, 1080).name());
         assertEquals(TapRegions.MOUSE, t.hit(2200, 1000, 2400, 1080).name());
 
-        // The 17/22 middle belongs to nobody — it is the whole point.
+        // The 17/22 middle is in no region: it is the touchpad.
         assertNull(t.hit(1200, 540, 2400, 1080));
         assertNull(t.hit(1200, 99, 2400, 1080));
         assertNull(t.hit(1200, 932, 2400, 1080));
@@ -155,7 +155,7 @@ public class TapRegionsTest {
 
     /**
      * Regions are a one-finger affordance. A two-finger tap is a right click
-     * everywhere on the screen, including inside a band — otherwise the bands
+     * everywhere on the screen, including inside a band; otherwise the bands
      * would be dead zones for the other buttons.
      */
     @Test

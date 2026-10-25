@@ -1,23 +1,23 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! A C backend's own library as the Linux client reaches it: opened by name
-//! the first time anything asks, rather than linked, so that a library that
-//! cannot be loaded (a system library it needs missing or too old, a file of
-//! another build, or no file at all) makes that one backend not available
-//! and the client starts with the rest.
+//! A C backend's library on the Linux client: opened by name on first use
+//! rather than linked, so that a library that cannot be loaded (a system
+//! library it needs is missing or too old, the file is from another build,
+//! or there is no file) makes only that backend unavailable and the client
+//! starts with the rest.
 //!
 //! A backend's crate declares one [`Library`] over the table its build script
 //! generated from its header (bindgen's `dynamic_library_name`), calls the
-//! header's functions through [`call!`](crate::call), and has its `Kind`'s
-//! `create` say the backend is not available where the library cannot be
-//! opened through [`create_if_loaded!`](crate::create_if_loaded). On the phone
-//! the C is linked into the same library as the crate, which exports nothing
-//! but `JNI_OnLoad`, so there the library is a `Linked`, the calls are the
-//! extern declarations and `create` is the crate's own function. The vtable a
-//! session is driven by is reached through the session's own pointer and was
-//! never a symbol, so [`start`](super::start) and [`CSession`](super::CSession)
-//! are the same on both.
+//! header's functions through [`call!`](crate::call), and wraps its `Kind`'s
+//! `create` in [`create_if_loaded!`](crate::create_if_loaded), which reports
+//! the backend as unavailable when the library cannot be opened. On the phone
+//! the C is linked into the same library as the crate, which exports only
+//! `JNI_OnLoad`, so there the library is a `Linked`, the calls are the extern
+//! declarations and `create` is the crate's own function. The vtable is
+//! reached through the session's own pointer, never through a symbol, so
+//! [`start`](super::start) and [`CSession`](super::CSession) are the same on
+//! both.
 
 #[cfg(target_os = "linux")]
 use std::sync::OnceLock;
@@ -26,21 +26,21 @@ use std::sync::OnceLock;
 #[cfg(target_os = "linux")]
 #[derive(Clone, Copy)]
 pub enum Scope {
-    /// Its symbols for itself (`RTLD_LOCAL`): nothing opened after it binds
-    /// to them. For the open backends' libraries, which export only their
-    /// header's functions and `vento_log`.
+    /// Keeps its symbols private (`RTLD_LOCAL`): libraries opened later do
+    /// not bind to them. For the open backends' libraries, which export only
+    /// their header's functions and `vento_log`.
     Local,
-    /// Its symbols in the process's global scope (`RTLD_GLOBAL`), as for a
-    /// library the binary is linked against: for RealVNC's hosting layer,
+    /// Adds its symbols to the process's global scope (`RTLD_GLOBAL`), as for
+    /// a library the binary is linked against. For RealVNC's hosting layer,
     /// whose loader looks symbols up there.
     Global,
 }
 
 /// A backend's library and its functions, `T` being the table bindgen
-/// generated over its header: opened once, the first time [`get`](Self::get)
+/// generated from its header: opened once, the first time [`get`](Self::get)
 /// is called, and never closed (the libraries register exit handlers, and a
-/// session's threads run in them). A failure is kept too, as the sentence
-/// every later call is told.
+/// session's threads run in them). A failure is cached too, and every later
+/// call gets the same message.
 #[cfg(target_os = "linux")]
 pub struct Library<T: 'static> {
     name: &'static str,
@@ -52,9 +52,9 @@ pub struct Library<T: 'static> {
 
 #[cfg(target_os = "linux")]
 impl<T> Library<T> {
-    /// `name` is the file as the client's CMake build writes it, found through
+    /// `name` is the file name the client's CMake build writes, found through
     /// the binary's rpath (or `LD_LIBRARY_PATH`); `header` is the header the
-    /// table was generated from, for the error when the file is another
+    /// table was generated from, for the error when the file is a different
     /// library; `bind` is the generated table's `from_library`.
     pub const fn new(
         name: &'static str,
@@ -70,23 +70,22 @@ impl<T> Library<T> {
         self.loaded.get_or_init(|| self.open()).as_ref().map_err(String::as_str)
     }
 
-    /// The table of a library [`get`](Self::get) has already opened: under a
-    /// session, which is started only once it has.
+    /// The table of a library [`get`](Self::get) has already opened, for use
+    /// within a session, which is started only after that.
     pub fn loaded(&self) -> &T {
         self.get().expect("a session is started only over its opened library")
     }
 
-    /// Marks the library as one the client's build did not make, for `why`,
-    /// unless it has been opened already: every later call is told `why`
-    /// rather than the loader's "cannot open shared object file", which would
-    /// not say how to get it. For a client whose build knows that it made no
-    /// such file.
+    /// Marks the library as not built, for the reason `why`, unless it has
+    /// been opened already: every later call gets `why` rather than the
+    /// loader's "cannot open shared object file", which does not say how to
+    /// get it. For a client whose build knows it made no such file.
     pub fn not_built(&self, why: String) {
         let _ = self.loaded.set(Err(why));
     }
 
-    /// A backend's `version` over this library: its own version, as `read`
-    /// reads it, or "not available: <why>".
+    /// A backend's `version`: the library's version as `read` gets it, or
+    /// "not available: <why>".
     pub fn version(&self, read: impl FnOnce(&T) -> String) -> String {
         match self.get() {
             Ok(table) => read(table),
@@ -100,16 +99,16 @@ impl<T> Library<T> {
             Scope::Local => RTLD_LOCAL,
             Scope::Global => RTLD_GLOBAL,
         };
-        // Every symbol bound now: a missing symbol or symbol version (a glibc
-        // older than the build machine's) fails here, where it can be said,
-        // rather than in the middle of a session. Opening it runs its
-        // constructors, the vendored libraries' and the C++ runtime's, and the
-        // lookups read the header's functions: the library is one the
-        // client's own build made.
+        // Bind every symbol now: a missing symbol or symbol version (a glibc
+        // older than the build machine's) fails here, where it can be
+        // reported, rather than mid-session. Opening it runs its constructors
+        // (the vendored libraries' and the C++ runtime's), and the lookups
+        // read the header's functions; this relies on the library coming from
+        // the client's own build.
         let library = unsafe { Library::open(Some(self.name), RTLD_NOW | scope) }.map_err(|e| {
             // glibc names the file it could not load, which for a missing
-            // dependency is the dependency: the library's name goes in front,
-            // so that the sentence says whose it is.
+            // dependency is the dependency, so prefix the library's name to
+            // show which backend it belongs to.
             let e = e.to_string();
             if e.starts_with(self.name) { e } else { format!("{}: {e}", self.name) }
         })?;
@@ -118,11 +117,12 @@ impl<T> Library<T> {
     }
 }
 
-/// One of a C backend's own functions (its header's, beside the vtable),
-/// called: on the Linux client as a member of `$library`, the table a
+/// Calls one of a C backend's own functions (declared in its header, outside
+/// the vtable): on the Linux client as a member of `$library`, the table a
 /// `Library` opened; on the phone, where the C is linked into the same
-/// library as the crate, as the extern declaration `$ffi::$f`, and `$library`
-/// is a `Linked`. Inside an `unsafe` block, as any call into the C is.
+/// library as the crate, as the extern declaration `$ffi::$f`, with
+/// `$library` a `Linked`. Used inside an `unsafe` block, like any call into
+/// the C.
 #[macro_export]
 macro_rules! call {
     ($library:expr, $ffi:ident :: $f:ident ( $($arg:expr),* $(,)? )) => {{
@@ -138,7 +138,7 @@ macro_rules! call {
 }
 
 /// A `Kind`'s `create` over a backend's library: on the Linux client a
-/// function that opens `$library` first and, where it cannot be opened, fails
+/// function that opens `$library` first and, if it cannot be opened, fails
 /// with "<$name> is not available: <why>"; on the phone `$create` itself.
 #[macro_export]
 macro_rules! create_if_loaded {
@@ -154,9 +154,9 @@ macro_rules! create_if_loaded {
     }};
 }
 
-/// A backend's library where its C is linked into the same library as its
-/// crate, with [`Library`]'s calls: always there. Inlined, so that a crate's
-/// code on the phone is what it was when it called the C directly.
+/// Stands in for [`Library`] where the C is linked into the same library as
+/// its crate, so it is always loaded. Inlined, so that the phone's code
+/// compiles to direct calls into the C.
 #[cfg(not(target_os = "linux"))]
 pub struct Linked;
 
@@ -185,8 +185,8 @@ mod tests {
         unsafe { library.get::<unsafe extern "C" fn()>(b"vento_nothing_version\0") }.map(|_| ())
     }
 
-    /// A library that is not there is one backend not available, in a
-    /// sentence that names the file, and asking again is told the same.
+    /// A missing library makes its backend unavailable, with a message that
+    /// names the file, and asking again gives the same message.
     #[test]
     fn a_missing_library_is_not_available_with_its_name() {
         static MISSING: Library<()> =
@@ -196,21 +196,22 @@ mod tests {
         assert_eq!(MISSING.get().unwrap_err(), version.trim_start_matches("not available: "));
     }
 
-    /// A library the build did not make says why, and is never opened.
+    /// A library marked as not built reports why, and is never opened.
     #[test]
     fn a_library_not_built_says_why() {
         static ABSENT: Library<()> = Library::new("libc.so.6", "vento/nothing.h", Scope::Local, nothing);
         ABSENT.not_built("built only with clang".to_string());
         assert_eq!(ABSENT.version(|_| unreachable!()), "not available: built only with clang");
-        // Once opened, it is what was opened.
+        // Once opened, `not_built` has no effect.
         static OPENED: Library<()> = Library::new("libc.so.6", "vento/nothing.h", Scope::Local, nothing);
         assert!(OPENED.get().is_ok());
         OPENED.not_built("built only with clang".to_string());
         assert!(OPENED.get().is_ok());
     }
 
-    /// A library that opens but lacks a function of the header is not the
-    /// library the header describes, and says which function.
+    /// A library that opens but lacks one of the header's functions is
+    /// reported as not the library the header describes, naming the
+    /// function.
     #[test]
     fn another_library_is_not_the_one_its_header_describes() {
         static OTHER: Library<()> = Library::new("libc.so.6", "vento/nothing.h", Scope::Local, no_such_symbol);
