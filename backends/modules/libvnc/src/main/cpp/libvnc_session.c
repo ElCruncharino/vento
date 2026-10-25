@@ -1728,6 +1728,7 @@ static bool op_read_thumbnail(vento_session *base, int step, void *dst, size_t s
 }
 
 static const vento_session_ops OPS = {
+        .size = sizeof(vento_session_ops),
         .pointer = op_pointer,
         .key_down = op_key_down,
         .key_up = op_key_up,
