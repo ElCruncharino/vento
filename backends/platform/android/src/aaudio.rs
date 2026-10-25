@@ -10,8 +10,8 @@
 //! configuration. Everything used is from API 26 or 28, and the app's
 //! minimum is 34, so nothing is looked up at run time.
 //!
-//! **A data callback**, rather than the blocking writes TigerVNC's own sink
-//! made: AAudio asks for each buffer on a thread of its own, and the
+//! **A data callback**, rather than the non-blocking writes TigerVNC's old
+//! sink (`AndroidAudioOutput`, which this replaced) made: AAudio asks for each buffer on a thread of its own, and the
 //! callback fills it from the stream's queue, which is exactly the shape the
 //! queue was made for — the protocol thread only ever queues, and the
 //! callback never waits on anything but the queue's copy. Opening the stream

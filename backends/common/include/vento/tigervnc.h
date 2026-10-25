@@ -13,6 +13,7 @@
 
 #include <stdbool.h>
 
+#include <vento/audio.h>
 #include <vento/backend.h>
 #include <vento/video.h>
 
@@ -39,6 +40,11 @@ typedef struct vento_tigervnc_config {
        `h264` says, since nothing could draw it. */
     const vento_video_decoders *video;
     bool audio;              /* whether to ask for the server's sound, for the session */
+    /* Where it is played: the platform's sound output (vento/audio.h),
+       copied, and the session's from here on, released when it ends — even
+       where this call fails. NULL for none, and the server's sound is then
+       never asked for whatever `audio` says. */
+    const vento_audio *audio_output;
     int connect_timeout_ms;  /* 0 or less for no deadline */
 } vento_tigervnc_config;
 

@@ -152,11 +152,12 @@ under the host locale (`export LC_ALL=C`).
 - TigerVNC's H.264 decoder context is the shim's own
   (`H264VentoDecoderContext`, selected by `H264_VENTO` in their factory; their
   libav one is not built, `HAVE_LIBAV` unset), and hands each rectangle to
-  vento's video decoders through `vento/video.h`'s table. Its audio sink is
-  platform code under `backends/platform/android/tigervnc`, behind the shim's
-  own `AudioOutput.h`. An upstream change to `H264DecoderContext` or
-  `H264Decoder` (the reset flags, the 64-context limit) or to the QEMU audio
-  calls in `CConnection` reaches the shim.
+  vento's video decoders through `vento/video.h`'s table. Its QEMU audio is
+  played on vento's sound output through `vento/audio.h`'s table
+  (`VentoAudio.h`; AAudio on the phone, behind `common::audio`'s queue), not
+  their viewer's `AudioOutput`, which is not compiled. An upstream change to
+  `H264DecoderContext` or `H264Decoder` (the reset flags, the 64-context
+  limit) or to the QEMU audio calls in `CConnection` reaches the shim.
 - Every comment of ours that names an upstream version or behaviour ("in
   3.19.1", "the assembly is GAS", "returns Some") is a claim to re-verify
   against the target and correct or remove. Grep for the old version string
@@ -324,9 +325,10 @@ One commit per upstream, after review, by the lead:
   dropped, and the libav context's pixel format fix with that context). The certificate check is the shim's now: what cannot be excused is
   refused and the rest goes to `trust_needed`, their viewer's known-hosts store
   not used at all; the RSA-AES key question is ported from
-  `vncviewer/CConn.cxx`; audio is behind the `Audio` row, an AAudio sink over
-  the shim's own `AudioOutput.h`. Builds `common/` only, with `config.h` written
-  by our CMake and, on Android, an empty `pthread` target for the link.
+  `vncviewer/CConn.cxx`; audio is behind the `Audio` row and plays on
+  vento's sound output through `vento/audio.h`'s table (`VentoAudio.h`).
+  Builds `common/` only, with `config.h` written by our
+  CMake and, on Android, an empty `pthread` target for the link.
 - **freerdp** 3.32.0; two patches: `0001`, codec/h264: `WITH_H264_EXTERNAL`,
   a slot for an application's subsystem, `g_Subsystem_external`, tried
   first, and `WITH_GFX_H264` following it; and `0002`, upstream's

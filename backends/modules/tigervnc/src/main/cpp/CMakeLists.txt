@@ -3,9 +3,10 @@
 #
 # Under Gradle this is a root, configured by the NDK toolchain, and makes
 # `libremotedesktop_tigervnc.so`: the session, with the module's Rust crate
-# linked in as the JNI layer over it, and the phone's two media sinks, with
-# the vendored libjpeg-turbo and pixman and the nettle and GnuTLS ports linked
-# in, since a phone has none of them.
+# linked in as the JNI layer over it (and with it the phone's MediaCodec and
+# AAudio, which decode its H.264 and play its sound), with the vendored
+# libjpeg-turbo and pixman and the nettle and GnuTLS ports linked in, since a
+# phone has none of them.
 
 cmake_minimum_required(VERSION 3.30)
 project(remotedesktop_tigervnc CXX C)
@@ -129,8 +130,8 @@ endforeach()
 # is not in bionic, so every message stays in English and their no-NLS branch
 # makes `_()` the identity; and audio is their viewer's own PulseAudio or
 # waveOut sink, which is not compiled here — the protocol half of it is in
-# `common/` whatever this says, and the sink is the platform's behind
-# `AudioOutput.h`.
+# `common/` whatever this says, and the sound is played on the platform's
+# output, handed to the session as `vento/audio.h`'s table (`VentoAudio.h`).
 configure_file("${THIRD_PARTY}/tigervnc/config.h.in" "${CMAKE_CURRENT_BINARY_DIR}/config.h")
 add_definitions(-DHAVE_CONFIG_H)
 
@@ -167,14 +168,12 @@ target_sources(rfbclient PRIVATE $<TARGET_OBJECTS:vento_tigervnc_h264>)
 # The session, which is the shim over TigerVNC's client and names no
 # platform; the Rust crate beside it in `src/main/rust`, which is the
 # backend over the session and the JNI layer every backend shares — and
-# MediaCodec's decoder, which the session's H.264 is decoded by; and the
-# audio output the phone's own sink stands behind, from
-# `backends/platform/android`.
-add_library(remotedesktop_tigervnc SHARED tigervnc_session.cxx
-        "${VENTO_BACKENDS}/platform/android/tigervnc/AndroidAudioOutput.cxx")
+# MediaCodec's decoder and AAudio's output, which the session's H.264 is
+# decoded by and its sound played on, through the tables the crate hands
+# it (vento_android_library links both).
+add_library(remotedesktop_tigervnc SHARED tigervnc_session.cxx)
 vento_android_library(remotedesktop_tigervnc remotedesktop_tigervnc)
 remotedesktop_warnings(remotedesktop_tigervnc)
 # gnutls by name as well as through theirs: the certificate check is the
 # shim's now, and it calls the known-hosts functions itself.
-target_link_libraries(remotedesktop_tigervnc PRIVATE rfbclient rfb network rdr core gnutls
-        aaudio)
+target_link_libraries(remotedesktop_tigervnc PRIVATE rfbclient rfb network rdr core gnutls)
