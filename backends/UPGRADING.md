@@ -439,7 +439,15 @@ One commit per upstream, after review, by the lead:
   `backends/modules/tigervnc/cpp/cmake/pixman.cmake`; only the region
   API is reached. The checkout's origin is freedesktop's gitlab while
   `.gitmodules` names the X11Libre mirror; they match.
-- **openssl** 3.5.9, LTS to 2030. No patches. Moving to 4.x needs `no-ech`,
+- **openssl** 3.5.9, LTS to 2030. No patches. Both builds configure
+  `no-quic` and `no-dtls`: FreeRDP is a TLS client and makes no QUIC or
+  DTLS connection. Without QUIC `quic.h` declares no
+  `OSSL_QUIC_client_method`, so a consumer that starts using QUIC fails to
+  compile; `ssl/quic/quic_tls*.c` stay in the source list (the API for an
+  external QUIC stack). QUIC's qlog was the one caller of `OpenSSL_version`
+  (FreeRDP calls none), so the linked libraries no longer hold "OpenSSL 3.5.9 ..." or the build date; the
+  version they carry is the default provider's bare `3.5.9` (`strings
+  <lib> | grep -x`). Moving to 4.x needs `no-ech`,
   and the engine references in `gen.sh` and the port's CMakeLists go. The
   host build (`platform/linux/cmake/openssl.cmake`) runs Configure with the
   port's options without `no-legacy`, the assembly on as there, plus

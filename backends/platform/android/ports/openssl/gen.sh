@@ -64,7 +64,7 @@ abis="arm64-v8a x86_64"
 #                that carries video, and AES in C is where that shows. It is
 #                what makes gen/ per-ABI rather than one directory.
 configure_args="no-shared no-tests no-apps no-docs no-legacy no-engine no-dso
-    no-comp no-dtls no-srp no-psk no-ssl3 no-weak-ssl-ciphers"
+    no-comp no-dtls no-quic no-srp no-psk no-ssl3 no-weak-ssl-ciphers"
 
 for abi in $abis; do
     echo "> $abi"

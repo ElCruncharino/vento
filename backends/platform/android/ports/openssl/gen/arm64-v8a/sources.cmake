@@ -1047,49 +1047,8 @@ set(OPENSSL_SOURCES_libssl_lib
         ssl/d1_srtp.c
         ssl/methods.c
         ssl/pqueue.c
-        ssl/priority_queue.c
-        ssl/quic/cc_newreno.c
-        ssl/quic/json_enc.c
-        ssl/quic/qlog.c
-        ssl/quic/qlog_event_helpers.c
-        ssl/quic/quic_ackm.c
-        ssl/quic/quic_cfq.c
-        ssl/quic/quic_channel.c
-        ssl/quic/quic_demux.c
-        ssl/quic/quic_engine.c
-        ssl/quic/quic_fc.c
-        ssl/quic/quic_fifd.c
-        ssl/quic/quic_impl.c
-        ssl/quic/quic_lcidm.c
-        ssl/quic/quic_method.c
-        ssl/quic/quic_obj.c
-        ssl/quic/quic_port.c
-        ssl/quic/quic_rcidm.c
-        ssl/quic/quic_reactor.c
-        ssl/quic/quic_reactor_wait_ctx.c
-        ssl/quic/quic_record_rx.c
-        ssl/quic/quic_record_shared.c
-        ssl/quic/quic_record_tx.c
-        ssl/quic/quic_record_util.c
-        ssl/quic/quic_rstream.c
-        ssl/quic/quic_rx_depack.c
-        ssl/quic/quic_srt_gen.c
-        ssl/quic/quic_srtm.c
-        ssl/quic/quic_sstream.c
-        ssl/quic/quic_statm.c
-        ssl/quic/quic_stream_map.c
-        ssl/quic/quic_strm_reas.c
-        ssl/quic/quic_thread_assist.c
         ssl/quic/quic_tls.c
         ssl/quic/quic_tls_api.c
-        ssl/quic/quic_trace.c
-        ssl/quic/quic_tserver.c
-        ssl/quic/quic_txp.c
-        ssl/quic/quic_txpim.c
-        ssl/quic/quic_types.c
-        ssl/quic/quic_wire.c
-        ssl/quic/quic_wire_pkt.c
-        ssl/quic/uint_set.c
         ssl/record/methods/dtls_meth.c
         ssl/record/methods/ssl3_meth.c
         ssl/record/methods/tls13_meth.c
@@ -1099,9 +1058,7 @@ set(OPENSSL_SOURCES_libssl_lib
         ssl/record/methods/tlsany_meth.c
         ssl/record/rec_layer_d1.c
         ssl/record/rec_layer_s3.c
-        ssl/rio/poll_builder.c
         ssl/rio/poll_immediate.c
-        ssl/rio/rio_notifier.c
         ssl/s3_enc.c
         ssl/s3_lib.c
         ssl/s3_msg.c

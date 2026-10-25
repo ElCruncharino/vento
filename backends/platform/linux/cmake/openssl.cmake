@@ -94,7 +94,7 @@ block(SCOPE_FOR VARIABLES PROPAGATE VENTO_OPENSSL_VERSION)
             CONFIGURE_COMMAND ${env} "${VENTO_PERL}" "${source}/Configure"
                 --prefix=${prefix} --libdir=lib --openssldir=/etc/ssl
                 no-shared no-tests no-apps no-docs no-engine no-dso
-                no-comp no-dtls no-srp no-psk no-ssl3 no-weak-ssl-ciphers
+                no-comp no-dtls no-quic no-srp no-psk no-ssl3 no-weak-ssl-ciphers
                 no-autoload-config -fPIC
             BUILD_COMMAND ${VENTO_MAKE} -j${jobs} build_libs
             INSTALL_COMMAND ${VENTO_MAKE} install_dev
