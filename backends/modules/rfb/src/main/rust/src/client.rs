@@ -3,11 +3,12 @@
 
 //! The session: one connection, a reader thread and a writer thread.
 
+use crate::clipboard::{self, Message};
 use crate::decode;
 use crate::error::{Error, Result};
 use crate::framebuffer::Framebuffer;
 use crate::pixel::PixelFormat;
-use crate::proto::{Counter, Reader, Writer, to_latin1};
+use crate::proto::{Counter, MAX_CUT_TEXT, Reader, Writer, latin1, to_latin1};
 use crate::security::{self, Security};
 use crate::transport::{Wire, Writes};
 use crate::zlib::ZlibStream;
@@ -133,6 +134,23 @@ struct Shared {
     /// so remembering which one went down is the client's job, and doing it
     /// here rather than in Java keeps it under the protocol's own tests.
     held: Mutex<HashMap<i64, u32>>,
+    /// Where the extended clipboard stands (see `clipboard.rs`). Both the
+    /// reader, answering the server, and whoever offers a copy reach it.
+    clip: Mutex<Clip>,
+}
+
+/// The extended clipboard's state: what the server said it takes, and the
+/// text this end has announced and not yet been asked for.
+#[derive(Default)]
+struct Clip {
+    /// The server's caps, action bits and all; 0 until it sends them, and
+    /// then the plain messages are not used again.
+    server: u32,
+    /// The most text the server takes unasked; 0 means notify only.
+    server_utf8_size: u32,
+    /// The text announced, LF line ends, until the server's clipboard
+    /// changes under it. TigerVNC's `hasLocalClipboard` with the text.
+    local: Option<String>,
 }
 
 /// A connection. Created first, connected second: the framebuffer exists from
@@ -163,6 +181,7 @@ impl Client {
                 received: Counter::default(),
                 sent: Counter::default(),
                 held: Mutex::new(HashMap::new()),
+                clip: Mutex::new(Clip::default()),
             }),
             rx: Mutex::new(Some(rx)),
         }
@@ -310,16 +329,36 @@ impl Client {
     /// Not sent while view-only: the far end's clipboard is the far end's, and
     /// replacing it is driving rather than watching. Both borrowed clients
     /// already refuse it there.
+    ///
+    /// With the extended clipboard the text is announced and kept, and goes
+    /// when the server asks for it — or at once, where the server said it
+    /// takes that much unasked — as TigerVNC's `announceClipboard` does it.
+    /// Without it, it goes as a plain `ClientCutText`: Latin-1, and LF line
+    /// ends, which is what RFB says lines end in.
     pub fn clipboard(&self, text: &str) {
         if self.shared.view_only.load(Ordering::Relaxed) {
             return;
         }
-        let bytes = to_latin1(text);
-        let mut msg = Vec::with_capacity(8 + bytes.len());
-        msg.push(6u8);
-        msg.extend_from_slice(&[0, 0, 0]);
-        msg.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
-        msg.extend_from_slice(&bytes);
+        let text = clipboard::to_lf(text);
+        let mut clip = self.shared.clip.lock().unwrap();
+        let server = clip.server;
+        if server & clipboard::CAPS == 0 {
+            drop(clip);
+            self.send(client_cut_text(&text));
+            return;
+        }
+        let wire = clipboard::wire_text(&text);
+        let msg = if server & clipboard::PROVIDE != 0 && wire.len() <= clip.server_utf8_size as usize {
+            clipboard::provide(&wire)
+        } else if server & clipboard::NOTIFY != 0 {
+            clipboard::notify(true)
+        } else {
+            // A server that cannot be told there is text can only be given
+            // it, which is what TigerVNC does then.
+            local_text(server, &text)
+        };
+        clip.local = Some(text);
+        drop(clip);
         self.send(msg);
     }
 
@@ -536,42 +575,83 @@ impl Client {
                     r.skip(count * 6)?;
                 }
                 2 => handler.bell(),
-                3 => {
-                    r.skip(3)?;
-                    let length = r.i32()?;
-                    // `unsigned_abs`, because negating i32::MIN is the one
-                    // value that overflows — in a release build silently, into
-                    // a skip of two gigabytes that reads until the far end
-                    // gives up.
-                    let n = length.unsigned_abs() as usize;
-                    if n > crate::proto::MAX_CUT_TEXT {
-                        // Skipped, not refused: ending the session over a big
-                        // copy at the far end lost the desktop for the sake of
-                        // a clipboard. Nothing is delivered, since a cut-off
-                        // text pasted here would read as the whole of it.
-                        log::warn!(
-                            "the far end's clipboard of {n} bytes is over the {} this client takes; skipped",
-                            crate::proto::MAX_CUT_TEXT
-                        );
-                        r.skip(n)?;
-                        continue;
-                    }
-                    if length < 0 {
-                        // The extended clipboard's negative length is a
-                        // capability exchange we did not ask for; skipping the
-                        // body is how a client that does not speak it stays in
-                        // sync with the stream.
-                        r.skip(n)?;
-                    } else {
-                        let text = crate::proto::latin1(&r.bytes(n)?);
-                        handler.clipboard(&text);
-                    }
-                }
+                3 => self.server_cut_text(r, handler)?,
                 other => {
                     return Err(Error::Protocol(format!("server message type {other}")));
                 }
             }
         }
+    }
+
+    /// `ServerCutText`, plain or extended.
+    fn server_cut_text(&self, r: &mut Reader<impl Read>, handler: &mut dyn Handler) -> Result<()> {
+        r.skip(3)?;
+        let length = r.i32()?;
+        // `unsigned_abs`, because negating i32::MIN is the one value that
+        // overflows — in a release build silently, into a skip of two
+        // gigabytes that reads until the far end gives up.
+        let n = length.unsigned_abs() as usize;
+        if n > MAX_CUT_TEXT {
+            // Skipped, not refused: ending the session over a big copy at
+            // the far end lost the desktop for the sake of a clipboard.
+            // Nothing is delivered, since a cut-off text pasted here would
+            // read as the whole of it.
+            log::warn!("the far end's clipboard of {n} bytes is over the {MAX_CUT_TEXT} this client takes; skipped");
+            r.skip(n)?;
+            return Ok(());
+        }
+        let body = r.bytes(n)?;
+        if length >= 0 {
+            // The far end owns the clipboard now, so a request for ours is
+            // one for something that has gone.
+            self.shared.clip.lock().unwrap().local = None;
+            handler.clipboard(&clipboard::to_lf(&latin1(&body)));
+            return Ok(());
+        }
+        let message = clipboard::parse(&body, MAX_CUT_TEXT).map_err(Error::Protocol)?;
+        let mut clip = self.shared.clip.lock().unwrap();
+        match message {
+            Message::Caps { flags, utf8_size } => {
+                clip.server = flags;
+                clip.server_utf8_size = utf8_size.unwrap_or(0);
+                log::debug!(
+                    "extended clipboard: the server takes {:#x}, text unasked up to {} bytes",
+                    flags,
+                    clip.server_utf8_size
+                );
+                let _ = self.shared.out.send(Out::Bytes(clipboard::caps()));
+            }
+            Message::Notify(formats) => {
+                // The server's clipboard changed: ask for its text at once,
+                // which is when the TigerVNC backend asks too.
+                if formats & clipboard::UTF8 != 0 {
+                    clip.local = None;
+                    if clip.server & clipboard::REQUEST != 0 {
+                        let _ = self.shared.out.send(Out::Bytes(clipboard::request()));
+                    }
+                }
+            }
+            Message::Provide(text) => {
+                drop(clip);
+                if let Some(text) = text {
+                    handler.clipboard(&text);
+                }
+            }
+            Message::Request(formats) => {
+                if formats & clipboard::UTF8 != 0
+                    && let Some(local) = &clip.local
+                    && !self.shared.view_only.load(Ordering::Relaxed)
+                {
+                    let _ = self.shared.out.send(Out::Bytes(local_text(clip.server, local)));
+                }
+            }
+            Message::Peek => {
+                if clip.server & clipboard::NOTIFY != 0 {
+                    let _ = self.shared.out.send(Out::Bytes(clipboard::notify(clip.local.is_some())));
+                }
+            }
+        }
+        Ok(())
     }
 
     fn framebuffer_update(
@@ -782,6 +862,9 @@ fn set_encodings(preferred: &[i32], compress_level: Option<u8>) -> Vec<u8> {
     // every pointer event on the floor.
     list.push(decode::ENC_EXTENDED_MOUSE_BUTTONS);
     list.push(decode::ENC_POINTER_TYPE_CHANGE);
+    // The clipboard in UTF-8 rather than Latin-1, where the server has it;
+    // its answer is its caps, as a ServerCutText (see `clipboard.rs`).
+    list.push(clipboard::ENC_EXTENDED_CLIPBOARD);
     if let Some(level) = compress_level {
         list.push(-256 + level.min(9) as i32);
     }
@@ -794,6 +877,28 @@ fn set_encodings(preferred: &[i32], compress_level: Option<u8>) -> Vec<u8> {
         msg.extend_from_slice(&e.to_be_bytes());
     }
     msg
+}
+
+/// A plain `ClientCutText`: Latin-1, `?` for the rest.
+fn client_cut_text(text: &str) -> Vec<u8> {
+    let bytes = to_latin1(text);
+    let mut msg = Vec::with_capacity(8 + bytes.len());
+    msg.push(6u8);
+    msg.extend_from_slice(&[0, 0, 0]);
+    msg.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
+    msg.extend_from_slice(&bytes);
+    msg
+}
+
+/// Our text, the way a server with the extended clipboard takes it: a
+/// provide where it has that action, and otherwise the plain message, as
+/// TigerVNC's `sendClipboardData` chooses.
+fn local_text(server: u32, text: &str) -> Vec<u8> {
+    if server & clipboard::PROVIDE != 0 {
+        clipboard::provide(&clipboard::wire_text(text))
+    } else {
+        client_cut_text(text)
+    }
 }
 
 /// A `PointerEvent`, in one of its two shapes.
@@ -1199,6 +1304,96 @@ mod tests {
         let seen = read_all(&Client::new(), &bytes);
         assert!(seen.clipboard.is_empty());
         assert_eq!(seen.bells, 1);
+    }
+
+    /// What the client queued for the server, in order.
+    fn sent(client: &Client) -> Vec<Vec<u8>> {
+        let rx = client.rx.lock().unwrap();
+        let mut sent = Vec::new();
+        while let Ok(Out::Bytes(b)) = rx.as_ref().unwrap().try_recv() {
+            sent.push(b);
+        }
+        sent
+    }
+
+    /// One of our extended messages as the server would send it: the same
+    /// bytes under `ServerCutText`'s type.
+    fn from_server(mut msg: Vec<u8>) -> Vec<u8> {
+        msg[0] = 3;
+        msg
+    }
+
+    /// An extended clipboard message from the server: flags and payload.
+    fn extended(flags: u32, payload: &[u8]) -> Vec<u8> {
+        let mut msg = vec![3, 0, 0, 0];
+        msg.extend_from_slice(&(-((4 + payload.len()) as i32)).to_be_bytes());
+        msg.extend_from_slice(&flags.to_be_bytes());
+        msg.extend_from_slice(payload);
+        msg
+    }
+
+    /// TigerVNC's turns, against a server that takes text by notify only
+    /// (Xvnc's default): its caps are answered with ours, its notify with a
+    /// request, and its provide delivered as UTF-8 with LF line ends. A copy
+    /// here is announced, given when asked for, and owned up to on a peek;
+    /// once the server's clipboard changes, a request for ours goes unanswered.
+    #[test]
+    fn the_extended_clipboard_takes_tigervncs_turns() {
+        use clipboard::{CAPS, NOTIFY, PEEK, PROVIDE, REQUEST, UTF8};
+        let client = Client::new();
+        client.shared.running.store(true, Ordering::Release);
+        let mut bytes = extended(UTF8 | CAPS | REQUEST | PEEK | NOTIFY | PROVIDE, &0u32.to_be_bytes());
+        bytes.extend(extended(NOTIFY | UTF8, &[]));
+        bytes.extend(from_server(clipboard::provide(&clipboard::wire_text("far caf\u{e9} \u{2014} x\r\nnext"))));
+        let seen = read_all(&client, &bytes);
+        assert_eq!(seen.clipboard, vec!["far caf\u{e9} \u{2014} x\nnext".to_string()]);
+        assert_eq!(sent(&client), vec![clipboard::caps(), clipboard::request()]);
+
+        let near = "near caf\u{e9} \u{2014} \u{1f600}";
+        client.clipboard(near);
+        assert_eq!(sent(&client), vec![clipboard::notify(true)]);
+        let mut bytes = extended(REQUEST | UTF8, &[]);
+        bytes.extend(extended(PEEK, &[]));
+        read_all(&client, &bytes);
+        assert_eq!(
+            sent(&client),
+            vec![clipboard::provide(&clipboard::wire_text(near)), clipboard::notify(true)]
+        );
+
+        let mut bytes = extended(NOTIFY | UTF8, &[]);
+        bytes.extend(extended(REQUEST | UTF8, &[]));
+        bytes.extend(extended(PEEK, &[]));
+        read_all(&client, &bytes);
+        assert_eq!(sent(&client), vec![clipboard::request(), clipboard::notify(false)]);
+    }
+
+    /// A server that takes text unasked is given it at once, up to the size
+    /// it named; past that it is only told.
+    #[test]
+    fn text_goes_unasked_where_the_server_takes_it() {
+        use clipboard::{CAPS, NOTIFY, PROVIDE, REQUEST, UTF8};
+        let client = Client::new();
+        client.shared.running.store(true, Ordering::Release);
+        read_all(&client, &extended(UTF8 | CAPS | REQUEST | NOTIFY | PROVIDE, &16u32.to_be_bytes()));
+        let _ = sent(&client);
+        client.clipboard("short");
+        client.clipboard("rather longer than sixteen");
+        assert_eq!(
+            sent(&client),
+            vec![clipboard::provide(&clipboard::wire_text("short")), clipboard::notify(true)]
+        );
+    }
+
+    /// No caps, no extension: the plain messages, Latin-1 both ways, `?`
+    /// for what Latin-1 lacks, and LF line ends.
+    #[test]
+    fn without_caps_the_clipboard_is_latin_1() {
+        let client = Client::new();
+        client.shared.running.store(true, Ordering::Release);
+        client.clipboard("caf\u{e9} \u{2014}\r\nx");
+        assert_eq!(sent(&client), vec![vec![6, 0, 0, 0, 0, 0, 0, 8, b'c', b'a', b'f', 0xe9, b' ', b'?', b'\n', b'x']]);
+        let seen = read_all(&client, &[3, 0, 0, 0, 0, 0, 0, 6, b'c', b'a', b'f', 0xe9, b'\r', b'\n']);
+        assert_eq!(seen.clipboard, vec!["caf\u{e9}\n".to_string()]);
     }
 
     /// `0x7FFF` is standing still, and a delta too big for the field stops at

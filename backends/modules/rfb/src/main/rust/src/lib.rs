@@ -18,9 +18,9 @@
 //! | Versions | 3.3, 3.7, 3.8 |
 //! | Security | None, VncAuth, VeNCrypt (X509None, X509Vnc, X509Plain) |
 //! | Encodings | Raw, CopyRect, RRE, Hextile, ZRLE |
-//! | Pseudo | Cursor, DesktopSize, LastRect, compression level, ExtendedMouseButtons, PointerTypeChange |
+//! | Pseudo | Cursor, DesktopSize, LastRect, compression level, ExtendedMouseButtons, PointerTypeChange, ExtendedClipboard |
 //! | Pointer | absolute, or relative where the server asks for it |
-//! | Clipboard | both ways, Latin-1 |
+//! | Clipboard | both ways: UTF-8 text with the extended clipboard, Latin-1 without |
 //!
 //! What it does not, and where each is answered: **anonymous TLS** (VeNCrypt's
 //! 257–259, which encrypt the line and prove nothing about the far end — see
@@ -43,6 +43,7 @@ pub const PROTOCOL_VERSION: &str = "RFB 3.8";
 mod bindings;
 
 mod client;
+mod clipboard;
 mod decode;
 mod error;
 mod framebuffer;
