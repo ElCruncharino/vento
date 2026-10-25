@@ -53,6 +53,10 @@ rustls = { version = "0.23", default-features = false, features = [
 # offset: this is the one field whose position nobody should guess.
 x509-cert = { version = "0.2", default-features = false, features = ["pem"] }
 
+# `src/backend.rs`, the protocol as a `session::Backend`.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+remotedesktop-session.workspace = true
+
 # The only part of this crate that knows a phone exists: the JNI entry points
 # in `src/bindings`, and the platform crate they stand on.
 [target.'cfg(target_os = "android")'.dependencies]

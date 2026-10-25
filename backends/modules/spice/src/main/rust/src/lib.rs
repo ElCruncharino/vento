@@ -36,6 +36,11 @@
 /// The JNI half: the entry points the Java in this module declares, in front
 /// of a `common::Session`. Android only — everything above is the protocol,
 /// and it builds and tests on the host with none of this compiled.
+// The protocol as a `session::Backend`, with this backend's options read into
+// its config and its rows. The phone has `bindings` and its Java twin.
+#[cfg(not(target_os = "android"))]
+pub mod backend;
+
 #[cfg(target_os = "android")]
 mod bindings;
 

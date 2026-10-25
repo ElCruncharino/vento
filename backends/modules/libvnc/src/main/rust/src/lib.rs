@@ -1,0 +1,117 @@
+// SPDX-FileCopyrightText: 2026 Patrick Gaskin
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+//! libvncclient's `vento_libvnc` as a [`Backend`](session::backend::Backend):
+//! `LibVncNative.nativeCreate`'s parameters and `LibVncBackend`'s option
+//! handling and rows.
+
+use session::c::{Behaviour, CSession, ffi, start};
+use session::backend::{Backend, ConnectionFact, Field, Traffic};
+use session::kind::{CONNECT_TIMEOUT_MS, Connect, Kind};
+use session::options::Options;
+use std::ffi::CString;
+
+pub static KIND: Kind = Kind {
+    about: &session::catalog::LIBVNC,
+    version: || unsafe { session::c::string(ffi::vento_libvnc_version()) },
+    create,
+};
+
+static BEHAVIOUR: Behaviour = Behaviour {
+    info,
+    sent_counted: true,
+    set_option,
+    rdp_domain: false,
+};
+
+/// libvncclient's own default list, best first; "auto" is it unchanged, and
+/// anything else is that encoding with `copyrect` after it.
+const AUTO_ENCODINGS: &str = "tight zrle ultra copyrect hextile zlib corre rre raw";
+
+fn encodings(value: &str) -> String {
+    if value.is_empty() || value == "auto" {
+        AUTO_ENCODINGS.to_string()
+    } else {
+        format!("{value} copyrect")
+    }
+}
+
+/// A 0–9 option as the library wants it, or −1 for "do not send it".
+fn level(value: &str) -> i32 {
+    value.parse().unwrap_or(-1)
+}
+
+/// The colour option as the shim's level: 0 full, 1 rgb222, 2 rgb111.
+fn colour(value: &str) -> i32 {
+    match value {
+        "rgb222" => 1,
+        "rgb111" => 2,
+        _ => 0,
+    }
+}
+
+fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
+    let o = c.options;
+    let address = CString::new(c.address).map_err(|_| "address has a NUL")?;
+    let user = (!c.user.is_empty()).then(|| CString::new(c.user).unwrap_or_default());
+    let password = c.password.and_then(|p| CString::new(p).ok());
+    let encoding = CString::new(encodings(o.get("Encoding"))).unwrap_or_default();
+    let config = ffi::vento_libvnc_config {
+        address: address.as_ptr(),
+        user_name: user.as_ref().map_or(std::ptr::null(), |u| u.as_ptr()),
+        password: password.as_ref().map_or(std::ptr::null(), |p| p.as_ptr()),
+        shared: o.bool("Shared"),
+        anonymous_tls: o.bool("AnonymousTLS"),
+        encoding: encoding.as_ptr(),
+        compress_level: level(o.get("Compression")),
+        quality_level: level(o.get("Quality")),
+        color_level: colour(o.get("ColorLevel")),
+        connect_timeout_ms: CONNECT_TIMEOUT_MS,
+    };
+    log::info!("connecting to {}", c.address);
+    let backend = start(
+        c,
+        &BEHAVIOUR,
+        |callbacks| unsafe { ffi::vento_libvnc_create(&config, callbacks) },
+        None,
+    )?;
+    backend.set_view_only(o.bool("ViewOnly"));
+    Ok(backend)
+}
+
+/// Encoding, compression and quality are live (`SetEncodings` at any point);
+/// the colour depth is not, since the pixel format cannot change with
+/// nothing in flight. Shared is decided at ClientInit and the bell is read
+/// where the bell arrives.
+fn set_option(session: &CSession, o: &Options, key: &str) {
+    if matches!(key, "Encoding" | "Compression" | "Quality") {
+        let encoding = CString::new(encodings(o.get("Encoding"))).unwrap_or_default();
+        unsafe {
+            ffi::vento_libvnc_set_encodings(
+                session.session,
+                encoding.as_ptr(),
+                level(o.get("Compression")),
+                level(o.get("Quality")),
+            )
+        }
+    }
+}
+
+fn info(s: &[String], traffic: Option<Traffic>) -> Vec<ConnectionFact> {
+    if s.len() < 7 {
+        return Vec::new();
+    }
+    let mut facts = vec![
+        ConnectionFact::of(Field::DesktopName, "Desktop", &s[0]),
+        ConnectionFact::of(Field::Protocol, "Protocol", &s[1]),
+        ConnectionFact::of(Field::Connection, "Connection", &s[2]),
+        ConnectionFact::of(Field::Security, "Security", &s[3]),
+        ConnectionFact::of(Field::Encoding, "Encodings offered", &s[4]),
+    ];
+    if let Some(traffic) = traffic {
+        facts.push(ConnectionFact::data(traffic));
+    }
+    facts.push(ConnectionFact::diagnostic(Field::ServerPixels, "Server pixels", &s[5]));
+    facts.push(ConnectionFact::diagnostic(Field::ViewerPixels, "Viewer pixels", &s[6]));
+    facts
+}

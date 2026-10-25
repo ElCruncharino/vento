@@ -36,6 +36,10 @@ sha2 = "0.11"
 # in here: it builds under the NDK without being asked anything.
 zstd = "0.13"
 
+# `src/backend.rs`, the protocol as a `session::Backend`.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+remotedesktop-session.workspace = true
+
 # The only part of this crate that knows a phone exists: the JNI entry points
 # in `src/bindings` and the platform crate they stand on, which is where the
 # MediaCodec decoder they hand the client lives.
