@@ -1063,8 +1063,8 @@ pub static RUSTDESK: &[Spec] = &[
     ),
     // Their own client's switch, on as theirs is: the peer sends Opus while
     // its desktop makes a sound, and nothing once it has been silent for
-    // eight seconds. Decided at login, though their option message could
-    // carry it later. "The remote
+    // eight seconds. What the login asks, and where the session's Enable
+    // switch starts, which asks again with their option message. "The remote
     // machine" rather than "the server", which here is the rendezvous one.
     bool(
         "Audio",
