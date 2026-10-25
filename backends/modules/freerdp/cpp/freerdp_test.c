@@ -127,6 +127,21 @@ static void testAddress(void) {
     split("host:0", NULL, 0, "port number");
     split("host:65536", NULL, 0, "port number");
     split("host:33a", NULL, 0, "port number");
+    /* What FreeRDP's connect reads as a Unix socket path, a file descriptor
+       or a VM socket rather than a host. */
+    split("/tmp/x", NULL, 0, "not a host name");
+    split("/tmp/x:3389", NULL, 0, "not a host name");
+    split("|3", NULL, 0, "not a host name");
+    split("|3:5", NULL, 0, "not a host name");
+    split("vsock://3", NULL, 0, "not a host name");
+    split("vsock://3:3389", NULL, 0, "not a host name");
+    split("[/tmp/x]", NULL, 0, "not a host name");
+    split("[|3]:5", NULL, 0, "not a host name");
+    split("[vsock://3]:1", NULL, 0, "not a host name");
+    split(" |3", NULL, 0, "not a host name");
+    /* Only at the start. */
+    split("host/x", "host/x", 3389, NULL);
+    split("vsock", "vsock", 3389, NULL);
 }
 
 /* ---- the proxy ---------------------------------------------------------- */

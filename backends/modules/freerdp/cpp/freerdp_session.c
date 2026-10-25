@@ -255,11 +255,20 @@ static const vento_session_ops OPS;
 
 /* ---- the address -------------------------------------------------------- */
 
+/* Whether FreeRDP's connect (`freerdp_tcp_default_connect`) would take
+   `host` as something other than a name or an address: a path is a Unix
+   socket to connect to, `|` uses the port number as a file descriptor that
+   is already connected, and `vsock://` dials a virtual machine socket. */
+static int specialHost(const char *host) {
+    return host[0] == '/' || host[0] == '|' || strncmp(host, "vsock://", 8) == 0;
+}
+
 /* An address is `host`, `host:port`, `[literal]` or `[literal]:port`. An
    unbracketed IPv6 literal is refused with an error rather than guessed at,
    since it can't be told apart from a host followed by a port. RDP has no
-   display numbers, unlike VNC, so a second colon has no meaning. The host is
-   left at the start of `address`, which the caller still frees; `why` is
+   display numbers, unlike VNC, so a second colon has no meaning. A host that
+   FreeRDP would not dial as one (see `specialHost`) is refused too. The host
+   is left at the start of `address`, which the caller still frees; `why` is
    empty unless the address is unusable. */
 static void splitAddress(char *address, int *port, char *why, size_t whyLen) {
     size_t len = strlen(address);
@@ -283,10 +292,18 @@ static void splitAddress(char *address, int *port, char *why, size_t whyLen) {
     size_t hostLen = len;
     const char *number = NULL;
 
+    if (specialHost(address)) {
+        snprintf(why, whyLen, "%s is not a host name or IP address", address);
+        return;
+    }
     if (address[0] == '[') {
         const char *close = strchr(address, ']');
         if (!close) {
             snprintf(why, whyLen, "%s missing closing bracket", address);
+            return;
+        }
+        if (specialHost(address + 1)) {
+            snprintf(why, whyLen, "%s is not a host name or IP address", address);
             return;
         }
         host = address + 1;
