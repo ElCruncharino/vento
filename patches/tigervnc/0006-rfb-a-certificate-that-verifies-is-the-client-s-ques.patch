@@ -1,7 +1,7 @@
-From afce86889456ca50bf8f82ec7c6f9d9d4cc6d3df Mon Sep 17 00:00:00 2001
+From 24df62fbf5e6a2f252f0ecbcb6367a299760c96e Mon Sep 17 00:00:00 2001
 From: "Claude Opus 5.5" <noreply@anthropic.com>
 Date: Thu, 15 Oct 2026 00:44:47 -0400
-Subject: [PATCH 6/7] rfb: a certificate that verifies is the client's question
+Subject: [PATCH 6/6] rfb: a certificate that verifies is the client's question
  too
 
 checkSession returned as soon as GnuTLS said the certificate verified,

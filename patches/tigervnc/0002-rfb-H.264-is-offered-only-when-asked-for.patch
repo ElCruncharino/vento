@@ -1,7 +1,7 @@
-From 3a59e83ed018f29fe645b17702d64f29e3f2ffd1 Mon Sep 17 00:00:00 2001
+From 0abb31b9f18e64ee6b0b87b5da423052752db2d0 Mon Sep 17 00:00:00 2001
 From: Claude Opus 5 <noreply@anthropic.com>
 Date: Wed, 12 Aug 2026 12:51:35 -0400
-Subject: [PATCH 2/7] rfb: H.264 is offered only when asked for
+Subject: [PATCH 2/6] rfb: H.264 is offered only when asked for
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit

@@ -149,11 +149,14 @@ under the host locale (`export LC_ALL=C`).
   Java keeps is its provider and, for RDP and the two borrowed VNC clients, a
   `NativeBackend.Hooks`. An upgrade that keeps the adapter's `Kind` building
   has nothing to change on that side.
-- TigerVNC's two media sinks are platform code under
-  `backends/platform/android/tigervnc`: the H.264 decoder context (selected
-  by `H264_ANDROID`) and the audio sink behind the shim's own
-  `AudioOutput.h`. An upstream change to `H264DecoderContext` or to the QEMU
-  audio calls in `CConnection` reaches them.
+- TigerVNC's H.264 decoder context is the shim's own
+  (`H264VentoDecoderContext`, selected by `H264_VENTO` in their factory; their
+  libav one is not built, `HAVE_LIBAV` unset), and hands each rectangle to
+  vento's video decoders through `vento/video.h`'s table. Its audio sink is
+  platform code under `backends/platform/android/tigervnc`, behind the shim's
+  own `AudioOutput.h`. An upstream change to `H264DecoderContext` or
+  `H264Decoder` (the reset flags, the 64-context limit) or to the QEMU audio
+  calls in `CConnection` reaches the shim.
 - Every comment of ours that names an upstream version or behaviour ("in
   3.19.1", "the assembly is GAS", "returns Some") is a claim to re-verify
   against the target and correct or remove. Grep for the old version string
@@ -317,13 +320,13 @@ One commit per upstream, after review, by the lead:
   `0008` calls `GotCursorShape` with a 0x0 shape for a cursor update of no
   pixels, the server hiding the pointer, which upstream returns from
   before the callback.
-- **tigervnc** master dd416cbf, reporting 1.16.80; seven patches (the PAM one
-  dropped). The certificate check is the shim's now: what cannot be excused is
+- **tigervnc** master dd416cbf, reporting 1.16.80; six patches (the PAM one
+  dropped, and the libav context's pixel format fix with that context). The certificate check is the shim's now: what cannot be excused is
   refused and the rest goes to `trust_needed`, their viewer's known-hosts store
   not used at all; the RSA-AES key question is ported from
   `vncviewer/CConn.cxx`; audio is behind the `Audio` row, an AAudio sink over
-  the shim's own `AudioOutput.h`. Builds `common/` only, with `config.h`
-  written by our CMake and, on Android, an empty `pthread` target for the link.
+  the shim's own `AudioOutput.h`. Builds `common/` only, with `config.h` written
+  by our CMake and, on Android, an empty `pthread` target for the link.
 - **freerdp** 3.32.0. No patches. `LegacyTls` row for TLS 1.0 at level 0;
   `remotedesktop_vendored_warnings` silences their tree.
 - **ironrdp** master 9b151c4c. No patches. A submodule rather than crates.io

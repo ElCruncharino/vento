@@ -31,6 +31,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, ThreadId};
 
 pub mod ffi;
+pub mod video;
 
 /// A C string the session's bytes become, UTF-8 as the header promises.
 ///
@@ -43,6 +44,29 @@ pub unsafe fn string(ptr: *const c_char) -> String {
     } else {
         unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned()
     }
+}
+
+/// `text` into a C buffer of `len` bytes, with its NUL, cut short to fit at a
+/// character boundary. False, with nothing written, where there is no room
+/// for anything but the NUL.
+///
+/// # Safety
+///
+/// `out` is null or `len` writable bytes.
+pub(crate) unsafe fn write_string(text: &str, out: *mut c_char, len: usize) -> bool {
+    if out.is_null() || len < 2 {
+        return false;
+    }
+    let mut end = text.len().min(len - 1);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    let text = text[..end].replace('\0', " ");
+    unsafe {
+        std::ptr::copy_nonoverlapping(text.as_ptr(), out.cast::<u8>(), end);
+        *out.add(end) = 0;
+    }
+    true
 }
 
 /// The mailbox a callback was handed, as a borrow: `user` is a live
@@ -407,6 +431,20 @@ impl CSession {
         Some(rows)
     }
 
+    /// The decoder's overlay line, or `None` where the backend has none —
+    /// no video, no picture yet, or a table from before the member.
+    fn decoder_status(&self) -> Option<String> {
+        let _entered = self.enter()?;
+        let decoder_status = optional!(self.ops(), decoder_status)?;
+        let mut line = [0 as c_char; 256];
+        if !unsafe { decoder_status(self.session, line.as_mut_ptr(), line.len()) } {
+            return None;
+        }
+        // The backend's NUL, or the end of the buffer if it left none.
+        line[line.len() - 1] = 0;
+        Some(unsafe { string(line.as_ptr()) })
+    }
+
     /// Received and sent, or `None` while there is nothing to count.
     fn traffic(&self) -> Option<[u64; 2]> {
         let mut out = [0u64; 2];
@@ -713,6 +751,10 @@ impl Backend for CBackend {
         self.traffic_raw()
     }
 
+    fn decoder_status(&self) -> Option<String> {
+        self.session.decoder_status()
+    }
+
     fn read_region(
         &self,
         x: usize,
@@ -1004,6 +1046,19 @@ mod tests {
         // A row wider than the stride.
         assert_eq!(region_args(1 << 20, [0, 0, 65, 1], 256, 0, 0), None);
         assert_eq!(region_args(1 << 20, [0, 0, 0, 1], 256, 0, 0), None);
+    }
+
+    #[test]
+    fn a_string_is_cut_to_its_buffer_at_a_character() {
+        let mut buf = [1 as c_char; 6];
+        assert!(unsafe { write_string("H.264 sw", buf.as_mut_ptr(), buf.len()) });
+        assert_eq!(unsafe { string(buf.as_ptr()) }, "H.264");
+        // "é" is two bytes, and half of it is not UTF-8.
+        let mut buf = [1 as c_char; 3];
+        assert!(unsafe { write_string("aé", buf.as_mut_ptr(), buf.len()) });
+        assert_eq!(unsafe { string(buf.as_ptr()) }, "a");
+        assert!(!unsafe { write_string("a", buf.as_mut_ptr(), 1) });
+        assert!(!unsafe { write_string("a", std::ptr::null_mut(), 8) });
     }
 
     #[test]

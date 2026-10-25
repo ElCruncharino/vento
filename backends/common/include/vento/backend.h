@@ -334,6 +334,12 @@ typedef struct vento_session_ops {
        sent. NULL where the protocol cannot say where screens go. */
     void (*request_layout)(vento_session *s, int width, int height, const int32_t *screens,
                            int n);
+    /* How the picture is being decoded, for a debug overlay, where the session
+       decodes video through the platform's decoders (vento/video.h): the
+       decoder's own line as of the last picture or so, into `out` with its
+       NUL, cut short to fit. False, with nothing written, before the first
+       picture and for a picture that is not video. */
+    bool (*decoder_status)(vento_session *s, char *out, size_t len);
 } vento_session_ops;
 
 /* Whether `s`'s table has `member` and it is not NULL: the table's `size`

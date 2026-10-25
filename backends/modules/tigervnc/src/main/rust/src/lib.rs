@@ -7,7 +7,9 @@
 //! makes of the C. Its certificates are the client's to judge: the session
 //! hands them to `trust_needed`, so they meet the known hosts as every other
 //! backend's do, and TigerVNC's own known-hosts file is never read or written —
-//! which is why no state directory is given it.
+//! which is why no state directory is given it. Its H.264 is decoded by the
+//! platform's decoders, handed to the C as `vento/video.h`'s table
+//! (`session::c::video`): the phone's MediaCodec.
 
 use session::c::{Behaviour, CSession, ffi, start};
 use session::backend::{Backend, ConnectionFact, Field, Traffic};
@@ -22,11 +24,13 @@ pub static KIND: Kind = Kind {
 };
 
 // The phone's library: this backend, registered on the module's generated
-// natives class. Android only.
+// natives class. Android only. MediaCodec is what decodes its H.264 there
+// (see `create`).
 #[cfg(target_os = "android")]
 platform_android::natives!(
     class = c"net/pgaskin/remotedesktop/backend/tigervnc/TigerVncNatives",
     kind = KIND,
+    decoders = || Some(std::sync::Arc::new(platform_android::mediacodec::MediaCodec)),
 );
 
 static BEHAVIOUR: Behaviour = Behaviour {
@@ -83,7 +87,7 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
     let address = CString::new(c.address).map_err(|_| "address has a NUL")?;
     let user = (!c.user.is_empty()).then(|| CString::new(c.user).unwrap_or_default());
     let password = c.password.and_then(|p| CString::new(p).ok());
-    let config = ffi::vento_tigervnc_config {
+    let mut config = ffi::vento_tigervnc_config {
         address: address.as_ptr(),
         user_name: user.as_ref().map_or(std::ptr::null(), |u| u.as_ptr()),
         password: password.as_ref().map_or(std::ptr::null(), |p| p.as_ptr()),
@@ -94,6 +98,7 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
         quality_level: quality(o.get("Quality")),
         color_level: colour(o.get("ColorLevel")),
         h264: o.bool("H264"),
+        video: std::ptr::null(),
         audio: o.bool("Audio"),
         connect_timeout_ms: CONNECT_TIMEOUT_MS,
     };
@@ -101,7 +106,18 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
     let backend = start(
         c,
         &BEHAVIOUR,
-        |callbacks| unsafe { ffi::vento_tigervnc_create(&config, callbacks) },
+        |callbacks| {
+            // H.264 is decoded by the platform's decoders, which the session
+            // is handed here and owns from the call on, released when it
+            // ends (or at once, where it does not start). Made here rather
+            // than above so that it is handed over on every path that makes
+            // it. No decoders, and the session never offers H.264.
+            let video = c.decoders.clone().map(session::c::video::table);
+            if let Some(video) = &video {
+                config.video = video;
+            }
+            unsafe { ffi::vento_tigervnc_create(&config, callbacks) }
+        },
         None,
     )?;
     backend.set_view_only(o.bool("ViewOnly"));

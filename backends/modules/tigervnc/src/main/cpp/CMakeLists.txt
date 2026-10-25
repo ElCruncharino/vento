@@ -108,21 +108,22 @@ set(PIXMAN_LIBRARIES pixman)
 set(PIXMAN_INCLUDE_DIRS "${THIRD_PARTY}/pixman/pixman" "${CMAKE_CURRENT_BINARY_DIR}/pixman-gen")
 
 # H.264, which their build has two implementations of — FFmpeg's libavcodec and
-# Windows' Media Foundation — and this one has a third. Their
+# Windows' Media Foundation — and this one has a third: the context beside this
+# file, which hands each rectangle to vento's own video decoders (the
+# platform's, through `vento/video.h`: MediaCodec on the phone). Their
 # `common/rfb/CMakeLists.txt` compiles the decoder itself whenever ENABLE_H264
 # is on and adds either of theirs only where it found FFmpeg or is building for
-# Windows, neither of which is true here; the context class is under
-# `backends/platform/android/tigervnc`, H264_ANDROID is what selects it, and
-# the six lines that do are the one patch it takes. HAVE_LIBAV stays unset,
-# since that is what would ask for FFmpeg's.
-#
-# So the whole of H.264 here is the platform's own decoder through the NDK's C
-# API: nothing vendored, nothing added to the APK, and it runs on the hardware
-# every other video on the phone runs on.
+# Windows, neither of which is asked for here; H264_VENTO is what selects ours,
+# and the six lines that do are the one patch it takes. HAVE_LIBAV stays unset,
+# since that is what would compile FFmpeg's — and with it a second FFmpeg into
+# this library — and so do the three results their build compiles the libav
+# context on, whatever a cache left behind.
 set(ENABLE_H264 ON)
 set(HAVE_H264 1)
-add_definitions(-DH264_ANDROID)
-set(H264_LIBRARIES mediandk)
+add_definitions(-DH264_VENTO)
+foreach(lib AVCODEC AVUTIL SWSCALE)
+    set(${lib}_FOUND FALSE)
+endforeach()
 
 # Neither of the other things config.h can say is true of this build: gettext
 # is not in bionic, so every message stays in English and their no-NLS branch
@@ -142,24 +143,34 @@ add_library(pthread INTERFACE)
 # Their sub-projects put their own tree on the include path as
 # `${CMAKE_SOURCE_DIR}/common`, which under the Gradle build is a directory
 # that does not exist — a stale -I and nothing worse, as long as the real one
-# is here. The platform's own sources go on the path too, for the H.264 branch
-# of theirs that includes the Android context by name. libtool control files
-# are for the autotools half of their build, of which there is none here.
-include_directories("${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}")
-include_directories("${VENTO_BACKENDS}/platform/android/tigervnc")
+# is here. This directory goes on the path too, for the H.264 branch of theirs
+# that includes our context by name, and the neutral headers for the table it
+# calls through. libtool control files are for the autotools half of their
+# build, of which there is none here.
+include_directories("${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${VENTO_BACKENDS}/common/include")
 include_directories(SYSTEM "${THIRD_PARTY}/tigervnc/common")
 macro(libtool_create_control_file)
 endmacro()
 add_subdirectory("${THIRD_PARTY}/tigervnc/common" tigervnc-common EXCLUDE_FROM_ALL)
 remotedesktop_vendored_warnings("${THIRD_PARTY}/tigervnc/common")
 
+# The H.264 context goes into their library, beside their own two, because it
+# is their factory that names it: inside `rfbclient`, the reference resolves
+# however the library ends up linked, where an object of ours that only their
+# archive refers to would be dropped before it was looked for. Compiled as a
+# target of ours, with our warnings, and only its objects handed over.
+add_library(vento_tigervnc_h264 OBJECT H264VentoDecoderContext.cxx)
+remotedesktop_warnings(vento_tigervnc_h264)
+target_sources(rfbclient PRIVATE $<TARGET_OBJECTS:vento_tigervnc_h264>)
+
 # The session, which is the shim over TigerVNC's client and names no
 # platform; the Rust crate beside it in `src/main/rust`, which is the
-# backend over the session and the JNI layer every backend shares; and the
-# H.264 context and audio output the phone's own decoders stand behind,
-# from `backends/platform/android`.
+# backend over the session and the JNI layer every backend shares — and
+# MediaCodec's decoder, which the session's H.264 is decoded by; and the
+# audio output the phone's own sink stands behind, from
+# `backends/platform/android`.
 add_library(remotedesktop_tigervnc SHARED tigervnc_session.cxx
-        "${VENTO_BACKENDS}/platform/android/tigervnc/H264AndroidDecoderContext.cxx"
         "${VENTO_BACKENDS}/platform/android/tigervnc/AndroidAudioOutput.cxx")
 vento_android_library(remotedesktop_tigervnc remotedesktop_tigervnc)
 remotedesktop_warnings(remotedesktop_tigervnc)
