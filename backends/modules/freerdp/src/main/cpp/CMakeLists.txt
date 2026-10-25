@@ -3,9 +3,10 @@
 #
 # Under Gradle this is a root, configured by the NDK toolchain, and makes
 # `libremotedesktop_freerdp.so`: the session, with the module's Rust crate
-# linked in as the JNI layer over it, the OpenSSL port, and OpenSL ES behind its
-# sound. Its H.264 is vento's decoders, the phone's MediaCodec, through the
-# subsystem in h264_vento.c.
+# linked in as the JNI layer over it, and the OpenSSL port. Its H.264 is vento's
+# decoders, the phone's MediaCodec, through the subsystem in h264_vento.c; and
+# its sound is vento's output, AAudio, through the rdpsnd device in
+# rdpsnd_vento.c.
 
 cmake_minimum_required(VERSION 3.30)
 project(remotedesktop_freerdp C)
@@ -94,20 +95,26 @@ set(WITH_CLIENT_CHANNELS ON CACHE BOOL "" FORCE)
 # upstream's, unchanged.
 set(WITH_H264_EXTERNAL ON CACHE BOOL "" FORCE)
 
-# The phone's sound is the NDK's, which FreeRDP has switches for, so the
-# host's codec and sound libraries are off by name; and its H.264 is
-# MediaCodec's through vento's decoders, so FreeRDP's own MediaCodec
-# subsystem is off too.
-foreach(off WITH_OPENH264 WITH_FFMPEG WITH_SWSCALE WITH_ALSA WITH_PULSE WITH_DSP_FFMPEG
-        WITH_MEDIACODEC)
+# The sound is played on the platform's output, which the session is handed
+# (vento/audio.h), through a device of this module's that the channel finds
+# by name (rdpsnd_vento.h) — the same queue and policy TigerVNC's sound goes
+# through. So none of the library's own devices is built but the one that
+# discards every sample, which it builds whatever it is told and which is what
+# a session with its sound off or played over there gets; and none of the
+# sound libraries they would link (PulseAudio and the fifteen libraries behind
+# it, ALSA, OSS, sndio, OpenSL ES) is looked for. The microphone channel's
+# devices go with them, which is no loss: it is built and never loaded.
+foreach(off WITH_PULSE WITH_ALSA WITH_OSS WITH_SNDIO WITH_OPENSLES)
     set(${off} OFF CACHE BOOL "" FORCE)
 endforeach()
 
-# The device behind Sound = "This phone": rdpsnd tries OpenSL ES first on
-# Android, and without it the only device left is one that discards every
-# sample. It is upstream's default here already; saying so makes the
-# libOpenSLES.so it links a decision rather than an accident.
-set(WITH_OPENSLES ON CACHE BOOL "" FORCE)
+# No FFmpeg on the phone, so the host's codec libraries are off by name,
+# and the sound channel plays PCM only; and its H.264 is MediaCodec's
+# through vento's decoders, so FreeRDP's own MediaCodec subsystem is off
+# too.
+foreach(off WITH_OPENH264 WITH_FFMPEG WITH_SWSCALE WITH_DSP_FFMPEG WITH_MEDIACODEC)
+    set(${off} OFF CACHE BOOL "" FORCE)
+endforeach()
 
 # The version from the hard-coded string in their cmake/GetProjectVersion.cmake
 # rather than from `git describe`, which also stamps the build with a short
@@ -169,7 +176,7 @@ set_source_files_properties(h264_vento.c PROPERTIES INCLUDE_DIRECTORIES
 # headers are borrowed from the port for the TLS version constants, and as
 # SYSTEM like the rest, because linking the port would put them on the path
 # as ours.
-add_library(remotedesktop_freerdp SHARED freerdp_session.c h264_vento.c)
+add_library(remotedesktop_freerdp SHARED freerdp_session.c h264_vento.c rdpsnd_vento.c)
 vento_android_library(remotedesktop_freerdp remotedesktop_freerdp)
 remotedesktop_warnings(remotedesktop_freerdp)
 target_include_directories(remotedesktop_freerdp SYSTEM PRIVATE ${FREERDP_INCLUDES}

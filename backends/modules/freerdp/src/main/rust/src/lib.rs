@@ -7,7 +7,10 @@
 //! makes of the C. The library's config path is a directory of ours, which also
 //! becomes the process's HOME where it has none (the phone's); its certificate
 //! store there is never read or written, since every certificate is the trust
-//! prompt's to decide.
+//! prompt's to decide. Its H.264 is decoded by the platform's decoders and its
+//! sound (rdpsnd, with Sound = local) played on the platform's output, handed
+//! to the C as `vento/video.h`'s and `vento/audio.h`'s tables as TigerVNC's
+//! are.
 
 use session::c::{Behaviour, CSession, ffi, start};
 use session::backend::{Backend, ConnectionFact, Field, Traffic};
@@ -24,8 +27,8 @@ pub static KIND: Kind = Kind {
 
 // The phone's library: this backend, registered on the module's generated
 // natives class. Android only. The session is handed AAudio as its sound
-// output, which rdpsnd is still to be moved onto (it plays through upstream's
-// OpenSL ES device until then).
+// output, which the server's sound plays on through the module's rdpsnd
+// device.
 //
 // WinPR has a `JNI_OnLoad` of its own, which keeps the `JavaVM` it reads the
 // time zone through, and a library has room for one: the module's CMake
@@ -110,6 +113,7 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
         config_path: config_path.as_ptr(),
         connect_timeout_ms: CONNECT_TIMEOUT_MS,
         video: std::ptr::null(),
+        audio: std::ptr::null(),
     };
     log::info!("connecting to {} ({}x{})", c.address, width, height);
     let backend = start(
@@ -122,6 +126,13 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
             let video = c.decoders.clone().map(session::c::video::table);
             if let Some(video) = &video {
                 config.video = video;
+            }
+            // And its sound plays on the platform's output, as TigerVNC's
+            // does: the session owns the table from the call on, and without
+            // one does not ask the server for sound.
+            let audio = c.audio.clone().map(session::c::audio::table);
+            if let Some(audio) = &audio {
+                config.audio = audio;
             }
             unsafe { ffi::vento_freerdp_create(&config, callbacks) }
         },
