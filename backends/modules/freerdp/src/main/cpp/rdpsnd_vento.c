@@ -12,8 +12,10 @@
 // in the wave's confirm, and is how it learns what the client's end of the
 // latency is. All of it is the table's (vento/audio.h): the queue, the
 // device opened off this thread, the drop past a quarter of a second, the
-// session's gain and mute. Every call into a device comes from the channel's
-// one thread at a time, and none waits on the platform's device.
+// session's gain and mute — and the decoding, where the server sends AAC or
+// Opus, which the platform's decoders do (MediaCodec on the phone) rather
+// than the library's own DSP. Every call into a device comes from the
+// channel's one thread at a time, and none waits on the platform's device.
 //
 // What the channel does not do is say when the sound has stopped: the
 // server's Close PDU is logged and nothing more, so a device it opened stays
@@ -54,20 +56,28 @@
    reasons. */
 #define IDLE_GRACE_MS 2000
 
-/* What this device plays of a format, and how: as it comes, or widened from
-   8 bits. Everything else the channel decodes before the device sees it,
-   where the library can, and hands over as 16-bit PCM in the stream it opened
-   instead. The one place a format is decided: a decoder of vento's (AAC, Opus)
-   is a kind more here and a case more in `play`. */
+/* What this device plays of a format, and how: as it comes, widened from 8
+   bits, or decoded by the platform's decoders, which the session's table
+   says it has (`VentoSound`). Windows picks AAC whenever it is offered, and
+   it is offered wherever the platform decodes it. What none of these is, the
+   channel decodes before the device sees it where the library can — which
+   without its FFmpeg is PCM alone, so nothing — and offers back otherwise. The
+   one place a format is decided. */
 typedef enum {
     KIND_NONE = 0,
     KIND_S16,
     KIND_U8,
+    KIND_AAC,
+    KIND_OPUS,
 } Kind;
+
+static bool decoded(Kind kind) {
+    return kind == KIND_AAC || kind == KIND_OPUS;
+}
 
 /* The table's limits, which are the platform's: rates from 8 to 384 kHz,
    one to eight channels. A server offers mono and stereo. */
-static Kind kindOf(const AUDIO_FORMAT *f) {
+static Kind kindOf(const VentoSound *sound, const AUDIO_FORMAT *f) {
     if (f == NULL || f->nSamplesPerSec < 8000 || f->nSamplesPerSec > 384000 || f->nChannels < 1
             || f->nChannels > 8) {
         return KIND_NONE;
@@ -77,6 +87,14 @@ static Kind kindOf(const AUDIO_FORMAT *f) {
     }
     if (f->wFormatTag == WAVE_FORMAT_PCM && f->wBitsPerSample == 8) {
         return KIND_U8;
+    }
+    if (f->wFormatTag == WAVE_FORMAT_AAC_MS && sound->aac) {
+        return KIND_AAC;
+    }
+    /* Opus's identification header has room for two channels without a
+       mapping table, which a server's format does not carry. */
+    if (f->wFormatTag == WAVE_FORMAT_OPUS && sound->opus && f->nChannels <= 2) {
+        return KIND_OPUS;
     }
     return KIND_NONE;
 }
@@ -91,6 +109,13 @@ typedef struct {
     bool opened;
     bool announced; /* the first wave since `Open` has been described */
     bool failed;    /* the platform would not open a stream in it */
+    /* The decoder of a decoded kind, opened with the format, and whether a
+       wave has failed to decode since (said once). */
+    vento_audio_decoder *decoder;
+    bool undecodable;
+    /* What the stream is open in, which for a decoded kind is the decoder's
+       answer rather than the server's format (Opus is always 48 kHz). */
+    int streamRate, streamChannels;
     /* The server's volume, as a gain, applied to every stream opened. */
     float gain;
 
@@ -133,17 +158,27 @@ static void closeLocked(Device *d) {
     }
 }
 
-/* The stream, opened in the channel's format if it is not: the first wave
-   since `Open`, or since the stream was closed for being idle. */
-static bool openLocked(Device *d) {
-    if (d->stream != NULL) {
+static void closeDecoderLocked(Device *d) {
+    if (d->decoder != NULL) {
+        d->sound->table.decoder_close(d->decoder);
+        d->decoder = NULL;
+    }
+}
+
+/* The stream, opened in `rate` and `channels` if it is not open in them:
+   the first wave since `Open`, or since the stream was closed for being
+   idle, or a decoder whose output changed. */
+static bool openLocked(Device *d, int rate, int channels) {
+    if (d->stream != NULL && d->streamRate == rate && d->streamChannels == channels) {
         return true;
     }
+    closeLocked(d);
     if (!d->opened || d->failed || d->kind == KIND_NONE) {
         return false;
     }
-    d->stream = d->sound->table.open(d->sound->table.user, VENTO_AUDIO_S16,
-                                     (int) d->format.nSamplesPerSec, (int) d->format.nChannels);
+    d->streamRate = rate;
+    d->streamChannels = channels;
+    d->stream = d->sound->table.open(d->sound->table.user, VENTO_AUDIO_S16, rate, channels);
     if (d->stream == NULL) {
         d->failed = true;
         LOGW("sound: the platform's output would not open a stream; the server's sound is dropped");
@@ -191,39 +226,57 @@ static void *closer(void *arg) {
 /* ---- the device -------------------------------------------------------- */
 
 static BOOL formatSupported(rdpsndDevicePlugin *device, const AUDIO_FORMAT *format) {
-    (void) device;
-    return kindOf(format) != KIND_NONE;
+    const Device *d = (const Device *) device;
+    return kindOf(d->sound, format) != KIND_NONE;
 }
 
 /* The server's formats, said as the channel hears them, with what becomes of
-   each: played here, decoded by the library first, or not offered back.
-   Which one the server picks shows in the first wave (`playEx`). */
+   each: played here, decoded here first ("vento"), decoded by the library
+   first, or not offered back. Which one the server picks shows in the first
+   wave (`playEx`). */
 static UINT serverFormatAnnounce(rdpsndDevicePlugin *device, const AUDIO_FORMAT *formats,
                                  size_t count) {
+    const Device *d = (const Device *) device;
     char line[1536];
     size_t used = 0;
     line[0] = '\0';
     for (size_t i = 0; i < count && used + 64 < sizeof(line); i++) {
         char one[64];
         describe(&formats[i], one, sizeof(one));
-        const char *how = kindOf(&formats[i]) != KIND_NONE           ? ""
+        const Kind kind = kindOf(d->sound, &formats[i]);
+        const char *how = decoded(kind)                                    ? " (vento)"
+                          : kind != KIND_NONE                               ? ""
                           : freerdp_dsp_supports_format(&formats[i], FALSE) ? " (library)"
-                                                                         : " (no)";
+                                                                            : " (no)";
         const int n = snprintf(line + used, sizeof(line) - used, "%s%s%s", i ? ", " : "", one, how);
         if (n < 0) {
             break;
         }
         used += (size_t) n < sizeof(line) - used ? (size_t) n : sizeof(line) - used - 1;
     }
-    (void) device;
     LOGI("sound: the server offers %zu formats: %s", count, line);
     return CHANNEL_RC_OK;
+}
+
+/* What a decoded kind's format sets its decoder up with: an Opus
+   identification header where the server sent one as the format's extra
+   bytes, and otherwise nothing, so that the format's numbers stand for AAC
+   LC or plain Opus — which is what Windows' AAC is (raw frames, no extra
+   bytes) and what the library's own decoding assumed of it too. */
+static void decoderConfig(const AUDIO_FORMAT *f, const uint8_t **config, size_t *len) {
+    *config = NULL;
+    *len = 0;
+    if (f->wFormatTag == WAVE_FORMAT_OPUS && f->data != NULL && f->cbSize >= 19
+            && memcmp(f->data, "OpusHead", 8) == 0) {
+        *config = f->data;
+        *len = f->cbSize;
+    }
 }
 
 static BOOL open_(rdpsndDevicePlugin *device, const AUDIO_FORMAT *format, UINT32 latency) {
     Device *d = (Device *) device;
     (void) latency;
-    const Kind kind = kindOf(format);
+    const Kind kind = kindOf(d->sound, format);
     if (kind == KIND_NONE) {
         char one[64];
         describe(format, one, sizeof(one));
@@ -232,6 +285,7 @@ static BOOL open_(rdpsndDevicePlugin *device, const AUDIO_FORMAT *format, UINT32
     }
     pthread_mutex_lock(&d->lock);
     closeLocked(d);
+    closeDecoderLocked(d);
     d->format = *format;
     d->format.data = NULL;
     d->format.cbSize = 0;
@@ -239,11 +293,31 @@ static BOOL open_(rdpsndDevicePlugin *device, const AUDIO_FORMAT *format, UINT32
     d->opened = true;
     d->announced = false;
     d->failed = false;
-    /* Opened now rather than at the first wave, which follows at once. A
-       stream the platform will not open is said once and the waves are
-       dropped, but the device still answers that it opened: a failed open
-       is an error the channel ends itself over, and with it the session. */
-    openLocked(d);
+    d->undecodable = false;
+    int rate = (int) format->nSamplesPerSec;
+    if (decoded(kind)) {
+        const uint8_t *config;
+        size_t len;
+        decoderConfig(format, &config, &len);
+        d->decoder = d->sound->table.decoder_open(
+                d->sound->table.user, kind == KIND_AAC ? VENTO_AUDIO_CODEC_AAC : VENTO_AUDIO_CODEC_OPUS,
+                rate, (int) format->nChannels, config, len);
+        if (d->decoder == NULL) {
+            d->failed = true;
+            LOGW("sound: the platform would not decode what the server sends; its sound is dropped");
+        }
+        /* Opus decodes at 48 kHz whatever the server's format says. */
+        if (kind == KIND_OPUS) {
+            rate = 48000;
+        }
+    }
+    /* Opened now rather than at the first wave, which follows at once, in
+       what the decoder will most likely make of it — and opened again at the
+       first wave if it makes something else. A stream the platform will not
+       open is said once and the waves are dropped, but the device still
+       answers that it opened: a failed open is an error the channel ends
+       itself over, and with it the session. */
+    openLocked(d, rate, (int) format->nChannels);
     d->idleAt = nowMs() + IDLE_GRACE_MS;
     pthread_mutex_unlock(&d->lock);
     return TRUE;
@@ -296,32 +370,63 @@ static const int16_t *widen(Device *d, const BYTE *data, size_t size) {
     return d->wide;
 }
 
-/* A wave, already decoded by the channel where this device does not play
-   its format (`format` is then the server's, the samples 16-bit PCM in the
-   stream that was opened). What comes back is the milliseconds until these
-   samples are heard, which the channel adds to the wave's confirm. */
+/* One wave of a decoded kind, through the platform's decoder: its samples,
+   in what the decoder says they are, NULL where it made none. */
+static const int16_t *decodeLocked(Device *d, const BYTE *data, size_t size, size_t *bytes,
+                                   int *rate, int *channels) {
+    *bytes = 0;
+    if (d->decoder == NULL) {
+        return NULL;
+    }
+    const int16_t *samples = NULL;
+    const int frames = d->sound->table.decode(d->decoder, data, size, &samples, rate, channels);
+    if (frames < 0 && !d->undecodable) {
+        LOGW("sound: a wave of %zu bytes would not decode; it is dropped, as is any other", size);
+        d->undecodable = true;
+    }
+    if (frames <= 0 || samples == NULL || *channels <= 0) {
+        return NULL;
+    }
+    *bytes = (size_t) frames * (size_t) *channels * sizeof(int16_t);
+    return samples;
+}
+
+/* A wave: as the server sent it where this device plays or decodes its
+   format, and otherwise already decoded by the channel (`format` is then the
+   server's, the samples 16-bit PCM in the stream that was opened). What comes
+   back is the milliseconds until these samples are heard, which the channel
+   adds to the wave's confirm. */
 static UINT playEx(rdpsndDevicePlugin *device, const AUDIO_FORMAT *format, const BYTE *data,
                    size_t size) {
     Device *d = (Device *) device;
+    const Kind kind = kindOf(d->sound, format);
     if (!d->announced && format != NULL) {
         char one[64];
         describe(format, one, sizeof(one));
         LOGI("sound: the server sends %s%s", one,
-             kindOf(format) == KIND_NONE ? ", which the library decodes" : "");
+             decoded(kind)        ? ", which the platform decodes"
+             : kind == KIND_NONE ? ", which the library decodes"
+                                 : "");
         d->announced = true;
     }
     pthread_mutex_lock(&d->lock);
     int latency = 0;
-    if (openLocked(d)) {
-        const void *samples = data;
-        size_t bytes = size;
-        if (d->kind == KIND_U8 && kindOf(format) == KIND_U8) {
-            samples = widen(d, data, size);
-            bytes = size * sizeof(int16_t);
-        }
-        if (samples != NULL && bytes > 0) {
-            d->sound->table.write(d->stream, samples, bytes);
-        }
+    const void *samples = data;
+    size_t bytes = size;
+    int rate = (int) d->format.nSamplesPerSec;
+    int channels = (int) d->format.nChannels;
+    if (decoded(d->kind) && kind == d->kind) {
+        samples = decodeLocked(d, data, size, &bytes, &rate, &channels);
+    } else if (d->kind == KIND_U8 && kind == KIND_U8) {
+        samples = widen(d, data, size);
+        bytes = size * sizeof(int16_t);
+    }
+    /* A decoder that made nothing of this wave (yet) leaves the stream as it
+       is, open or closed. */
+    if (samples != NULL && bytes > 0 && openLocked(d, rate, channels)) {
+        d->sound->table.write(d->stream, samples, bytes);
+    }
+    if (d->stream != NULL) {
         latency = d->sound->table.latency != NULL ? d->sound->table.latency(d->stream) : 0;
         d->idleAt = nowMs() + (uint64_t) (latency > 0 ? latency : 0) + IDLE_GRACE_MS;
     }
@@ -333,6 +438,7 @@ static void close_(rdpsndDevicePlugin *device) {
     Device *d = (Device *) device;
     pthread_mutex_lock(&d->lock);
     closeLocked(d);
+    closeDecoderLocked(d);
     d->opened = false;
     pthread_mutex_unlock(&d->lock);
 }
@@ -345,6 +451,7 @@ static void free_(rdpsndDevicePlugin *device) {
     pthread_mutex_lock(&d->lock);
     d->quit = true;
     closeLocked(d);
+    closeDecoderLocked(d);
     pthread_cond_signal(&d->cond);
     pthread_mutex_unlock(&d->lock);
     if (d->closerRunning) {
@@ -433,6 +540,12 @@ bool vento_sound_init(VentoSound *v, const vento_audio *table) {
     }
     v->table = *table;
     v->available = true;
+    /* Asked once: what the server is offered for the whole session. */
+    if (table->decodable != NULL && table->decoder_open != NULL && table->decode != NULL
+            && table->decoder_close != NULL) {
+        v->aac = table->decodable(table->user, VENTO_AUDIO_CODEC_AAC);
+        v->opus = table->decodable(table->user, VENTO_AUDIO_CODEC_OPUS);
+    }
     return true;
 }
 

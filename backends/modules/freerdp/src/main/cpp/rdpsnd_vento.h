@@ -45,6 +45,8 @@
 typedef struct VentoSound {
     vento_audio table;
     bool available;
+    /* What the platform's decoders take, which the server is offered. */
+    bool aac, opus;
 } VentoSound;
 
 /* The library's own symbols, not the backend's: only vento/freerdp.h's are

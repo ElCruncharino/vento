@@ -5,8 +5,8 @@
 # `libremotedesktop_freerdp.so`: the session, with the module's Rust crate
 # linked in as the JNI layer over it, and the OpenSSL port. Its H.264 is vento's
 # decoders, the phone's MediaCodec, through the subsystem in h264_vento.c; and
-# its sound is vento's output, AAudio, through the rdpsnd device in
-# rdpsnd_vento.c.
+# its sound is vento's output and vento's AAC and Opus decoders, AAudio and
+# MediaCodec, through the rdpsnd device in rdpsnd_vento.c.
 
 cmake_minimum_required(VERSION 3.30)
 project(remotedesktop_freerdp C)
@@ -104,15 +104,19 @@ set(WITH_H264_EXTERNAL ON CACHE BOOL "" FORCE)
 # sound libraries they would link (PulseAudio and the fifteen libraries behind
 # it, ALSA, OSS, sndio, OpenSL ES) is looked for. The microphone channel's
 # devices go with them, which is no loss: it is built and never loaded.
-foreach(off WITH_PULSE WITH_ALSA WITH_OSS WITH_SNDIO WITH_OPENSLES)
+#
+# The AAC and Opus a server sends are decoded by the platform's decoders, in
+# the same table, so the library's DSP decodes nothing it is not given as
+# PCM and is built without FFmpeg (`WITH_DSP_FFMPEG`): the device claims those
+# formats itself and gets the packets as they came.
+foreach(off WITH_PULSE WITH_ALSA WITH_OSS WITH_SNDIO WITH_OPENSLES WITH_DSP_FFMPEG)
     set(${off} OFF CACHE BOOL "" FORCE)
 endforeach()
 
-# No FFmpeg on the phone, so the host's codec libraries are off by name,
-# and the sound channel plays PCM only; and its H.264 is MediaCodec's
-# through vento's decoders, so FreeRDP's own MediaCodec subsystem is off
-# too.
-foreach(off WITH_OPENH264 WITH_FFMPEG WITH_SWSCALE WITH_DSP_FFMPEG WITH_MEDIACODEC)
+# No FFmpeg on the phone, so the host's codec libraries are off by name;
+# and its H.264 is MediaCodec's through vento's decoders, so FreeRDP's own
+# MediaCodec subsystem is off too.
+foreach(off WITH_OPENH264 WITH_FFMPEG WITH_SWSCALE WITH_MEDIACODEC)
     set(${off} OFF CACHE BOOL "" FORCE)
 endforeach()
 

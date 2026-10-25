@@ -352,12 +352,14 @@ One commit per upstream, after review, by the lead:
   that `rdpsndDevicePlugin` (FormatSupported, Open, PlayEx returning the
   latency, SetVolume, ServerFormatAnnounce) still means the same, that the
   channel still offers the server what its DSP decodes *or* the device
-  plays and hands a DSP-decoded wave over as PCM, and that the Close PDU
-  still does not reach the device (it closes its own stream when idle). No
-  `WITH_PULSE`, `WITH_ALSA`, `WITH_OSS`, `WITH_SNDIO` or `WITH_OPENSLES`;
-  their "fake" device is still built and is what Sound = off gets.
-  `LegacyTls` row for TLS 1.0 at level 0; `remotedesktop_vendored_warnings`
-  silences their tree.
+  plays, and hands a wave of a format the device claims to PlayEx as it
+  came (the device claims AAC, `WAVE_FORMAT_AAC_MS`, and Opus where vento's
+  decoders take them, and decodes them through `vento/audio.h`), and that
+  the Close PDU still does not reach the device (it closes its own stream
+  when idle). No `WITH_PULSE`, `WITH_ALSA`, `WITH_OSS`, `WITH_SNDIO`,
+  `WITH_OPENSLES` or `WITH_DSP_FFMPEG`; their "fake" device is still built
+  and is what Sound = off gets. `LegacyTls` row for TLS 1.0 at level 0;
+  `remotedesktop_vendored_warnings` silences their tree.
 - **ironrdp** master 9b151c4c. No patches. A submodule rather than crates.io
   because the bitmap stride fix (80bb81b3) is still unreleased; revisit at
   the next ironrdp-session release. EGFX is deliberately off; the doc
