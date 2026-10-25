@@ -14,8 +14,11 @@ use session::backend::{
 use session::events::{Feed, Mailbox};
 use session::kind::{self, CONNECT_TIMEOUT_MS, Connect, Kind};
 use session::options::Options;
-use std::sync::{Arc, Mutex};
+use common::video::GpuPicture;
+use std::sync::{Arc, Mutex, RwLockReadGuard};
 use std::time::Duration;
+
+use crate::framebuffer::Framebuffer;
 
 pub static KIND: Kind = Kind {
     about: &session::catalog::RUSTDESK,
@@ -102,6 +105,19 @@ fn create(c: &Connect) -> Result<Arc<dyn Backend>, String> {
         mailbox: Arc::clone(&c.mailbox),
         options: Mutex::new(o.clone()),
     }))
+}
+
+impl RustDesk {
+    /// The framebuffer to read, caught up first with a picture left on the
+    /// GPU (see `Framebuffer::catch_up`). A picture that arrives between the
+    /// two locks is the next read's to catch up with.
+    fn framebuffer(&self) -> RwLockReadGuard<'_, Framebuffer> {
+        let framebuffer = self.session.client.framebuffer();
+        if framebuffer.read().unwrap().behind() {
+            framebuffer.write().unwrap().catch_up();
+        }
+        framebuffer.read().unwrap()
+    }
 }
 
 impl Backend for RustDesk {
@@ -231,6 +247,10 @@ impl Backend for RustDesk {
         self.session.client.decoder_status()
     }
 
+    fn gpu_picture(&self) -> Option<Arc<dyn GpuPicture>> {
+        self.session.client.gpu_picture()
+    }
+
     fn read_region(
         &self,
         x: usize,
@@ -246,12 +266,12 @@ impl Backend for RustDesk {
         if start > dst.len() {
             return false;
         }
-        let framebuffer = self.session.client.framebuffer().read().unwrap();
+        let framebuffer = self.framebuffer();
         framebuffer.read_rgba(x, y, width, height, &mut dst[start..], dst_stride)
     }
 
     fn thumbnail(&self, step: usize) -> Option<Picture> {
-        let framebuffer = self.session.client.framebuffer().read().unwrap();
+        let framebuffer = self.framebuffer();
         let (w, h, words) = framebuffer.thumbnail(step.max(1))?;
         Some(Picture::from_words(w, h, &words))
     }
