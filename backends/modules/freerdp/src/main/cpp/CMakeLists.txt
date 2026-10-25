@@ -3,8 +3,9 @@
 #
 # Under Gradle this is a root, configured by the NDK toolchain, and makes
 # `libremotedesktop_freerdp.so`: the session, with the module's Rust crate
-# linked in as the JNI layer over it and the OpenSSL port and FreeRDP's own
-# MediaCodec and OpenSL ES behind its H.264 and sound.
+# linked in as the JNI layer over it, the OpenSSL port, and OpenSL ES behind its
+# sound. Its H.264 is vento's decoders, the phone's MediaCodec, through the
+# subsystem in h264_vento.c.
 
 cmake_minimum_required(VERSION 3.30)
 project(remotedesktop_freerdp C)
@@ -83,9 +84,22 @@ endforeach()
 set(WITH_CLIENT_COMMON ON CACHE BOOL "" FORCE)
 set(WITH_CLIENT_CHANNELS ON CACHE BOOL "" FORCE)
 
-# The phone's H.264 and sound are the NDK's, which FreeRDP has switches for,
-# so the host's codec and sound libraries are off by name.
-foreach(off WITH_OPENH264 WITH_FFMPEG WITH_SWSCALE WITH_ALSA WITH_PULSE WITH_DSP_FFMPEG)
+# The library's H.264 is decoded by the platform's decoders, which the session
+# is handed (vento/video.h), through a subsystem of this module's: the slot
+# patches/freerdp adds for one the application links in. None of the
+# library's own is built, so there is one H.264 decoder to reason about —
+# the one RustDesk's and TigerVNC's pictures go through, with the same
+# hardware decoding and fallback — and the library's code above the decoder
+# (AVC444's combining of two pictures, the conversion into the surface) is
+# upstream's, unchanged.
+set(WITH_H264_EXTERNAL ON CACHE BOOL "" FORCE)
+
+# The phone's sound is the NDK's, which FreeRDP has switches for, so the
+# host's codec and sound libraries are off by name; and its H.264 is
+# MediaCodec's through vento's decoders, so FreeRDP's own MediaCodec
+# subsystem is off too.
+foreach(off WITH_OPENH264 WITH_FFMPEG WITH_SWSCALE WITH_ALSA WITH_PULSE WITH_DSP_FFMPEG
+        WITH_MEDIACODEC)
     set(${off} OFF CACHE BOOL "" FORCE)
 endforeach()
 
@@ -101,12 +115,6 @@ set(WITH_OPENSLES ON CACHE BOOL "" FORCE)
 # is the release's own, so the version the library reports is the same either
 # way; only the revision becomes "n/a".
 set(USE_VERSION_FROM_GIT_TAG OFF CACHE BOOL "" FORCE)
-
-# H.264 on the phone's own decoder, through the NDK's MediaCodec — which is a
-# build switch here and was eighteen hand-written NDK declarations the last time
-# this repository wanted the same thing. Nothing is vendored and nothing is
-# added to the APK for it.
-set(WITH_MEDIACODEC ON CACHE BOOL "" FORCE)
 
 # Their asserts print what failed and then abort. Keep that in a build somebody
 # is debugging, where an abort with a message is the finding; a release build
@@ -149,6 +157,11 @@ remotedesktop_vendored_warnings("${THIRD_PARTY}/freerdp")
 set(FREERDP_INCLUDES
         "${THIRD_PARTY}/freerdp/include" "${CMAKE_CURRENT_BINARY_DIR}/freerdp/include"
         "${THIRD_PARTY}/freerdp/winpr/include" "${CMAKE_CURRENT_BINARY_DIR}/freerdp/winpr/include")
+# The H.264 subsystem is built against the library's own declaration of the
+# interface, which it keeps beside its subsystems rather than in its public
+# headers; the one file that needs it is the one given it.
+set_source_files_properties(h264_vento.c PROPERTIES INCLUDE_DIRECTORIES
+        "${THIRD_PARTY}/freerdp/libfreerdp/codec")
 
 # The session, which is the shim over FreeRDP's client and names no
 # platform, and the Rust crate beside it in `src/main/rust`, which is the
@@ -156,7 +169,7 @@ set(FREERDP_INCLUDES
 # headers are borrowed from the port for the TLS version constants, and as
 # SYSTEM like the rest, because linking the port would put them on the path
 # as ours.
-add_library(remotedesktop_freerdp SHARED freerdp_session.c)
+add_library(remotedesktop_freerdp SHARED freerdp_session.c h264_vento.c)
 vento_android_library(remotedesktop_freerdp remotedesktop_freerdp)
 remotedesktop_warnings(remotedesktop_freerdp)
 target_include_directories(remotedesktop_freerdp SYSTEM PRIVATE ${FREERDP_INCLUDES}

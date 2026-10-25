@@ -33,6 +33,7 @@ pub static KIND: Kind = Kind {
 platform_android::natives!(
     class = c"net/pgaskin/remotedesktop/backend/freerdp/FreeRdpNatives",
     kind = KIND,
+    decoders = || Some(std::sync::Arc::new(platform_android::mediacodec::MediaCodec)),
     on_load = winpr_on_load,
 );
 
@@ -85,7 +86,7 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
         Platform::Linux => c"linux",
     };
     let config_path = CString::new(store.to_string_lossy().into_owned()).unwrap_or_default();
-    let config = ffi::vento_freerdp_config {
+    let mut config = ffi::vento_freerdp_config {
         address: address.as_ptr(),
         user_name: user_c.as_ref().map_or(std::ptr::null(), |u| u.as_ptr()),
         domain: domain_c.as_ref().map_or(std::ptr::null(), |d| d.as_ptr()),
@@ -105,15 +106,22 @@ fn create(c: &Connect) -> Result<std::sync::Arc<dyn Backend>, String> {
         platform: platform.as_ptr(),
         config_path: config_path.as_ptr(),
         connect_timeout_ms: CONNECT_TIMEOUT_MS,
-        // The library decodes its H.264 itself, so it is told the mode once,
-        // and a change takes effect at the next connection.
-        hardware: session::c::video::mode_number(c.hardware()),
+        video: std::ptr::null(),
     };
     log::info!("connecting to {} ({}x{})", c.address, width, height);
     let backend = start(
         c,
         &BEHAVIOUR,
-        |callbacks| unsafe { ffi::vento_freerdp_create(&config, callbacks) },
+        |callbacks| {
+            // The library's H.264 is decoded by the platform's decoders, as
+            // TigerVNC's is: the session owns them from the call on, and
+            // without them offers no H.264.
+            let video = c.decoders.clone().map(session::c::video::table);
+            if let Some(video) = &video {
+                config.video = video;
+            }
+            unsafe { ffi::vento_freerdp_create(&config, callbacks) }
+        },
         None,
     )?;
     backend.set_view_only(o.bool("ViewOnly"));

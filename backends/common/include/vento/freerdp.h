@@ -13,6 +13,7 @@
 #include <stdbool.h>
 
 #include <vento/backend.h>
+#include <vento/video.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -47,10 +48,12 @@ typedef struct vento_freerdp_config {
        without one. A HOME already set is left as it is. */
     const char *config_path;
     int connect_timeout_ms;  /* 0 or less for the library's default */
-    /* The person's hardware decoding, as `vento_video_decoders.mode` numbers
-       it (0 off, 1 VAAPI, 2 auto), at connect. The phone's MediaCodec decodes
-       where the platform puts it. */
-    int hardware;
+    /* What decodes the graphics pipeline's H.264: the platform's decoders
+       (vento/video.h), the session's from the call on, released when it
+       ends or at once where it does not start. They carry the person's
+       hardware decoding. NULL for none, and the session then offers no
+       H.264. */
+    const vento_video_decoders *video;
 } vento_freerdp_config;
 
 /* "FreeRDP x.y.z" — the one call that proves the whole path. */

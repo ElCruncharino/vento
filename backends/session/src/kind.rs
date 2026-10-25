@@ -9,7 +9,7 @@ use crate::backend::Backend;
 use crate::catalog::About;
 use crate::events::Mailbox;
 use crate::options::Options;
-use common::video::{Decoders, Hardware};
+use common::video::Decoders;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -87,10 +87,10 @@ pub struct Connect<'a> {
     pub client_name: &'a str,
     pub platform: Platform,
     /// What decodes a protocol's video, for the one whose picture is video
-    /// (RustDesk) and the one that has a video encoding (TigerVNC's H.264,
-    /// through `vento/video.h`): the phone's MediaCodec. `None` is a
-    /// RustDesk session with no picture, reported as such, and a TigerVNC
-    /// one that never offers H.264.
+    /// (RustDesk) and the two that have a video encoding (TigerVNC's and
+    /// FreeRDP's H.264, through `vento/video.h`): the phone's MediaCodec.
+    /// `None` is a RustDesk session with no picture, reported as such, and a
+    /// TigerVNC or FreeRDP one that never offers H.264.
     pub decoders: Option<Arc<dyn Decoders>>,
 }
 
@@ -102,15 +102,6 @@ impl Connect<'_> {
             return (self.domain.to_string(), self.user.to_string());
         }
         crate::credentials::split_domain(self.user)
-    }
-
-    /// How video may be decoded, as the [`decoders`](Connect::decoders) say
-    /// at connect: what a library with decoders of its own is handed
-    /// (FreeRDP's, for its H.264), where a backend that decodes through `decoders` —
-    /// RustDesk, TigerVNC — asks them instead, and again whenever it makes a
-    /// decoder.
-    pub fn hardware(&self) -> Hardware {
-        self.decoders.as_ref().map(|d| d.hardware()).unwrap_or_default()
     }
 }
 
