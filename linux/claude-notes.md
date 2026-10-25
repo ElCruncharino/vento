@@ -1090,7 +1090,27 @@ and neither can be asked for a layout:
   the shared desktop is, so there is nothing for a pop-out to show.
 
 **The connection panel** is the phone's `ConnectionPanel`: controls above
-facts, in the top right corner, where it stays. It has no title bar: its first
+facts. It opens in the top right corner and is dragged by anything on it
+that is not a control; its text is not selectable, so a drag from a label or
+a value moves it. Where it was put is kept in memory for the session (not
+saved) as an anchor per axis, a fraction of the window's size: the panel's
+edge nearest that edge of the window, or its centre where the panel sits in
+the middle 30% of the room it has to move in on that axis (the room rather
+than the window, so a panel most of the window's height dragged against the
+bottom stays against it). A resize places it from that anchor, kept 8 points
+(`panel::MARGIN`) from every edge of the window (`panel::Anchor`); the drag is
+constrained to the same rect, which also caps the panel's size. Its frame has
+no shadow. egui decides what a press clicks or drags by where the pointer is
+at the end of the frame, so a press and a quick move off the panel read in
+one frame dragged the desktop and pressed at the far end: `gui::PointerSplit`
+makes a press the last pointer event of its frame and a release the first,
+holding the rest for the next frame. A window too small for the panel shrinks it,
+and a larger one gives it back its full size: its width and the height its
+content is offered are minimums as well as defaults, since egui keeps the
+size a window was squeezed to and only grows it to fit its content. It is an egui window in `Order::Middle` and the
+toolbar an area in `Order::Foreground`, so the toolbar is drawn over it even
+after the panel is clicked, which raises a window only among its own order.
+It is the main window's alone, so a pop-out has none. It has no title bar: its first
 row is the desktop's name (the address until the protocol has said one) over
 the session's state line, with the close button, a cross, at that row's right
 end; the toolbar's Info closes it as well. The controls are the backend's *live* options from the registry — the

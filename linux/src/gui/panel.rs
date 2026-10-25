@@ -25,6 +25,15 @@
 //! same ids every frame, so an open dropdown stays open and a field being
 //! typed in keeps its text until it is left.
 //!
+//! The panel opens in the top right corner and can be dragged by anything
+//! on it that is not a control; its text cannot be selected, so a drag
+//! that starts on a label moves the panel. Where it was put is kept for
+//! the session as an [`Anchor`], not saved, so that it keeps its place
+//! when the window is resized, and it is kept [`MARGIN`] from every edge
+//! of the window. It is an ordinary egui window, without a shadow, in
+//! [`Order::Middle`], so the toolbar (in [`Order::Foreground`]) is drawn
+//! over it however recently the panel was clicked.
+//!
 //! The panel does nothing to the backend itself. What is changed on it
 //! comes back as [`Action`]s for the session to apply, which is what keeps
 //! the panel a drawing of state rather than an owner of any.
@@ -35,8 +44,8 @@ use crate::backends::Platform;
 use crate::options::{self, Options, Spec, Type};
 use runtime::media::audio::Switch;
 use egui::{
-    Align, Align2, ComboBox, Grid, Layout, Response, RichText, ScrollArea, Sense, TextEdit, Ui, WidgetInfo,
-    WidgetType, vec2,
+    Align, ComboBox, CursorIcon, Frame, Grid, Id, Layout, Order, Pos2, Rangef, Rect, Response, RichText, ScrollArea,
+    Sense, Shadow, TextEdit, Ui, Vec2, WidgetInfo, WidgetType, pos2, vec2,
 };
 use std::collections::BTreeMap;
 
@@ -149,6 +158,82 @@ pub struct Panel {
     /// focus: a refresh must not rewrite a field while it is typed in, and
     /// the value is only sent once the field loses the focus.
     edits: BTreeMap<&'static str, String>,
+    /// Where the panel was last dragged to; the top right corner until it
+    /// has been.
+    anchor: Option<Anchor>,
+}
+
+/// The panel's distance from the window's edges where it opens.
+const INSET: f32 = 16.0;
+
+/// The least distance kept between the panel and each edge of the window,
+/// wherever it is dragged or placed and however small the window is.
+const MARGIN: f32 = 8.0;
+
+/// The middle of the room the panel has to move in on either axis, as a
+/// fraction of it: a panel there is placed by its centre on that axis.
+/// Measured in the room rather than the window so that a panel taller than
+/// a third of the window, dragged against its bottom edge, stays against
+/// it.
+const MIDDLE: f32 = 0.30;
+
+/// Where the panel was dragged to, relative to the window, so that it keeps
+/// its place when the window is resized. Per axis, the point of the panel
+/// that is kept in place and where it is, as a fraction of the window's
+/// size from its left or top edge: the panel's edge nearest that edge of
+/// the window, or its centre where the panel is in the [`MIDDLE`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Anchor {
+    x: (Align, f32),
+    y: (Align, f32),
+}
+
+impl Anchor {
+    /// The anchor of a panel drawn at `panel` in `window`.
+    fn of(panel: Rect, window: Rect) -> Anchor {
+        Anchor {
+            x: axis_anchor(panel.x_range(), window.x_range()),
+            y: axis_anchor(panel.y_range(), window.y_range()),
+        }
+    }
+
+    /// Where a panel of `size` goes in `window`: its top left corner, kept
+    /// so that all of the panel is in the window, [`MARGIN`] from its
+    /// edges, where it fits.
+    fn left_top(self, size: Vec2, window: Rect) -> Pos2 {
+        pos2(
+            axis_place(self.x, size.x, window.x_range()),
+            axis_place(self.y, size.y, window.y_range()),
+        )
+    }
+}
+
+/// [`Anchor::of`] on one axis, for a panel spanning `panel` in a window
+/// spanning `window`.
+fn axis_anchor(panel: Rangef, window: Rangef) -> (Align, f32) {
+    let fraction = |at: f32| (at - window.min) / window.span().max(1.0);
+    // 0 against the start of the window, 1 against its end.
+    let room = window.span() - panel.span();
+    let along = if room > 0.0 { (panel.min - window.min) / room } else { 0.0 };
+    if (along - 0.5).abs() <= MIDDLE / 2.0 {
+        (Align::Center, fraction(panel.center()))
+    } else if along < 0.5 {
+        (Align::Min, fraction(panel.min))
+    } else {
+        (Align::Max, fraction(panel.max))
+    }
+}
+
+/// [`Anchor::left_top`] on one axis: where a panel `size` long starts. One
+/// too long for the window with its margins starts a margin from the start.
+fn axis_place((align, fraction): (Align, f32), size: f32, window: Rangef) -> f32 {
+    let at = window.min + fraction * window.span();
+    let start = match align {
+        Align::Min => at,
+        Align::Center => at - size / 2.0,
+        Align::Max => at - size,
+    };
+    start.min(window.max - MARGIN - size).max(window.min + MARGIN)
 }
 
 /// The sizes offered besides the window's and the desktop's own, which are
@@ -178,8 +263,26 @@ impl Panel {
         if !self.open {
             return actions;
         }
-        let room = (ctx.content_rect().height() - 48.0).max(120.0);
-        egui::Window::new("Connection")
+        let screen = ctx.content_rect();
+        // The panel and its drag are kept within this, which also caps its
+        // size: egui keeps a window no larger than the rect it is
+        // constrained to.
+        let bounds = screen.shrink(MARGIN);
+        let room = (screen.height() - 48.0).max(120.0).min(bounds.height());
+        let id = Id::new("connection-panel");
+        // Placed every frame from where it was put rather than left where
+        // egui last had it, so that a resized window moves it too; by its
+        // top left corner, as egui moves a window by the corner that it
+        // is placed by and a drag would jump if that changed during it. Its
+        // size is the last frame's, which is egui's too; the first frame
+        // is egui's sizing pass, which is not drawn.
+        let size = ctx.memory(|m| m.area_rect(id)).map_or(vec2(360.0, 0.0), |r| r.size());
+        let left_top = match self.anchor {
+            Some(anchor) => anchor.left_top(size, screen),
+            None => pos2(screen.max.x - INSET - size.x, screen.min.y + INSET),
+        };
+        let shown = egui::Window::new("Connection")
+            .id(id)
             // No title bar: the desktop's name heads the panel, and a bar
             // above it saying "Connection" was a second heading and a strip
             // of the desktop lost for it. The close button sits at the end
@@ -187,17 +290,31 @@ impl Panel {
             .title_bar(false)
             .collapsible(false)
             .resizable(false)
-            .default_width(360.0)
             // Drawn at its content's height, and scrolled once that is
-            // taller than the window it floats over. The default height is
-            // what the content is *offered* (an egui window offers its
+            // taller than the window it floats over. The height given here
+            // is what the content is *offered* (an egui window offers its
             // content no more than that, and a scroll area never asks for
             // more) and not what is drawn, which follows the content: the
             // scroll area shrinks to it, where the window's own would not.
+            // A minimum rather than a default, since egui keeps the size a
+            // window was last offered and only grows it to fit its content:
+            // one squeezed by a small window would stay that small once the
+            // window was larger again.
+            .default_width(360.0)
+            .min_width(360.0)
             .default_height(room)
+            .min_height(room)
             .max_height(room)
-            .anchor(Align2::RIGHT_TOP, vec2(-16.0, 16.0))
+            .current_pos(left_top)
+            // Under the toolbar, which is in the foreground: egui raises a
+            // window when it is clicked, but only among those of its order.
+            .order(Order::Middle)
+            .constrain_to(bounds)
+            .frame(Frame::window(&ctx.global_style()).shadow(Shadow::NONE))
             .show(ctx, |ui| {
+                // Nothing on it is text to copy, and a drag that starts on
+                // a label moves the panel instead.
+                ui.style_mut().interaction.selectable_labels = false;
                 // The close button first, from the right, so that the name
                 // and the state are given what is left of the row and wrap
                 // there rather than pushing the button out of the panel.
@@ -218,6 +335,12 @@ impl Panel {
                     facts(ui, snapshot);
                 });
             });
+        if let Some(shown) = shown
+            && shown.response.dragged()
+        {
+            self.anchor = Some(Anchor::of(shown.response.rect, screen));
+            ctx.set_cursor_icon(CursorIcon::Grabbing);
+        }
         actions
     }
 
@@ -511,6 +634,81 @@ mod tests {
         // The window, the desktop, the second monitor, and the four of the
         // usual list that are not one of those.
         assert_eq!(sizes.len(), 7);
+    }
+
+    const WINDOW: Rect = Rect::from_min_max(pos2(0.0, 0.0), pos2(1000.0, 800.0));
+
+    #[test]
+    fn a_panel_near_an_edge_keeps_its_distance_from_it_in_proportion() {
+        // 40 from the right edge and 80 from the top of a 1000 × 800 window.
+        let panel = Rect::from_min_size(pos2(600.0, 80.0), vec2(360.0, 200.0));
+        let anchor = Anchor::of(panel, WINDOW);
+        assert_eq!(anchor.x, (Align::Max, 0.96));
+        assert_eq!(anchor.y, (Align::Min, 0.1));
+        assert_eq!(anchor.left_top(panel.size(), WINDOW), panel.min);
+        // Twice as wide: still 4% of the width from the right edge.
+        let wide = Rect::from_min_size(pos2(0.0, 0.0), vec2(2000.0, 800.0));
+        assert_eq!(anchor.left_top(panel.size(), wide), pos2(1920.0 - 360.0, 80.0));
+        // Half as tall: 10% of the height from the top.
+        let short = Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 400.0));
+        assert_eq!(anchor.left_top(vec2(360.0, 200.0), short), pos2(600.0, 40.0));
+    }
+
+    #[test]
+    fn a_panel_in_the_middle_stays_centred() {
+        let panel = Rect::from_center_size(WINDOW.center(), vec2(360.0, 400.0));
+        let anchor = Anchor::of(panel, WINDOW);
+        assert_eq!(anchor.x, (Align::Center, 0.5));
+        assert_eq!(anchor.y, (Align::Center, 0.5));
+        let other = Rect::from_min_size(pos2(10.0, 20.0), vec2(1600.0, 1000.0));
+        let size = vec2(360.0, 400.0);
+        let placed = Rect::from_min_size(anchor.left_top(size, other), size);
+        assert_eq!(placed.center(), other.center());
+    }
+
+    #[test]
+    fn the_middle_is_the_middle_thirty_percent() {
+        // A panel 100 long in a window 1000 long has 900 to move in, the
+        // middle 30% of which is 315 to 585 from the start.
+        let window = Rangef::new(0.0, 1000.0);
+        assert_eq!(axis_anchor(Rangef::new(320.0, 420.0), window), (Align::Center, 0.37));
+        assert_eq!(axis_anchor(Rangef::new(580.0, 680.0), window), (Align::Center, 0.63));
+        assert_eq!(axis_anchor(Rangef::new(300.0, 400.0), window), (Align::Min, 0.3));
+        assert_eq!(axis_anchor(Rangef::new(600.0, 700.0), window), (Align::Max, 0.7));
+        // A panel most of the window's height, against its bottom edge,
+        // though its centre is in the middle 30% of the window.
+        let window = Rangef::new(0.0, 800.0);
+        assert_eq!(axis_anchor(Rangef::new(235.0, 800.0), window), (Align::Max, 1.0));
+        // One that fills it.
+        assert_eq!(axis_anchor(Rangef::new(0.0, 800.0), window), (Align::Min, 0.0));
+    }
+
+    #[test]
+    fn a_panel_is_kept_in_the_window() {
+        // Anchored 2% from the right edge: in a window too narrow for that,
+        // it is kept a margin from the left edge, and too short, the top.
+        let anchor = Anchor {
+            x: (Align::Max, 0.98),
+            y: (Align::Max, 1.0),
+        };
+        let small = Rect::from_min_size(pos2(0.0, 0.0), vec2(300.0, 200.0));
+        assert_eq!(anchor.left_top(vec2(360.0, 400.0), small), pos2(8.0, 8.0));
+        // Anchored past an edge, or closer to it than the margin, it stops
+        // a margin from the edge.
+        let anchor = Anchor {
+            x: (Align::Min, -0.1),
+            y: (Align::Max, 1.2),
+        };
+        assert_eq!(anchor.left_top(vec2(360.0, 400.0), WINDOW), pos2(8.0, 392.0));
+        let anchor = Anchor {
+            x: (Align::Max, 0.996),
+            y: (Align::Min, 0.005),
+        };
+        assert_eq!(anchor.left_top(vec2(360.0, 400.0), WINDOW), pos2(1000.0 - 8.0 - 360.0, 8.0));
+        // Flush with a corner it is drawn at a margin from both edges.
+        let corner = Rect::from_min_size(pos2(1000.0 - 360.0, 800.0 - 400.0), vec2(360.0, 400.0));
+        let anchor = Anchor::of(corner, WINDOW);
+        assert_eq!(anchor.left_top(corner.size(), WINDOW), pos2(632.0, 392.0));
     }
 
     #[test]

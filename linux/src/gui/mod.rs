@@ -69,7 +69,7 @@ use egui::ViewportId;
 use session::{Session, Teardown, WindowOp};
 pub use settings::Settings;
 pub use view::ScaleMode;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use toolbar::Placement;
@@ -295,9 +295,78 @@ struct Surface {
     /// again whenever it moves or changes scale, which is also when an
     /// output that went away has had its windows moved elsewhere.
     output: Option<String>,
+    /// Pointer events kept from egui until its next frame (see
+    /// [`PointerSplit`]).
+    held: VecDeque<WindowEvent>,
+    split: PointerSplit,
+}
+
+/// Where egui's frames are split in a burst of pointer events. egui finds
+/// the widget a press is on, and so what it clicks or drags, at the
+/// pointer's position at the end of the frame the press is read in, not at
+/// the press: a press and a quick move away in one frame went to whatever
+/// the pointer was over after the move (a drag that started on the
+/// connection panel went to the desktop, and so to the far end). And a
+/// widget is not dragged in the frame its button is released, so moves
+/// read in that frame are lost to it. A press is therefore the last
+/// pointer event its frame reads, and a release the first; the events
+/// that would break that wait for the next frame.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct PointerSplit {
+    /// A pointer event has been given to egui since its last frame.
+    fed: bool,
+    /// The last of them was a press.
+    pressed: bool,
+}
+
+impl PointerSplit {
+    /// Whether a pointer event (`button`: `Some(true)` a press,
+    /// `Some(false)` a release) can be given to egui in this frame, and if
+    /// so, counted as given. `queued` is whether earlier ones are waiting,
+    /// which this one then waits behind.
+    fn admit(&mut self, button: Option<bool>, queued: bool) -> bool {
+        if queued || self.pressed || (button == Some(false) && self.fed) {
+            return false;
+        }
+        self.fed = true;
+        self.pressed = button == Some(true);
+        true
+    }
 }
 
 impl Surface {
+    /// An event given to egui, or, for a pointer event, held until its next
+    /// frame where egui would misread it in this one (see [`PointerSplit`]).
+    /// Whether a frame is wanted for it.
+    fn give_egui(&mut self, event: WindowEvent) -> bool {
+        let button = match &event {
+            WindowEvent::MouseInput { state, .. } => Some(*state == ElementState::Pressed),
+            WindowEvent::CursorMoved { .. }
+            | WindowEvent::CursorEntered { .. }
+            | WindowEvent::CursorLeft { .. }
+            | WindowEvent::MouseWheel { .. }
+            | WindowEvent::Touch(_) => None,
+            _ => return self.winit.on_window_event(&self.window, &event).repaint,
+        };
+        if !self.split.admit(button, !self.held.is_empty()) {
+            self.held.push_back(event);
+            return true;
+        }
+        self.winit.on_window_event(&self.window, &event).repaint
+    }
+
+    /// Once a frame has taken egui's input, the events held from it given
+    /// for the next. Whether there were any, and so a next frame is wanted.
+    fn release_held(&mut self) -> bool {
+        self.split = PointerSplit::default();
+        let held = std::mem::take(&mut self.held);
+        let any = !held.is_empty();
+        for event in held {
+            self.give_egui(event);
+        }
+        any
+    }
+
     /// Whether the window can be seen (see `App::sync_shown`).
     fn shown(&self) -> bool {
         !self.occluded && self.minimized != Some(true) && !self.viewability.hidden()
@@ -619,6 +688,8 @@ impl App {
                 pointer: None,
                 occluded: false,
                 minimized: None,
+                held: VecDeque::new(),
+                split: PointerSplit::default(),
             },
         );
         Ok(id)
@@ -852,6 +923,9 @@ impl App {
             }
         }
         let raw_input = surface.winit.take_egui_input(&window);
+        if surface.release_held() {
+            window.request_redraw();
+        }
         let mut next: Option<Request> = None;
         let mut ended: Option<(String, bool)> = None;
         let mut host = Host {
@@ -1479,11 +1553,10 @@ impl ApplicationHandler<Wake> for App {
             }
             _ => {}
         }
-        if let Some(surface) = self.windows.get_mut(&id) {
-            let response = surface.winit.on_window_event(&window, &event);
-            if response.repaint {
-                window.request_redraw();
-            }
+        if let Some(surface) = self.windows.get_mut(&id)
+            && surface.give_egui(event)
+        {
+            window.request_redraw();
         }
     }
 
@@ -1680,6 +1753,44 @@ impl Gpu {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Which of `events` (`Some(true)` a press, `Some(false)` a release,
+    /// `None` a move) each frame reads, given all at once.
+    fn frames(events: &[Option<bool>]) -> Vec<Vec<Option<bool>>> {
+        let mut split = PointerSplit::default();
+        let mut queue: Vec<Option<bool>> = events.to_vec();
+        let mut frames = Vec::new();
+        while !queue.is_empty() {
+            let mut frame = Vec::new();
+            let mut held = Vec::new();
+            for e in queue {
+                if split.admit(e, !held.is_empty()) {
+                    frame.push(e);
+                } else {
+                    held.push(e);
+                }
+            }
+            frames.push(frame);
+            split = PointerSplit::default();
+            queue = held;
+        }
+        frames
+    }
+
+    #[test]
+    fn a_press_ends_its_frame_and_a_release_starts_one() {
+        const P: Option<bool> = Some(true);
+        const R: Option<bool> = Some(false);
+        const M: Option<bool> = None;
+        // A press and a quick drag: the press is read where it was made,
+        // the moves before the release.
+        assert_eq!(frames(&[M, P, M, M, R, M]), vec![vec![M, P], vec![M, M], vec![R, M]]);
+        // A click.
+        assert_eq!(frames(&[P, R]), vec![vec![P], vec![R]]);
+        // Moves alone, and a release with nothing before it, are one frame.
+        assert_eq!(frames(&[M, M, M]), vec![vec![M, M, M]]);
+        assert_eq!(frames(&[R, M, P]), vec![vec![R, M, P]]);
+    }
 
     #[test]
     fn only_a_disconnected_command_line_session_quits() {
