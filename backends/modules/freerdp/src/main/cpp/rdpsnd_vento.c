@@ -239,7 +239,11 @@ static UINT serverFormatAnnounce(rdpsndDevicePlugin *device, const AUDIO_FORMAT 
     const Device *d = (const Device *) device;
     char line[1536];
     size_t used = 0;
+    bool playable = false;
     line[0] = '\0';
+    for (size_t i = 0; i < count; i++) {
+        playable = playable || kindOf(d->sound, &formats[i]) != KIND_NONE;
+    }
     for (size_t i = 0; i < count && used + 64 < sizeof(line); i++) {
         char one[64];
         describe(&formats[i], one, sizeof(one));
@@ -255,6 +259,13 @@ static UINT serverFormatAnnounce(rdpsndDevicePlugin *device, const AUDIO_FORMAT 
         used += (size_t) n < sizeof(line) - used ? (size_t) n : sizeof(line) - used - 1;
     }
     LOGI("sound: the server offers %zu formats: %s", count, line);
+    /* A server that lists a format this end plays may send sound from now on,
+       and nothing in rdpsnd asks it to stop during a session (the client's
+       formats are an answer to these, sent once), so the session's switch is
+       a mute, there from this list rather than from the first wave. */
+    if (playable && d->sound->table.offer != NULL) {
+        d->sound->table.offer(d->sound->table.user, VENTO_AUDIO_SWITCH_MUTE, true, NULL, NULL);
+    }
     return CHANNEL_RC_OK;
 }
 
