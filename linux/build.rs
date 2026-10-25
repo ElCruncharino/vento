@@ -61,12 +61,15 @@ fn main() {
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
 
     // What the C build is made of, as far as cargo is asked to watch: the
-    // build files, the neutral headers, each module's host half and the
-    // Linux platform's C and CMake half (not its `probe/`, which this build
-    // leaves off). The vendored trees are not watched — they are
-    // submodules, and a change there is a rebuild somebody asks for.
+    // build files, the GnuTLS and nettle pins (a bump reruns CMake, which
+    // fetches the new release), the neutral headers, each module's host
+    // half and the Linux platform's C and CMake half (not its `probe/`,
+    // which this build leaves off). The vendored trees are not watched —
+    // they are submodules, and a change there is a rebuild somebody asks
+    // for.
     for path in [
         "CMakeLists.txt",
+        "crypto-sources.txt",
         "cmake",
         "api/include",
         "platform/linux/cpp",

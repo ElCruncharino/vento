@@ -52,9 +52,11 @@
 # nasm (libjpeg-turbo's x86 SIMD; it is C without), and a C and
 # C++ compiler CMake can find — clang for RealVNC (`CC=clang CXX=clang++ cmake ...`), whose
 # four host-only submodules are initialised with `--recursive`. GnuTLS and
-# nettle are the release tarballs the phone's ports build, unpacked into
-# `third_party/gnutls` and `third_party/nettle` by
-# `./gradlew :backends:fetchCryptoSources`.
+# nettle are the release tarballs the phone's ports build, pinned in
+# `crypto-sources.txt`: the first configure downloads them, checks their
+# SHA-256 and unpacks them into `third_party/gnutls` and `third_party/nettle`
+# (as `./gradlew :backends:fetchCryptoSources` does), so it needs the network
+# unless they are there already.
 
 cmake_minimum_required(VERSION 3.30)
 project(vento_backends C CXX)
@@ -143,8 +145,9 @@ set(VENTO_JPEG_INCLUDE_DIRS
         "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/libjpeg-turbo/src"
         "${CMAKE_CURRENT_BINARY_DIR}/libjpeg-turbo")
 
-# GnuTLS and nettle, from the tarballs the phone's ports build, configured
-# and built by their own autotools build at build time (the file says why).
+# GnuTLS and nettle, from the tarballs the phone's ports build (downloaded
+# here when they are not in `third_party/`), configured and built by their
+# own autotools build at build time (the file says why).
 # libvncclient and TigerVNC link them in, as they do libjpeg-turbo.
 include(platform/linux/cmake/gnutls.cmake)
 

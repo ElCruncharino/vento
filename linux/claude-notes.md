@@ -107,11 +107,13 @@ or nettle either: the phone's release tarballs of both (GnuTLS 3.8, nettle 4.0
 with its mini-gmp) are configured and built by their own autotools build in
 the CMake tree, once (about a minute and a half), and linked into the libvnc
 and TigerVNC libraries, since nettle's soname changes with nearly every
-release. The tarballs are not submodules: `./gradlew
-:backends:fetchCryptoSources` unpacks them into `third_party/gnutls` and
-`third_party/nettle`, or by hand, from the URLs and SHA-256 hashes in
-`backends/build.gradle`'s `cryptoSources`, with `tar -x
---strip-components=1`. Nettle's assembly needs m4; without it, nettle is
+release. The tarballs are not submodules: the first build downloads them
+from the mirrors in `backends/crypto-sources.txt`, checks them against the
+SHA-256 hashes there and unpacks them into `third_party/gnutls` and
+`third_party/nettle`, so it needs the network once. `./gradlew
+:backends:fetchCryptoSources` unpacks the same trees, and the build's error
+without the network says how to unpack them by hand. Nettle's assembly
+needs m4; without it, nettle is
 built in C, with a build note. GnuTLS takes its CA certificates from
 `/etc/ssl/certs/ca-certificates.crt` (Debian, Ubuntu and Fedora all have
 it), which decides nothing here: every certificate goes to the known hosts
@@ -413,8 +415,7 @@ two can go anywhere together: `/opt/vento`, a home directory.
 in a container and outputs only that tree:
 
 ```sh
-# from the repository root, with the submodules initialised and GnuTLS and
-# nettle unpacked (./gradlew :backends:fetchCryptoSources)
+# from the repository root, with the submodules initialised
 docker build -f linux/Dockerfile --output type=local,dest=build/dist/vento .
 ```
 
@@ -424,9 +425,11 @@ on the build's glibc and later ones. The Dockerfile builds on Ubuntu 18.04
 versions, and Rust at `rust-toolchain.toml`'s channel; the glibc baseline is
 the Dockerfile's alone. It copies the checkout (`linux/Dockerfile.dockerignore`
 limits what is sent), applies `patches/` to submodules still at their pinned
-commits, runs `cargo build --release --locked`, strips the libraries' debug
-information, and checks the tree with `readelf` and `ldd`: the relative
-rpath, no library missing, the backends resolved in the tree's own `lib/`.
+commits, runs `cargo build --release --locked` (which downloads the GnuTLS
+and nettle tarballs and checks their SHA-256; the context leaves out any
+unpacked in the checkout), strips the libraries' debug information, and
+checks the tree with `readelf` and `ldd`: the relative rpath, no library
+missing, the backends resolved in the tree's own `lib/`.
 It writes nothing to the checkout. A build from scratch takes about nine
 and a half minutes on eight cores (the toolchain about a minute and a half
 of it, cached after the first build; GnuTLS and nettle about a minute and a

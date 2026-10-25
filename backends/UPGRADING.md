@@ -7,10 +7,11 @@ description: Upgrade the third-party upstreams behind the backends (submodules u
 
 Every backend is a shim of ours over somebody else's client, pinned as a
 submodule under `third_party/` (or, for nettle and gnutls, as a release
-tarball named in `backends/build.gradle`). Upgrading one is moving that pin,
-carrying our patches across, regenerating whatever is generated, adapting the
-shim, and proving the build. This file is the procedure that came out of the
-first full round (September 2026), including the things that went wrong.
+tarball named in `backends/crypto-sources.txt`). Upgrading one is moving
+that pin, carrying our patches across, regenerating whatever is generated,
+adapting the shim, and proving the build. This file is the procedure that
+came out of the first full round (September 2026), including the things
+that went wrong.
 
 Read `patch.sh` and `.gitmodules` first: the gitlink names the *pristine*
 upstream commit, our changes live in `patches/<name>/`, and the `base` tag in
@@ -151,16 +152,20 @@ Without patches: `checkout --detach`, `tag -f base`, `update-index`,
 `./patch.sh check`. A submodule with no `base` tag yet gets one at the
 target.
 
-A tarball: bump version, sha256 and both URLs in `backends/build.gradle`,
-verify the hash against upstream's signature or announcement (not against
-the download), `rm -rf third_party/<name>`, `./gradlew
-:backends:fetchCryptoSources`, then the port's `gen.sh`. gnutls' gen builds
+A tarball: bump `<name>.version`, `<name>.sha256` and both `<name>.url`
+lines in `backends/crypto-sources.txt`, the one place they live (Gradle's
+`fetchCryptoSources` and the host CMake build both read it), verify the
+hash against upstream's signature or announcement (not against the
+download), `./gradlew :backends:fetchCryptoSources` (it replaces a tree
+whose `.pin` is another hash), then the port's `gen.sh`. gnutls' gen builds
 nettle itself, so a nettle bump reruns gnutls' gen too and may change its
 `gen/`. The host build has no `gen/`: `platform/linux/cmake/gnutls.cmake`
-runs both tarballs' own configure and make at build time, in a directory
-named after both versions, so a bump is a fresh build there with nothing to
-regenerate; a configure option the new release renames or drops shows up
-in its configure log (under that directory's `src/*-stamp/`).
+replaces a tree whose `.pin` is not the pinned hash at configure time, the
+same way, then runs both tarballs' own configure and make at build time,
+in a directory named after both versions, so a bump is a fresh build there
+with nothing to regenerate; a configure option the new release renames or
+drops shows up in its configure log (under that directory's
+`src/*-stamp/`).
 
 A port's `gen.sh` rerun at the same pin must produce an empty diff. If it
 does not, fix the script first as its own commit, regenerated at the old

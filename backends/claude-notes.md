@@ -121,7 +121,8 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
   `vento_backend_probe`, `VENTO_SHARED`, `VENTO_PROBES`,
   `VENTO_FFMPEG_PREFIX`); `cmake/gnutls.cmake`, GnuTLS and nettle for the
   host, built at build time by their own autotools build from the tarballs
-  the Android ports use, and `cmake/openssl.cmake`, OpenSSL for the host,
+  the Android ports use (downloaded at configure time when they are not in
+  `third_party/`), and `cmake/openssl.cmake`, OpenSSL for the host,
   built the same way by its own Configure from the submodule the Android
   port uses; `probe/`, the development tools — the C probes'
   shared body and the two sound rigs (`--features probe`); and `tests/`, the
@@ -135,6 +136,9 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
   `codegenSources`).
 - `buildSrc/` — the Gradle tasks those helpers use (cargo, codegen, tarballs,
   patch check), pulled in by the root `buildSrc`.
+- `crypto-sources.txt` — the version, SHA-256 and mirrors of the nettle and
+  GnuTLS release tarballs, read by Gradle's `fetchCryptoSources` and by the
+  host CMake build, which both unpack them into `third_party/`.
 - `CMakeLists.txt` — the host CMake build of the C backends, which
   `linux/build.rs` runs (`VENTO_SHARED=ON`) and which builds the C probes
   with `-DVENTO_PROBES=ON`. Each platform's half of a C backend's CMake is

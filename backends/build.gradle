@@ -169,27 +169,29 @@ ext.rustStaticLibrary = { Project module, String crate ->
  * bootstrap wants gnulib and four host tools — so what a release carries is
  * what upstream *is* here, named by a hash rather than by a gitlink.
  *
- * Nothing in a build fetches these; `./gradlew fetchCryptoSources` does, and a
- * tree that is not there is a message from CMake saying so.
+ * Their versions, hashes and mirrors are in `crypto-sources.txt`, which the
+ * host CMake build reads too: a host build unpacks a missing tree itself, the
+ * way the tasks here do. The phone's build fetches nothing;
+ * `./gradlew fetchCryptoSources` does, and a tree that is not there is a
+ * message from its CMake saying so.
  */
-ext.cryptoSources = [
-        nettle: [
-                version: '4.0',
-                sha256 : '3addbc00da01846b232fb3bc453538ea5468da43033f21bb345cb1e9073f5094',
-                urls   : [
-                        'https://ftp.gnu.org/gnu/nettle/nettle-4.0.tar.gz',
-                        'https://www.lysator.liu.se/~nisse/archive/nettle-4.0.tar.gz',
-                ],
-        ],
-        gnutls: [
-                version: '3.8.13',
-                sha256 : 'ffed8ec1bf09c2426d4f14aae377de4753b53e537d685e604e99a8b16ca9c97e',
-                urls   : [
-                        'https://www.gnupg.org/ftp/gcrypt/gnutls/v3.8/gnutls-3.8.13.tar.xz',
-                        'https://mirrors.dotsrc.org/gcrypt/gnutls/v3.8/gnutls-3.8.13.tar.xz',
-                ],
-        ],
-]
+ext.cryptoSources = [:]
+file('crypto-sources.txt').eachLine { line ->
+    line = line.trim()
+    if (!line || line.startsWith('#')) {
+        return
+    }
+    final m = line =~ /^([a-z0-9]+)\.(version|sha256|url)\s*=\s*(\S+)$/
+    if (!m.matches()) {
+        throw new GradleException("crypto-sources.txt: not a `<name>.<key> = <value>` line: ${line}")
+    }
+    final pin = cryptoSources.computeIfAbsent(m.group(1)) { [urls: []] }
+    if (m.group(2) == 'url') {
+        pin.urls << m.group(3)
+    } else {
+        pin[m.group(2)] = m.group(3)
+    }
+}
 
 def fetchTasks = cryptoSources.collect { name, pin ->
     tasks.register("fetch${name.capitalize()}Sources", DownloadSourceTarball) {

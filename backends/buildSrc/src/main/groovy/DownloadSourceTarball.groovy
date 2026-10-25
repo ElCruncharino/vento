@@ -24,9 +24,11 @@ import org.gradle.process.ExecOperations
  * So the release is the upstream, a SHA-256 names it exactly, and what a
  * mirror sent is verified before it is unpacked rather than after.
  *
- * <p>Like the APK task, this is <em>ordering</em> rather than a dependency: a
- * build never fetches anything, and a missing tree is a message from CMake
- * saying which command puts it there.
+ * <p>Like the APK task, this is <em>ordering</em> rather than a dependency: the
+ * phone's build never fetches anything, and a missing tree is a message from
+ * CMake saying which command puts it there. The host CMake build unpacks a
+ * missing tree itself, from the same pins ({@code backends/crypto-sources.txt})
+ * and into the same layout, {@code .pin} included.
  */
 abstract class DownloadSourceTarball extends DefaultTask {
 

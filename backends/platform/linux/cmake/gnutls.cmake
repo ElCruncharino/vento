@@ -32,10 +32,129 @@
 # crypto-policies file Fedora's reads, whose contents follow Fedora's own
 # GnuTLS version.
 #
+# The tarballs are downloaded and unpacked at configure time when a tree is
+# missing or is not the pinned release (`vento_crypto_source` below), so
+# that ExternalProject finds the sources and a host build needs no Gradle.
+#
 # The result is three imported targets named as the phone's ports name
 # theirs, `gnutls`, `hogweed` and `nettle`, each carrying its include
 # directory and what it links after it, and VENTO_GNUTLS_VERSION for
 # libvncserver's version check.
+
+# The hash in `<tree>/.pin`, or nothing.
+function(vento_crypto_source_pin tree out)
+    set(pin "")
+    if(EXISTS "${tree}/.pin")
+        file(READ "${tree}/.pin" pin)
+        string(STRIP "${pin}" pin)
+    endif()
+    set(${out} "${pin}" PARENT_SCOPE)
+endfunction()
+
+# Makes `third_party/<name>` the release `crypto-sources.txt` pins for it,
+# as Gradle's `fetchCryptoSources` does, so that a host build needs no
+# Gradle: downloaded from the first mirror that answers, checked against
+# the pinned SHA-256 before anything is unpacked, unpacked without the
+# tarball's top directory, with a `.pin` file holding the hash. A tree
+# whose `.pin` holds the pinned hash is kept as it is; any other is
+# replaced. The tree is unpacked under `third_party/.fetch/` and renamed
+# into place with its `.pin`, so an interrupted download or unpack leaves
+# the previous tree or none, never part of one. A lock there serialises
+# the configures of several build trees.
+function(vento_crypto_source third_party name)
+    unset(version)
+    unset(sha256)
+    set(pins "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../../../crypto-sources.txt")
+    set_property(DIRECTORY "${CMAKE_SOURCE_DIR}" APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${pins}")
+    file(STRINGS "${pins}" lines REGEX "^[ \t]*${name}\\.")
+    set(urls "")
+    foreach(line IN LISTS lines)
+        if(NOT line MATCHES "^[ \t]*${name}\\.(version|sha256|url)[ \t]*=[ \t]*([^ \t]+)[ \t]*$")
+            message(FATAL_ERROR "backends/crypto-sources.txt: not a `<name>.<key> = <value>` line: ${line}")
+        endif()
+        if(CMAKE_MATCH_1 STREQUAL "url")
+            list(APPEND urls "${CMAKE_MATCH_2}")
+        else()
+            set(${CMAKE_MATCH_1} "${CMAKE_MATCH_2}")
+        endif()
+    endforeach()
+    if(NOT DEFINED version OR NOT DEFINED sha256 OR NOT urls)
+        message(FATAL_ERROR "backends/crypto-sources.txt has no version, sha256 and url for ${name}")
+    endif()
+
+    set(tree "${third_party}/${name}")
+    # A rebuild notices a deleted or replaced tree and configures again.
+    set_property(DIRECTORY "${CMAKE_SOURCE_DIR}" APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${tree}/.pin")
+    vento_crypto_source_pin("${tree}" pin)
+    if(pin STREQUAL sha256)
+        return()
+    endif()
+    file(MAKE_DIRECTORY "${third_party}/.fetch")
+    file(LOCK "${third_party}/.fetch/${name}.lock" GUARD FUNCTION)
+    vento_crypto_source_pin("${tree}" pin)
+    if(pin STREQUAL sha256)
+        return()
+    endif()
+    if(NOT EXISTS "${tree}")
+        set(why "is missing")
+    elseif(pin STREQUAL "")
+        set(why "has no .pin file, so it is not known to be ${name} ${version}")
+    else()
+        set(why "holds another release (sha256 ${pin})")
+    endif()
+    message(STATUS "${name}: third_party/${name} ${why}; fetching ${name} ${version}")
+
+    set(work "${third_party}/.fetch/${name}")
+    file(REMOVE_RECURSE "${work}")
+    file(MAKE_DIRECTORY "${work}")
+    set(failures "")
+    foreach(url IN LISTS urls)
+        string(REGEX REPLACE "^.*/" "" tarball "${url}")
+        set(tarball "${work}/${tarball}")
+        message(STATUS "${name}: downloading ${url}")
+        file(DOWNLOAD "${url}" "${tarball}" STATUS status INACTIVITY_TIMEOUT 60)
+        list(GET status 0 code)
+        if(NOT code EQUAL 0)
+            list(GET status 1 error)
+            list(APPEND failures "${url}: ${error}")
+            file(REMOVE "${tarball}")
+            continue()
+        endif()
+        file(SHA256 "${tarball}" got)
+        if(NOT got STREQUAL sha256)
+            list(APPEND failures "${url}: sha256 ${got}, wanted ${sha256}")
+            file(REMOVE "${tarball}")
+            continue()
+        endif()
+        file(ARCHIVE_EXTRACT INPUT "${tarball}" DESTINATION "${work}/unpacked")
+        file(GLOB top LIST_DIRECTORIES true "${work}/unpacked/*")
+        list(LENGTH top count)
+        if(NOT count EQUAL 1 OR NOT IS_DIRECTORY "${top}")
+            file(REMOVE_RECURSE "${work}")
+            message(FATAL_ERROR "${url} does not hold a single top directory, which "
+                    "third_party/${name} is unpacked from; check backends/crypto-sources.txt")
+        endif()
+        file(WRITE "${top}/.pin" "${sha256}\n")
+        if(EXISTS "${tree}")
+            file(RENAME "${tree}" "${work}/previous")
+        endif()
+        file(RENAME "${top}" "${tree}")
+        file(REMOVE_RECURSE "${work}")
+        message(STATUS "${name}: ${version} unpacked into third_party/${name}")
+        return()
+    endforeach()
+    file(REMOVE_RECURSE "${work}")
+    list(JOIN failures "\n  " failures)
+    list(GET urls 0 tarball)
+    string(REGEX REPLACE "^.*/" "" tarball "${tarball}")
+    message(FATAL_ERROR "third_party/${name} ${why}, and no mirror gave ${name} ${version}:\n"
+            "  ${failures}\n"
+            "Configure again once a mirror serves it, or run `./gradlew :backends:fetchCryptoSources`, "
+            "or unpack the tarball by hand: download it from one of those URLs, check that its "
+            "SHA-256 is ${sha256}, then, from the repository root, `mkdir third_party/${name} && "
+            "tar -xf ${tarball} --strip-components=1 -C third_party/${name} && "
+            "echo ${sha256} > third_party/${name}/.pin`. The pins are in backends/crypto-sources.txt.")
+endfunction()
 
 block(SCOPE_FOR VARIABLES PROPAGATE VENTO_GNUTLS_VERSION)
     include(ExternalProject)
@@ -43,11 +162,7 @@ block(SCOPE_FOR VARIABLES PROPAGATE VENTO_GNUTLS_VERSION)
 
     get_filename_component(third_party "${CMAKE_CURRENT_LIST_DIR}/../../../../third_party" ABSOLUTE)
     foreach(name nettle gnutls)
-        if(NOT EXISTS "${third_party}/${name}/configure")
-            message(FATAL_ERROR "third_party/${name} is empty: run `./gradlew :backends:fetchCryptoSources`, "
-                    "or unpack the tarball `backends/build.gradle` names there (its URL and SHA-256 are "
-                    "in `cryptoSources`) with `tar -x --strip-components=1`")
-        endif()
+        vento_crypto_source("${third_party}" ${name})
         file(STRINGS "${third_party}/${name}/configure" version REGEX "^PACKAGE_VERSION='[0-9.]+'$")
         if(NOT version MATCHES "'([0-9.]+)'")
             message(FATAL_ERROR "no PACKAGE_VERSION in third_party/${name}/configure")

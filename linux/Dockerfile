@@ -7,8 +7,7 @@
 # `lib/` with the backends' `libvento_*.so` (the binary's rpath is
 # `$ORIGIN/lib`). The tree can be moved anywhere as a whole: /opt/vento, a
 # home directory, a USB stick. From the repository root, with the submodules
-# initialised (`git submodule update --init --recursive`) and GnuTLS and
-# nettle unpacked (`./gradlew :backends:fetchCryptoSources`):
+# initialised (`git submodule update --init --recursive`):
 #
 #   docker build -f linux/Dockerfile --output type=local,dest=build/dist/vento .
 #
@@ -16,7 +15,10 @@
 # to submodules at their pinned commits and accepts submodules `./patch.sh`
 # has already patched. It writes nothing to the checkout.
 # `linux/Dockerfile.dockerignore` limits the context to the sources the build
-# reads.
+# reads. GnuTLS and nettle are not in it: the CMake build downloads their
+# release tarballs and checks them against the SHA-256 hashes in
+# `backends/crypto-sources.txt`, as on a machine without them, so the result
+# does not depend on whatever is unpacked in the checkout.
 #
 # The binary needs the glibc symbol versions it was linked against, so it runs
 # on the build's glibc and later ones. The build therefore runs on Ubuntu

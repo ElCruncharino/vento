@@ -2,6 +2,8 @@
 # a .dockerignore at the root). It holds only the sources the Linux build
 # reads: no Android app, add-ons or website, no submodules only the phone
 # builds, and no build trees (hundreds of gigabytes in a working checkout).
+# Not GnuTLS or nettle either: the build downloads and checks their tarballs
+# (linux/Dockerfile says why).
 *
 
 !Cargo.toml
@@ -15,7 +17,6 @@
 !third_party/dav1d/
 !third_party/ffmpeg/
 !third_party/freerdp/
-!third_party/gnutls/
 !third_party/hbb_common/
 !third_party/ironrdp/
 !third_party/libc-shim/
@@ -25,7 +26,6 @@
 !third_party/libvncserver/
 !third_party/logger/
 !third_party/mcpelauncher-linker/
-!third_party/nettle/
 !third_party/openssl/
 !third_party/pixman/
 !third_party/ryll/
