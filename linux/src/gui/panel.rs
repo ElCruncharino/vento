@@ -235,7 +235,9 @@ impl Panel {
                 {
                     continue;
                 }
-                self.option_row(ui, spec, values, actions);
+                // `--view-only` forces it.
+                let forced = spec.key == "ViewOnly" && controls.settings.view_only;
+                self.option_row(ui, spec, values, !forced, actions);
             }
 
             if facts.can_resize {
@@ -321,14 +323,21 @@ impl Panel {
     }
 
     /// One live option as the control its kind calls for, showing what it
-    /// is set to now.
-    fn option_row(&mut self, ui: &mut Ui, spec: &'static Spec, values: &Options, actions: &mut Vec<Action>) {
+    /// is set to now; disabled unless `enabled`.
+    fn option_row(
+        &mut self,
+        ui: &mut Ui,
+        spec: &'static Spec,
+        values: &Options,
+        enabled: bool,
+        actions: &mut Vec<Action>,
+    ) {
         ui.label(RichText::new(spec.label).weak());
         let current = values.get(spec.key);
         match spec.ty {
             Type::Bool => {
                 let mut on = current.eq_ignore_ascii_case("true");
-                if ui.checkbox(&mut on, "").changed() {
+                if ui.add_enabled(enabled, egui::Checkbox::without_text(&mut on)).changed() {
                     actions.push(Action::SetOption(spec.key, if on { "true" } else { "false" }.to_string()));
                 }
             }

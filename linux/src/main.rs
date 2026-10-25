@@ -3,28 +3,31 @@
 
 //! `vento`: one process that holds a session on any of the eight backends.
 //!
-//! [`main`] parses the command line into a [`Mode`] and dispatches. The
-//! window is the default: nothing on the command line opens the connection
-//! dialog empty, a backend and an address open it filled in (connecting to
-//! another machine takes a click, so a typo does not start a connection), and
-//! `--connect` opens straight into the session, which quits the window when
-//! it is disconnected. `--list` prints the backends and their options, and
-//! `--forget` forgets a server (`known_hosts::forget`) without connecting
-//! anywhere. Any of the probe's flags (`--probe`, `--out`, `--click`, …)
-//! selects the headless mode instead, modelled on
+//! [`main`] parses the command line ([`cli`]) into a [`Mode`] and
+//! dispatches. The window is the default: nothing on the command line opens
+//! the connection dialog empty, a backend and an address open it filled in
+//! (connecting to another machine takes a click, so a typo does not start a
+//! connection), and `--connect` opens straight into the session, which quits
+//! the window when it is disconnected. `--help` prints the options and the
+//! backends with theirs, `--list` each backend's library, and `--forget`
+//! forgets a server (`known_hosts::forget`) without connecting anywhere.
+//! `--probe` selects the headless mode instead, modelled on
 //! `backends/platform/linux/probe/probe.c`: it connects, prints every event,
-//! answers the prompts from the flags, writes the framebuffer and a
-//! thumbnail, prints the facts, and exits with a status that is zero only if
-//! it connected, stayed connected, wrote what `--out` asked for and closed
-//! when told to. Input is sent and not confirmed, since no protocol confirms
-//! it; the failures that can be detected (input requested in view only, a
-//! clipboard the backend says has nowhere to go) fail it.
+//! answers the prompts from the flags, writes the framebuffer and its
+//! thumbnail where asked, prints the facts, and exits with a status that is
+//! zero only if it connected, stayed connected, wrote what was asked for and
+//! closed when told to. Input is sent and not confirmed, since no protocol
+//! confirms it; the failures that can be detected (input requested in view
+//! only, a clipboard the backend says has nowhere to go) fail it.
+
+mod cli;
 
 fn main() {
     std::process::exit(host::run(std::env::args().skip(1).collect()));
 }
 
 mod host {
+    use super::cli::{self, Arg};
     use runtime::media::audio::Outputs as _;
     use std::cell::Cell;
     use std::path::PathBuf;
@@ -41,7 +44,9 @@ mod host {
 
     /// What the command line resolved to.
     enum Mode {
-        /// The backends and their options.
+        /// The options, and the backends with theirs.
+        Help,
+        /// Each backend's library.
         List,
         /// A headless session, as the probe.
         Probe(Box<Probe>),
@@ -81,14 +86,17 @@ mod host {
         sound: Cell<vento::events::Sound>,
         /// `--layout`: screens to ask for, left to right.
         layout: Option<Vec<(u32, u32)>>,
-        /// `--no-clipboard-in`'s opposite: whether what the far end copies is
-        /// shown, which is the probe's way of taking it.
+        /// `--no-recv-clipboard`'s opposite: whether what the far end copies
+        /// is shown, which is the probe's way of taking it.
         clipboard_in: bool,
-        /// `--hw-decode`: how video is decoded.
+        /// `--video` and `--hw-decode`: how video is decoded.
         hw_decode: backends::Hardware,
-        /// `--audio-output`: where the far end's sound plays.
+        /// `--audio`: where the far end's sound plays.
         audio_output: backends::AudioOutput,
+        /// `--out` and `--out-thumb`: where the framebuffer and its
+        /// thumbnail go.
         out: Option<PathBuf>,
+        out_thumb: Option<PathBuf>,
         thumb_step: usize,
         /// Whether `--password` has been given to a credentials prompt.
         /// It is given once: a second prompt is the far end saying it was
@@ -100,95 +108,40 @@ mod host {
         refused: Cell<bool>,
     }
 
-    const USAGE: &str = "\
-usage: vento                                   the connection dialog
-       vento [<backend> [<address>]] [options] the dialog, filled in
-       vento <backend> <address> --connect ... a session in a window
-       vento <backend> <address> --probe N ... a headless probe
-       vento --list
-       vento --forget <address> [--state-dir DIR]
-
-  <backend>              one of the ids --list prints
-  <address>              host, host:port, host:display, [literal]:port — the
-                         backend decides what a number means
-  --user NAME            the user name; for RDP, DOMAIN\\user or user@domain
-  --domain NAME          the RDP domain, if not folded into --user
-  --password TEXT        the password; without one the credentials prompt is
-                         answered with a cancel (the probe gives it to the
-                         first prompt only: a second means it was refused)
-  -o KEY=VALUE           a backend option (repeatable); --list shows each
-  --connect              connect at once instead of showing the dialog;
-                         disconnecting that session quits (an ending the
-                         far end caused shows the dialog with the reason)
-  --no-clipboard-out     do not send locally copied text to the far end
-  --no-clipboard-in      do not take what the far end copies onto the local
-                         clipboard
-  --no-grab-keyboard     leave the window manager's shortcuts (Alt+Tab, Super)
-                         to this desktop rather than sending them on
-  --software-cursor      draw the far end's cursor shape into the picture,
-                         hiding this desktop's, instead of making it the
-                         window's own pointer where this end owns the
-                         pointer
-  --hw-decode[=HOW]      decode video on the GPU: vaapi, auto (the same, VAAPI
-                         then software; the default without =HOW) or off,
-                         which is what it is without the flag; where the
-                         device does not take a stream it is decoded in
-                         software. RustDesk, TigerVNC's H.264 and FreeRDP's
-                         H.264 use it (the dialog's Settings have all five,
-                         and the panel switches them live)
-  --audio-output=WHERE   play the far end's sound on pipewire (a stream of
-                         its own; nothing where no daemon answers), alsa
-                         (ALSA's default device) or auto, the default:
-                         PipeWire where its daemon answers, ALSA otherwise.
-                         VENTO_AUDIO_OUTPUT says the same where this is not
-                         given
-  --x11, --wayland       open the window on that display server (default:
-                         Wayland where WAYLAND_DISPLAY is set, X11 otherwise)
-  --library-dir DIR      where RealVNC's two libraries are (XDG data dir)
-  --state-dir DIR        where backends keep what they leave behind (XDG state
-                         dir); the known hosts are in $XDG_CONFIG_HOME/vento
-  --verbose              let the backends' debug lines through (RUST_LOG=trace
-                         also each key typed, by keysym: for tests only)
-  --forget ADDRESS       forget a server, connecting nowhere: its pins in the
-                         known hosts, its RealVNC identity and RealVNC's own
-                         record of it (under --state-dir), so that the next
-                         connection asks again. Every backend's entries for
-                         it; host:1, host:5901 and host::5901 are one server,
-                         a bare host only itself; prints what it removed
-
-headless, any of which selects the probe instead of the window:
-  --probe SECONDS        how long to watch after connecting (5)
-  --connect-timeout N    how long to wait for the connection (30)
-  --out FILE.ppm         write the framebuffer there, and FILE-thumb.ppm
-  --thumb-step N         the thumbnail's scale, 1/N (8)
-  --trust                answer yes to every trust, security and message prompt,
-                         for this run: a certificate the known hosts match
-                         needs no --trust, and none is ever pinned from here
-  --click X,Y            left-click there once connected
-  --key KEYSYM           press and release this X keysym: 0x61, 97 and 0141
-                         are all 'a', as strtol reads them
-  --clipboard TEXT       send this as the clipboard a second after connecting
-  --sound-cycle SECONDS  turn the far end's sound off, and on again, every
-                         SECONDS, where the session's switch asks the far
-                         end (QEMU's audio, SPICE, RustDesk)
-  --resize WxH           ask for a desktop this size a second after connecting
-  --layout WxH,WxH,...   ask for these screens side by side instead, the far
-                         end's own screens by position and new ones past them";
-
     pub fn run(args: Vec<String>) -> i32 {
-        vento::log::init(args.iter().any(|a| a == "--verbose"));
+        let args = match cli::split(args, cli::FLAGS) {
+            Ok(args) => args,
+            Err(message) => return usage_error(&message),
+        };
+        vento::log::init(args.contains(&Arg::Flag("verbose", None)));
         match parse(args) {
+            Ok(Mode::Help) => {
+                print!("{}\n{}", cli::usage(&defaults()), cli::backends(&help_backends()));
+                0
+            }
             Ok(Mode::List) => {
-                list();
+                for kind in backends::all() {
+                    println!("{}", cli::list_line(kind.id, &backends::library_path(kind)));
+                }
                 0
             }
             Ok(Mode::Probe(probe)) => probe.run(),
             Ok(Mode::Gui(launch)) => gui::run(*launch),
             Ok(Mode::Forget { address, dirs }) => forget(&address, &dirs),
-            Err(message) => {
-                eprintln!("{message}\n\n{USAGE}");
-                2
-            }
+            Err(message) => usage_error(&message),
+        }
+    }
+
+    fn usage_error(message: &str) -> i32 {
+        eprintln!("vento: {message}\nsee vento --help");
+        2
+    }
+
+    /// The directories' defaults, as the help shows them.
+    fn defaults() -> cli::Defaults {
+        cli::Defaults {
+            extlib_dir: backends::default_extlib_dir().display().to_string(),
+            state_dir: backends::default_state_dir().display().to_string(),
         }
     }
 
@@ -216,52 +169,55 @@ headless, any of which selects the probe instead of the window:
         i32::from(!done.failed.is_empty())
     }
 
-    /// The backends and, under each, its options as `-o` takes them.
-    fn list() {
-        for kind in backends::all() {
-            println!("{}  {}  {}", kind.id, kind.name, (kind.version)());
-            println!("    {}", kind.description);
-            for spec in kind.options {
-                let type_note = match spec.ty {
-                    Type::Bool => "true|false".to_string(),
-                    Type::Int => "N".to_string(),
-                    Type::Text => "text".to_string(),
-                    Type::Choice => spec
-                        .choices
-                        .iter()
-                        .map(|c| c.value)
-                        .collect::<Vec<_>>()
-                        .join("|"),
-                };
-                let gate = spec
-                    .gate
-                    .map(|g| format!(" (only when {}={})", g.key, g.values.join("/")))
-                    .unwrap_or_default();
-                println!(
-                    "    -o {}={}  [{}]{}  {}",
-                    spec.key,
-                    spec.default,
-                    type_note,
-                    gate,
-                    spec.summary_on(Platform::Linux).unwrap_or(spec.label)
-                );
-            }
-            println!();
-        }
+    /// The backends and their options as the help lists them, each library
+    /// opened for its version.
+    fn help_backends() -> Vec<cli::Backend> {
+        backends::all()
+            .into_iter()
+            .map(|kind| cli::Backend {
+                id: kind.id.to_string(),
+                name: kind.name.to_string(),
+                version: (kind.version)(),
+                description: kind.description.to_string(),
+                options: kind
+                    .options
+                    .iter()
+                    .map(|spec| {
+                        let values = match spec.ty {
+                            Type::Bool => vec!["true".to_string(), "false".to_string()],
+                            Type::Choice => spec
+                                .choices
+                                .iter()
+                                .map(|c| if c.value.is_empty() { "\"\"".to_string() } else { c.value.to_string() })
+                                .collect(),
+                            Type::Int | Type::Text => Vec::new(),
+                        };
+                        let gate = spec
+                            .gate
+                            .map(|g| format!(" (only when {}={})", g.key, g.values.join("/")))
+                            .unwrap_or_default();
+                        cli::BackendOption {
+                            key: spec.key.to_string(),
+                            default: spec.default.to_string(),
+                            values,
+                            description: format!("{}{gate}", spec.summary_on(Platform::Linux).unwrap_or(spec.label)),
+                        }
+                    })
+                    .collect(),
+            })
+            .collect()
     }
 
-    fn parse(args: Vec<String>) -> Result<Mode, String> {
-        if args.iter().any(|a| a == "--list") {
-            return Ok(Mode::List);
-        }
+    fn parse(args: Vec<Arg>) -> Result<Mode, String> {
+        let mut help = false;
+        let mut list = false;
         let mut positional = Vec::new();
         let mut user = String::new();
         let mut domain = String::new();
         let mut password = None;
         let mut assignments: Vec<String> = Vec::new();
-        let mut seconds = 5u64;
-        let mut connect_timeout = 30u64;
-        let mut trust = false;
+        let mut seconds = None;
+        let mut connect_timeout = cli::CONNECT_TIMEOUT;
         let mut click = None;
         let mut key = None;
         let mut clipboard = None;
@@ -269,114 +225,120 @@ headless, any of which selects the probe instead of the window:
         let mut sound_cycle = None;
         let mut layout = None;
         let mut out = None;
-        let mut thumb_step = 8usize;
-        let mut dirs = Dirs::xdg();
+        let mut out_thumb = None;
+        let mut thumb_step = cli::THUMB_STEP;
+        let mut state_dir = None;
+        let mut extlib_dir = None;
         let mut settings = gui::Settings::default();
-        // Any of the probe's own flags asks for the probe; without one, the
-        // window.
-        let mut headless = false;
+        // The first of the probe's own options, which need `--probe`.
+        let mut probe_only = None;
         let mut connect = false;
         // The window's display server, if named; the probe has no window and
-        // accepts either silently.
+        // takes any.
         let mut display_server = None;
         let mut forget = None;
 
-        let mut it = args.into_iter().peekable();
-        let value = |it: &mut std::iter::Peekable<std::vec::IntoIter<String>>, flag: &str| {
-            it.next().ok_or_else(|| format!("{flag} needs a value"))
-        };
-        while let Some(arg) = it.next() {
-            match arg.as_str() {
-                "--verbose" => {}
-                "--user" => user = value(&mut it, "--user")?,
-                "--domain" => domain = value(&mut it, "--domain")?,
-                "--password" => password = Some(value(&mut it, "--password")?),
-                "-o" => assignments.push(value(&mut it, "-o")?),
-                "--connect" => connect = true,
-                "--no-clipboard-out" => settings.clipboard_out = false,
-                "--no-clipboard-in" => settings.clipboard_in = false,
-                "--no-grab-keyboard" => settings.grab_keyboard = false,
-                "--software-cursor" => settings.software_cursor = true,
-                "--hw-decode" => settings.hw_decode = backends::Hardware::Auto,
-                _ if arg.starts_with("--hw-decode=") => settings.hw_decode = hw_decode(&arg)?,
-                _ if arg.starts_with("--audio-output=") => settings.audio_output = audio_output(&arg)?,
-                "--x11" | "--wayland" => {
-                    let named = if arg == "--x11" { gui::DisplayServer::X11 } else { gui::DisplayServer::Wayland };
-                    if display_server.is_some_and(|p| p != named) {
-                        return Err("--x11 and --wayland are each other's opposite".into());
+        for arg in args {
+            let (name, value) = match arg {
+                Arg::Positional(arg) => {
+                    positional.push(arg);
+                    continue;
+                }
+                Arg::Flag(name, value) => (name, value.unwrap_or_default()),
+            };
+            if cli::PROBE_ONLY.contains(&name) {
+                probe_only.get_or_insert(name);
+            }
+            match name {
+                "help" => help = true,
+                "list" => list = true,
+                "forget" => forget = Some(value),
+                "connect" => connect = true,
+                "user" => user = value,
+                "domain" => domain = value,
+                "password" => password = Some(value),
+                "option" => assignments.push(value),
+                "trust" => settings.trust = true,
+                "platform" => {
+                    display_server = match value.as_str() {
+                        "auto" => None,
+                        "x11" => Some(gui::DisplayServer::X11),
+                        "wayland" => Some(gui::DisplayServer::Wayland),
+                        _ => return Err(format!("--platform: {value:?} is not one of auto, x11, or wayland")),
                     }
-                    display_server = Some(named);
                 }
-                "--probe" => {
-                    headless = true;
-                    seconds = number::<u64>(&value(&mut it, "--probe")?, "--probe")?;
+                "video" => {
+                    settings.video = backends::hardware_named(&value)
+                        .ok_or_else(|| format!("--video: {value:?} is not one of auto, vaapi, or off"))?
                 }
-                "--connect-timeout" => {
-                    headless = true;
-                    connect_timeout = number::<u64>(&value(&mut it, "--connect-timeout")?, "--connect-timeout")?
+                "audio" => {
+                    settings.audio_output = backends::AudioOutput::from_name(&value)
+                        .ok_or_else(|| format!("--audio: {value:?} is not one of auto, pipewire, alsa, or off"))?
                 }
-                "--out" => {
-                    headless = true;
-                    out = Some(PathBuf::from(value(&mut it, "--out")?));
+                "cursor" => {
+                    settings.software_cursor = match value.as_str() {
+                        "native" => false,
+                        "software" => true,
+                        _ => return Err(format!("--cursor: {value:?} is not one of native or software")),
+                    }
                 }
-                "--thumb-step" => {
-                    headless = true;
-                    thumb_step = number::<usize>(&value(&mut it, "--thumb-step")?, "--thumb-step")?.max(1)
+                "extlib-dir" => extlib_dir = Some(PathBuf::from(value)),
+                "state-dir" => state_dir = Some(PathBuf::from(value)),
+                "verbose" => {}
+                "scale" => (settings.scale, settings.fit_window) = scale(&value)?,
+                "view-only" => settings.view_only = true,
+                "hw-decode" => settings.hw_decode = true,
+                "no-send-clipboard" => settings.clipboard_out = false,
+                "no-recv-clipboard" => settings.clipboard_in = false,
+                "no-grab-keyboard" => settings.grab_keyboard = false,
+                "probe" => seconds = Some(number::<u64>(&value, "--probe")?),
+                "connect-timeout" => connect_timeout = number::<u64>(&value, "--connect-timeout")?,
+                "out" => out = Some(PathBuf::from(value)),
+                "out-thumb" => out_thumb = Some(PathBuf::from(value)),
+                "thumb-step" => thumb_step = number::<usize>(&value, "--thumb-step")?.max(1),
+                "click" => {
+                    let (x, y) = value.split_once(',').ok_or("--click: not X,Y")?;
+                    click = Some((number::<i32>(x.trim(), "--click")?, number::<i32>(y.trim(), "--click")?));
                 }
-                "--trust" => {
-                    headless = true;
-                    trust = true;
-                }
-                "--click" => {
-                    headless = true;
-                    let v = value(&mut it, "--click")?;
-                    let (x, y) = v.split_once(',').ok_or("--click: not X,Y")?;
-                    click = Some((
-                        number::<i32>(x.trim(), "--click")?,
-                        number::<i32>(y.trim(), "--click")?,
-                    ));
-                }
-                "--key" => {
-                    headless = true;
-                    key = Some(keysym(&value(&mut it, "--key")?)?);
-                }
-                "--clipboard" => {
-                    headless = true;
-                    clipboard = Some(value(&mut it, "--clipboard")?);
-                }
-                "--sound-cycle" => {
-                    headless = true;
-                    let v = value(&mut it, "--sound-cycle")?;
-                    let seconds: u64 = v.parse().ok().filter(|&n| n > 0).ok_or_else(|| format!("--sound-cycle {v:?}"))?;
+                "key" => key = Some(keysym(&value)?),
+                "clipboard" => clipboard = Some(value),
+                "sound-cycle" => {
+                    let seconds: u64 =
+                        value.parse().ok().filter(|&n| n > 0).ok_or_else(|| format!("--sound-cycle {value:?}"))?;
                     sound_cycle = Some(Duration::from_secs(seconds));
                 }
-                "--resize" => {
-                    headless = true;
-                    resize = Some(dimensions(&value(&mut it, "--resize")?, "--resize")?);
-                }
-                "--layout" => {
-                    headless = true;
-                    let v = value(&mut it, "--layout")?;
+                "resize" => resize = Some(dimensions(&value, "--resize")?),
+                "layout" => {
                     layout = Some(
-                        v.split(',')
+                        value
+                            .split(',')
                             .map(|s| dimensions(s.trim(), "--layout"))
                             .collect::<Result<Vec<_>, _>>()?,
                     );
                 }
-                "--forget" => forget = Some(value(&mut it, "--forget")?),
-                "--library-dir" => dirs.realvnc_libs = PathBuf::from(value(&mut it, "--library-dir")?),
-                "--state-dir" => dirs.state = PathBuf::from(value(&mut it, "--state-dir")?),
-                other if other.starts_with('-') && other != "-" => {
-                    return Err(format!("unknown option {other:?}"));
-                }
-                _ => positional.push(arg),
+                other => unreachable!("--{other} is in cli::FLAGS but not parsed"),
             }
         }
 
+        if help {
+            return Ok(Mode::Help);
+        }
+        if list {
+            return Ok(Mode::List);
+        }
+        let headless = seconds.is_some();
+        if let Some(name) = probe_only
+            && !headless
+        {
+            return Err(format!("--{name} needs --probe"));
+        }
+        let dirs = backends::dirs(
+            &state_dir.unwrap_or_else(backends::default_state_dir),
+            &extlib_dir.unwrap_or_else(backends::default_extlib_dir),
+        );
         if let Some(address) = forget {
             if !positional.is_empty() || headless || connect || !assignments.is_empty() {
-                return Err("--forget only takes an address, and not other options"
-                    .into());
+                return Err("--forget only takes an address, and not other options".into());
             }
             if trust::key(&address).is_empty() {
                 return Err("--forget needs an address".into());
@@ -407,9 +369,12 @@ headless, any of which selects the probe instead of the window:
             options::find(kind.options, k)?.check(v)?;
             options.set(k, v);
         }
+        if settings.view_only && options::find(kind.options, "ViewOnly").is_ok() {
+            options.set("ViewOnly", "true");
+        }
         options.check_requirements(kind.options)?;
 
-        if !headless {
+        let Some(seconds) = seconds else {
             return Ok(Mode::Gui(Box::new(gui::Launch {
                 request: Some(gui::Request {
                     kind,
@@ -424,7 +389,7 @@ headless, any of which selects the probe instead of the window:
                 settings,
                 display_server,
             })));
-        }
+        };
 
         Ok(Mode::Probe(Box::new(Probe {
             kind,
@@ -436,7 +401,7 @@ headless, any of which selects the probe instead of the window:
             dirs,
             seconds,
             connect_timeout,
-            trust,
+            trust: settings.trust,
             click,
             key,
             clipboard,
@@ -447,9 +412,10 @@ headless, any of which selects the probe instead of the window:
             sound: Cell::new(Default::default()),
             layout,
             clipboard_in: settings.clipboard_in,
-            hw_decode: settings.hw_decode,
+            hw_decode: settings.hardware(),
             audio_output: settings.audio_output,
             out,
+            out_thumb,
             thumb_step,
             answered: Cell::new(false),
             refused: Cell::new(false),
@@ -461,18 +427,24 @@ headless, any of which selects the probe instead of the window:
         format!("id={} {}x{}+{}+{}", m.id, m.width, m.height, m.x, m.y)
     }
 
-    /// Parses `--hw-decode=HOW`.
-    fn hw_decode(arg: &str) -> Result<backends::Hardware, String> {
-        let how = arg.split_once('=').map_or("", |(_, how)| how);
-        backends::hardware_named(how)
-            .ok_or_else(|| format!("--hw-decode: {how:?} is not one of vaapi, auto, or off"))
-    }
-
-    /// Parses `--audio-output=WHERE`.
-    fn audio_output(arg: &str) -> Result<backends::AudioOutput, String> {
-        let name = arg.split_once('=').map_or("", |(_, name)| name);
-        backends::AudioOutput::from_name(name)
-            .ok_or_else(|| format!("--audio-output: {name:?} is not one of pipewire, alsa or auto"))
+    /// `--scale`'s modes: the window's own, and `none-resize`, which is
+    /// `none` (one to one) with the window made the desktop's size once.
+    fn scale(value: &str) -> Result<(gui::ScaleMode, bool), String> {
+        use gui::ScaleMode;
+        Ok(match value {
+            "fit-width" => (ScaleMode::FitWidth, false),
+            "fit-height" => (ScaleMode::FitHeight, false),
+            "fill-width" => (ScaleMode::FillWidth, false),
+            "fill-height" => (ScaleMode::FillHeight, false),
+            "none" => (ScaleMode::Original, false),
+            "none-resize" => (ScaleMode::Original, true),
+            _ => {
+                return Err(format!(
+                    "--scale: {value:?} is not one of fit-height, fit-width, fill-width, fill-height, none, or \
+                     none-resize"
+                ));
+            }
+        })
     }
 
     /// `WxH`, neither of them zero.
@@ -549,11 +521,13 @@ headless, any of which selects the probe instead of the window:
                     client_name: &client_name,
                     platform: Platform::Linux,
                     decoders: Some(backends::decoders(self.hw_decode)),
-                    audio: Some({
+                    // `--audio off`: no output, so the far end's sound is
+                    // dropped.
+                    audio: {
                         let audio = backends::audio(&self.address, self.audio_output);
                         *self.sound_controls.borrow_mut() = Some(Arc::clone(audio.controls()));
-                        audio
-                    }),
+                        audio.plays().then_some(audio as _)
+                    },
                 };
                 say("create");
                 match self.kind.start(&connect) {
@@ -596,7 +570,7 @@ headless, any of which selects the probe instead of the window:
                     status = 1;
                 } else {
                     self.facts(&backend, &say);
-                    if self.out.is_some() && !self.write_pictures(&backend, &say) {
+                    if !self.write_pictures(&backend, &say) {
                         status = 1;
                     }
                     // Asked at the end rather than when it was sent, since an
@@ -713,7 +687,7 @@ headless, any of which selects the probe instead of the window:
                     }
                 }
                 Event::Clipboard(text) if !self.clipboard_in => {
-                    say(&format!("clipboard {} bytes, not taken (--no-clipboard-in)", text.len()))
+                    say(&format!("clipboard {} bytes, not taken (--no-recv-clipboard)", text.len()))
                 }
                 Event::Clipboard(text) => say(&format!(
                     "clipboard {} bytes: {:?}{}",
@@ -929,10 +903,11 @@ headless, any of which selects the probe instead of the window:
             }
         }
 
+        /// `--out` and `--out-thumb`: whether each asked for was written.
         fn write_pictures(&self, backend: &Arc<dyn Backend>, say: &dyn Fn(&str)) -> bool {
-            let Some(out) = &self.out else {
+            if self.out.is_none() && self.out_thumb.is_none() {
                 return true;
-            };
+            }
             let facts = backend.facts();
             let (width, height) = (facts.width, facts.height);
             if width == 0 || height == 0 {
@@ -940,39 +915,39 @@ headless, any of which selects the probe instead of the window:
                 return false;
             }
             let mut ok = true;
-            let mut rgba = vec![0u8; width * height * 4];
-            if backend.read_region(0, 0, width, height, &mut rgba, width * 4, 0, 0) {
-                let picture = vento::backend::Picture { width, height, rgba };
-                match ppm::write(out, &picture) {
-                    Ok(()) => say(&format!("read_region {width}x{height} -> {}", out.display())),
-                    Err(e) => {
-                        say(&format!("writing {}: {e}", out.display()));
-                        ok = false;
-                    }
+            let write = |path: &std::path::Path, picture: &vento::backend::Picture, what: String| match ppm::write(
+                path, picture,
+            ) {
+                Ok(()) => {
+                    say(&format!("{what} -> {}", path.display()));
+                    true
                 }
-            } else {
-                say(&format!("read_region {width}x{height} refused"));
-                ok = false;
+                Err(e) => {
+                    say(&format!("writing {}: {e}", path.display()));
+                    false
+                }
+            };
+            if let Some(out) = &self.out {
+                let mut rgba = vec![0u8; width * height * 4];
+                if backend.read_region(0, 0, width, height, &mut rgba, width * 4, 0, 0) {
+                    let picture = vento::backend::Picture { width, height, rgba };
+                    ok &= write(out, &picture, format!("read_region {width}x{height}"));
+                } else {
+                    say(&format!("read_region {width}x{height} refused"));
+                    ok = false;
+                }
             }
-
-            let step = self.thumb_step;
-            let thumb_path = ppm::thumbnail_path(out);
-            match backend.thumbnail(step) {
-                Some(picture) => match ppm::write(&thumb_path, &picture) {
-                    Ok(()) => say(&format!(
-                        "read_thumbnail 1/{step} {}x{} -> {}",
-                        picture.width,
-                        picture.height,
-                        thumb_path.display()
-                    )),
-                    Err(e) => {
-                        say(&format!("writing {}: {e}", thumb_path.display()));
+            if let Some(out) = &self.out_thumb {
+                let step = self.thumb_step;
+                match backend.thumbnail(step) {
+                    Some(picture) => {
+                        let what = format!("read_thumbnail 1/{step} {}x{}", picture.width, picture.height);
+                        ok &= write(out, &picture, what);
+                    }
+                    None => {
+                        say(&format!("read_thumbnail 1/{step} refused"));
                         ok = false;
                     }
-                },
-                None => {
-                    say(&format!("read_thumbnail 1/{step} refused"));
-                    ok = false;
                 }
             }
             ok
@@ -1000,46 +975,189 @@ headless, any of which selects the probe instead of the window:
             }
         }
 
-        #[test]
-        fn hardware_decoding_is_off_unless_asked_and_auto_when_bare() {
-            let settings = |args: &[&str]| match parse(args.iter().map(|a| a.to_string()).collect()) {
-                Ok(Mode::Gui(launch)) => launch.settings.hw_decode,
-                Ok(Mode::Probe(probe)) => probe.hw_decode,
-                _ => panic!("{args:?} did not parse"),
-            };
-            use backends::Hardware;
-            assert_eq!(settings(&[]), Hardware::Off);
-            assert_eq!(settings(&["--hw-decode"]), Hardware::Auto);
-            assert_eq!(settings(&["--hw-decode=vaapi"]), Hardware::On);
-            assert_eq!(settings(&["--hw-decode=auto"]), Hardware::Auto);
-            assert_eq!(settings(&["--hw-decode", "--hw-decode=off"]), Hardware::Off);
-            assert_eq!(
-                settings(&["rustdesk", "127.0.0.1", "--probe", "1", "--hw-decode=vaapi"]),
-                Hardware::On
-            );
-            for refused in ["--hw-decode=", "--hw-decode=VAAPI", "--hw-decode=nvdec", "--hw-decode=vulkan"] {
-                assert!(parse(vec![refused.to_string()]).is_err(), "{refused}");
+        fn parsed(args: &[&str]) -> Result<Mode, String> {
+            parse(cli::split(args.iter().map(|a| a.to_string()).collect(), cli::FLAGS)?)
+        }
+
+        fn launch(args: &[&str]) -> Box<gui::Launch> {
+            match parsed(args) {
+                Ok(Mode::Gui(launch)) => launch,
+                Ok(_) => panic!("{args:?} is not the window"),
+                Err(e) => panic!("{args:?}: {e}"),
+            }
+        }
+
+        fn probe(args: &[&str]) -> Box<Probe> {
+            match parsed(args) {
+                Ok(Mode::Probe(probe)) => probe,
+                Ok(_) => panic!("{args:?} is not the probe"),
+                Err(e) => panic!("{args:?}: {e}"),
             }
         }
 
         #[test]
-        fn the_sound_plays_where_it_is_told_and_auto_otherwise() {
-            let output = |args: &[&str]| match parse(args.iter().map(|a| a.to_string()).collect()) {
-                Ok(Mode::Gui(launch)) => launch.settings.audio_output,
-                Ok(Mode::Probe(probe)) => probe.audio_output,
-                _ => panic!("{args:?} did not parse"),
-            };
-            use backends::AudioOutput;
-            assert_eq!(output(&[]), AudioOutput::Auto);
-            assert_eq!(output(&["--audio-output=alsa"]), AudioOutput::Alsa);
-            assert_eq!(output(&["--audio-output=pipewire"]), AudioOutput::PipeWire);
+        fn hardware_decoding_is_off_unless_asked_and_decodes_as_video_says() {
+            use backends::Hardware;
+            let hardware = |args: &[&str]| launch(args).settings.hardware();
+            assert_eq!(hardware(&[]), Hardware::Off);
+            assert_eq!(hardware(&["--hw-decode"]), Hardware::Auto);
+            assert_eq!(hardware(&["--hw-decode", "--video", "vaapi"]), Hardware::On);
+            assert_eq!(hardware(&["--video=vaapi"]), Hardware::Off);
+            assert_eq!(hardware(&["--video=off", "--hw-decode"]), Hardware::Off);
+            assert_eq!(hardware(&["--video=vaapi", "--video=auto", "--hw-decode"]), Hardware::Auto);
+            assert_eq!(launch(&["--video=vaapi"]).settings.video, Hardware::On);
             assert_eq!(
-                output(&["tigervnc", "127.0.0.1", "--probe", "1", "--audio-output=alsa", "--audio-output=auto"]),
+                probe(&["rustdesk", "127.0.0.1", "--probe", "1", "--hw-decode", "--video=vaapi"]).hw_decode,
+                Hardware::On
+            );
+            for refused in [&["--video="][..], &["--video", "VAAPI"], &["--video=nvdec"], &["--video"]] {
+                assert!(parsed(refused).is_err(), "{refused:?}");
+            }
+            assert_eq!(
+                parsed(&["--video=nvdec"]).err().unwrap(),
+                "--video: \"nvdec\" is not one of auto, vaapi, or off"
+            );
+        }
+
+        #[test]
+        fn the_sound_plays_where_it_is_told_and_auto_otherwise() {
+            use backends::AudioOutput;
+            let output = |args: &[&str]| launch(args).settings.audio_output;
+            assert_eq!(output(&[]), AudioOutput::Auto);
+            assert_eq!(output(&["--audio", "alsa"]), AudioOutput::Alsa);
+            assert_eq!(output(&["--audio=pipewire"]), AudioOutput::PipeWire);
+            assert_eq!(output(&["--audio=off"]), AudioOutput::Off);
+            assert_eq!(
+                probe(&["tigervnc", "127.0.0.1", "--probe", "1", "--audio=alsa", "--audio=auto"]).audio_output,
                 AudioOutput::Auto
             );
-            for refused in ["--audio-output=", "--audio-output=pulse", "--audio-output=PipeWire", "--audio-output"] {
-                assert!(parse(vec![refused.to_string()]).is_err(), "{refused}");
+            for refused in [&["--audio="][..], &["--audio=pulse"], &["--audio=PipeWire"], &["--audio"]] {
+                assert!(parsed(refused).is_err(), "{refused:?}");
             }
+            assert_eq!(
+                parsed(&["--audio=pulse"]).err().unwrap(),
+                "--audio: \"pulse\" is not one of auto, pipewire, alsa, or off"
+            );
+        }
+
+        #[test]
+        fn the_window_s_platform_cursor_and_scale_are_by_name() {
+            use gui::{DisplayServer, ScaleMode};
+            assert_eq!(launch(&[]).display_server, None);
+            assert_eq!(launch(&["--platform", "x11"]).display_server, Some(DisplayServer::X11));
+            assert_eq!(launch(&["--platform=wayland"]).display_server, Some(DisplayServer::Wayland));
+            assert_eq!(launch(&["--platform=x11", "--platform=auto"]).display_server, None);
+            assert!(parsed(&["--platform=X11"]).is_err());
+            assert!(!launch(&[]).settings.software_cursor);
+            assert!(launch(&["--cursor=software"]).settings.software_cursor);
+            assert!(!launch(&["--cursor=software", "--cursor", "native"]).settings.software_cursor);
+            assert!(parsed(&["--cursor=hardware"]).is_err());
+            let scale = |args: &[&str]| {
+                let settings = launch(args).settings;
+                (settings.scale, settings.fit_window)
+            };
+            assert_eq!(scale(&[]), (ScaleMode::FitWidth, false));
+            assert_eq!(scale(&["--scale", cli::SCALE]), scale(&[]));
+            assert_eq!(scale(&["--scale=fit-height"]), (ScaleMode::FitHeight, false));
+            assert_eq!(scale(&["--scale=fill-width"]), (ScaleMode::FillWidth, false));
+            assert_eq!(scale(&["--scale=fill-height"]), (ScaleMode::FillHeight, false));
+            assert_eq!(scale(&["--scale=none"]), (ScaleMode::Original, false));
+            assert_eq!(scale(&["--scale=none-resize"]), (ScaleMode::Original, true));
+            assert_eq!(scale(&["--scale=none-resize", "--scale=none"]), (ScaleMode::Original, false));
+            assert!(parsed(&["--scale=1:1"]).is_err());
+        }
+
+        #[test]
+        fn the_session_options_are_the_settings_and_view_only_is_forced() {
+            let settings = launch(&["--no-send-clipboard", "--no-recv-clipboard", "--no-grab-keyboard"]).settings;
+            assert!(!settings.clipboard_out && !settings.clipboard_in && !settings.grab_keyboard);
+            let settings = launch(&[]).settings;
+            assert!(settings.clipboard_out && settings.clipboard_in && settings.grab_keyboard);
+            assert!(!settings.view_only && !settings.trust);
+
+            let forced = launch(&["--view-only", "rfb", "127.0.0.1:1", "-o", "ViewOnly=false"]);
+            assert!(forced.settings.view_only);
+            assert_eq!(forced.request.unwrap().options.get("ViewOnly"), "true");
+            let probe = probe(&["rfb", "127.0.0.1:1", "-P1", "--view-only"]);
+            assert_eq!(probe.options.get("ViewOnly"), "true");
+        }
+
+        #[test]
+        fn trust_is_for_the_window_and_the_probe_and_resize_only_for_the_probe() {
+            assert!(launch(&["--trust"]).settings.trust);
+            assert!(launch(&["--trust", "-c", "rfb", "127.0.0.1:1"]).settings.trust);
+            assert!(probe(&["rfb", "127.0.0.1:1", "--trust", "--probe=1"]).trust);
+            assert!(!probe(&["rfb", "127.0.0.1:1", "--probe=1"]).trust);
+            for (flag, value) in [
+                ("--connect-timeout", "5"),
+                ("--out", "x.ppm"),
+                ("--out-thumb", "x.ppm"),
+                ("--thumb-step", "4"),
+                ("--click", "1,2"),
+                ("--key", "0x61"),
+                ("--clipboard", "x"),
+                ("--sound-cycle", "2"),
+                ("--resize", "800x600"),
+                ("--layout", "800x600,800x600"),
+            ] {
+                let error = format!("{flag} needs --probe");
+                assert_eq!(parsed(&["rfb", "127.0.0.1:1", flag, value]).err(), Some(error.clone()));
+                assert_eq!(parsed(&["rfb", "127.0.0.1:1", "-c", flag, value]).err(), Some(error));
+                assert!(parsed(&["rfb", "127.0.0.1:1", flag, value, "-P", "1"]).is_ok(), "{flag}");
+            }
+            let p = probe(&["rfb", "127.0.0.1:1", "-P3", "--out", "a.ppm", "--out-thumb=b.ppm", "--thumb-step=4"]);
+            assert_eq!(p.seconds, 3);
+            assert_eq!(p.out, Some(PathBuf::from("a.ppm")));
+            assert_eq!(p.out_thumb, Some(PathBuf::from("b.ppm")));
+            assert_eq!(p.thumb_step, 4);
+            assert_eq!(p.connect_timeout, cli::CONNECT_TIMEOUT);
+            let p = probe(&["rfb", "127.0.0.1:1", "-P", "1", "--resize", "800x600", "--click=-1,5"]);
+            assert_eq!(p.resize, Some((800, 600)));
+            assert_eq!(p.click, Some((-1, 5)));
+        }
+
+        #[test]
+        fn known_hosts_and_state_are_in_the_state_dir_and_realvnc_in_the_extlib_dir() {
+            let dirs = launch(&["--state-dir", "/s", "--extlib-dir=/e"]).dirs;
+            assert_eq!(dirs.config, PathBuf::from("/s"));
+            assert_eq!(dirs.state, PathBuf::from("/s"));
+            assert_eq!(dirs.realvnc_libs, PathBuf::from("/e/realvnc"));
+            match parsed(&["-F", "host:1", "--state-dir=/s"]) {
+                Ok(Mode::Forget { address, dirs }) => {
+                    assert_eq!(address, "host:1");
+                    assert_eq!(dirs.config, PathBuf::from("/s"));
+                }
+                _ => panic!("not --forget"),
+            }
+        }
+
+        #[test]
+        fn each_form_of_the_command_line_is_its_mode() {
+            assert!(matches!(parsed(&["-h"]), Ok(Mode::Help)));
+            assert!(parsed(&["rfb", "--help", "--x"]).is_err());
+            assert!(matches!(parsed(&["rfb", "127.0.0.1:1", "-c", "--help"]), Ok(Mode::Help)));
+            assert!(matches!(parsed(&["--list"]), Ok(Mode::List)));
+            assert!(matches!(parsed(&["-L", "rfb"]), Ok(Mode::List)));
+            assert!(matches!(parsed(&["--forget=host:1"]), Ok(Mode::Forget { .. })));
+            assert_eq!(
+                parsed(&["-F", "host:1", "-c"]).err().unwrap(),
+                "--forget only takes an address, and not other options"
+            );
+            assert!(launch(&[]).request.is_none());
+            let dialog = launch(&["rfb"]);
+            assert!(!dialog.connect && dialog.request.as_ref().unwrap().address.is_empty());
+            let session = launch(&["-cume", "-pPW", "--domain", "D", "rfb", "127.0.0.1:1", "-oShared=false"]);
+            assert!(session.connect);
+            let request = session.request.unwrap();
+            assert_eq!((request.user.as_str(), request.domain.as_str()), ("me", "D"));
+            assert_eq!(request.password.as_deref(), Some("PW"));
+            assert_eq!(request.options.get("Shared"), "false");
+            assert_eq!(parsed(&["-c"]).err().unwrap(), "give a backend and an address");
+            assert_eq!(parsed(&["-c", "rfb"]).err().unwrap(), "give a backend and an address");
+            assert_eq!(parsed(&["-P", "1", "rfb"]).err().unwrap(), "give a backend and an address");
+            assert_eq!(parsed(&["nope", "h"]).err().unwrap(), "no backend \"nope\", see --list");
+            assert_eq!(probe(&["-P5", "rfb", "127.0.0.1:1"]).address, "127.0.0.1:1");
+            assert_eq!(parsed(&["--x11"]).err().unwrap(), "unknown option --x11");
         }
 
         #[test]

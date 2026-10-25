@@ -34,7 +34,7 @@ silence is played until `pactl` has shown the stream on the null sink.
 vento plays on a PipeWire stream of its own, and libpipewire reads
 `PIPEWIRE_NODE` from the environment: `PIPEWIRE_NODE=vento_test vento ...`
 plays into the null sink. So does ALSA's `default` device here, PipeWire's
-ALSA plugin, which is where vento's sound goes with `--audio-output=alsa`
+ALSA plugin, which is where vento's sound goes with `--audio alsa`
 (or `VENTO_AUDIO_OUTPUT=alsa`; the rig and every other program built on the
 platform crate read that) and where there is no PipeWire daemon. `sink.sh
 check` finds vento's own streams by their process id (node `vento`) and the

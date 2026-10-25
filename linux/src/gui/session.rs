@@ -80,7 +80,7 @@ use crate::events::{Cursor, Event, Mailbox, State};
 use crate::known_hosts::{self, KnownHosts, Store};
 use api::trust::{self, Decision};
 use runtime::media::audio::{Outputs, Playback, Sound, Switch};
-use crate::options::Options;
+use crate::options::{self, Options};
 use egui::{CursorIcon, TextureHandle, TextureOptions, Vec2, ViewportId, vec2};
 use pane::{MonitorKey, Pane, PaneId, Rebound};
 use std::collections::VecDeque;
@@ -317,7 +317,7 @@ impl Session {
     /// Starts connecting. `screen` is the window's size in pixels, which
     /// is what the RDP backends' `DesktopSize=device` asks for.
     pub fn start(
-        request: Request,
+        mut request: Request,
         dirs: &Dirs,
         settings: Settings,
         placement: Placement,
@@ -327,7 +327,7 @@ impl Session {
     ) -> Result<Session, String> {
         let mailbox = Mailbox::new(Some(wake));
         let client_name = backends::client_name();
-        let decoders = backends::decoders(settings.hw_decode);
+        let decoders = backends::decoders(settings.hardware());
         // Told before the backend starts, so its first picture can be one:
         // only a hardware picture is ever left on the GPU, and only by a
         // backend that asks to, so with hardware decoding off this changes
@@ -336,6 +336,11 @@ impl Session {
         // Its streams are listed under the address until the far end says
         // its desktop's name (`poll`).
         let audio = backends::audio(&request.address, settings.audio_output);
+        // `--view-only`: the backend starts view only, whatever the dialog
+        // or `-o` said, and stays so (`set_option`).
+        if settings.view_only && options::find(request.kind.options, "ViewOnly").is_ok() {
+            request.options.set("ViewOnly", "true");
+        }
         let identity = known_hosts::saved_identity(&dirs.config, request.kind, &request.address);
         let connect = Connect {
             address: &request.address,
@@ -351,7 +356,7 @@ impl Session {
             client_name: &client_name,
             platform: backends::Platform::Linux,
             decoders: Some(Arc::clone(&decoders) as _),
-            audio: Some(Arc::clone(&audio) as _),
+            audio: audio.plays().then(|| Arc::clone(&audio) as _),
         };
         let backend = request.kind.start(&connect)?;
         // Typed or pasted, and a title before the desktop has a name.
@@ -362,8 +367,11 @@ impl Session {
         // it rather than from off, which had `-o ViewOnly=true` showing
         // "View only: off" while the window forwarded keys the backend
         // dropped, and held the keyboard grab for them.
-        let view_only = live.bool("ViewOnly");
+        let view_only = live.bool("ViewOnly") || settings.view_only;
         let pinned = backends::pinned_as(request.kind, &request.address, &request.options);
+        let mut main = Pane::new(ViewportId::ROOT, placement, None);
+        main.view.mode = settings.scale;
+        main.fit_pending = settings.fit_window;
         Ok(Session {
             request,
             settings,
@@ -376,7 +384,7 @@ impl Session {
             desktop: None,
             snapshot: Snapshot::default(),
             last_poll: None,
-            panes: vec![Pane::new(ViewportId::ROOT, placement, None)],
+            panes: vec![main],
             panel: Panel::default(),
             live,
             follower: Follower::default(),
@@ -607,6 +615,7 @@ impl Session {
                     self.closed = Some(if self.disconnecting.is_some() { String::new() } else { detail });
                 }
                 Event::TrustNeeded { fingerprint } => self.trust_needed(fingerprint),
+                other if self.settings.trust && self.trust_answered(&other) => {}
                 other => {
                     if let Some(prompt) = Prompt::from_event(&other) {
                         self.prompts.push_back(prompt);
@@ -658,7 +667,7 @@ impl Session {
         // Only RustDesk's pictures are ever left on the GPU: whole frames of
         // video, where TigerVNC's and FreeRDP's H.264 is rectangles composed
         // with the rest of their picture in memory.
-        if self.settings.hw_decode == Hardware::Off
+        if self.settings.hardware() == Hardware::Off
             || self.request.kind.id != api::catalog::RUSTDESK.id
         {
             return None;
@@ -799,6 +808,10 @@ impl Session {
     /// toolbar: remembered as the value the controls show, and handed to
     /// the backend. View-only is the one the window has a say in too.
     fn set_option(&mut self, key: &str, value: &str) {
+        if key == "ViewOnly" && self.settings.view_only && value != "true" {
+            log::info!("view only is forced by --view-only");
+            return;
+        }
         self.live.set(key, value);
         log::info!("option {key} = {value:?}");
         if key == "ViewOnly" {
@@ -1148,14 +1161,14 @@ impl Session {
             on_off(settings.clipboard_in),
             on_off(settings.grab_keyboard),
             on_off(settings.software_cursor),
-            backends::hardware_name(settings.hw_decode)
+            backends::hardware_name(settings.hardware())
         );
         // Taken by every backend that decodes through these at its next
         // picture (RustDesk, which asks for a key frame to start the new
         // decoder on, and TigerVNC's and FreeRDP's H.264, which ask
         // `Decoders::hardware`).
-        if settings.hw_decode != self.settings.hw_decode {
-            self.decoders.set_hardware(settings.hw_decode);
+        if settings.hardware() != self.settings.hardware() {
+            self.decoders.set_hardware(settings.hardware());
         }
         self.settings = settings;
     }
@@ -1499,14 +1512,26 @@ impl Session {
     /// as `api::trust` decides on the phone too: a match is silent, a
     /// RustDesk key never seen is pinned without asking, and anything else
     /// is put to the user with why.
+    ///
+    /// With `--trust` the known hosts are only read: what they do not match
+    /// is accepted, and nothing is pinned.
     fn trust_needed(&mut self, fingerprint: String) {
         let key = &self.pinned.key;
-        match trust::decide(&self.known_hosts, &self.pinned, &fingerprint) {
+        let decision = if self.settings.trust {
+            trust::decide(&trust::ReadOnly(&self.known_hosts), &self.pinned, &fingerprint)
+        } else {
+            trust::decide(&self.known_hosts, &self.pinned, &fingerprint)
+        };
+        match decision {
             Decision::Matches => {
                 log::info!("certificate matches the pin for {key}");
                 self.backend.answer_trust(true);
             }
             Decision::FirstSight => self.backend.answer_trust(true),
+            Decision::Ask { identity, .. } if self.settings.trust => {
+                log::info!("accepting the certificate for {key} ({identity:?}): --trust, not pinned");
+                self.backend.answer_trust(true);
+            }
             Decision::Ask {
                 identity,
                 matching_address,
@@ -1519,6 +1544,32 @@ impl Session {
                 });
             }
         }
+    }
+
+    /// `--trust`: accepts a security, unverified, question or message
+    /// prompt without showing it, and remembers nothing; whether `event`
+    /// was one.
+    fn trust_answered(&mut self, event: &Event) -> bool {
+        match event {
+            Event::Unverified { why } => {
+                log::info!("accepting an unverified server ({why}): --trust");
+                self.backend.answer_trust(true);
+            }
+            Event::Question { title, .. } => {
+                log::info!("answering yes to {title:?}: --trust");
+                self.backend.answer_trust(true);
+            }
+            Event::Message { text, .. } => {
+                log::info!("accepting the message {text:?}: --trust");
+                self.backend.answer_trust(true);
+            }
+            Event::SecurityNeeded { .. } => {
+                log::info!("accepting the server's security: --trust, not remembered");
+                self.backend.answer_security(true, false);
+            }
+            _ => return false,
+        }
+        true
     }
 
     fn prompt(&mut self, ctx: &egui::Context) {
@@ -1573,8 +1624,9 @@ impl Session {
             self.backend.disconnect();
         }
         // `RealVncBackend.saveIdentity`: kept by the address as written, for
-        // the next session to hand back.
-        if let Some(identity) = self.backend.saved_identity() {
+        // the next session to hand back. Not under `--trust`, which
+        // remembers nothing.
+        if let Some(identity) = self.backend.saved_identity().filter(|_| !self.settings.trust) {
             let address = &self.request.address;
             match self.identities.set(address, &identity) {
                 Ok(()) => log::info!("remembered RealVNC's identity for {address}"),

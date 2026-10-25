@@ -18,7 +18,7 @@
 //! backend gave it and compared by its hex digits only, since one library
 //! prints `66:CC:…` and another `66:cc:…`. Each client chooses where pins are
 //! stored (the phone's `known_hosts` preferences, the Linux client's
-//! `$XDG_CONFIG_HOME/vento/known_hosts`); this module defines what they mean:
+//! `known_hosts` in its state directory); this module defines what they mean:
 //! [`decide`] when an identity arrives, [`answered`] when the user has
 //! answered a question about one.
 

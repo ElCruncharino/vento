@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The eight backends, each as a [`Kind`]: what the picker and `--list` show,
-//! the options it takes, and how to start a session on it.
+//! The eight backends, each as a [`Kind`]: what the picker and `--help` show,
+//! the options it takes, and how to start a session on it; the library each
+//! runs from, for `--list`; and the directories a session is given.
 //!
 //! None of them is this client's own. The four Rust protocols each carry
 //! their adapter in their own crate (`backend.rs` beside the protocol), the
@@ -15,7 +16,85 @@ pub use api::trust::{Pinned, pinned_as};
 
 pub use platform_linux::audio::{Audio, Output as AudioOutput};
 pub use platform_linux::ffmpeg::{FFmpeg, Hardware, hardware_name, hardware_named};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+/// `$XDG_STATE_HOME/vento`, or `~/.local/state/vento`: the default
+/// `--state-dir`, which holds the known hosts, RealVNC's identities and each
+/// backend's state in a directory named for it.
+pub fn default_state_dir() -> PathBuf {
+    xdg("XDG_STATE_HOME", ".local/state").join("vento")
+}
+
+/// The default `--extlib-dir`, the directory of the libraries some backends
+/// need and this project does not build, each backend's in a directory named
+/// for it (RealVNC's two in `realvnc/`): `$XDG_DATA_HOME/vento` (or
+/// `~/.local/share/vento`) where RealVNC's are there, and otherwise `lib/`
+/// beside the binary, the directory of the release tree's backend libraries.
+pub fn default_extlib_dir() -> PathBuf {
+    let data = xdg("XDG_DATA_HOME", ".local/share").join("vento");
+    if data.join(REALVNC_LIBRARY).is_file() {
+        return data;
+    }
+    match std::env::current_exe() {
+        Ok(exe) => exe.parent().map_or(data, |dir| dir.join("lib")),
+        Err(_) => data,
+    }
+}
+
+/// The RealVNC viewer's library, under the extra libraries' directory: the
+/// one the default `--extlib-dir` looks for.
+const REALVNC_LIBRARY: &str = "realvnc/libvncviewer.so";
+
+/// An XDG base directory: `var`, or `under` in the home directory where it
+/// is unset or empty.
+fn xdg(var: &str, under: &str) -> PathBuf {
+    std::env::var_os(var)
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join(under))
+}
+
+/// The directories a session is given: `state` for the known hosts and
+/// every backend's state, and RealVNC's libraries in `realvnc/` under
+/// `extlib`.
+pub fn dirs(state: &Path, extlib: &Path) -> Dirs {
+    Dirs {
+        config: state.to_path_buf(),
+        state: state.to_path_buf(),
+        realvnc_libs: extlib.join("realvnc"),
+    }
+}
+
+/// The file a backend's code is in: for the C backends the library they
+/// open, where it was found, opening it first; for the Rust ones this
+/// binary. Where a library cannot be opened, the path it was looked for at
+/// (the first of the rpath's directories that has it, or `lib/` beside the
+/// binary) and why.
+pub fn library_path(kind: &Kind) -> Result<PathBuf, (PathBuf, String)> {
+    type Opened = fn() -> Result<PathBuf, (&'static str, &'static str)>;
+    let c: [(&Kind, Opened); 4] = [
+        (&remotedesktop_libvnc::KIND, remotedesktop_libvnc::library_path),
+        (&remotedesktop_tigervnc::KIND, remotedesktop_tigervnc::library_path),
+        (&remotedesktop_freerdp::KIND, remotedesktop_freerdp::library_path),
+        (&remotedesktop_realvnc::KIND, remotedesktop_realvnc::library_path),
+    ];
+    let exe = std::env::current_exe().map_err(|e| (PathBuf::new(), format!("this binary's path: {e}")))?;
+    let Some((_, path)) = c.iter().find(|(k, _)| std::ptr::eq(*k, kind)) else {
+        return Ok(exe);
+    };
+    path().map_err(|(name, why)| {
+        // The rpath (`build.rs`): `lib/` beside the binary, then `../lib`.
+        let dir = exe.parent().unwrap_or(Path::new("/"));
+        let tried = [Some(dir), dir.parent()]
+            .into_iter()
+            .flatten()
+            .map(|d| d.join("lib").join(name))
+            .find(|p| p.is_file())
+            .unwrap_or_else(|| dir.join("lib").join(name));
+        (tried, why.to_string())
+    })
+}
 
 /// What the far end lists this machine as, where a phone says its model.
 pub fn client_name() -> String {
@@ -43,7 +122,7 @@ pub fn decoders(hardware: Hardware) -> Arc<FFmpeg> {
 
 /// Where the far end's sound goes here: a PipeWire stream of the session's
 /// own, or ALSA's default device where there is no PipeWire (`output` picks,
-/// `--audio-output`), where the phone hands over AAudio. One per session, as
+/// `--audio`), where the phone hands over AAudio. One per session, as
 /// [`Connect::audio`], so that its controls (the gain and mute, which a
 /// window sets while the session plays) are that session's alone, and its
 /// streams are listed under its name (`title`) in a mixer.

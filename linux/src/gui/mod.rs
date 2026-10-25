@@ -68,6 +68,7 @@ pub use display_server::DisplayServer;
 use egui::ViewportId;
 use session::{Session, Teardown, WindowOp};
 pub use settings::Settings;
+pub use view::ScaleMode;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -161,9 +162,9 @@ pub fn run(launch: Launch) -> i32 {
     event_loop.set_control_flow(ControlFlow::Wait);
     let proxy = event_loop.create_proxy();
     let mut app = App {
+        dirs: launch.dirs.clone(),
+        settings: launch.settings,
         launch: Some(launch),
-        dirs: Dirs::xdg(),
-        settings: Settings::default(),
         placement: Placement::default(),
         proxy,
         gpu: None,

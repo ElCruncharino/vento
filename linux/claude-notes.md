@@ -78,10 +78,12 @@ clients, and what differs between them is each client's own code.
   with the live controls), `prompts.rs` (the modal prompts).
 - **`src/known_hosts.rs`** — this client's `api::trust::Store`: where
   it keeps its pins (what they mean, and what is asked, is `api::trust`)
-  and RealVNC's identities, as files under `$XDG_CONFIG_HOME/vento`, with
-  tests.
-- **`src/main.rs`** — the `vento` binary: the window, `--list`,
-  `--forget`, and the headless probe.
+  and RealVNC's identities, as files in the state directory
+  (`--state-dir`, `$XDG_STATE_HOME/vento` by default), with tests.
+- **`src/main.rs`** — the `vento` binary: the window, `--help`, `--list`,
+  `--forget`, and the headless probe. **`src/cli.rs`** — the command line's
+  GNU-style splitting, the help text, and the formatting of the help's
+  `backends:` section and of `--list`, with tests.
 
 ## Building and running
 
@@ -168,8 +170,9 @@ few dozen functions of it declared by hand.
 
 **Hardware decoding is off by default**, and off it is the software decoder
 it always was: no device is opened, and libva is not loaded. Asked for — the
-**Hardware decoding** setting, or `--hw-decode` (`auto`, or `=vaapi`, which
-is the same) — the Rust decoder (RustDesk's picture, and TigerVNC's H.264)
+**Hardware decoding** setting, or `--hw-decode`, decoding as `--video` says
+(`auto`, the default, or `vaapi`, which is the same; `off` disables the
+setting) — the Rust decoder (RustDesk's picture, and TigerVNC's H.264)
 decodes on VAAPI, stream by stream, where the device has a decoder for the
 stream's profile, and in software where it has not, with the reason kept:
 **VAAPI first, then software**. One device is opened for the whole process,
@@ -348,15 +351,28 @@ cargo run -- rdp
 # one's: the clipboard in each direction (both on unless told otherwise), the
 # keyboard grab that sends Alt+Tab and the rest on (on unless told), and the
 # far end's cursor drawn into the picture rather than made the window's own
-# (off unless told), and video decoded on the GPU (off unless told; bare is
-# auto: VAAPI, else software, stream by stream). The dialog's
-# "Settings" section has the same five.
-cargo run -- tigervnc 127.0.0.1:5901 --no-clipboard-out --no-clipboard-in
+# (native unless told), and video decoded on the GPU (off unless told; then
+# as --video says, auto by default: VAAPI, else software, stream by stream).
+# The dialog's "Settings" section has the same five. Options take their value
+# as --opt value, --opt=value, -o value or -ovalue, and short options stack
+# (-cu NAME).
+cargo run -- tigervnc 127.0.0.1:5901 --no-send-clipboard --no-recv-clipboard
 cargo run -- tigervnc 127.0.0.1:5901 --no-grab-keyboard
-cargo run -- tigervnc 127.0.0.1:5901 --software-cursor
+cargo run -- tigervnc 127.0.0.1:5901 --cursor software
 cargo run -- rustdesk 127.0.0.1 -o ConnectBy=address --hw-decode
-cargo run -- rustdesk 127.0.0.1 -o ConnectBy=address --hw-decode=vaapi
+cargo run -- rustdesk 127.0.0.1 -o ConnectBy=address --hw-decode --video vaapi
 cargo run -- tigervnc 127.0.0.1::5903 -o H264=true -o Encoding=h264 --hw-decode
+
+# Session options of this run: the main window's first scale (fit-width by
+# default; none is 1:1, none-resize 1:1 with the window made the desktop's
+# size once it is known), and view only forced, its toolbar button and panel
+# row disabled. --trust accepts every trust, security and message prompt
+# without showing it, reading the known hosts and writing nothing.
+cargo run -- tigervnc 127.0.0.1:5901 --password vncpass -c --scale none-resize
+cargo run -- tigervnc 127.0.0.1:5901 --password vncpass -c --view-only --trust
+
+# No sound output at all (the session is handed none), or one by name.
+cargo run -- spice 127.0.0.1:5930 --password spicepass -c --audio off
 
 # Straight into a session, with --connect. Without --password the credentials
 # prompt asks. Disconnecting it quits; if the far end ends it instead, the
@@ -368,10 +384,16 @@ cargo run -- spice 127.0.0.1:5930 --password spicepass --connect
 
 # On a given display server rather than winit's choice (Wayland where
 # WAYLAND_DISPLAY is set, X11 otherwise).
-cargo run -- --x11 tigervnc 127.0.0.1:5901 --password vncpass --connect
-cargo run -- --wayland
+cargo run -- --platform x11 tigervnc 127.0.0.1:5901 --password vncpass --connect
+cargo run -- --platform wayland
 
-# The backends and their options.
+# The options, then the backends and their options ("backends:"); each
+# backend's library is opened for its version.
+cargo run -- --help
+
+# Each backend and the file its code runs from, one line each: the library a
+# C backend loaded, or this binary for a Rust one; where a library cannot be
+# loaded, "<name> <path it looked for> (error: <why>)".
 cargo run -- --list
 
 # Forget a server: its pins, its RealVNC identity and RealVNC's own record of
@@ -379,15 +401,17 @@ cargo run -- --list
 cargo run -- --forget 127.0.0.1:5901
 
 # A session, headless: connect, print every event, answer the prompts from the
-# flags, write the framebuffer and a thumbnail, print the facts, and leave.
-# Any of the probe's flags (--probe, --out, --click, --key, --clipboard,
-# --resize, --layout, --trust, …) selects this instead of the window. A
-# certificate the known hosts match is accepted without --trust; --trust
-# accepts any other for this run and pins nothing.
-cargo run -- tigervnc 127.0.0.1:5901 --password vncpass \
-    --out /tmp/shot.ppm --click 500,300 --key 0x61 --clipboard hello
+# flags, write the framebuffer and its thumbnail where asked, print the facts,
+# and leave. --probe N (-P N) selects this instead of the window; the probe's
+# other options (--out, --out-thumb, --click, --key, --clipboard, --resize,
+# --layout, …) are refused without it. A certificate the known hosts match is
+# accepted without --trust; --trust accepts any other for this run and pins
+# nothing.
+cargo run -- tigervnc 127.0.0.1:5901 --password vncpass -P 5 \
+    --out /tmp/shot.ppm --out-thumb /tmp/shot-thumb.ppm \
+    --click 500,300 --key 0x61 --clipboard hello
 cargo run -- rdp 127.0.0.1:3389 --user proto --password protopass \
-    --trust --out /tmp/rdp.ppm
+    --trust --probe 5 --out /tmp/rdp.ppm
 ```
 
 `build.rs` runs `backends/CMakeLists.txt` with `-DVENTO_SHARED=ON`, which makes
@@ -431,8 +455,8 @@ commits, runs `cargo build --release --locked` (which downloads the GnuTLS
 and nettle tarballs and checks their SHA-256; the context leaves out any
 unpacked in the checkout), strips the libraries' debug information, and
 checks the tree: the relative rpath (`readelf`), no library missing (`ldd` on
-the binary and each library), and every backend available in `vento --list`,
-which opens each library from the tree's own `lib/`.
+the binary and each library), and `vento --list`, which opens each library,
+naming the tree's own `lib/` for all four C backends and no error.
 It writes nothing to the checkout. A build from scratch takes about nine
 and a half minutes on eight cores (the toolchain about a minute and a half
 of it, cached after the first build; GnuTLS and nettle about a minute and a
@@ -463,9 +487,10 @@ backend's crate opens its own (`api::c::library`) the first time it is
 needed, with every symbol bound then (`RTLD_NOW`). A library that cannot be
 loaded (the file missing, a library it needs missing or too old, a file of
 another build) makes that one backend not available, and the binary starts
-and runs the others. The backend is still listed: `--list` opens every
+and runs the others. The backend is still listed: `--help` opens every
 library to show its version, or `not available: <reason>` with the loader's
-reason, and a session on it, from the command line or the connection dialog,
+reason, `--list` the file it was loaded from (read from `/proc/self/maps`)
+or the one it looked for and `(error: <reason>)`, and a session on it, from the command line or the connection dialog,
 fails to start with "<backend> is not available: <reason>". A window opens
 only the library of the backend it connects with, when it connects. A library
 stays open once opened. The three open backends' libraries are opened with
@@ -477,15 +502,15 @@ The probe answers the first credentials prompt with `--password` and a second
 with a cancel, since a second prompt is the far end refusing the first answer
 (SPICE and RustDesk ask again for every refused password); it then says the
 authentication failed and leaves with 1. The clipboard settings hold in the
-probe too: under `--no-clipboard-in` what the far end copies is printed as its
-size alone. So does `--hw-decode`: the facts then say the
+probe too: under `--no-recv-clipboard` what the far end copies is printed as
+its size alone. So does `--hw-decode`: the facts then say the
 codec with `(hardware)` or `(software)`, and a `decoder` line after them is
 the overlay's `dec` line, with the reason where hardware was asked for and
 the picture is software.
 
 The probe's exit status is 0 only if it connected within `--connect-timeout`,
 stayed connected for the time asked, wrote the framebuffer and the thumbnail
-where `--out` asked for them, and closed within 10 s of disconnecting; it is 1
+where `--out` and `--out-thumb` asked for them, and closed within 10 s of disconnecting; it is 1
 otherwise, and 2 for a command line it refused. `--click`, `--key` and
 `--clipboard` are sent, not confirmed: no protocol here says input arrived, so
 0 says they went out on a live session and nothing more; under `-o
@@ -628,10 +653,11 @@ one that is not back after three tries a second apart leaves its streams to
 ALSA until it is, which they look for every five seconds. A stream that
 fails on its own — refused as it is made, or failed by the daemon later — is
 made again a second later, and goes to ALSA at its third failure in a row.
-`--audio-output=`
+`--audio`
 `pipewire`, `alsa` or `auto` (the default; also `VENTO_AUDIO_OUTPUT`) picks
 one for tests: `pipewire` plays nothing without a daemon rather than going
-to ALSA. Which one plays is in the panel's Sound row (`Opus 48 kHz stereo
+to ALSA. `off` hands the session no output at all, so the far end's sound is
+dropped and neither library is loaded. Which one plays is in the panel's Sound row (`Opus 48 kHz stereo
 (PipeWire)`) and the overlay (`+ PipeWire 11 ms`). Against ALSA's `default`
 on a PipeWire desktop — PipeWire's ALSA plugin, with a 50 ms ring in front of
 the graph — the client's share of RDP's sound is 23-28 ms rather than 84-89
@@ -1112,11 +1138,11 @@ a second screen asked of it is left out).
 
 **Settings** are the client's own, one answer for every connection, as the
 phone's `AppSettings` has them: **Send clipboard** and **Receive clipboard**
-(both on by default; `--no-clipboard-out`, `--no-clipboard-in`), **Grab
+(both on by default; `--no-send-clipboard`, `--no-recv-clipboard`), **Grab
 keyboard** (on by default; `--no-grab-keyboard`), **Software cursor** (off
-by default; `--software-cursor`), below, and **Hardware decoding** (off by
-default; `--hw-decode`, above, whose box on is `auto`; `=vaapi` from the
-command line, which decodes the same, is kept until the box is unticked). Grab keyboard is whether the window
+by default; `--cursor software`), below, and **Hardware decoding** (off by
+default; `--hw-decode`, above, decoding as `--video` says, `auto` by default;
+with `--video off` the box is disabled). Grab keyboard is whether the window
 holds the window manager's or the compositor's shortcuts off at all — the X11
 keyboard grab, or Wayland's shortcuts inhibitor, below — so that Alt+Tab,
 Super and the rest reach the far end; off, neither is ever taken, and a
@@ -1186,7 +1212,7 @@ or has sent none. Where the desktop is not drawn one to one the shape is
 resampled to the view's scale, nearest neighbour, and its hotspot with it;
 the log says the size and hotspot of each one set. `cursor.rs` says how this
 shares the window's cursor with egui-winit, which sets it from egui's icon.
-**Software cursor** (a setting, off by default; `--software-cursor`) draws
+**Software cursor** (a setting, off by default; `--cursor software`) draws
 the shape into the picture under the local pointer instead, with the OS
 cursor hidden over the desktop, as the Android app does; in relative mode it
 changes nothing, as there the far end draws its own.
@@ -1319,8 +1345,11 @@ Cancel, or Continue with the box unticked, pins nothing. A certificate that a
 certificate authority would vouch for is asked about like any other: the
 question is whether this is the machine it was last time.
 
-The pins are in **`$XDG_CONFIG_HOME/vento/known_hosts`** (by default
-`~/.config/vento/known_hosts`), one line per address: `<address> <fingerprint>`.
+The pins are in **`known_hosts`** in the state directory (`--state-dir`, by
+default `$XDG_STATE_HOME/vento`, `~/.local/state/vento`), one line per
+address: `<address> <fingerprint>`. (Before, they were in
+`$XDG_CONFIG_HOME/vento`; nothing moves them, so pins made then are asked
+about again.)
 The address is the one typed, folded for case and nothing else, so
 `host` and `host:3389` are two entries; the fingerprint is SHA-256, as the
 backend printed it, and compared as its hex digits whatever their case or
@@ -1333,19 +1362,21 @@ treated as empty and left alone. To forget a server, `vento --forget
 <address>` (below).
 
 Only the window writes it. The probe reads it — a pinned host connects
-headless without `--trust` — and never writes it: `--trust` says yes for that
-run and nothing else.
+headless without `--trust` — and never writes it. `--trust`, in the window or
+the probe, says yes for that run and nothing else: the window then reads the
+known hosts and shows no trust, security or message prompt, accepting each,
+and pins nothing and keeps no RealVNC identity for it.
 
 No backend keeps a store of certificates of its own: FreeRDP is told to read
 and write none, TigerVNC hands its certificates over rather than keep its
 viewer's `x509_known_hosts` (on the phone as well), and libvnc and the four
 Rust clients never had one. What the backends do still keep is RealVNC's, under the state
-directory (`--state-dir`, by default `$XDG_STATE_HOME/vento`):
+directory too:
 
 | Backend | What | Where |
 |---------|------|-------|
 | RealVNC | the core's private key, its own record of identities accepted with *remember server*, its config and logs | `<state>/realvnc/net.pgaskin.remotedesktop/.vnc/` (`rsaKeys`, `identities`, `config.d/`), `<state>/realvnc/vnclog/` |
-| RealVNC | the identity the core asks to have remembered, handed back as `Identity` next time — kept by this client, as `RealVncBackend` keeps it | `$XDG_CONFIG_HOME/vento/realvnc_identities` |
+| RealVNC | the identity the core asks to have remembered, handed back as `Identity` next time — kept by this client, as `RealVncBackend` keeps it | `<state>/realvnc_identities` |
 | FreeRDP | nothing; the directory exists because the library will not connect without a path for a store it is never allowed to use | `<state>/freerdp/` |
 
 RealVNC's identity is the core's opaque blob rather than a fingerprint, and
@@ -1388,7 +1419,8 @@ asked about and pinned like any other, here and on the phone.
 
 winit picks the display server: Wayland where `WAYLAND_DISPLAY` (or
 `WAYLAND_SOCKET`) is set, X11 where only `DISPLAY` is, with no falling back
-from one to the other. `--x11` and `--wayland` override that, and the log's
+from one to the other. `--platform x11` and `--platform wayland` override
+that, and the log's
 `display server:` line says which the window got. What differs between the two
 is chosen at run time rather than by a cfg: the keyboard shortcuts (Wayland's
 inhibitor, one per window, or X11's keyboard grab, one for the client, moved to
@@ -1587,7 +1619,7 @@ handles.
   otherwise RandR's idea of the monitor's DPI (1 on Xvfb, which reports a
   0 mm screen).
 
-**Xwayland** — `--x11` on a Wayland session — is for testing, and the
+**Xwayland** — `--platform x11` on a Wayland session — is for testing, and the
 Wayland backend is the one to use there; the log says so when the X server is
 Xwayland. Tried on niri through xwayland-satellite 0.8.2 (Xwayland 24.1,
 rootless): the window opens on the hardware's Vulkan, connects, draws the far
@@ -1609,9 +1641,10 @@ and its library, `libvento_realvnc.so` (the session and the hosting layer that
 runs the viewer's Android core in this process), is built only when `clang` is
 on `PATH`. The crate opens it as the other backends' are opened (*Backend
 libraries* under *Installing*), through the rpath (`lib/` beside the
-binary), the first time a session or `--list` asks. Without clang the build
-says so in a note, the backend is still listed, `--list` shows it as `not
-available: libvento_realvnc.so was not built: …` with the reason, and a
+binary), the first time a session, `--help` or `--list` asks. Without clang
+the build says so in a note, the backend is still listed, `--help` shows it
+as `not available: libvento_realvnc.so not available (was clang installed
+when building?)` and `--list` with that as its `(error: …)`, and a
 session on it fails to start with that sentence. Where the library was built
 but cannot be loaded, the reason is the loader's, as for the other backends. The next `cargo build` after `PATH` changes
 (clang installed, say) looks again, and when the answer differs the C tree is
@@ -1619,7 +1652,9 @@ configured afresh with the other compilers, so nothing has to be cleaned by
 hand. To use it, take
 `libvncviewer.so` and `libc++_shared.so` for your host's ABI out of the viewer
 APK of the build `realvnc/.../Library.java` pins (the session verifies them by
-SHA-256 and refuses any other), and point `--library-dir` at them:
+SHA-256 and refuses any other), and put them in `realvnc/` under
+`--extlib-dir`, the directory of the extra libraries backends need (each
+backend's in a directory named for it):
 
 ```sh
 mkdir -p ~/.local/share/vento/realvnc
@@ -1629,10 +1664,13 @@ unzip -j com.realvnc.viewer.android_4.9.3.60175.apk \
 cargo run -- realvnc 127.0.0.1::5901 --password vncpass
 ```
 
-`--library-dir` defaults to `$XDG_DATA_HOME/vento/realvnc` and `--state-dir`
-(where the core keeps its key, identities and logs — as plain files where the
-phone has encrypted ones; see [Known hosts](#known-hosts)) to
-`$XDG_STATE_HOME/vento`.
+`--extlib-dir` defaults to `$XDG_DATA_HOME/vento` where
+`realvnc/libvncviewer.so` is under it, and otherwise to `lib/` beside the
+binary, so a release tree with `lib/realvnc/` works wherever it is unpacked;
+`--help` prints the default it resolved. `--state-dir` (where the core keeps
+its key, identities and logs — as plain files where the phone has encrypted
+ones; see [Known hosts](#known-hosts) — and the client its known hosts)
+defaults to `$XDG_STATE_HOME/vento`.
 
 The core's own log comes out on stderr as `I RealVnc: <category>: …` (`W`
 for its warnings and errors) whatever `--verbose` says: everything the

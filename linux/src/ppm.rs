@@ -25,17 +25,6 @@ pub fn write(path: &Path, picture: &Picture) -> io::Result<()> {
     file.flush()
 }
 
-/// `FILE.ppm` to `FILE-thumb.ppm`, as the C probe names its thumbnail, and
-/// `FILE` to `FILE-thumb` where there is no extension.
-pub fn thumbnail_path(out: &Path) -> std::path::PathBuf {
-    let name = out.file_name().and_then(|n| n.to_str()).unwrap_or("out.ppm");
-    let thumb = match name.rsplit_once('.') {
-        Some((stem, ext)) if !stem.is_empty() => format!("{stem}-thumb.{ext}"),
-        _ => format!("{name}-thumb"),
-    };
-    out.with_file_name(thumb)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -48,18 +37,5 @@ mod tests {
             rgba: vec![1, 2, 3, 255, 4, 5, 6, 0],
         };
         assert_eq!(encode(&picture), b"P6\n2 1\n255\n\x01\x02\x03\x04\x05\x06");
-    }
-
-    #[test]
-    fn the_thumbnail_goes_beside_the_picture() {
-        assert_eq!(
-            thumbnail_path(Path::new("/x/shot.ppm")),
-            Path::new("/x/shot-thumb.ppm")
-        );
-        assert_eq!(thumbnail_path(Path::new("shot")), Path::new("shot-thumb"));
-        assert_eq!(
-            thumbnail_path(Path::new("/a.b/shot")),
-            Path::new("/a.b/shot-thumb")
-        );
     }
 }

@@ -12,6 +12,7 @@
 //! it back when it ends, so what was switched mid-session is what the next
 //! one starts with.
 
+use super::view::ScaleMode;
 use crate::backends::{AudioOutput, Hardware};
 use egui::{RichText, Ui};
 
@@ -32,16 +33,34 @@ pub struct Settings {
     /// the far end. Off, neither is ever taken and they stay this
     /// desktop's.
     pub grab_keyboard: bool,
-    /// Decode video on the GPU where it can be, through VAAPI (`vaapi`, or
-    /// `auto`, which is the same). Off, the default, no device is opened and
-    /// libva is not loaded. Like the rest, not saved: a run that wants it
-    /// asks for it (`--hw-decode`) or switches it on here.
-    pub hw_decode: Hardware,
+    /// Decode video on the GPU where it can be, as `video` says. Off, the
+    /// default, no device is opened and libva is not loaded. Like the rest,
+    /// not saved: a run that wants it asks for it (`--hw-decode`) or
+    /// switches it on here.
+    pub hw_decode: bool,
+    /// How video is decoded on the GPU while `hw_decode` is on: through
+    /// VAAPI (`vaapi`, or `auto`, which is the same), or not at all (`off`,
+    /// which leaves the box disabled). Command line only (`--video`).
+    pub video: Hardware,
     /// Where the far end's sound plays: PipeWire's own stream where a
-    /// daemon answers and ALSA's default device otherwise (`auto`), or one
-    /// of the two by name. Command line only (`--audio-output`), for tests
-    /// of either path; not drawn with the rest.
+    /// daemon answers and ALSA's default device otherwise (`auto`), one of
+    /// the two by name, or nowhere (`off`). Command line only (`--audio`);
+    /// not drawn with the rest.
     pub audio_output: AudioOutput,
+    /// The scale a session's main window starts at, and whether the window
+    /// is made the desktop's size once that is known (`--scale
+    /// none-resize`, with `ScaleMode::Original`). Command line only
+    /// (`--scale`).
+    pub scale: ScaleMode,
+    pub fit_window: bool,
+    /// Every session is view only, and the View only button and option
+    /// cannot turn that off. Command line only (`--view-only`).
+    pub view_only: bool,
+    /// Every trust, security and message prompt is accepted without being
+    /// shown, and nothing is pinned or remembered for it: a certificate the
+    /// known hosts match is still taken as matching. Command line only
+    /// (`--trust`).
+    pub trust: bool,
 }
 
 impl Default for Settings {
@@ -51,13 +70,24 @@ impl Default for Settings {
             clipboard_in: true,
             software_cursor: false,
             grab_keyboard: true,
-            hw_decode: Hardware::Off,
+            hw_decode: false,
+            video: Hardware::Auto,
             audio_output: AudioOutput::Auto,
+            scale: ScaleMode::FitWidth,
+            fit_window: false,
+            view_only: false,
+            trust: false,
         }
     }
 }
 
 impl Settings {
+    /// How video is decoded: `video` while hardware decoding is on, and
+    /// off otherwise.
+    pub fn hardware(&self) -> Hardware {
+        if self.hw_decode { self.video } else { Hardware::Off }
+    }
+
     /// The five as rows of a two-column grid (a label and a box each, the
     /// shape the dialog's and the panel's options are drawn in). In the
     /// `panel` the labels are weak, as the panel's are, and have no
@@ -103,18 +133,18 @@ impl Settings {
             "Hide the native cursor and draw the cursor directly. Always enabled if the \
              remote machine uses a relative pointer.",
         );
-        // A box like the others, on meaning `auto`; `vaapi` from the command
-        // line, which decodes the same, is kept until the box is switched
-        // off.
+        // A box like the others, decoding as `--video` says; disabled where
+        // that is `off`.
         label(
             ui,
             "Hardware decoding",
             "Decode video using the GPU (VAAPI) if supported by the backend and local \
              hardware. Not supported by all backends, and may be slower on some hardware.",
         );
-        let mut on = self.hw_decode != Hardware::Off;
-        if ui.checkbox(&mut on, "").changed() {
-            self.hw_decode = if on { Hardware::Auto } else { Hardware::Off };
+        let enabled = self.video != Hardware::Off;
+        let mut on = self.hw_decode && enabled;
+        if ui.add_enabled(enabled, egui::Checkbox::without_text(&mut on)).changed() {
+            self.hw_decode = on;
             changed = true;
         }
         ui.end_row();

@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The certificate pinned for each address, as a file under
-//! `$XDG_CONFIG_HOME/vento`: the counterpart of the phone's `known_hosts`
-//! preferences.
+//! The certificate pinned for each address, as a file in the state
+//! directory (`--state-dir`, `$XDG_STATE_HOME/vento` by default): the
+//! counterpart of the phone's `known_hosts` preferences.
 //!
 //! A remote desktop server's certificate is one it made for itself on first
 //! start, and no authority vouches for it, so, as on the phone and as over
@@ -17,7 +17,8 @@
 //! This is the only store: no backend keeps certificates of its own (the
 //! adapters tell each library not to), and both the window and the probe
 //! read it. Only the window writes it, and only when a prompt was answered
-//! with *remember server*; the probe's `--trust` applies to that run alone.
+//! with *remember server*; `--trust` applies to that run alone, in the window
+//! and the probe.
 //!
 //! What a pin means (the key an address is filed under, how two fingerprints
 //! compare, what is asked when they do not, and when an answer is pinned) is

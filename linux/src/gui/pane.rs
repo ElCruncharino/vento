@@ -130,7 +130,7 @@ pub fn owner_after(pane: PaneId, mask: i32) -> Option<PaneId> {
 
 pub struct Pane {
     pub id: PaneId,
-    view: View,
+    pub view: View,
     /// Which of the far end's monitors is on screen, or `None` for the
     /// whole desktop.
     monitor: Option<MonitorKey>,
@@ -178,6 +178,9 @@ pub struct Pane {
     /// last frame, so that a key typed into it is egui's. Kept per window:
     /// egui's own answer is for whichever window ran its pass last.
     pub wants_keys: bool,
+    /// The window is to be made the desktop's size once that is known
+    /// (`--scale none-resize`).
+    pub fit_pending: bool,
 }
 
 impl Pane {
@@ -202,6 +205,7 @@ impl Pane {
             pointer_since: None,
             size: None,
             wants_keys: false,
+            fit_pending: false,
         }
     }
 
@@ -271,6 +275,11 @@ impl Pane {
         if title != self.title_set(ctx) {
             host.window.set_title(&title);
             ctx.data_mut(|d| d.insert_temp(self.title_id(), title));
+        }
+
+        if self.fit_pending && s.connected() && s.desktop.is_some() {
+            self.fit_pending = false;
+            self.fit_window(s, host);
         }
 
         let pixels_per_point = ctx.pixels_per_point();
@@ -703,8 +712,9 @@ impl Pane {
         // icon says which without the highlight's help.
         let view_only = s.view_only;
         let symbol = if view_only { icons::VISIBILITY } else { icons::MOUSE };
+        // Disabled under `--view-only`, which forces it.
         if ui
-            .add_enabled(connected, toggle(ui.visuals(), symbol, view_only))
+            .add_enabled(connected && !s.settings.view_only, toggle(ui.visuals(), symbol, view_only))
             .on_hover_text(if view_only {
                 "View only: on."
             } else {

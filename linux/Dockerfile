@@ -31,7 +31,8 @@
 # - Linux on x86_64 with glibc 2.27 or later, libstdc++ (GLIBCXX_3.4.22) and
 #   zlib (libz.so.1);
 # - for the window, a Vulkan or GL driver and a Wayland or X11 session;
-# - for RealVNC, the two libraries from RealVNC's viewer (linux/claude-notes.md
+# - for RealVNC, the two libraries from RealVNC's viewer, in the tree's
+#   lib/realvnc/ or in $XDG_DATA_HOME/vento/realvnc/ (linux/claude-notes.md
 #   says how to extract them from its APK).
 # Sound (PipeWire, ALSA) and hardware decoding (libva) are loaded at run time
 # when installed. libjpeg-turbo, pixman, GnuTLS, nettle, OpenSSL, libatomic,
@@ -133,10 +134,10 @@ RUN for dir in patches/*/; do \
 # Build, then copy the tree out of target/release/ (linux/build.rs lays it
 # out there) and strip the libraries' debug information (the C backends are
 # built RelWithDebInfo). Check the copy: the relative rpath, no library
-# missing with LD_LIBRARY_PATH unset, and every backend available in
-# `vento --list`, which opens each backend's library from the tree's own lib/
-# (the binary does not link them). Print the newest glibc and libstdc++
-# symbol versions each file needs.
+# missing with LD_LIBRARY_PATH unset, and `vento --list`, which opens each
+# backend's library (the binary does not link them), naming the tree's own
+# lib/ for all four C backends and no error. Print the newest glibc and
+# libstdc++ symbol versions each file needs.
 # The tools are LLVM's, since 18.04's binutils cannot read clang 18's DWARF 5.
 RUN cd linux \
     && RUSTUP_TOOLCHAIN=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' /src/rust-toolchain.toml) \
@@ -149,9 +150,9 @@ RUN cd linux \
     && for file in /out/vento /out/lib/*.so; do \
            ! ldd "$file" | grep 'not found' || { echo "error: $file" >&2; exit 1; }; \
        done \
-    && /out/vento --list > /tmp/backends \
-    && grep -E '^[a-z]+  [A-Z]' /tmp/backends \
-    && ! grep 'not available' /tmp/backends \
+    && /out/vento --list | tee /tmp/backends \
+    && test "$(grep -c '^[a-z]* /out/lib/libvento_[a-z]*\.so$' /tmp/backends)" = 4 \
+    && ! grep -F '(error:' /tmp/backends \
     && for file in /out/vento /out/lib/*.so; do \
            echo "$file: $(llvm-objdump -T "$file" | grep -oE 'GLIBC_[0-9.]+' | sort -uV | tail -1)" \
                 "$(llvm-objdump -T "$file" | grep -oE 'GLIBCXX_[0-9.]+' | sort -uV | tail -1)"; \

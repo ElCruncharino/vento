@@ -90,7 +90,7 @@ python3 -I cursor.py :42
 scripts/testvnc/run.sh; scripts/testqemu/run.sh; scripts/testx11/run.sh
 cd linux && cargo build --offline
 export DISPLAY=:42; unset WAYLAND_DISPLAY
-./target/debug/vento tigervnc 127.0.0.1:5901 --password vncpass --connect --verbose &
+./target/debug/vento tigervnc 127.0.0.1:5901 --password vncpass --connect --platform x11 --verbose &
 W=$(xdotool search --sync --name 'Vento' | head -1)
 xdotool windowactivate --sync $W
 xdotool key super+Return ctrl+alt+t alt+Tab

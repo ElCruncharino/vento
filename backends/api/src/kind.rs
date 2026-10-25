@@ -30,27 +30,6 @@ pub struct Dirs {
     pub realvnc_libs: PathBuf,
 }
 
-impl Dirs {
-    /// The Linux client's XDG defaults: `vento` under `$XDG_CONFIG_HOME`,
-    /// `$XDG_STATE_HOME` and `$XDG_DATA_HOME`, each falling back to its
-    /// default under `$HOME`.
-    pub fn xdg() -> Dirs {
-        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
-        let xdg = |var: &str, under: &str| {
-            std::env::var_os(var)
-                .filter(|v| !v.is_empty())
-                .map(PathBuf::from)
-                .unwrap_or_else(|| home.join(under))
-                .join("vento")
-        };
-        Dirs {
-            config: xdg("XDG_CONFIG_HOME", ".config"),
-            state: xdg("XDG_STATE_HOME", ".local/state"),
-            realvnc_libs: xdg("XDG_DATA_HOME", ".local/share").join("realvnc"),
-        }
-    }
-}
-
 /// Which client a session is in, for the protocols that send it to the far
 /// end: RustDesk's login names the platform, and RDP's general capability
 /// set carries a major type.

@@ -9,7 +9,7 @@
 //!
 //! winit chooses: Wayland where `WAYLAND_DISPLAY` (or `WAYLAND_SOCKET`) is
 //! set, X11 where only `DISPLAY` is, and no falling back from one to the
-//! other. `--x11` and `--wayland` override that, and the window's raw
+//! other. `--platform` overrides that, and the window's raw
 //! display handle says afterwards which it got.
 
 use raw_window_handle::{HasDisplayHandle, RawDisplayHandle};
