@@ -58,6 +58,8 @@
 #include <freerdp/client/cmdline.h>
 #include <freerdp/crypto/certificate.h>
 #include <freerdp/client/disp.h>
+#include <freerdp/client/rdpei.h>
+#include <freerdp/channels/rdpei.h>
 #include <freerdp/channels/rdpgfx.h>
 #include <freerdp/channels/rdpsnd.h>
 #include <freerdp/gdi/gdi.h>
@@ -94,6 +96,7 @@ enum {
     CMD_FOCUS,
     CMD_RESIZE,
     CMD_LAYOUT,
+    CMD_TOUCH,
 };
 
 typedef struct {
@@ -161,6 +164,9 @@ struct Session {
        event when the channel connects. */
     CliprdrClientContext *cliprdr;
     DispClientContext *disp;
+    /* Touch, from the rdpei channel. Only the protocol thread may call it: the
+       library frees the channel with the connection. */
+    RdpeiClientContext *rdpei;
     _Atomic int gfxOpen; /* the graphics pipeline's channel is up */
     /* The capability set the server confirmed from the pipeline's offer: its
        version, and whether that version with its flags enables H.264. */
@@ -350,7 +356,8 @@ static void splitAddress(char *address, int *port, char *why, size_t whyLen) {
    tell from slow input. That is a key press (its release then finds nothing
    held and sends nothing), or a command restated by a later one of its type:
    a pointer (its mask holds all the buttons), the focus, a size, a layout, a
-   clipboard. A release is never chosen, since losing one leaves the key held
+   clipboard. A touch is never chosen: each one is a step of a contact, not a
+   restatement. A release is never chosen, since losing one leaves the key held
    at the far end until it is pressed again. If nothing in the ring can go,
    the new command is dropped instead, unless it is a release, in which case
    the oldest command is dropped. Returns whether `c` has room; under
@@ -364,7 +371,8 @@ static bool makeRoom(Session *s, const Cmd *c) {
     unsigned later = 1u << c->type;
     for (int i = (s->head + CMD_RING - 1) % CMD_RING;; i = (i + CMD_RING - 1) % CMD_RING) {
         const int type = s->ring[i].type;
-        if (type == CMD_KEY_DOWN || (!releases(type) && (later & (1u << type)))) {
+        if (type == CMD_KEY_DOWN ||
+            (!releases(type) && type != CMD_TOUCH && (later & (1u << type)))) {
             victim = i;
         }
         later |= 1u << type;
@@ -1165,6 +1173,8 @@ static void onChannelConnected(void *context, const ChannelConnectedEventArgs *e
         s->disp = (DispClientContext *) e->pInterface;
         s->disp->custom = s;
         s->disp->DisplayControlCaps = onDisplayControlCaps;
+    } else if (strcmp(e->name, RDPEI_DVC_CHANNEL_NAME) == 0) {
+        s->rdpei = (RdpeiClientContext *) e->pInterface;
     }
 }
 
@@ -1180,6 +1190,8 @@ static void onChannelDisconnected(void *context, const ChannelDisconnectedEventA
         atomic_store(&s->h264.hardware, -1);
     } else if (strcmp(e->name, CLIPRDR_SVC_CHANNEL_NAME) == 0) {
         s->cliprdr = NULL;
+    } else if (strcmp(e->name, RDPEI_DVC_CHANNEL_NAME) == 0) {
+        s->rdpei = NULL;
     } else if (strcmp(e->name, DISP_DVC_CHANNEL_NAME) == 0) {
         s->disp = NULL;
         s->canResize = 0;
@@ -1730,6 +1742,29 @@ static void doLayout(Session *s) {
     sendLayout(s, rects, n);
 }
 
+/* A touch contact, by the phases of Backend.TOUCH_*: 0 down, 1 move, 2 up,
+   3 cancelled. The library builds the legal flag combination for each and
+   keeps its own contact ids, so a contact is named here by the id the app gave
+   it. Dropped while the channel is not open, which is the server's choice. */
+static void doTouch(Session *s, int contact, int phase, int x, int y) {
+    RdpeiClientContext *rdpei = s->rdpei;
+    if (!rdpei || !s->connected) {
+        return;
+    }
+    INT32 contactId = 0;
+    UINT rc = CHANNEL_RC_OK;
+    switch (phase) {
+        case 0: rc = rdpei->TouchBegin(rdpei, contact, x, y, &contactId); break;
+        case 1: rc = rdpei->TouchUpdate(rdpei, contact, x, y, &contactId); break;
+        case 2: rc = rdpei->TouchEnd(rdpei, contact, x, y, &contactId); break;
+        case 3: rc = rdpei->TouchCancel(rdpei, contact, x, y, &contactId); break;
+        default: return;
+    }
+    if (rc != CHANNEL_RC_OK) {
+        LOGW("touch phase %d for contact %d not sent: 0x%08x", phase, contact, rc);
+    }
+}
+
 static void drainCommands(Session *s) {
     for (;;) {
         Cmd c;
@@ -1756,6 +1791,10 @@ static void drainCommands(Session *s) {
             case CMD_FOCUS: doFocus(s, c.a); break;
             case CMD_RESIZE: doResize(s, c.a, c.b); break;
             case CMD_LAYOUT: doLayout(s); break;
+            case CMD_TOUCH:
+                /* The position is packed in c as two 16-bit halves. */
+                doTouch(s, c.a, c.b, (int) ((c.c >> 16) & 0xffff), (int) (c.c & 0xffff));
+                break;
             default: break;
         }
         free(c.text);
@@ -1912,6 +1951,10 @@ static void applySettings(Session *s, rdpSettings *settings) {
     freerdp_settings_set_bool(settings, FreeRDP_CompressionEnabled, s->compression != 0);
     freerdp_settings_set_bool(settings, FreeRDP_RedirectClipboard, TRUE);
     freerdp_settings_set_bool(settings, FreeRDP_SupportDisplayControl, TRUE);
+    /* Offers the touch channel, which the library loads on this setting alone.
+       Harmless when the app never sends touch: the server can open it and leave
+       it idle. */
+    freerdp_settings_set_bool(settings, FreeRDP_MultiTouchInput, TRUE);
 
     /* The picture. Windows 8 and later prefer the graphics pipeline, and it is
        the only path that carries H.264, which this build decodes with the
@@ -2460,6 +2503,16 @@ static void op_request_desktop_size(vento_session *base, int width, int height) 
     post(sessionOfBase(base), &c);
 }
 
+static void op_touch(vento_session *base, int contact, int phase, int x, int y) {
+    if (phase < 0 || phase > 3) {
+        return;
+    }
+    const INT64 xy = ((INT64) (x < 0 ? 0 : x > 65535 ? 65535 : x) << 16) |
+                     (INT64) (y < 0 ? 0 : y > 65535 ? 65535 : y);
+    Cmd c = {CMD_TOUCH, contact, phase, xy, NULL, 0};
+    post(sessionOfBase(base), &c);
+}
+
 void vento_freerdp_set_monitor_count(vento_session *base, int count) {
     sessionOfBase(base)->monitors = count < 1 ? 1 : (count > 16 ? 16 : count);
 }
@@ -2722,4 +2775,5 @@ static const vento_session_ops OPS = {
         .destroy = op_destroy,
         .request_layout = op_request_layout,
         .decoder_status = op_decoder_status,
+        .touch = op_touch,
 };
