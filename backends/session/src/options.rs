@@ -1057,6 +1057,19 @@ pub static RUSTDESK: &[Spec] = &[
             choice("h265", "H.265"),
         ],
     ),
+    // Their own client's switch, on as theirs is: the peer sends Opus while
+    // its desktop makes a sound, and nothing once it has been silent for
+    // eight seconds. Decided at login, though their option message could
+    // carry it later. "The remote
+    // machine" rather than "the server", which here is the rendezvous one.
+    bool(
+        "Audio",
+        "Sound",
+        "Play the remote machine's audio.",
+        true,
+        Scope::Layered,
+        false,
+    ),
     bool(
         "LockAfterSession",
         "Lock when the session ends",
@@ -1506,6 +1519,7 @@ mod tests {
                 "Quality",
                 "FrameRate",
                 "Codec",
+                "Audio",
                 "LockAfterSession",
                 "ViewOnly"
             ]

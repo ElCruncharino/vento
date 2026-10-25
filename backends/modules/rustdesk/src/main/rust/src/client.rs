@@ -48,6 +48,8 @@ use crate::protos::message::{
 };
 use crate::rendezvous;
 use crate::wire::{self, Traffic};
+use common::audio::decode::Codec as SoundCodec;
+use common::audio::{Format, Outputs, Player};
 use common::{Handler, Hangup};
 use common::video::{self, Codec, Decoded, Decoders, GpuPicture, Hardware};
 
@@ -100,7 +102,19 @@ pub struct Config {
     /// the login and never changed: what it asks for happens after the last
     /// message either end sends.
     pub lock_after: bool,
+    /// Where the peer's sound goes, or `None` for a session that asks for
+    /// none. Asked for only where the platform decodes Opus, which is all
+    /// their peer sends.
+    pub audio: Option<Arc<dyn Outputs>>,
 }
+
+/// How long a stream stays open after its sound was heard: the gap between
+/// one sound and the next it rides over, as the other backends' streams do.
+/// Their peer goes on sending silence for eight seconds after its desktop
+/// falls silent and then nothing (its "zero gate"), so this is also how a
+/// session that has stopped sounding stops showing its Sound button, ten
+/// seconds after.
+const QUIET: Duration = Duration::from_secs(2);
 
 /// What the login tells the peer this end runs on. Not a cosmetic field:
 /// their peer keys features on it — a file clipboard only between two
@@ -398,6 +412,9 @@ pub struct Client {
     codec_sent: AtomicI32,
     /// The last round trip their timing message measured, in milliseconds.
     round_trip: AtomicU64,
+    /// Whether the options ask the peer for its sound: set from the
+    /// [`Config`] when the session runs, read whenever the options go out.
+    sound: AtomicBool,
 }
 
 impl Client {
@@ -433,6 +450,7 @@ impl Client {
             codec: AtomicI32::new(PreferredCodec::Auto.ordinal()),
             codec_sent: AtomicI32::new(-1),
             round_trip: AtomicU64::new(0),
+            sound: AtomicBool::new(false),
         }
     }
 
@@ -559,6 +577,7 @@ impl Client {
         self.quality.store(config.quality.ordinal(), Ordering::Relaxed);
         self.fps.store(config.fps, Ordering::Relaxed);
         self.codec.store(config.codec.ordinal(), Ordering::Relaxed);
+        self.sound.store(sound_of(config).is_some(), Ordering::Relaxed);
 
         // How the socket is obtained is the whole of the difference between the
         // two modes: everything past this point is one session either way.
@@ -851,6 +870,11 @@ impl Client {
         let mut rate = Rate::new();
         let mut cursors: HashMap<u64, Cursor> = HashMap::new();
         let mut connected = false;
+        // The peer's sound and the format it last said it is in. A peer
+        // sends something at least every second (its timing message), so a
+        // check for quiet after every message is often enough.
+        let mut sound = sound_of(config).map(Player::new);
+        let mut sound_format: Option<Format> = None;
 
         loop {
             let message = match reader.message::<Message>() {
@@ -858,6 +882,9 @@ impl Client {
                 Err(e) if timed_out(&e) => return Err(Error::Silent),
                 Err(e) => return Err(Error::Io(e)),
             };
+            if let Some(player) = &mut sound {
+                player.close_if_quiet(QUIET);
+            }
             let Some(union) = message.union else { continue };
             match union {
                 message::Union::LoginResponse(response) => match response.union {
@@ -944,8 +971,24 @@ impl Client {
                     Some(misc::Union::SwitchDisplay(display)) => {
                         self.switched(&display, handler, &mut back);
                     }
+                    // What the Opus that follows was encoded at: one of Opus's
+                    // own rates, which their peer resamples its device to.
+                    Some(misc::Union::AudioFormat(format)) => {
+                        sound_format = Format::new(format.sample_rate, format.channels as usize);
+                        log::info!(
+                            "the peer sends its sound as Opus at {} Hz in {} channel(s){}",
+                            format.sample_rate,
+                            format.channels,
+                            if sound_format.is_some() { "" } else { ", which is not played" }
+                        );
+                    }
                     _ => {}
                 },
+                message::Union::AudioFrame(frame) => {
+                    if let (Some(player), Some(format)) = (&mut sound, sound_format) {
+                        player.packet(SoundCodec::Opus, format, &[], &frame.data);
+                    }
+                }
                 _ => {}
             }
         }
@@ -1356,12 +1399,17 @@ impl Client {
         } else {
             UNFOCUSED_FPS
         };
-        // Nothing here plays audio, and a desktop that is talking is a stream
-        // of Opus this session would pay for and drop. The clipboard has no
-        // switch beside it because whether this phone shares one is a question
-        // about the phone, answered once for every protocol in the app's own
-        // settings.
-        option.disable_audio = BoolOption::Yes.into();
+        // The peer's sound where this session plays it, and otherwise not: a
+        // desktop that is talking is a stream of Opus a session without
+        // sound would pay for and drop. The clipboard has no switch beside it
+        // because whether this phone shares one is a question about the
+        // phone, answered once for every protocol in the app's own settings.
+        option.disable_audio = if self.sound.load(Ordering::Relaxed) {
+            BoolOption::No
+        } else {
+            BoolOption::Yes
+        }
+        .into();
         let codec = self.codec.load(Ordering::Relaxed);
         let moved = self.codec_sent.swap(codec, Ordering::Relaxed) != codec;
         if at_login || moved {
@@ -1883,6 +1931,16 @@ fn arm(union: &message::Union) -> &'static str {
     }
 }
 
+/// The session's sound output, where the config has one and its platform
+/// decodes Opus: the only codec their peer encodes its sound in, so an
+/// output without the decoder is no sound at all.
+fn sound_of(config: &Config) -> Option<Arc<dyn Outputs>> {
+    config
+        .audio
+        .clone()
+        .filter(|audio| audio.decoders().is_some_and(|d| d.decodable(SoundCodec::Opus)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1977,6 +2035,64 @@ mod tests {
             (released_and_scrolled[1].x, released_and_scrolled[1].y),
             (0, WHEEL_NOTCH)
         );
+    }
+
+    /// An output that decodes Opus where told to, and plays nothing.
+    struct Sounding(Arc<common::audio::Controls>, bool);
+
+    impl Outputs for Sounding {
+        fn controls(&self) -> &Arc<common::audio::Controls> {
+            &self.0
+        }
+
+        fn device(&self, _queue: Arc<common::audio::Queue>) -> std::result::Result<Box<dyn common::audio::Device>, String> {
+            Err("not in a test".into())
+        }
+
+        fn decoders(&self) -> Option<&dyn common::audio::decode::Decoders> {
+            self.1.then_some(self as _)
+        }
+    }
+
+    impl common::audio::decode::Decoders for Sounding {
+        fn decodable(&self, codec: SoundCodec) -> bool {
+            codec == SoundCodec::Opus
+        }
+
+        fn decoder(
+            &self,
+            _codec: SoundCodec,
+            _format: Format,
+            _config: &[u8],
+        ) -> std::result::Result<Box<dyn common::audio::decode::Decoder>, String> {
+            Err("not in a test".into())
+        }
+    }
+
+    #[test]
+    fn the_peers_sound_is_asked_for_only_where_its_opus_is_decoded() {
+        let config = |audio: Option<Arc<dyn Outputs>>| Config {
+            address: String::new(),
+            reach: Reach::Direct,
+            password: None,
+            connect_timeout: Duration::from_secs(1),
+            my_name: String::new(),
+            platform: Platform::Linux,
+            quality: Quality::Balanced,
+            fps: 0,
+            codec: PreferredCodec::Auto,
+            lock_after: false,
+            audio,
+        };
+        let controls = Arc::new(common::audio::Controls::new());
+        assert!(sound_of(&config(None)).is_none());
+        assert!(sound_of(&config(Some(Arc::new(Sounding(Arc::clone(&controls), false))))).is_none());
+        assert!(sound_of(&config(Some(Arc::new(Sounding(controls, true))))).is_some());
+
+        let client = Client::new(Arc::new(video::NoDecoders));
+        assert_eq!(client.options(true).disable_audio.enum_value(), Ok(BoolOption::Yes));
+        client.sound.store(true, Ordering::Relaxed);
+        assert_eq!(client.options(false).disable_audio.enum_value(), Ok(BoolOption::No));
     }
 
     #[test]
