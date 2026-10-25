@@ -65,6 +65,7 @@ for dir in "$a" "$b"; do
     mkdir -p "$dir"
     rsync -a \
         --exclude='/target/' \
+        --exclude='/linux/target/' \
         --exclude='build/' \
         --exclude='.cxx/' \
         --exclude='.gradle/' \
@@ -92,7 +93,7 @@ for out in "${artefacts[@]}"; do
         name=$(basename "$apk")
         echo
         echo "==> $name"
-        go run ./check-reproducible.go "$apk" "$b/$out/$name" || status=1
+        go run ./scripts/check-reproducible.go "$apk" "$b/$out/$name" || status=1
     done
 done
 
