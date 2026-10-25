@@ -7,7 +7,7 @@
 # what a platform is written to: the picture and the sound a session carries
 # (`src/media/`), whose video decoders and sound outputs a platform supplies
 # by implementing `media::video::Decoders` and `media::audio::Outputs`, and
-# what is done with their planes and samples.
+# what is done with their planes and samples, the same on both platforms.
 #
 # Nothing in here knows what a phone is. The Android half of a backend is
 # `remotedesktop-platform-android`, which depends on this crate and not the

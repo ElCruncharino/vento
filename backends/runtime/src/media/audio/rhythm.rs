@@ -34,10 +34,10 @@
 //! Windows' PCM, 186 ms, which is past [`MARGIN_MAX`](super::MARGIN_MAX)
 //! and would make every late pair a stall. (Not only writes that land
 //! together: a pair's second write can come a few milliseconds after the
-//! first, as the sender gets to it.) The hold keeps every write's `d`, which
-//! is what a queue has to have kept from whichever write it started on;
-//! lateness, and what a write that ran a queue dry is late by, are the
-//! first's.
+//! first, as the sender gets to it, 11 ms in `audio_pattern`'s debug build.)
+//! The hold keeps every write's `d`, which is what a queue has to have kept
+//! from whichever write it started on; lateness, and what a write that ran
+//! a queue dry is late by, are the first's.
 //!
 //! **Of late** is the last [`WINDOW`], in [`BUCKETS`] buckets of a second:
 //! long enough to have seen any rhythm a protocol keeps (a Windows PCM pair

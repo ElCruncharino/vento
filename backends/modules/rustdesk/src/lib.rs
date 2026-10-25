@@ -34,10 +34,10 @@
 //!
 //! Nothing in here decodes video. The client is made with a
 //! `runtime::media::video::Decoders` — the phone's MediaCodec in the app,
-//! nothing at all in a test — and what it tells the far end it can take is
-//! whatever that says. Which codecs a session ends up in is the far end's
-//! choice out of that list, so the same protocol code is a VP9 session on one
-//! platform and an H.265 one on another.
+//! libavcodec in the probe, nothing at all in a test — and what it tells the
+//! far end it can take is whatever that says. Which codecs a session ends up in
+//! is the far end's choice out of that list, so the same protocol code is a VP9
+//! session on one platform and an H.265 one on another.
 
 // The protocol as the phone holds it: an `api::Backend`, with this backend's
 // options read into its config and its rows, through the one JNI layer below.

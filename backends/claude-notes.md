@@ -26,6 +26,7 @@ parent, its tasks and the CMake every C backend includes.
       modules/<name>/   one per backend (eight)
       platform/
         android/        crate, codegen/, java/, javatest/, cpp/, cmake/, ports/
+        linux/          crate, cpp/, probe/, tests/
       build/            the :backends module's Gradle output, untracked
 
 ## The backends: `modules/<name>/`
@@ -102,6 +103,11 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
   backend's Android half (`vento_android_library`); and `ports/`, the
   generated Android builds of openssl, nettle and gnutls (`gen.sh` in each
   regenerates its `gen/`).
+- `platform/linux/` (`remotedesktop-platform-linux`) — the platform for Linux:
+  FFmpeg, built statically from `third_party/` by `build.rs`, and the decoders
+  and the PipeWire/ALSA outputs over it (the crate); `cpp/`, the C those
+  decoders call and a stderr logger; `probe/`, the development tools — the two
+  sound rigs (`--features probe`); and `tests/`, the decoders' fixture tests.
 
 ## Building them
 

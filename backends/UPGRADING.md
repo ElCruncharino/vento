@@ -39,6 +39,30 @@ Nothing runs in parallel: every step needs a clean tree to commit from.
    `backends/platform/android/ports/{nettle,gnutls}/gen.sh`
 5. libvncserver, tigervnc, freerdp, ironrdp, hbb_common, ryll
 
+`third_party/ffmpeg` and `third_party/dav1d` are not a backend's and not in this
+round either: the static FFmpeg `backends/platform/linux/build.rs` builds for
+every desktop decoder, each pinned at a release tag. FFmpeg moves to a newer
+release's tag with `patches/ffmpeg/` rebased onto it; the decoders it is
+configured with are `DECODERS` and `HWACCELS` in that build script, so a
+consumer that starts using another codec adds it there. Proven by the desktop
+crate's fixture tests (`tests/decode.rs` for the video, `tests/sound.rs` for AAC
+and Opus)and the RustDesk probe with each codec. Android builds neither.
+
+`third_party/libva` goes with FFmpeg: headers only, for its VAAPI decoders
+(`HWACCELS` in the same build script). Nothing of it is compiled or linked;
+libva is reached through `backends/platform/linux/cpp/va_shim.c`, which
+defines each libva function FFmpeg calls and loads the real one on first
+use. A newer FFmpeg may call a libva function the shim does not have yet,
+which is a link error naming it (`undefined symbol: va...`): add it to
+`VA_FUNCTIONS` there. `vento_video.c` calls two of them itself for a held
+picture (`vaSyncSurface`, `vaExportSurfaceHandle`) and reads FFmpeg's
+`AVVAAPIDeviceContext` for the display, which a new FFmpeg could rename.
+libva moves to a newer release's tag when FFmpeg wants newer headers (its
+configure says which `VA_CHECK_VERSION` a feature needs). Proven by the
+Linux platform crate's `hardware` and `hardware_auto` tests with
+`VENTO_TEST_HW=require` on a machine with a VAAPI device, and
+`hardware_off`.
+
 A shared library can be blocked by a consumer: nettle 4 could not move until
 TigerVNC had upstream's nettle-4 compatibility. When an evaluation says "stay"
 because of a consumer, note it and come back after that consumer moves.
@@ -239,7 +263,7 @@ line or one file somewhere that already has seven:
   (`api::trust::decide` over each client's `Store`), the bell and the
   events are the `api` crate's and are not written again.
 - **The workspace.** The crate's directory in the root `Cargo.toml`'s
-  `members`, which names each one.
+  `members` and `default-members`, which name each one.
 - **The phone's library.** One `platform_android::natives!` line in the
   crate's `lib.rs` under `cfg(target_os = "android")`, naming the module's
   natives class and the `Kind` (`decoders =` for a backend whose picture is
@@ -291,9 +315,9 @@ any change to a native surface — `platform_android`'s `surface.rs`,
 
 Nothing in the Gradle or cargo steps runs on a device or against a real
 server. The probes are the exception: they run against the Docker desktops
-under `scripts/` (`testvnc`, `testrdp`, `testspice`). Say in the report which
-were run and which were not, rather than implying otherwise; the other
-harnesses under `scripts/` need VMs.
+under `scripts/` (`testvnc`, `testrdp`, `testspice`, `testrustdesk`). Say in
+the report which were run and which were not, rather than implying otherwise;
+the other harnesses under `scripts/` need VMs.
 
 Build in the repository's own `target/` and `.cxx`. `/tmp` is a RAM-backed
 tmpfs: no cargo target directories, scratch workspaces, unpacks or clones

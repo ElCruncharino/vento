@@ -8,8 +8,9 @@
 //! As with [`video::Decoders`](crate::media::video::Decoders), a protocol
 //! asks for a decoder and does not know whose it is: what it holds is the
 //! session's [`Outputs`](super::Outputs), whose
-//! [`decoders`](super::Outputs::decoders) are the platform's (MediaCodec on
-//! the phone), so that RDP's AAC is decoded by none of FreeRDP's.
+//! [`decoders`](super::Outputs::decoders) are the platform's — libavcodec on
+//! Linux, MediaCodec on the phone — so that RDP's AAC is decoded by the same
+//! code on both, and by none of FreeRDP's.
 //!
 //! What comes out is what a [`Stream`](super::Stream) takes, signed 16-bit
 //! samples interleaved, whatever the decoder works in: both libraries decode

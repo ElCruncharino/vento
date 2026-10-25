@@ -2614,6 +2614,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "remotedesktop-platform-linux"
+version = "0.0.1"
+dependencies = [
+ "cc",
+ "log",
+ "remotedesktop-runtime",
+]
+
+[[package]]
 name = "remotedesktop-rfb"
 version = "0.0.1"
 dependencies = [
@@ -2649,6 +2658,7 @@ dependencies = [
  "protobuf-codegen",
  "remotedesktop-api",
  "remotedesktop-platform-android",
+ "remotedesktop-platform-linux",
  "remotedesktop-runtime",
  "sha2 0.11.0",
  "socket2",

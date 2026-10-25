@@ -9,7 +9,7 @@
 //! and MediaCodec is a C API, so this reaches it with an `extern "C"` block
 //! and no JNI, no Java and no thread of its own. Everything after the decode —
 //! what moved, and the conversion of only that — is
-//! `runtime::media::video::Output`.
+//! `runtime::media::video::Output`, the same as libavcodec's on a desktop.
 //!
 //! Declared here rather than taken from a crate: it is a dozen functions with a
 //! stable ABI, and `#[link]` on the extern block is the whole of the build
@@ -674,9 +674,10 @@ impl Decoder {
             // Both out of the bitstream's own description of itself. A stream
             // that says nothing is taken for BT.601, which is what the encoders
             // this has met produce untagged — a RustDesk peer's libvpx and
-            // libaom are handed libyuv's BT.601 and told nothing. (A framework
-            // that fills in a default of its own by picture size answers before
-            // this does.)
+            // libaom are handed libyuv's BT.601 and told nothing — and what
+            // `platform_linux`'s libavcodec path takes silence for too.
+            // (A framework that fills in a default of its own by picture size
+            // answers before this does.)
             let mut standard = 0;
             let mut range = 0;
             self.bt709 = AMediaFormat_getInt32(format, c"color-standard".as_ptr(), &mut standard)

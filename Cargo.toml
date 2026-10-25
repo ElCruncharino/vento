@@ -15,15 +15,35 @@
 # small crate beside the C library for the others. None of them knows a
 # phone. `backends/platform/*` is where one platform's glue lives — Android's
 # JNI and MediaCodec in `android` (and, in `android/codegen`, the host tool
-# that writes its Java). What a platform supplies, it supplies by implementing a
-# trait of `runtime`'s (`Callbacks`, `media::video::Decoders`,
-# `media::audio::Outputs`) and handing it to the session, so no protocol crate
-# says which platform it is on. A protocol crate depends on the platform crate
-# only under a target cfg, `android`, for the library the app loads, so the host
-# build never sees it.
+# that writes its Java), libavcodec in `linux`. What a platform supplies, it
+# supplies by implementing a trait of `runtime`'s (`Callbacks`,
+# `media::video::Decoders`, `media::audio::Outputs`) and handing it to the
+# session, so no protocol crate says which platform it is on. A protocol crate
+# depends on a platform crate only under a target cfg — `android` for the
+# library the app loads, `desktop` for its probe — so neither build sees the
+# other's.
 [workspace]
 resolver = "2"
 members = [
+    "backends/runtime",
+    "backends/api",
+    "backends/platform/android",
+    "backends/platform/android/codegen",
+    "backends/platform/linux",
+    "backends/modules/rfb",
+    "backends/modules/ironrdp",
+    "backends/modules/spice",
+    "backends/modules/rustdesk",
+    "backends/modules/libvnc",
+    "backends/modules/tigervnc",
+    "backends/modules/freerdp",
+]
+# Every member but the Linux platform crate, which is the one whose build
+# script builds dav1d and FFmpeg (minutes, once per target directory): a bare
+# `cargo build`, `test` or `clippy` here is the phone's crates and the
+# backends, and none of those needs it without its `probe` feature.
+# `--workspace` or `-p remotedesktop-platform-linux` for its own tests.
+default-members = [
     "backends/runtime",
     "backends/api",
     "backends/platform/android",
@@ -48,6 +68,7 @@ publish = false
 remotedesktop-runtime = { path = "backends/runtime", version = "0.0.1" }
 remotedesktop-api = { path = "backends/api", version = "0.0.1" }
 remotedesktop-platform-android = { path = "backends/platform/android", version = "0.0.1" }
+remotedesktop-platform-linux = { path = "backends/platform/linux", version = "0.0.1" }
 log = "0.4"
 # Only `remotedesktop-platform-android` has it, and no other crate may (its
 # manifest says why).

@@ -27,8 +27,8 @@ const SETTLE: Duration = Duration::from_millis(5);
 
 /// How long after a write of a group the queue waits for the rest of it
 /// before it starts (see `pull`): the writes of a group land within a few
-/// milliseconds of each other (microseconds from Windows), and the start is
-/// that much silence.
+/// milliseconds of each other (microseconds from Windows; up to 11 ms from
+/// `audio_pattern`'s debug build), and the start is that much silence.
 const GATHER: Duration = Duration::from_millis(25);
 
 /// How long a skip is faded over, out of what would have played next and
@@ -270,10 +270,11 @@ impl Queue {
         self.format.duration(self.margin(&inner))
     }
 
-    /// Which of the platform's outputs the device plays on, for the facts
-    /// row and the overlay to say. A platform with one way out (AAudio) need
-    /// not say; a device that falls back to another output mid-stream says
-    /// it again.
+    /// Which of the platform's outputs the device plays on — the desktop's
+    /// PipeWire stream, or ALSA's device where there is no PipeWire — for
+    /// the facts row and the overlay to say. A platform with one way out
+    /// (AAudio) need not say; a device that falls back to another output
+    /// mid-stream says it again.
     pub fn set_output(&self, output: &'static str) {
         *self.output.lock().unwrap() = Some(output);
     }

@@ -6,11 +6,12 @@
 #
 # This is the only crate in the workspace with `jni` in it. A protocol crate
 # depends on it under a target cfg and nowhere else, which keeps the host
-# build — tests, examples — free of anything that knows a phone exists; and
-# neither `remotedesktop-runtime` nor `remotedesktop-api` depends on it at
-# all, because the layering runs the other way: this crate holds an
-# `api::Backend` for Java and implements `runtime::media::video::Decoders`
-# for MediaCodec, and neither `runtime` nor `api` hears about either.
+# build — tests, examples, `remotedesktop-platform-linux` — free of anything
+# that knows a phone exists; and neither `remotedesktop-runtime` nor
+# `remotedesktop-api` depends on it at all, because the layering runs the
+# other way: this crate holds an `api::Backend` for Java and implements
+# `runtime::media::video::Decoders` for MediaCodec, and neither `runtime` nor
+# `api` hears about either.
 #
 # On a host target the crate is the JNI table and nothing else: plain data,
 # no dependencies to fetch, read by `vento-codegen` (`codegen/`) to write

@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // Where a session file's log lines go, which is the platform's to say: logcat
-// under the Android adapter. The session files log through this and nothing
-// else, so that none of them names a platform — and the two library loggers
-// that have to be bridged (libvncclient's two hooks, TigerVNC's
-// `core::Logger`) are bridged in the session files, onto this.
+// under the Android adapter, stderr under a desktop one. The session files
+// log through this and nothing else, so that none of them names a platform —
+// and the two library loggers that have to be bridged (libvncclient's two
+// hooks, TigerVNC's `core::Logger`) are bridged in the session files, onto
+// this.
 
 #ifndef VENTO_LOG_H
 #define VENTO_LOG_H

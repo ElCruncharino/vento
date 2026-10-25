@@ -15,7 +15,7 @@
 // this header is that crate's, in `backends/api/include/vento/` with the other
 // neutral headers: the `api` crate reads them into Rust, and each C backend's
 // crate reads its own header over them. A platform's C is `vento_log` and
-// nothing else: logcat on the phone.
+// nothing else: logcat on the phone, stderr on a desktop.
 //
 // The shape is `runtime::Callbacks`, method for method: `vento_callbacks` is the outward half, fire-and-forget, with every
 // question a protocol can ask turned into an event that says one is pending,

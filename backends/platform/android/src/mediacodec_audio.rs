@@ -4,7 +4,7 @@
 //! The phone's sound decoders, MediaCodec's AAC and Opus:
 //! [`MediaCodecAudio`] is this platform's
 //! `runtime::media::audio::decode::Decoders`, which [`AAudio`] hands out with
-//! its streams.
+//! its streams, and the counterpart of `platform_linux::ffmpeg_audio`.
 //!
 //! Through the same NDK calls as the video ([`mediacodec`]), in their
 //! synchronous form and on the caller's thread: a packet of sound is a

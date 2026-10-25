@@ -7,10 +7,10 @@
 //! A protocol asks for a stream and does not know whose it is, as with
 //! [`video::Decoders`](crate::media::video::Decoders): what it holds is an
 //! [`Outputs`], handed to it by whoever started the session — AAudio in
-//! `platform_android`, [`NoOutputs`] for a test. Before this each backend that
-//! had sound had a sink of its own (TigerVNC's AAudio one, FreeRDP's OpenSL ES
-//! one), each with its own idea of how much to queue, and none that a window
-//! could mute.
+//! `platform_android`, ALSA in `platform_linux`, [`NoOutputs`] for a test with
+//! neither. Before this each backend that had sound had a sink of its own
+//! (TigerVNC's AAudio one, FreeRDP's OpenSL ES one), each with its own idea of
+//! how much to queue, and none that a window could mute.
 //!
 //! What every platform does alike is here, in [`Queue`]: a protocol thread
 //! writes into it and never waits, and the platform's device drains it on a
@@ -358,7 +358,8 @@ pub struct Playback {
     /// ([`Queue::set_device`]); zero until then.
     pub device: Duration,
     /// Which of the platform's outputs the device is ([`Queue::set_output`]):
-    /// `None` where the platform has only the one and does not say (AAudio).
+    /// "PipeWire" or "ALSA" on the desktop; `None` where the platform has
+    /// only the one and does not say (AAudio).
     pub output: Option<&'static str>,
     pub stats: Stats,
 }

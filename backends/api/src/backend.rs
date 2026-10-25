@@ -564,8 +564,8 @@ mod tests {
         assert_eq!(info[2].label, "Pixels");
         out.controls().set_muted(true);
         assert_eq!(ConnectionFact::sound(out.controls()).unwrap().value, "PCM 48 kHz stereo, muted");
-        // A platform that says which of its outputs plays it has it said,
-        // as a decoder's "(hardware)" is.
+        // A platform that says which of its outputs plays it (the desktop's
+        // PipeWire or ALSA) has it said, as a decoder's "(hardware)" is.
         let piped = Out(Arc::clone(&out.0), Some("PipeWire"));
         let mut later = piped.open(Format::new(44_100, 2).unwrap()).unwrap();
         later.write(&[0, 0]);

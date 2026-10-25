@@ -6,11 +6,11 @@
 //! neither the protocol nor the platform knowing the other.
 //!
 //! A protocol whose picture is video gets a [`video::Decoders`] from
-//! whoever started it, and does not know whose: the phone's hardware. What is
-//! done with a decoder's planes afterwards — finding what moved, and
-//! converting only that — is [`video`]'s. A protocol with sound gets an
-//! [`audio::Outputs`] the same way, and writes into the [`audio::Queue`] a
-//! platform's device drains.
+//! whoever started it, and does not know whose: the phone's hardware, or
+//! libavcodec on a desktop. What is done with a decoder's planes afterwards —
+//! finding what moved, and converting only that — is [`video`]'s and the same
+//! for both. A protocol with sound gets an [`audio::Outputs`] the same way,
+//! and writes into the [`audio::Queue`] a platform's device drains.
 //!
 //! Nothing here is about a session's conversation — the handler, the
 //! callbacks, the thread a protocol runs on — which is the rest of this

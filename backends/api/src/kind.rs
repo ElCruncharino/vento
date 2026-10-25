@@ -97,16 +97,17 @@ pub struct Connect<'a> {
     pub platform: Platform,
     /// What decodes a protocol's video, for the one whose picture is video
     /// (RustDesk) and the two that have a video encoding (TigerVNC's and
-    /// FreeRDP's H.264, through `vento/video.h`): the phone's MediaCodec.
-    /// `None` is a RustDesk session with no picture, reported as such, and a
-    /// TigerVNC or FreeRDP one that never offers H.264.
+    /// FreeRDP's H.264, through `vento/video.h`): the phone's MediaCodec, or
+    /// libavcodec on a desktop. `None` is a RustDesk session with no
+    /// picture, reported as such, and a TigerVNC or FreeRDP one that never
+    /// offers H.264.
     pub decoders: Option<Arc<dyn Decoders>>,
     /// Where the far end's sound goes, for the backends that have sound
     /// (TigerVNC's QEMU audio and FreeRDP's rdpsnd through `vento/audio.h`,
-    /// SPICE's, IronRDP's and RustDesk's in Rust): the phone's AAudio, one
-    /// per session so that its controls — the switch and the mute a window
-    /// sets — are this session's alone. `None` is a session whose sound is
-    /// dropped.
+    /// SPICE's, IronRDP's and RustDesk's in Rust): the phone's AAudio, or
+    /// ALSA on a desktop, one per session so that its controls — the switch
+    /// and the mute a window sets — are this session's alone. `None` is a
+    /// session whose sound is dropped.
     pub audio: Option<Arc<dyn Outputs>>,
 }
 

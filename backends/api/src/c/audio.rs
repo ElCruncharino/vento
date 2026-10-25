@@ -6,16 +6,17 @@
 //! which until now each had a sink of their own.
 //!
 //! What that buys is the same thing [`video`](super::video) buys for
-//! pictures: one queue and one policy for every backend — how far ahead
-//! sound is kept, what is dropped when it gets too far ahead, the device
-//! opened off the protocol thread — and the session's mute, which a window
-//! sets on the [`Outputs`]' controls without the backend hearing of it.
+//! pictures: one queue and one policy for every backend on both platforms —
+//! how far ahead sound is kept, what is dropped when it gets too far ahead,
+//! the device opened off the protocol thread — and the session's mute,
+//! which a window sets on the [`Outputs`]' controls without the backend
+//! hearing of it.
 //!
 //! The platform's decoders ride along in the same table
 //! ([`Outputs::decoders`]): a backend whose far end sends AAC or Opus
 //! (FreeRDP's rdpsnd) offers what they decode and hands the packets here, so
-//! the decoding is the platform's rather than whatever the library would
-//! have linked.
+//! the decoding is the platform's on both platforms rather than whatever the
+//! library would have linked.
 
 use std::ffi::{c_int, c_void};
 use std::sync::Arc;

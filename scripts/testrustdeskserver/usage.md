@@ -22,6 +22,7 @@ A peer and a client to point at it, which `run.sh` prints:
 
 ```sh
 RENDEZVOUS=<host> KEY=<key> scripts/testrustdesk/run.sh
+cargo run --features probe --example rustdesk-probe -- id <peer-id> --server <host> --key <key>
 scripts/session.sh -b rustdesk -o ConnectBy=id,RendezvousServer=<host>,RendezvousKey=<key> <peer-id>
 ```
 

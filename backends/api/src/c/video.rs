@@ -10,8 +10,9 @@
 //!
 //! What that buys is that a C backend's video is decoded exactly as RustDesk's
 //! is — the same [`Decoders`], with the person's hardware choice, its fallback
-//! to software, its status line and its answer to "was that hardware" — and
-//! nothing of it written twice.
+//! to software, its status line and its answer to "was that hardware" — on
+//! both platforms, the phone's MediaCodec as much as the Linux platform's
+//! FFmpeg, and nothing of it written twice.
 //!
 //! The table carries function pointers rather than naming symbols, so that a
 //! backend library links nothing of the process it is loaded into.
@@ -118,10 +119,12 @@ unsafe extern "C" fn mode(user: *mut c_void) -> c_int {
 /// decodes each rectangle on whichever of its worker threads is free, so a
 /// decoder made on one thread is fed and dropped on others, which is why the
 /// trait is not `Send` and why this is an `unsafe` promise rather than a
-/// bound. It holds for the phone's decoders. MediaCodec's handle is the
-/// NDK's, whose calls may come from any thread one at a time (the C++
-/// context this replaced made the same calls from the same worker threads),
-/// and keeps nothing thread-local between calls.
+/// bound. It holds for both platforms' decoders. MediaCodec's handle is the
+/// NDK's, whose calls may come from any thread one at a time — the C++
+/// context this replaced made the same calls from the same worker threads —
+/// and libavcodec's context, with its VAAPI device, is likewise
+/// any thread's as long as it is one thread's at a time. Neither keeps
+/// anything thread-local between calls.
 unsafe fn decoder<'a>(d: *mut ffi::vento_video_decoder) -> &'a mut Open {
     unsafe { &mut *(d as *mut Open) }
 }

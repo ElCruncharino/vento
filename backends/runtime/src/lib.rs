@@ -21,8 +21,8 @@
 //! The picture and the sound a session carries are [`media`]'s: the video
 //! decoders and sound outputs a platform supplies by implementing its two
 //! traits ([`media::video::Decoders`], [`media::audio::Outputs`]), and what is
-//! done with their planes and samples, the same for every protocol. It and the
-//! conversation above use nothing of each other.
+//! done with their planes and samples, the same for every protocol and both
+//! platforms. It and the conversation above use nothing of each other.
 //!
 //! What is not here: anything with `jni` in it, which is
 //! `remotedesktop-platform-android`.

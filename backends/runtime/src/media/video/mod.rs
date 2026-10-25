@@ -6,14 +6,18 @@
 //!
 //! A protocol asks for a decoder and does not know whose it is. What it holds
 //! is a [`Decoders`], handed to it by whoever started the session: the phone's
-//! MediaCodec in `platform_android` and [`NoDecoders`] for a test that has
-//! none: the answer is the platform's rather than the protocol's.
+//! MediaCodec in `platform_android`, libavcodec in `platform_linux`, and
+//! [`NoDecoders`] for a test that has neither. Which one that is was a
+//! `cfg(target_os)` inside the protocol until a second platform could decode,
+//! and the answer is the platform's rather than the protocol's — the same
+//! RustDesk session wants VP9 on both, and only the thing that gets the
+//! picture out of VP9 differs.
 //!
 //! Everything after the decode is here and is the same for every decoder: a
 //! decoder gets its planes into a [`convert::Frame`] and hands it to an
 //! [`Output`], which finds what moved ([`diff`]) and converts only that
 //! ([`convert`]). That is the expensive half of a frame on a phone whose
-//! decode is hardware.
+//! decode is hardware, and the half the two platforms share exactly.
 
 pub mod bitstream;
 pub mod convert;
@@ -58,17 +62,18 @@ impl Codec {
     }
 }
 
-/// How a platform's decoders may decode: on the GPU or not. The person's
+/// How a desktop's decoders may decode: on the GPU or not. The person's
 /// choice, off unless asked for.
 ///
-/// Here rather than beside a platform's decoder because it is what a session
-/// is started with, whichever backend it is: RustDesk's picture is decoded by
-/// the platform's [`Decoders`], which carry it, and so are TigerVNC's and
-/// FreeRDP's H.264, whose libraries ask the same decoders' mode through
-/// `vento/video.h`. Which API "the GPU" is, and what a setting calls each
-/// mode, are the platform's. A phone's MediaCodec is whatever the phone has
-/// and takes no such choice; its [`Decoders`] say `Off`, which to the phone
-/// means nothing more than "nothing was asked".
+/// Here rather than beside the desktop's decoder because it is what a
+/// session is started with, whichever backend it is: RustDesk's picture is
+/// decoded by the platform's [`Decoders`], which carry it, and so are
+/// TigerVNC's and FreeRDP's H.264, whose libraries ask the same decoders'
+/// mode through `vento/video.h`. Which API "the GPU" is, and
+/// what a setting calls each mode, are the platform's (`platform_linux`
+/// decodes on VAAPI and names `On` "vaapi"). A phone's MediaCodec is
+/// whatever the phone has and takes no such choice; its [`Decoders`] say
+/// `Off`, which to the phone means nothing more than "nothing was asked".
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Hardware {
     /// Software, and nothing of a device opened or loaded: the default.
@@ -86,7 +91,8 @@ pub enum Hardware {
 
 impl Hardware {
     /// Every mode, in declaration order, which is also how the C side numbers
-    /// them (`vento_video_decoders.mode`).
+    /// them (`vento_video_decoders.mode`, and the Linux decoders'
+    /// `vento_video_hardware`).
     pub const ALL: [Hardware; 3] = [Hardware::Off, Hardware::On, Hardware::Auto];
 }
 
@@ -99,11 +105,12 @@ impl Hardware {
 ///
 /// Not `Send`: a decoder is made, fed and dropped on the protocol thread, and
 /// the trait asks no more of a platform's decoder than that (MediaCodec's
-/// happens to be `Send`). The one caller that moves one anyway is TigerVNC's,
-/// whose library decodes each rectangle on whichever of its worker threads is
+/// happens to be `Send`; libavcodec's is a raw context nothing here has
+/// declared so). The one caller that moves one anyway is TigerVNC's, whose
+/// library decodes each rectangle on whichever of its worker threads is
 /// free: one call at a time, never two at once, and that promise is written
-/// down where it is made (`api::c::video`), with why the phone's decoders
-/// keep it.
+/// down where it is made (`api::c::video`), with why both platforms'
+/// decoders keep it.
 pub trait Decoder {
     /// True when a frame arrived, with the rows and columns it changed added to
     /// `changed`. `out` is `width * height` words, row-major, `R, G, B, A` in
@@ -234,8 +241,9 @@ pub trait GpuPicture: Send + Sync {
     fn colour(&self) -> (bool, bool);
 
     /// The picture as the platform that decoded it holds it, for that
-    /// platform's own drawing code to import: opaque to everything else, which
-    /// has no use for it.
+    /// platform's own drawing code to import (on Linux,
+    /// `platform_linux::ffmpeg::export` takes it from here): opaque to
+    /// everything else, which has no use for it.
     fn platform(&self) -> &dyn std::any::Any;
 
     /// The picture converted on the processor into `out`, `width * height`

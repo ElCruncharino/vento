@@ -2220,9 +2220,10 @@ mod tests {
         assert_eq!(encoding(Codec::Vp9, None), "VP9");
     }
 
-    /// Decoders whose way of decoding can be switched, and which count what
-    /// they make; each decoder draws a word per frame, says it is hardware when
-    /// made so, and asks for a key frame when told to.
+    /// Decoders whose way of decoding can be switched, as a desktop's can,
+    /// and which count what they make; each decoder draws a word per frame,
+    /// says it is hardware when made so, and asks for a key frame when told
+    /// to.
     #[derive(Default)]
     struct Switchable {
         hardware: Mutex<Hardware>,
