@@ -9,7 +9,7 @@
  * this one asks whether *this* session layer does, which is a different
  * question and the one that has to be re-asked after every change here.
  *
- *   cargo run -p remotedesktop-spice --example spice-probe -- 10.33.0.200:5930 spicepass
+ *   cargo run -p remotedesktop-spice --features probe --example spice-probe -- 10.33.0.200:5930 spicepass
  *
  * Environment:
  *   SPICE_SECONDS  how long to stay connected (default 5)

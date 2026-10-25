@@ -10,11 +10,11 @@
 //!
 //! ```sh
 //! scripts/testrdp/run.sh
-//! cargo run --example rdp-probe -- 127.0.0.1:3389 proto protopass /tmp/rdp.ppm
-//! RDP_PIN=AB:CD:… cargo run --example rdp-probe -- …    # refuse anything else
-//! RDP_NLA=off RDP_SIZE=1280x800 cargo run --example rdp-probe -- …
-//! RDP_CLIP='hello' cargo run --example rdp-probe -- …    # offer it, print theirs
-//! RDP_RFX=off RDP_COMPRESSION=rdp61 cargo run --example rdp-probe -- …
+//! cargo run --features probe --example ironrdp-probe -- 127.0.0.1:3389 proto protopass /tmp/rdp.ppm
+//! RDP_PIN=AB:CD:… cargo run --features probe --example ironrdp-probe -- …    # refuse anything else
+//! RDP_NLA=off RDP_SIZE=1280x800 cargo run --features probe --example ironrdp-probe -- …
+//! RDP_CLIP='hello' cargo run --features probe --example ironrdp-probe -- …    # offer it, print theirs
+//! RDP_RFX=off RDP_COMPRESSION=rdp61 cargo run --features probe --example ironrdp-probe -- …
 //! ```
 
 use remotedesktop_ironrdp::{Client, Config, Credentials, Handler, Nla};

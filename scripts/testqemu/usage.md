@@ -18,7 +18,7 @@ machine has it. There is no `shot` command: the guest's screen is not an X displ
 from the host — use the client under test.
 
 ```
-$ cargo run -q --example rfb-probe -- 127.0.0.1:5902 vncpass /tmp/f.ppm
+$ cargo run -q --features probe --example rfb-probe -- 127.0.0.1:5902 vncpass /tmp/f.ppm
 connected: 1024x768
 pointer mode: relative
 …
