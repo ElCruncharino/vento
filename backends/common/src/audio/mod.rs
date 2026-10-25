@@ -31,11 +31,18 @@
 //! arrives compressed, the platform's decoders for it ([`decode`]) are the
 //! same object's, [`Outputs::decoders`]: one thing a session is handed for
 //! its sound, however it arrives.
+//!
+//! A protocol written in Rust plays through a [`Player`], which is that
+//! object's streams and decoders as the far end's sound arrives: a stream
+//! per format, a decoder per codec, and a stream closed once it has gone
+//! quiet.
 
 pub mod decode;
+mod player;
 mod queue;
 mod resample;
 
+pub use player::Player;
 pub use queue::{Queue, Stats};
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
