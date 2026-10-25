@@ -81,14 +81,14 @@ static inline char *vento_utf8_from_bytes(const char *bytes) {
 }
 
 /* The most of a clipboard a session takes from the far end or offers it, in
-   bytes of its text as UTF-8 with LF line ends: `common::MAX_CLIPBOARD`,
+   bytes of its text as UTF-8 with LF line ends: `runtime::MAX_CLIPBOARD`,
    which the Rust side holds this equal to (`session::c`). Past it a clipboard
    is skipped whole rather than cut short. */
 #define VENTO_MAX_CLIPBOARD (1 << 20)
 
 /* CRLF, and a lone CR, to LF, in place: what text is on this side of the
    seam, from a protocol whose far end writes Windows' line ends. Never
-   longer than it was. `common::text::to_lf`, held to the same cases. */
+   longer than it was. `runtime::text::to_lf`, held to the same cases. */
 static inline void vento_text_to_lf(char *utf8) {
     if (!utf8) {
         return;
@@ -110,7 +110,7 @@ static inline void vento_text_to_lf(char *utf8) {
 /* Every line end, whichever it was, to CRLF, for a protocol whose far end
    expects Windows' line ends on its clipboard. Bytes of UTF-8 are never CR
    or LF but as themselves, so this works byte by byte. Returns a copy the
-   caller frees, or NULL out of memory. `common::text::to_crlf`. */
+   caller frees, or NULL out of memory. `runtime::text::to_crlf`. */
 static inline char *vento_text_to_crlf(const char *utf8) {
     if (!utf8) {
         utf8 = "";

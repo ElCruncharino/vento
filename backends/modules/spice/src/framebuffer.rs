@@ -37,7 +37,7 @@ impl Framebuffer {
 
     /// Nothing is preserved: a surface that changes size is a surface the
     /// server is about to draw the whole of. The caller has held the size to
-    /// [`common::MAX_DESKTOP_PIXELS`]; this allocates whatever it is given.
+    /// [`runtime::MAX_DESKTOP_PIXELS`]; this allocates whatever it is given.
     pub fn resize(&mut self, width: usize, height: usize) {
         self.width = width;
         self.height = height;

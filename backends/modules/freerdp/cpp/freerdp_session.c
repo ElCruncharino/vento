@@ -275,7 +275,7 @@ static void splitAddress(char *address, int *port, char *why, size_t whyLen) {
     }
     /* Not where another colon follows: "::1" is IPv6's loopback unbracketed,
        and is told so below rather than that it has no host (as
-       common::address says it). */
+       runtime::address says it). */
     if (len == 0 || (address[0] == ':' && strchr(address + 1, ':') == NULL)) {
         snprintf(why, whyLen, "No host in address");
         return;

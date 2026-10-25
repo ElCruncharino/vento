@@ -14,30 +14,30 @@
 //! place this crate is opinionated, because it is the one seam a second
 //! platform has to fit.
 //!
-//! A protocol whose picture is video also gets a [`video::Decoders`] from
-//! whoever started it, and does not know whose: the phone's hardware. What is
-//! done with a decoder's planes afterwards — finding what moved, and
-//! converting only that — is [`video`]'s.
-//!
 //! A protocol that reaches TLS reaches it through [`tls`]: the certificate
 //! pinned rather than verified, and one connection read and written by two
 //! threads.
+//!
+//! The picture and the sound a session carries are [`media`]'s: the video
+//! decoders and sound outputs a platform supplies by implementing its two
+//! traits ([`media::video::Decoders`], [`media::audio::Outputs`]), and what is
+//! done with their planes and samples, the same for every protocol. It and the
+//! conversation above use nothing of each other.
 //!
 //! What is not here: anything with `jni` in it, which is
 //! `remotedesktop-platform-android`.
 
 pub mod address;
-pub mod audio;
 pub mod client;
 pub mod cursor;
 pub mod events;
 pub mod handler;
 pub mod hangup;
+pub mod media;
 pub mod session;
 pub mod slot;
 pub mod text;
 pub mod tls;
-pub mod video;
 
 pub use client::Client;
 pub use events::Events;

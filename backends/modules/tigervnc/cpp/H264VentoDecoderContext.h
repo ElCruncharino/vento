@@ -5,10 +5,11 @@
 //
 // Their two are FFmpeg's libavcodec and Windows' Media Foundation, each a
 // decoder of the library's own. This one hands the rectangle to the platform's
-// `common::video::Decoders` through `vento/video.h` — the phone's MediaCodec —
-// so that TigerVNC's H.264 is decoded by the same code as RustDesk's video: one
-// colour rule, one hardware path with one fallback, and the same facts about
-// it. Selected by `H264_VENTO`, the one patch to their factory.
+// `runtime::media::video::Decoders` through `vento/video.h` — the phone's
+// MediaCodec — so that TigerVNC's H.264 is decoded by the same code as
+// RustDesk's video: one colour rule, one hardware path with one fallback, and
+// the same facts about it. Selected by `H264_VENTO`, the one patch to their
+// factory.
 //
 // Upstream's semantics are kept: a context per rectangle, made and reset by
 // their H264Decoder exactly as before (up to 64, the oldest dropped, a reset

@@ -22,7 +22,7 @@ use ironrdp_cliprdr::pdu::{
 };
 use ironrdp_core::impl_as_any;
 
-use common::text::{to_crlf, to_lf};
+use runtime::text::{to_crlf, to_lf};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
@@ -32,7 +32,7 @@ use std::sync::{Arc, Mutex};
 /// FreeRDP's C keeps as `VENTO_MAX_CLIPBOARD`. The phone reads its own
 /// clipboard up to 1 Mi characters (`SessionClipboard`), which past ASCII is
 /// more bytes than this; such a copy is not offered.
-const MAX_CLIPBOARD: usize = common::MAX_CLIPBOARD;
+const MAX_CLIPBOARD: usize = runtime::MAX_CLIPBOARD;
 
 /// Something only the channel can encode, left for the protocol thread.
 #[derive(Debug)]

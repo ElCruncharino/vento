@@ -38,7 +38,7 @@ use flate2::{Compress, Compression, FlushCompress};
 /// CRLF, and a lone CR, to LF (TigerVNC's `convertLF`, the form text has
 /// here and in a plain `ServerCutText`), and every line end to CRLF for a
 /// provide (its `convertCRLF`): runtime's, which both RDP backends keep too.
-pub use common::text::{to_crlf, to_lf};
+pub use runtime::text::{to_crlf, to_lf};
 
 /// The pseudo-encoding that says this client speaks the extension.
 pub const ENC_EXTENDED_CLIPBOARD: i32 = 0xC0A1_E5CE_u32 as i32;

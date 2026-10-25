@@ -15,7 +15,7 @@ use std::path::PathBuf;
 fn main() {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let own = manifest.join("cpp/include");
-    let shared = manifest.join("../../common/include");
+    let shared = manifest.join("../../session/include");
     println!("cargo:rerun-if-changed={}", own.display());
     println!("cargo:rerun-if-changed={}", shared.display());
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());

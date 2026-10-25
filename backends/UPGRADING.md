@@ -132,7 +132,7 @@ under the host locale (`export LC_ALL=C`).
 
 - A C backend's shim is one file in its module's `cpp/`, `<name>_session.c`
   (`.cxx` for TigerVNC), which drives the library against the neutral C API
-  in `backends/common/include/vento/` and names no platform; what it offers
+  in `backends/session/include/vento/` and names no platform; what it offers
   is declared in the backend's own header beside it,
   `include/vento/<name>.h`. Above it is the crate at the module's root, which
   reads that header into Rust (its `build.rs`, with bindgen), fills the
@@ -157,11 +157,11 @@ under the host locale (`export LC_ALL=C`).
   libav one is not built, `HAVE_LIBAV` unset), and hands each rectangle to
   vento's video decoders through `vento/video.h`'s table. Its QEMU audio is
   played on vento's sound output through `vento/audio.h`'s table
-  (`VentoAudio.h`; AAudio on the phone, behind `common::audio`'s queue), not
-  their viewer's `AudioOutput`, which is not compiled. An upstream change to
-  `H264DecoderContext` or `H264Decoder` (the reset flags, the 64-context
-  limit) or to the QEMU audio calls in `CConnection` reaches the shim — in
-  particular the session's sound switch leans on
+  (`VentoAudio.h`; AAudio on the phone, behind `runtime::media::audio`'s
+  queue), not their viewer's `AudioOutput`, which is not compiled. An upstream
+  change to `H264DecoderContext` or `H264Decoder` (the reset flags, the
+  64-context limit) or to the QEMU audio calls in `CConnection` reaches the
+  shim — in particular the session's sound switch leans on
   `CConnection::framebufferUpdateEnd` asking for audio (format, then enable)
   in the update that acknowledged it, which the shim's own
   `framebufferUpdateEnd` follows with a disable for a session started without
@@ -218,7 +218,9 @@ is a module under `backends/modules/<name>/`, and each layer of it is one
 line or one file somewhere that already has seven:
 
 - **The protocol.** A Rust crate at the module's root (`Cargo.toml`, `src/`,
-  `examples/`; `crate-type = ["lib", "cdylib"]`), or a C shim in `cpp/` over
+  `examples/`; `crate-type = ["lib", "cdylib"]`) written against
+  `remotedesktop-runtime` (its `media` too, where it has video or sound to
+  hand on), or a C shim in `cpp/` over
   `vento/backend.h` with its config in its own header,
   `cpp/include/vento/<name>.h` (on the include path of the module's targets
   through `vento_android_library`), and a small crate at the module's root

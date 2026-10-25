@@ -4,7 +4,7 @@
 //! What a session tells whoever is watching it, and the channel it says it
 //! through.
 //!
-//! An [`Event`] is `common::Events` as a value — one variant per method, plus
+//! An [`Event`] is `runtime::Events` as a value — one variant per method, plus
 //! the three the C API has over it (`question`, `security_needed`,
 //! `message`) — and a [`Mailbox`] is where a session puts them: a queue
 //! behind a mutex, a condition variable for a thread that wants to block on
@@ -39,7 +39,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
-pub use common::audio::{Sound, Switch};
+pub use runtime::media::audio::{Sound, Switch};
 
 /// A rectangle of the desktop, in pixels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -593,10 +593,10 @@ impl Mailbox {
     }
 }
 
-/// A mailbox as the `Events` a `common::Session` is started with.
+/// A mailbox as the `Events` a `runtime::Session` is started with.
 pub struct Feed(pub Arc<Mailbox>);
 
-impl common::Events for Feed {
+impl runtime::Events for Feed {
     fn connected(&self, width: usize, height: usize) {
         self.0.on_connected(width, height);
     }

@@ -25,9 +25,9 @@ use crate::framebuffer::Framebuffer;
 use crate::keymap::{self, Key};
 use crate::playback::Playback;
 use crate::tls;
-use common::Handler;
-use common::audio::Outputs;
-use common::address::Ports;
+use runtime::Handler;
+use runtime::media::audio::Outputs;
+use runtime::address::Ports;
 use shakenfist_spice_protocol::constants::{
     MOUSE_MODE_CLIENT, MOUSE_MODE_SERVER, cursor_client, display_client, image_compression,
     inputs_client, main_client, main_server,
@@ -333,7 +333,7 @@ impl Client {
         // Every channel of a session dials the same place, and the host is also
         // the name the certificate is checked against, so this is read once
         // rather than per channel.
-        let (host, port) = common::address::split(&config.address, DEFAULT_PORT, Ports::Plain)
+        let (host, port) = runtime::address::split(&config.address, DEFAULT_PORT, Ports::Plain)
             .map_err(Error::Address)?;
         let connector = match config.tls {
             true => Some(tls::Connector::new(&host)?),
@@ -505,10 +505,10 @@ impl Client {
     }
 }
 
-/// The shape `common::Session` runs: the inherent `run` and `close` are the
+/// The shape `runtime::Session` runs: the inherent `run` and `close` are the
 /// implementation, and this is them written down for a session that does not
 /// know which protocol it has.
-impl common::Client for Client {
+impl runtime::Client for Client {
     type Config = Config;
     type Error = Error;
     const NAME: &'static str = "spice";

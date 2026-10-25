@@ -288,13 +288,13 @@ pub fn zrle(
 /// whole touchpad design rests on possible.
 ///
 /// A pseudo-encoding's rectangle is not checked against the desktop, so the
-/// size is held to [`common::MAX_CURSOR_SIDE`] here, before the pixels are
+/// size is held to [`runtime::MAX_CURSOR_SIDE`] here, before the pixels are
 /// allocated by it. Past that the session ends, as it does in TigerVNC's
 /// viewer and in libvncclient: the bytes are there to be skipped, but a
 /// server that sends a cursor bigger than any screen's worth of cursor is
 /// not one whose next message is worth reading.
 pub fn cursor(r: &mut Reader<impl Read>, w: usize, h: usize) -> Result<Vec<u32>> {
-    if w > common::MAX_CURSOR_SIDE || h > common::MAX_CURSOR_SIDE {
+    if w > runtime::MAX_CURSOR_SIDE || h > runtime::MAX_CURSOR_SIDE {
         return Err(Error::Protocol(format!("cursor of {w}x{h}")));
     }
     let mut pixels = Vec::with_capacity(w * h);

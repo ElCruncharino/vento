@@ -112,7 +112,7 @@ impl I420 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::video::convert::Plane as Layout;
+    use crate::media::video::convert::Plane as Layout;
 
     fn at(offset: usize, col_inc: usize, row_inc: usize, sub: usize) -> Layout {
         Layout {

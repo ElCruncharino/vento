@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The phone's sound output, through the NDK's AAudio: [`AAudio`] is this
-//! platform's `common::audio::Outputs`.
+//! platform's `runtime::media::audio::Outputs`.
 //!
 //! Declared here rather than taken from a crate, for the reason
 //! [`mediacodec`](crate::mediacodec) gives: a couple of dozen functions with
@@ -31,8 +31,8 @@ use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::time::Duration;
 use std::sync::{Arc, Mutex};
 
-use common::audio::decode::Decoders;
-use common::audio::{Controls, Device, Format, Outputs, Queue};
+use runtime::media::audio::decode::Decoders;
+use runtime::media::audio::{Controls, Device, Format, Outputs, Queue};
 
 use crate::mediacodec_audio::MediaCodecAudio;
 

@@ -95,7 +95,7 @@ impl Images {
         // a size no desktop could be is refused before they are asked; LZ and
         // GLZ allocate by their stream's own, which is held to this one.
         let pixels = (descriptor.width as usize).checked_mul(descriptor.height as usize);
-        let Some(pixels) = pixels.filter(|&n| n <= common::MAX_DESKTOP_PIXELS) else {
+        let Some(pixels) = pixels.filter(|&n| n <= runtime::MAX_DESKTOP_PIXELS) else {
             log::warn!("display: a {}x{} image", descriptor.width, descriptor.height);
             return None;
         };
@@ -441,7 +441,7 @@ fn lz_alpha(data: &[u8], pixels: &mut [u8]) -> bool {
 /// rectangle, and this hands it straight back.
 ///
 /// Nothing for an image whose pixels are not the size it claims, and for a
-/// box bigger than any desktop could be ([`common::MAX_DESKTOP_PIXELS`]):
+/// box bigger than any desktop could be ([`runtime::MAX_DESKTOP_PIXELS`]):
 /// both sizes are the server's word, and this is where they are indexed by.
 fn fit(image: Image, src: (u32, u32, u32, u32), width: usize, height: usize) -> Option<Image> {
     let claimed = image.width.checked_mul(image.height).and_then(|n| n.checked_mul(4));
@@ -474,7 +474,7 @@ fn fit(image: Image, src: (u32, u32, u32, u32), width: usize, height: usize) -> 
     } else {
         (width, height)
     };
-    let count = width.checked_mul(height).filter(|&n| n <= common::MAX_DESKTOP_PIXELS);
+    let count = width.checked_mul(height).filter(|&n| n <= runtime::MAX_DESKTOP_PIXELS);
     let Some(count) = count else {
         log::warn!("display: a draw into a {width}x{height} box");
         return None;

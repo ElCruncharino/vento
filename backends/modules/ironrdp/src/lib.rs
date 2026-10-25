@@ -56,7 +56,7 @@ mod sound;
 mod tls;
 
 pub use client::{Client, Config, Experience, Info, Nla, Platform, compression, experience};
-pub use common::{Credentials, Handler};
+pub use runtime::{Credentials, Handler};
 pub use error::{Error, Result};
 pub use framebuffer::Framebuffer;
 pub use keymap::{Key, scancode};

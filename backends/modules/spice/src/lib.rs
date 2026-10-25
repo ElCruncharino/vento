@@ -27,8 +27,8 @@
 //! no backend here sends; **USB redirection**, **WebDAV** and
 //! **smartcard**, which are not a desktop; **file transfer**, which the agent
 //! carries and a phone has nowhere to put; and **H.264 streams**, whose decoder
-//! would be the platform's — a `common::video::Decoders`, as RustDesk's is —
-//! and is a stage of its own.
+//! would be the platform's — a `runtime::media::video::Decoders`, as RustDesk's
+//! is — and is a stage of its own.
 //!
 //! It is not the reference implementation and does not have to be: what a
 //! decoder produces was compared with `remote-viewer`'s own picture, pixel for
@@ -63,7 +63,7 @@ mod playback;
 mod tls;
 
 pub use client::{Client, Config, Info, VERSION, compression_of};
-pub use common::{Credentials, Handler};
+pub use runtime::{Credentials, Handler};
 pub use error::{Error, Result};
 pub use framebuffer::Framebuffer;
 
@@ -72,7 +72,7 @@ pub use framebuffer::Framebuffer;
 /// message is survived, and a runtime to wait on the async ones with.
 #[cfg(test)]
 mod testing {
-    use common::{Credentials, Handler};
+    use runtime::{Credentials, Handler};
 
     pub struct Nothing;
 

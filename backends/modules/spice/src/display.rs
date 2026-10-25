@@ -21,7 +21,7 @@
 use crate::error::{Error, Result};
 use crate::framebuffer::Framebuffer;
 use crate::images::Images;
-use common::Handler;
+use runtime::Handler;
 use shakenfist_spice_compression::{JpegDecoderRsDecoder, VideoDecoder, video};
 use shakenfist_spice_protocol::constants::display_server;
 use shakenfist_spice_protocol::messages::{
@@ -240,7 +240,7 @@ impl Display {
     /// whole of the new one.
     ///
     /// The size is two 32-bit fields of the server's and the framebuffer is
-    /// allocated by it here, so one past [`common::MAX_DESKTOP_PIXELS`] (or
+    /// allocated by it here, so one past [`runtime::MAX_DESKTOP_PIXELS`] (or
     /// past what a `usize` holds, on a 32-bit phone) ends the session as a
     /// protocol error rather than asking for gigabytes.
     fn reset_surface(
@@ -252,7 +252,7 @@ impl Display {
         if width == 0 || height == 0 {
             return Ok(());
         }
-        if width.checked_mul(height).is_none_or(|n| n > common::MAX_DESKTOP_PIXELS) {
+        if width.checked_mul(height).is_none_or(|n| n > runtime::MAX_DESKTOP_PIXELS) {
             return Err(Error::Protocol(format!("a desktop of {width}x{height}")));
         }
         self.framebuffer.write().unwrap().resize(width, height);

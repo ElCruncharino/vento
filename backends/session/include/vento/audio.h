@@ -2,26 +2,26 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // The platform's sound output, as a C backend is handed it: a table of calls
-// over `common::audio::Outputs` (AAudio on the phone), filled in by
+// over `runtime::media::audio::Outputs` (AAudio on the phone), filled in by
 // `session::c::audio` and passed in a backend's config. Function pointers
 // rather than symbols, for the reason `vento/video.h` gives: a backend library
 // links nothing of the process it is loaded into.
 //
 // What is behind a stream is the same for every backend: a queue that keeps as
-// little in front of the device as the far end's own rhythm of writes needs
-// not to run dry, and a margin that starts higher and comes down over a
-// stream's first clean seconds and grows when the far end's sound turns out
-// later than that (`common::audio::Queue`), with the device's own buffer
-// behind it; never more than a quarter of a second (past that the oldest is
-// dropped, so a burst or a stall costs a skip rather than a lag that grows),
-// silence while it fills back up after running dry, the session's gain and
-// mute, and a device opened off the caller's thread.
+// little in front of the device as the far end's own rhythm of writes needs not
+// to run dry, and a margin that starts higher and comes down over a stream's
+// first clean seconds and grows when the far end's sound turns out later than
+// that (`runtime::media::audio::Queue`), with the device's own buffer behind
+// it; never more than a quarter of a second (past that the oldest is dropped,
+// so a burst or a stall costs a skip rather than a lag that grows), silence
+// while it fills back up after running dry, the session's gain and mute, and a
+// device opened off the caller's thread.
 //
 // And where the far end's sound arrives compressed, the platform's decoders
 // for it are in the same table (AAC and Opus: MediaCodec on the phone,
-// `common::audio::decode`), so that a backend offers its far end what the
-// platform decodes and hands the packets here rather than to a decoder of its
-// library's own. So a backend only writes what the far end sends, as it
+// `runtime::media::audio::decode`), so that a backend offers its far end what
+// the platform decodes and hands the packets here rather than to a decoder of
+// its library's own. So a backend only writes what the far end sends, as it
 // arrives, and never waits.
 
 #ifndef VENTO_AUDIO_H
@@ -40,16 +40,16 @@ extern "C" {
    decoders hand back. */
 #define VENTO_AUDIO_S16 1
 
-/* Codecs, as `common::audio::decode::Codec` names them. AAC is raw access
-   units, one frame a packet and no ADTS header, which is how RDP's sound
-   sends it; Opus is one packet at a time, at 48 kHz. */
+/* Codecs, as `runtime::media::audio::decode::Codec` names them. AAC is raw
+   access units, one frame a packet and no ADTS header, which is how RDP's
+   sound sends it; Opus is one packet at a time, at 48 kHz. */
 #define VENTO_AUDIO_CODEC_AAC 1
 #define VENTO_AUDIO_CODEC_OPUS 2
 
 /* What the session's sound switch does (`offer`): silence the far end's
    sound here, where nothing can ask the far end to stop sending it during a
    session (RDP's sound), or ask it to stop and to send again (QEMU's audio
-   extension). As `common::audio::Switch` names them. */
+   extension). As `runtime::media::audio::Switch` names them. */
 #define VENTO_AUDIO_SWITCH_MUTE 1
 #define VENTO_AUDIO_SWITCH_ENABLE 2
 

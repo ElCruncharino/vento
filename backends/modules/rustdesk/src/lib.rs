@@ -33,11 +33,11 @@
 //! offer for a session to be reached.
 //!
 //! Nothing in here decodes video. The client is made with a
-//! `common::video::Decoders` — the phone's MediaCodec in the app, nothing at
-//! all in a test — and what it tells the far end it can take is whatever that
-//! says. Which codecs a session ends up in is the far end's choice out of that
-//! list, so the same protocol code is a VP9 session on one platform and an
-//! H.265 one on another.
+//! `runtime::media::video::Decoders` — the phone's MediaCodec in the app,
+//! nothing at all in a test — and what it tells the far end it can take is
+//! whatever that says. Which codecs a session ends up in is the far end's
+//! choice out of that list, so the same protocol code is a VP9 session on one
+//! platform and an H.265 one on another.
 
 // The protocol as the phone holds it: a `session::Backend`, with this backend's
 // options read into its config and its rows, through the one JNI layer below.
@@ -66,7 +66,7 @@ pub mod rendezvous;
 pub mod wire;
 
 pub use client::{Client, Config, Info, Platform, PreferredCodec, Quality, Reach, VERSION};
-pub use common::video::Codec;
-pub use common::{Credentials, Handler};
+pub use runtime::media::video::Codec;
+pub use runtime::{Credentials, Handler};
 pub use error::{Error, Result};
 pub use framebuffer::Framebuffer;

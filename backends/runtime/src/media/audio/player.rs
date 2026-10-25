@@ -230,8 +230,8 @@ impl Player {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio::decode::Decoders;
-    use crate::audio::{Controls, Device, Queue};
+    use crate::media::audio::decode::Decoders;
+    use crate::media::audio::{Controls, Device, Queue};
     use std::sync::Mutex;
 
     struct Quiet;

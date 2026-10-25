@@ -12,7 +12,7 @@ use crate::proto::{Counter, MAX_CUT_TEXT, Reader, Writer, latin1, to_latin1};
 use crate::security::{self, Security};
 use crate::transport::{Wire, Writes};
 use crate::zlib::ZlibStream;
-use common::{Credentials, Handler, Hangup};
+use runtime::{Credentials, Handler, Hangup};
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -856,10 +856,10 @@ impl Shared {
     }
 }
 
-/// A desktop size within [`common::MAX_DESKTOP_PIXELS`]. Two 16-bit fields
+/// A desktop size within [`runtime::MAX_DESKTOP_PIXELS`]. Two 16-bit fields
 /// here, so the product cannot overflow.
 fn check_desktop(width: usize, height: usize) -> Result<()> {
-    if width * height > common::MAX_DESKTOP_PIXELS {
+    if width * height > runtime::MAX_DESKTOP_PIXELS {
         return Err(Error::Protocol(format!("desktop of {width}x{height}")));
     }
     Ok(())
@@ -1154,7 +1154,7 @@ impl Rate {
 /// form. The display convention is older than the port one and every VNC client
 /// still takes it, so `10.0.0.5:1` has to mean 5901 rather than port 1.
 fn resolve(address: &str) -> Result<(String, u16)> {
-    common::address::split(address, 5900, common::address::Ports::Display).map_err(Error::Address)
+    runtime::address::split(address, 5900, runtime::address::Ports::Display).map_err(Error::Address)
 }
 
 /// Each address in turn, through `hangup` so that a close ends the dial too.
@@ -1175,10 +1175,10 @@ fn connect(hangup: &Hangup, host: &str, port: u16, timeout: Duration) -> Result<
     })))
 }
 
-/// The shape `common::Session` runs: the inherent `run` and `close` are the
+/// The shape `runtime::Session` runs: the inherent `run` and `close` are the
 /// implementation, and this is them written down for a session that does not
 /// know which protocol it has.
-impl common::Client for Client {
+impl runtime::Client for Client {
     type Config = Config;
     type Error = Error;
     const NAME: &'static str = "rfb";
@@ -1208,7 +1208,7 @@ impl Default for Client {
 mod tests {
     use super::*;
 
-    /// The forms are `common::address`'s; what is this client's own is the
+    /// The forms are `runtime::address`'s; what is this client's own is the
     /// default port and the display rule being on.
     #[test]
     fn addresses() {
@@ -1515,7 +1515,7 @@ mod tests {
     /// A cursor up to the shared bound is a cursor, mask and all.
     #[test]
     fn a_cursor_as_big_as_any_is_drawn() {
-        let side = common::MAX_CURSOR_SIDE;
+        let side = runtime::MAX_CURSOR_SIDE;
         let body = vec![0xff; side * 4 + side.div_ceil(8)];
         let mut bytes = cursor_update(side as u16, 1, &body);
         bytes.push(2);
@@ -1531,7 +1531,7 @@ mod tests {
     /// libvncclient's do.
     #[test]
     fn a_cursor_bigger_than_any_cursor_ends_the_session() {
-        for (w, h) in [(u16::MAX, u16::MAX), (common::MAX_CURSOR_SIDE as u16 + 1, 1)] {
+        for (w, h) in [(u16::MAX, u16::MAX), (runtime::MAX_CURSOR_SIDE as u16 + 1, 1)] {
             let bytes = cursor_update(w, h, &[0; 64]);
             let mut seen = Recorder::default();
             let end = Client::new().read_loop(&mut Reader::new(&bytes[..]), &mut seen);

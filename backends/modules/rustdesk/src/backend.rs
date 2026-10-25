@@ -7,14 +7,14 @@
 //! client hands over in [`Connect::decoders`]: MediaCodec on the phone.
 
 use crate::{Client, Config, Platform, PreferredCodec, Quality, Reach};
-use common::{Bridge, Session};
+use runtime::{Bridge, Session};
 use session::backend::{
     Backend, ConnectionFact, Credentials, Facts, Field, Monitor, Picture, Traffic,
 };
 use session::events::{Feed, Mailbox};
 use session::kind::{self, CONNECT_TIMEOUT_MS, Connect, Kind};
 use session::options::Options;
-use common::video::GpuPicture;
+use runtime::media::video::GpuPicture;
 use std::sync::{Arc, Mutex, RwLockReadGuard};
 use std::time::Duration;
 

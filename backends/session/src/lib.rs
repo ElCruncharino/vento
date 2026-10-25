@@ -34,4 +34,4 @@ pub mod options;
 pub mod rdp;
 pub mod trust;
 
-pub use common::Credentials;
+pub use runtime::Credentials;

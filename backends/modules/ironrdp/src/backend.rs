@@ -6,7 +6,7 @@
 //! `platform_android`'s JNI layer.
 
 use crate::{Client, Config, Nla, Platform};
-use common::{Bridge, Session};
+use runtime::{Bridge, Session};
 use session::backend::{
     Backend, ConnectionFact, Credentials, Facts, Field, Monitor, Picture, Traffic,
 };

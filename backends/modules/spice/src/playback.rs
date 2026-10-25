@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The playback channel: the guest's sound, as PCM or Opus, onto the
-//! session's output (`common::audio`).
+//! session's output (`runtime::media::audio`).
 //!
 //! The server says what it sends before it sends it — a `MODE` for the
 //! codec, a `START` for the rate and channels — and says when the guest has
@@ -13,8 +13,8 @@
 //! platform's decoder (MediaCodec on the phone), which is why Opus is
 //! offered only where that decodes it.
 
-use common::audio::decode::Codec;
-use common::audio::{Format, Outputs, Player};
+use runtime::media::audio::decode::Codec;
+use runtime::media::audio::{Format, Outputs, Player};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -176,7 +176,7 @@ fn u32_at(body: &[u8], at: usize) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use common::audio::{Controls, Device, Queue};
+    use runtime::media::audio::{Controls, Device, Queue};
     use std::sync::Mutex;
 
     struct Quiet;

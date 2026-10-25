@@ -19,7 +19,7 @@ crate-type = ["lib", "cdylib"]
 
 [dependencies]
 log.workspace = true
-remotedesktop-common.workspace = true
+remotedesktop-runtime.workspace = true
 # `src/backend.rs`, the protocol as a `session::Backend`: what the phone's JNI
 # layer stands in front of.
 remotedesktop-session.workspace = true
@@ -28,7 +28,7 @@ remotedesktop-session.workspace = true
 # change upstream before either would build for a phone: `patches/ryll/`, and
 # note 83 §2 for what they are. `client` is deliberately not among them — it is
 # their TLS opinion with a bundled root store in it, which is 922 KB and is
-# replaced here by `remotedesktop-common`'s pinning (`common::tls`). The
+# replaced here by `remotedesktop-runtime`'s pinning (`runtime::tls`). The
 # paths, and `default-features = false`, are the root `Cargo.toml`'s
 # `[workspace.dependencies]`.
 shakenfist-spice-protocol.workspace = true
@@ -52,7 +52,7 @@ tokio = { version = "1", default-features = false, features = [
     "sync",
     "macros",
 ] }
-# The TLS port, with `common::tls`'s verifier in it. No provider feature:
+# The TLS port, with `runtime::tls`'s verifier in it. No provider feature:
 # the patched protocol crate takes the process-wide default, which is the
 # `ring` our own crate installs.
 tokio-rustls = { version = "0.26", default-features = false, features = [

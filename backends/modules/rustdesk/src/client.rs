@@ -49,10 +49,10 @@ use crate::protos::message::{
 };
 use crate::rendezvous;
 use crate::wire::{self, Traffic};
-use common::audio::decode::Codec as SoundCodec;
-use common::audio::{Format, Outputs, Player};
-use common::{Handler, Hangup};
-use common::video::{self, Codec, Decoded, Decoders, GpuPicture, Hardware};
+use runtime::media::audio::decode::Codec as SoundCodec;
+use runtime::media::audio::{Format, Outputs, Player};
+use runtime::{Handler, Hangup};
+use runtime::media::video::{self, Codec, Decoded, Decoders, GpuPicture, Hardware};
 
 /// Their default direct-access port, which is `RENDEZVOUS_PORT + 2`.
 pub const DIRECT_PORT: u16 = 21118;
@@ -1359,16 +1359,16 @@ impl Client {
             return;
         }
         let content = if clip.compress {
-            unzstd(&clip.content, common::MAX_CLIPBOARD).unwrap_or_default()
+            unzstd(&clip.content, runtime::MAX_CLIPBOARD).unwrap_or_default()
         } else {
             clip.content
         };
-        if content.len() > common::MAX_CLIPBOARD {
+        if content.len() > runtime::MAX_CLIPBOARD {
             // Skipped whole, as every backend skips one: a part of a text
             // pasted here would read as the whole of it.
             log::warn!(
                 "the peer's clipboard is over the {} bytes this client takes; skipped",
-                common::MAX_CLIPBOARD
+                runtime::MAX_CLIPBOARD
             );
             return;
         }
@@ -1789,10 +1789,10 @@ impl Client {
     }
 }
 
-/// The shape `common::Session` runs: the inherent `run` and `close` are the
+/// The shape `runtime::Session` runs: the inherent `run` and `close` are the
 /// implementation, and this is them written down for a session that does not
 /// know which protocol it has.
-impl common::Client for Client {
+impl runtime::Client for Client {
     type Config = Config;
     type Error = Error;
     const NAME: &'static str = "rustdesk";
@@ -1894,7 +1894,7 @@ impl Cursor {
         }
         // Two 32-bit fields of the peer's, so held to the shared bound before
         // they size anything; within it the product cannot overflow.
-        if width > common::MAX_CURSOR_SIDE || height > common::MAX_CURSOR_SIDE {
+        if width > runtime::MAX_CURSOR_SIDE || height > runtime::MAX_CURSOR_SIDE {
             log::warn!("a {width}x{height} cursor is bigger than any cursor");
             return None;
         }
@@ -1960,7 +1960,7 @@ fn login_hash(password: &str, hash: &Hash) -> Vec<u8> {
 /// `host` or `host:port`, plus the bracketed IPv6 form. The direct mode's
 /// address only; an id is not one of these and never reaches here.
 fn resolve(address: &str) -> Result<SocketAddr> {
-    let (host, port) = common::address::split(address, DIRECT_PORT, common::address::Ports::Plain)
+    let (host, port) = runtime::address::split(address, DIRECT_PORT, runtime::address::Ports::Plain)
         .map_err(Error::Address)?;
     (host.as_str(), port)
         .to_socket_addrs()
@@ -2053,7 +2053,7 @@ mod tests {
         fn frame_end(&mut self) {}
         fn cursor(&mut self, _p: &[u32], _w: usize, _h: usize, _hx: i32, _hy: i32) {}
         fn clipboard(&mut self, _text: &str) {}
-        fn credentials(&mut self, _needs_user: bool) -> Option<common::Credentials> {
+        fn credentials(&mut self, _needs_user: bool) -> Option<runtime::Credentials> {
             None
         }
         fn trust(&mut self, _fingerprint: &str) -> bool {
@@ -2113,23 +2113,23 @@ mod tests {
     }
 
     /// An output that decodes Opus where told to, and plays nothing.
-    struct Sounding(Arc<common::audio::Controls>, bool);
+    struct Sounding(Arc<runtime::media::audio::Controls>, bool);
 
     impl Outputs for Sounding {
-        fn controls(&self) -> &Arc<common::audio::Controls> {
+        fn controls(&self) -> &Arc<runtime::media::audio::Controls> {
             &self.0
         }
 
-        fn device(&self, _queue: Arc<common::audio::Queue>) -> std::result::Result<Box<dyn common::audio::Device>, String> {
+        fn device(&self, _queue: Arc<runtime::media::audio::Queue>) -> std::result::Result<Box<dyn runtime::media::audio::Device>, String> {
             Err("not in a test".into())
         }
 
-        fn decoders(&self) -> Option<&dyn common::audio::decode::Decoders> {
+        fn decoders(&self) -> Option<&dyn runtime::media::audio::decode::Decoders> {
             self.1.then_some(self as _)
         }
     }
 
-    impl common::audio::decode::Decoders for Sounding {
+    impl runtime::media::audio::decode::Decoders for Sounding {
         fn decodable(&self, codec: SoundCodec) -> bool {
             codec == SoundCodec::Opus
         }
@@ -2139,7 +2139,7 @@ mod tests {
             _codec: SoundCodec,
             _format: Format,
             _config: &[u8],
-        ) -> std::result::Result<Box<dyn common::audio::decode::Decoder>, String> {
+        ) -> std::result::Result<Box<dyn runtime::media::audio::decode::Decoder>, String> {
             Err("not in a test".into())
         }
     }
@@ -2160,7 +2160,7 @@ mod tests {
             audio,
             sound: true,
         };
-        let controls = Arc::new(common::audio::Controls::new());
+        let controls = Arc::new(runtime::media::audio::Controls::new());
         assert!(sound_of(&config(None)).is_none());
         assert!(sound_of(&config(Some(Arc::new(Sounding(Arc::clone(&controls), false))))).is_none());
         assert!(sound_of(&config(Some(Arc::new(Sounding(controls, true))))).is_some());
@@ -2173,7 +2173,7 @@ mod tests {
 
     #[test]
     fn the_switch_asks_the_peer_with_the_audio_option_alone() {
-        let controls = Arc::new(common::audio::Controls::new());
+        let controls = Arc::new(runtime::media::audio::Controls::new());
         let audio: Arc<dyn Outputs> = Arc::new(Sounding(Arc::clone(&controls), true));
         let client = Client::new(Arc::new(video::NoDecoders));
         let (out, sent) = channel::<Vec<u8>>();
@@ -2181,7 +2181,7 @@ mod tests {
         client.sound.store(true, Ordering::Relaxed);
         client.offer_sound(&audio);
         let sound = controls.sound();
-        assert_eq!((sound.switch, sound.enabled), (Some(common::audio::Switch::Enable), true));
+        assert_eq!((sound.switch, sound.enabled), (Some(runtime::media::audio::Switch::Enable), true));
 
         let asked = |sent: &std::sync::mpsc::Receiver<Vec<u8>>| {
             let message = Message::parse_from_bytes(&sent.try_recv().unwrap()).unwrap();
@@ -2367,7 +2367,7 @@ mod tests {
         fn frame_end(&mut self) {}
         fn cursor(&mut self, _p: &[u32], _w: usize, _h: usize, _hx: i32, _hy: i32) {}
         fn clipboard(&mut self, _text: &str) {}
-        fn credentials(&mut self, _needs_user: bool) -> Option<common::Credentials> {
+        fn credentials(&mut self, _needs_user: bool) -> Option<runtime::Credentials> {
             None
         }
         fn trust(&mut self, _fingerprint: &str) -> bool {
@@ -2459,7 +2459,7 @@ mod tests {
         fn clipboard(&mut self, text: &str) {
             self.0.push(text.to_string());
         }
-        fn credentials(&mut self, _needs_user: bool) -> Option<common::Credentials> {
+        fn credentials(&mut self, _needs_user: bool) -> Option<runtime::Credentials> {
             None
         }
         fn trust(&mut self, _fingerprint: &str) -> bool {
@@ -2484,13 +2484,13 @@ mod tests {
         let client = Client::new(Arc::new(video::NoDecoders));
         let mut pasted = Pasted::default();
         client.clipboard_arrived(text_clipboard(zstd_rle(b'x', 5 << 30)), &mut pasted);
-        client.clipboard_arrived(text_clipboard(zstd_rle(b'x', common::MAX_CLIPBOARD + 1)), &mut pasted);
+        client.clipboard_arrived(text_clipboard(zstd_rle(b'x', runtime::MAX_CLIPBOARD + 1)), &mut pasted);
         assert!(pasted.0.is_empty(), "nothing of a clipboard past the bound");
-        client.clipboard_arrived(text_clipboard(zstd_rle(b'y', common::MAX_CLIPBOARD)), &mut pasted);
+        client.clipboard_arrived(text_clipboard(zstd_rle(b'y', runtime::MAX_CLIPBOARD)), &mut pasted);
         let plain = zstd::encode_all(&b"hello"[..], 3).unwrap();
         client.clipboard_arrived(text_clipboard(plain), &mut pasted);
         assert_eq!(pasted.0.len(), 2);
-        assert_eq!(pasted.0[0].len(), common::MAX_CLIPBOARD);
+        assert_eq!(pasted.0[0].len(), runtime::MAX_CLIPBOARD);
         assert_eq!(pasted.0[1], "hello");
     }
 
@@ -2511,7 +2511,7 @@ mod tests {
         let four = Cursor::of(cursor_data(2, 2, bomb.clone())).expect("four pixels out of gigabytes");
         assert_eq!(four.pixels, [u32::MAX; 4], "and the rest never made");
         assert!(Cursor::of(cursor_data(i32::MAX, i32::MAX, bomb)).is_none());
-        let side = common::MAX_CURSOR_SIDE as i32;
+        let side = runtime::MAX_CURSOR_SIDE as i32;
         assert!(Cursor::of(cursor_data(side + 1, 1, zstd_rle(0xff, (side as usize + 1) * 4))).is_none());
 
         let cursor = Cursor::of(cursor_data(side, 1, zstd_rle(0xff, side as usize * 4))).unwrap();

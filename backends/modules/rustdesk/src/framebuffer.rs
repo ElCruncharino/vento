@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use common::video::{Changes, GpuPicture};
+use runtime::media::video::{Changes, GpuPicture};
 
 /// A framebuffer of `R, G, B, A` words, so a read is a row copy into an Android
 /// `ARGB_8888` bitmap.
@@ -319,7 +319,7 @@ pub mod tests {
         fn colour(&self) -> (bool, bool) {
             (false, false)
         }
-        fn export(&self) -> std::result::Result<common::video::Dmabuf, String> {
+        fn export(&self) -> std::result::Result<runtime::media::video::Dmabuf, String> {
             Err("a test's".into())
         }
         fn read(&self, out: &mut [u32], width: usize, height: usize) -> bool {

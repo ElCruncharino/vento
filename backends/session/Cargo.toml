@@ -6,12 +6,12 @@
 # how a credentials prompt's answer is read, and how a far end's identity
 # meets the pins.
 #
-# It sits between `remotedesktop-common`, which a protocol is written against,
-# and the clients: each backend's adapter is in that backend's own crate — the
-# protocol crate for the four in Rust, a small crate beside the C library for
-# the others — and is written against this one. With the `c` feature it also
-# carries the one adapter over `vento/backend.h`'s vtable that the C backends'
-# crates fill in.
+# It sits between `remotedesktop-runtime`, which a protocol is written
+# against, and the clients: each backend's adapter is in that backend's own
+# crate — the protocol crate for the four in Rust, a small crate beside the C
+# library for the others — and is written against this one. With the `c`
+# feature it also carries the one adapter over `vento/backend.h`'s vtable that
+# the C backends' crates fill in.
 #
 # Nothing here knows a platform. The phone supplies what a session needs of it
 # (where to keep things, what decodes video, what the far end is told this
@@ -33,7 +33,7 @@ c = ["dep:bindgen"]
 
 [dependencies]
 log.workspace = true
-remotedesktop-common.workspace = true
+remotedesktop-runtime.workspace = true
 
 [build-dependencies]
 # The declarations in `vento/backend.h`, `video.h` and `audio.h` (and the

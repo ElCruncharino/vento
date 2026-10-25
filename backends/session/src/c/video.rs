@@ -19,8 +19,8 @@
 use std::ffi::{c_char, c_int, c_void};
 use std::sync::Arc;
 
-use common::video::i420::I420;
-use common::video::{Changes, Codec, Decoder, Decoders, Hardware};
+use runtime::media::video::i420::I420;
+use runtime::media::video::{Changes, Codec, Decoder, Decoders, Hardware};
 
 use super::ffi;
 
@@ -272,9 +272,9 @@ mod tests {
         fn decode_planes(
             &mut self,
             data: &[u8],
-            planes: &mut dyn FnMut(&common::video::convert::Frame<'_>),
+            planes: &mut dyn FnMut(&runtime::media::video::convert::Frame<'_>),
         ) -> bool {
-            use common::video::convert::{Frame, Plane};
+            use runtime::media::video::convert::{Frame, Plane};
             let first = data[0];
             let mut bytes: Vec<u8> = (0..12).map(|i| first.wrapping_add(i)).collect();
             bytes.extend([100, 200, 101, 201, 102, 202, 103, 203]);

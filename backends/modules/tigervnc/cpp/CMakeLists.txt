@@ -65,12 +65,12 @@ endif()
 add_subdirectory("${THIRD_PARTY}/libjpeg-turbo" libjpeg-turbo EXCLUDE_FROM_ALL)
 
 # TigerVNC's own root CMakeLists is not usable here — it requires X11 on
-# anything that is UNIX and not APPLE, which Android is, and it builds a
-# viewer and a server this build has no use for either — so this build takes
-# `common/` on its own, answers the variables its sub-projects read, and
-# writes the config.h their sources include. That is the whole adaptation:
-# their build files need no patch, and the one source line of theirs that does
-# is the branch that picks an H.264 decoder context.
+# anything that is UNIX and not APPLE, which Android is, and it builds a viewer
+# and a server this build has no use for either — so this build takes `common/`
+# on its own, answers the variables its sub-projects read, and writes the
+# config.h their sources include. That is the whole adaptation: their build
+# files need no patch, and the one source line of theirs that does is the
+# branch that picks an H.264 decoder context.
 set(VERSION "unknown")
 file(READ "${THIRD_PARTY}/tigervnc/CMakeLists.txt" _tigervnc_cmake)
 if(_tigervnc_cmake MATCHES "set\\(VERSION ([0-9][0-9.]*)\\)")
@@ -142,14 +142,14 @@ add_definitions(-DHAVE_CONFIG_H)
 add_library(pthread INTERFACE)
 
 # Their sub-projects put their own tree on the include path as
-# `${CMAKE_SOURCE_DIR}/common`, which under the Gradle build is a directory
-# that does not exist — a stale -I and nothing worse, as long as the real one
-# is here. This directory goes on the path too, for the H.264 branch of theirs
-# that includes our context by name, and the neutral headers for the table it
-# calls through. libtool control files are for the autotools half of their
-# build, of which there is none here.
+# `${CMAKE_SOURCE_DIR}/common`, which under the Gradle build is a directory that
+# does not exist — a stale -I and nothing worse, as long as the real one is
+# here. This directory goes on the path too, for the H.264 branch of theirs that
+# includes our context by name, and the neutral headers for the table it calls
+# through. libtool control files are for the autotools half of their build, of
+# which there is none here.
 include_directories("${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}"
-        "${VENTO_BACKENDS}/common/include")
+        "${VENTO_BACKENDS}/session/include")
 include_directories(SYSTEM "${THIRD_PARTY}/tigervnc/common")
 macro(libtool_create_control_file)
 endmacro()

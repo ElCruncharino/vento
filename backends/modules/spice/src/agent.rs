@@ -41,11 +41,11 @@ const MAX_PIECE: usize = 2048;
 /// `VDAgentMessage`: protocol, type, opaque, size.
 const HEADER: usize = 20;
 /// The biggest message this end reads whole: a clipboard of
-/// [`common::MAX_CLIPBOARD`] bytes behind its selection and type words.
+/// [`runtime::MAX_CLIPBOARD`] bytes behind its selection and type words.
 /// Every other message it reads is a few words. The size is a 32-bit field
 /// of the guest's and a message is kept until it is whole, so this is what
 /// the guest can make this end hold; one past it is dropped as it arrives.
-const MAX_MESSAGE: usize = common::MAX_CLIPBOARD + 8;
+const MAX_MESSAGE: usize = runtime::MAX_CLIPBOARD + 8;
 
 /// What a message is. The ones this client neither sends nor reads — the file
 /// transfer, the audio volume, the display config — are not here.
@@ -583,16 +583,16 @@ mod tests {
 
         // Just past the bound, in one piece with the message after it, and
         // the bound itself, which is a clipboard.
-        let over = guest_clipboard(&vec![b'x'; common::MAX_CLIPBOARD + 1]);
+        let over = guest_clipboard(&vec![b'x'; runtime::MAX_CLIPBOARD + 1]);
         let mut both = over.clone();
         both.extend_from_slice(&guest_clipboard(b"after"));
         assert_eq!(texts(&agent.receive(&both)), [5]);
-        let at = guest_clipboard(&vec![b'x'; common::MAX_CLIPBOARD]);
+        let at = guest_clipboard(&vec![b'x'; runtime::MAX_CLIPBOARD]);
         let mut events = Vec::new();
         for piece in at.chunks(MAX_PIECE) {
             events.extend(agent.receive(piece));
         }
-        assert_eq!(texts(&events), [common::MAX_CLIPBOARD]);
+        assert_eq!(texts(&events), [runtime::MAX_CLIPBOARD]);
     }
 
     #[test]

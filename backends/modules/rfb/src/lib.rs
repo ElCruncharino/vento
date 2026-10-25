@@ -61,7 +61,7 @@ mod transport;
 mod zlib;
 
 pub use client::{Client, Config, Info};
-pub use common::{Credentials, Handler};
+pub use runtime::{Credentials, Handler};
 pub use decode::{ENC_HEXTILE, ENC_RAW, ENC_RRE, ENC_ZRLE, encoding_name};
 pub use error::{Error, Result};
 pub use framebuffer::Framebuffer;
