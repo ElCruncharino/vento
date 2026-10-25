@@ -60,11 +60,11 @@ import java.util.function.Consumer;
  * stay in {@link KnownHosts}, which that layer reads and writes through {@link
  * #knownHostsPins} and {@link #knownHostsPin}.
  *
- * <p>Events arrive on the protocol thread, through the {@code on…} methods
- * below, in the order the session said them. Damage arrives once per frame, as
- * one array of rectangles, and is handed to the listener a rectangle at a
- * time from here — on this side of the boundary, so that a busy frame costs
- * one crossing rather than one per rectangle.
+ * <p>Events arrive through the {@code on…} methods below, one at a time and in
+ * the order the session said them, on the thread that said them: the protocol
+ * thread nearly always, a call into the session (an answer, a close) now and
+ * then. Damage arrives once per frame, as one array of rectangles handed to
+ * the listener one at a time from here: a crossing a frame, not a rectangle.
  */
 public final class NativeBackend implements Backend {
 
@@ -240,7 +240,7 @@ public final class NativeBackend implements Backend {
 
     /**
      * The remote cursor's shapes. Touched only by {@link #onCursor}, which is
-     * the protocol thread's, so it needs no lock of its own.
+     * called one event at a time, so it needs no lock of its own.
      */
     private final CursorCache cursors = new CursorCache();
     private final Context context;
@@ -621,7 +621,7 @@ public final class NativeBackend implements Backend {
         return out;
     }
 
-    // ---- events (protocol thread; called from the library) -----------------
+    // ---- events (one at a time, nearly always the protocol thread's) -------
 
     void onConnected(int width, int height) {
         Log.i(tag, "connected: " + width + "x" + height);

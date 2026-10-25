@@ -77,8 +77,8 @@
 // session files fill it in during the copy they make anyway. The cursor
 // comes in the same order; a platform that wants `Color`'s `0xAARRGGBB`
 // swaps on its side of the call, where it already has to copy, and hashes
-// there too — see `runtime::cursor` for the two things every platform so far
-// has wanted.
+// there too — see `runtime::cursor` for what the phone's JNI layer does with
+// one.
 
 #ifndef VENTO_BACKEND_H
 #define VENTO_BACKEND_H

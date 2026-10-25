@@ -19,10 +19,10 @@ import java.util.Map;
  * uploads for it: a pointer crossing a window's edge changes shape several
  * times a second, between two or three shapes it has already had.
  *
- * <p>The identity is a hash of the pixels, computed by whichever shim already
- * has them — the seam's four native backends all build the bitmap out of an
- * {@code int[]} they have just filled, so hashing there is a pass over data
- * that is already hot. The consequence is that this class trusts the hash: two
+ * <p>The identity is a hash of the pixels, computed by the JNI layer, which
+ * has them — every native backend's cursor crosses as an {@code int[]} it
+ * has just filled ({@code runtime::cursor}), so hashing there is a pass over
+ * data that is already hot. The consequence is that this class trusts the hash: two
  * shapes that collide are one shape, which is a wrong cursor rather than a
  * crash, and at 64 bits over a few dozen live shapes it will not happen.
  *
@@ -87,9 +87,9 @@ public final class CursorCache {
     }
 
     /**
-     * FNV-1a over the pixels, which is what every shim computes natively and
-     * what this exists to define in one place. Used by a backend whose library
-     * hands over pixels on the Java side.
+     * FNV-1a over the pixels, which is what the JNI layer computes natively,
+     * for a backend whose library would hand over pixels on the Java side
+     * (none does today: RealVNC's core hands over a finished bitmap).
      */
     public static long hash(int[] argb, int width, int height) {
         long h = 0xcbf29ce484222325L;
@@ -97,7 +97,7 @@ public final class CursorCache {
         h = (h ^ height) * 0x100000001b3L;
         for (int p : argb) {
             // Masked, because an opaque pixel is a negative int and sign
-            // extension here would not match the shims, where it is a u32.
+            // extension here would not match the native one, where it is a u32.
             h = (h ^ (p & 0xffffffffL)) * 0x100000001b3L;
         }
         return h;

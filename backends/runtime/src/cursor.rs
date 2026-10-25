@@ -1,13 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Patrick Gaskin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! What every platform so far has done with a cursor: packed its pixels the
-//! way a `Color` is packed, and hashed them.
+//! What the phone's JNI layer does with a cursor before it crosses to Java:
+//! packs its pixels the way a `Color` is packed, and hashes them.
 //!
-//! Here rather than in the Android crate because the hash is a contract with
-//! more than one party — it is `CursorCache`'s identity, and the two C shims
-//! and the Java compute the same one — and a second platform that wants to
-//! share that cache has to compute it too.
+//! The hash is a contract with the other side — it is `CursorCache`'s
+//! identity, and the Java has its own copy (`CursorCache.hash`) — so it is
+//! written down once, here.
 
 /// `0xAA_BB_GG_RR` (memory order R, G, B, A) to `0xAA_RR_GG_BB`, which is
 /// Android's `Color` packing and the one `Bitmap.setPixels` takes.
@@ -16,13 +15,13 @@ pub fn swap_rb(p: u32) -> u32 {
 }
 
 /// FNV-1a over a cursor's size and its `Color`-packed pixels, which is its
-/// identity in `CursorCache` — so this and the two C shims' copies of it and
-/// the Java one all have to agree, bit for bit. What it saves on the other
+/// identity in `CursorCache` — so this and the Java copy of it have to agree,
+/// bit for bit. What it saves on the other
 /// side is a bitmap and a texture per cursor change rather than anything on
 /// the wire.
 ///
 /// Over the *packed* pixels, not the framebuffer's word order, because that
-/// is what the other copies see; a platform computes it after
+/// is what the Java copy sees; the phone computes it after
 /// [`swap_rb`], where the pixels are already in cache from the conversion.
 pub fn hash(argb: &[u32], width: usize, height: usize) -> u64 {
     const PRIME: u64 = 0x100_0000_01b3;

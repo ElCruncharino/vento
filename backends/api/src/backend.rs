@@ -18,7 +18,8 @@
 //! concurrently with everything else — they take the read side of a lock the
 //! protocol thread holds for a blit at a time, so a pixel fetch never queues
 //! behind a socket read. Events arrive through the mailbox, from the protocol
-//! thread, and are read from wherever is convenient.
+//! thread nearly always (a call into the session can put one there too), and
+//! are read from wherever is convenient.
 //!
 //! [`read_region`]: Backend::read_region
 //! [`thumbnail`]: Backend::thumbnail
