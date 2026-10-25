@@ -3,7 +3,8 @@
 #
 # The host build of the C backends: the session files under
 # `modules/*/cpp`, against the libraries a Linux desktop has instead
-# of the ports and vendored trees the phone needs, and, with `-DVENTO_PROBES=ON`,
+# of the ports and vendored trees the phone needs (but for libjpeg-turbo and
+# pixman, which are the phone's submodules here too), and, with `-DVENTO_PROBES=ON`,
 # a probe in front of each that connects, prints every callback and writes the
 # framebuffer out.
 # Three of them are open clients; the fourth, RealVNC, is their proprietary
@@ -40,12 +41,12 @@
 # platform/linux/cmake/vento_linux.cmake).
 #
 # Needs, as development packages: openssl, gnutls, nettle (with hogweed and
-# gmp), libjpeg-turbo, pixman, zlib, FFmpeg's libswscale and libavutil
+# gmp), zlib, FFmpeg's libswscale and libavutil
 # (unless VENTO_FFMPEG_PREFIX is given; FreeRDP links the host's libavcodec
 # too where there is one, for its camera channel's MJPEG, which nothing
 # loads), plus
-# pkg-config, and a C and C++ compiler
-# CMake can find — clang for RealVNC (`CC=clang CXX=clang++ cmake ...`), whose
+# pkg-config, nasm (libjpeg-turbo's x86 SIMD; it is C without), and a C and
+# C++ compiler CMake can find — clang for RealVNC (`CC=clang CXX=clang++ cmake ...`), whose
 # four host-only submodules are initialised with `--recursive`.
 
 cmake_minimum_required(VERSION 3.30)
@@ -82,6 +83,58 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON CACHE BOOL "")
 
 include(cmake/warnings.cmake)
 include(platform/linux/cmake/vento_linux.cmake)
+
+# libjpeg-turbo, from `third_party/` as the phone has it, rather than the
+# host's: libvncclient's Tight and TigerVNC's both decode with it, and it is
+# linked into each of their libraries statically (`vento_linux.cmake` keeps
+# its symbols out of their exports). The host's would tie a built tree to its
+# distribution — libjpeg-turbo's soname is libjpeg.so.62 on Fedora and Debian
+# and libjpeg.so.8 on Ubuntu, where .so.62 is IJG's 6b — so nothing of it is
+# looked for. Built once here, where the phone builds a copy per module root,
+# since the two modules share this tree and a target can have one name in it;
+# it is generated when it is configured (jconfig.h), as a host build may be.
+# Its options are its own and go into the one cache, so they are forced, and
+# the scope is a block's so that position-independent code, which a static
+# archive linked into a shared library needs, is asked of it alone here.
+# NASM, which the video decoders want already, gives it its x86 SIMD; without
+# it it builds in C. The build string is the fixed one the phone's
+# `reproducible.cmake` gives it, not the date of the build. Its warnings are
+# not silenced as the other vendored trees' are: that `-w` reaches its NASM
+# sources too, where it is not the flag it is to a C compiler.
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/libjpeg-turbo/CMakeLists.txt")
+    message(FATAL_ERROR "third_party/libjpeg-turbo is empty — run `git submodule update --init`")
+endif()
+block(SCOPE_FOR VARIABLES)
+    macro(install)
+    endmacro()
+    macro(export)
+    endmacro()
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+    set(ENABLE_SHARED OFF CACHE BOOL "" FORCE)
+    set(ENABLE_STATIC ON CACHE BOOL "" FORCE)
+    set(WITH_TURBOJPEG OFF CACHE BOOL "" FORCE)
+    set(WITH_TESTS OFF CACHE BOOL "" FORCE)
+    set(WITH_FUZZ OFF CACHE BOOL "" FORCE)
+    set(BUILD "0" CACHE STRING "" FORCE)
+    # It refuses a blank documentation or manual directory, which is what
+    # CMake's own GNUInstallDirs caches for both (FreeRDP's and libvncserver's
+    # include it) in a tree configured before this was here; a value for its
+    # check, where the cache has a blank one. (Where the cache has none, as
+    # on a first configure, it makes its own, and a variable here would have
+    # it set a property on a cache entry that does not exist.) Nothing is
+    # installed from this tree, so any value does.
+    foreach(dir DOCDIR MANDIR)
+        if(DEFINED CACHE{CMAKE_INSTALL_${dir}} AND "$CACHE{CMAKE_INSTALL_${dir}}" STREQUAL "")
+            set(CMAKE_INSTALL_${dir} ${dir})
+        endif()
+    endforeach()
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../third_party/libjpeg-turbo" libjpeg-turbo EXCLUDE_FROM_ALL)
+endblock()
+# Its headers are in two places, since jconfig.h is generated: the modules
+# put both on their path with the target, `jpeg-static`.
+set(VENTO_JPEG_INCLUDE_DIRS
+        "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/libjpeg-turbo/src"
+        "${CMAKE_CURRENT_BINARY_DIR}/libjpeg-turbo")
 
 # Four roots under Gradle, four subdirectories here; each branches on
 # `ANDROID` and takes its host half. The vendored trees under them share

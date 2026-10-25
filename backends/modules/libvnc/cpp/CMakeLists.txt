@@ -6,8 +6,8 @@
 # module's Rust crate linked in as the JNI layer over it, and the vendored
 # libjpeg-turbo and the GnuTLS port, since a phone has neither. Under `backends/CMakeLists.txt`
 # it is a subdirectory on a Linux host and makes `vento_libvnc`, the session
-# alone, against the libjpeg-turbo and GnuTLS the host has, with a probe in
-# front of it. What is shared is the middle — how LibVNCServer itself is
+# alone, against the root's libjpeg-turbo and the GnuTLS the host has, with a
+# probe in front of it. What is shared is the middle — how LibVNCServer itself is
 # configured — and the two halves around it are `if(ANDROID)` and `else()`,
 # so that the Android build is the same sequence of statements it was.
 
@@ -83,6 +83,14 @@ if(ANDROID)
     # and the one TigerVNC's client requires — so the port is built once and used
     # by both. `find_package(GnuTLS)` above finds the shim beside FindJPEG's.
     add_subdirectory("${VENTO_BACKENDS}/platform/android/ports/gnutls" gnutls)
+else()
+    # The host root's libjpeg-turbo (backends/CMakeLists.txt), the same
+    # submodule, answered through the same FindJPEG shim: `cmake/host/` holds
+    # that one alone, since GnuTLS on the host is still the system's, found
+    # by CMake's own module. jconfig.h is generated there, so both of its
+    # directories go on the path before libvncserver's sources are added.
+    include_directories(${VENTO_JPEG_INCLUDE_DIRS})
+    list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/host")
 endif()
 
 # LibVNCServer, of which we build the client half only. These are cache

@@ -8,7 +8,8 @@
 # with the vendored libjpeg-turbo and pixman and the nettle and GnuTLS ports
 # linked in, since a phone has none of them. Under `backends/CMakeLists.txt`
 # it is a subdirectory on a Linux host and makes `vento_tigervnc`, the
-# session, against the libraries the host has, with a probe in front of it.
+# session, with the same libjpeg-turbo and pixman and against the host's
+# nettle and GnuTLS, with a probe in front of it.
 # What is shared is the middle — how
 # TigerVNC's `common/` itself is configured — and the two halves around it
 # are `if(ANDROID)` and `else()`, so that the Android build is the same
@@ -23,7 +24,7 @@ get_filename_component(VENTO_BACKENDS "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABS
 if(ANDROID)
     set(VENDORED tigervnc pixman libjpeg-turbo)
 else()
-    set(VENDORED tigervnc)
+    set(VENDORED tigervnc pixman)
 endif()
 foreach(sub ${VENDORED})
     if(NOT EXISTS "${THIRD_PARTY}/${sub}/README.rst" AND NOT EXISTS "${THIRD_PARTY}/${sub}/meson.build"
@@ -127,18 +128,25 @@ if(ANDROID)
     set(PIXMAN_LIBRARIES pixman)
     set(PIXMAN_INCLUDE_DIRS "${THIRD_PARTY}/pixman/pixman" "${CMAKE_CURRENT_BINARY_DIR}/pixman-gen")
 else()
-    # The same five answers from the host, found the way their own root finds
-    # them: CMake's modules for GnuTLS, JPEG and zlib, and theirs — on the
-    # module path for this directory and below — for nettle and pixman, which
-    # set exactly the variables `common/` reads.
+    # Three of the five answers from the host, found the way their own root
+    # finds them: CMake's modules for GnuTLS and zlib, and theirs — on the
+    # module path for this directory and below — for nettle, which sets
+    # exactly the variables `common/` reads. The image libraries are the
+    # phone's: the host root's libjpeg-turbo, and pixman built by the same
+    # file as on the phone, so that a built tree carries both rather than
+    # needing a distribution's (whose libjpeg soname is not even the same
+    # from one to the next).
     list(APPEND CMAKE_MODULE_PATH "${THIRD_PARTY}/tigervnc/cmake/Modules")
     find_package(Nettle REQUIRED)
     set(HAVE_NETTLE 1)
     find_package(GnuTLS REQUIRED)
     set(HAVE_GNUTLS 1)
     find_package(ZLIB REQUIRED)
-    find_package(JPEG REQUIRED)
-    find_package(Pixman REQUIRED)
+    include(cmake/pixman.cmake)
+    set(JPEG_LIBRARIES jpeg-static)
+    set(JPEG_INCLUDE_DIR ${VENTO_JPEG_INCLUDE_DIRS})
+    set(PIXMAN_LIBRARIES pixman)
+    set(PIXMAN_INCLUDE_DIRS "${THIRD_PARTY}/pixman/pixman" "${CMAKE_CURRENT_BINARY_DIR}/pixman-gen")
 endif()
 
 # H.264, which their build has two implementations of — FFmpeg's libavcodec and

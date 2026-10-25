@@ -97,7 +97,14 @@ several times slower), a C/C++ compiler — **clang** for the RealVNC backend
 (libc-shim does not build under GCC; without clang that one backend's library
 is not built, with a build note, and the backend says it is not available) —
 and the development files for openssl, gnutls, nettle
-(hogweed, gmp), libjpeg-turbo, pixman, zlib, plus libclang.
+(hogweed, gmp), zlib, plus libclang. Not libjpeg-turbo or pixman: both are
+built from their submodules (`third_party/libjpeg-turbo`, `third_party/pixman`,
+as the phone's are) and linked into the backends that use them, so that a
+built tree does not need a distribution's (whose libjpeg is `libjpeg.so.62`
+on Fedora and Debian and `libjpeg.so.8` on Ubuntu). NASM gives libjpeg-turbo
+its SIMD too. RealVNC's hosting layer links the compiler's static
+`libatomic.a` where there is one (on Fedora, `libatomic-static`), and the
+shared `libatomic.so.1` otherwise.
 Nothing of PipeWire or ALSA: their libraries are loaded at run time where
 they are installed (**Sound**, below).
 The window needs a Vulkan (or GLES) driver wgpu can use and a Wayland or X11
@@ -278,7 +285,13 @@ configured LGPL 2.1 or later (no `--enable-gpl`, no `--enable-nonfree`;
 configure (`patches/ffmpeg/`); dav1d, inside it, is BSD-2-Clause
 (`third_party/dav1d/COPYING`). FFmpeg is compiled against libva's headers,
 which are MIT (`third_party/libva/COPYING`), and the libva shim is ours;
-libva is not linked. libpipewire-0.3 (MIT) is not linked either, nor
+libva is not linked. libjpeg-turbo is linked statically into the libvnc and
+TigerVNC libraries (the IJG License, with the Modified BSD and zlib licences
+for parts of it: `third_party/libjpeg-turbo/LICENSE.md`; its TurboJPEG API,
+which is BSD-3-Clause alone, is not built), and pixman into TigerVNC's (MIT:
+`third_party/pixman/COPYING`). RealVNC's links GCC's libatomic where the
+compiler has a static one, under the GCC Runtime Library Exception, as
+every program GCC builds links libgcc. libpipewire-0.3 (MIT) is not linked either, nor
 compiled against: the sound output declares the functions and structures it
 uses by hand and loads the system's library at run time. Nothing of this crate's graph reaches the
 Android app or its licence page.
@@ -376,11 +389,11 @@ cp target/release/lib/libvento_*.so /opt/vento/lib/
 What the tree does not carry is the system's libraries, which a machine
 running it needs installed: glibc as new as the build machine's (it is
 linked against its symbol versions), zlib, and per backend — **libvnc**
-GnuTLS and libjpeg (`libjpeg.so.62`, libjpeg-turbo's); **tigervnc** GnuTLS,
-Nettle (and hogweed, GMP), libjpeg, pixman and libstdc++; **freerdp**
-OpenSSL 3 (`libssl.so.3`, `libcrypto.so.3`) and nothing else (its UTF-16
-conversion is WinPR's own, not ICU's); **realvnc** libstdc++ and
-libatomic. A backend's library that cannot be loaded stops the binary from
+GnuTLS; **tigervnc** GnuTLS, Nettle (and hogweed, GMP) and libstdc++;
+**freerdp** OpenSSL 3 (`libssl.so.3`, `libcrypto.so.3`) and nothing else
+(its UTF-16 conversion is WinPR's own, not ICU's); **realvnc** libstdc++
+(and libatomic, where the build machine's compiler had no static one).
+libjpeg-turbo and pixman are inside the libraries. A backend's library that cannot be loaded stops the binary from
 starting (RealVNC's excepted, which is opened at run time and says it is not
 available). Loaded at run time where they are there, and not needed
 otherwise: libpipewire-0.3 and libasound (sound), libva and libva-drm

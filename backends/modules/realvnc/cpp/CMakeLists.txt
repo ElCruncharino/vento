@@ -74,6 +74,21 @@ else()
     # defaults, which is what the hosting layer was proven with.
     set(JNIVM_ENABLE_TRACE ${VENTO_REALVNC_TRACE} CACHE BOOL "" FORCE)
     add_subdirectory("${THIRD_PARTY}/logger" logger EXCLUDE_FROM_ALL)
+    # libc-shim links `atomic` by name where its 24-byte atomics need it,
+    # which is libatomic.so.1 at run time: a library of GCC's that a desktop
+    # need not have installed (Debian and Ubuntu images do not), for a few
+    # lock-based functions. The compiler's static libatomic.a, where it has
+    # one, answers the name instead — position-independent on x86_64, so it
+    # links into the shared library, whose exports `--exclude-libs` keeps it
+    # out of. Where there is none (a distribution
+    # that packages it apart, as Fedora does in libatomic-static), the name
+    # is left to the linker and the shared one, as before.
+    execute_process(COMMAND ${CMAKE_C_COMPILER} -print-file-name=libatomic.a
+            OUTPUT_VARIABLE _atomic OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if(IS_ABSOLUTE "${_atomic}" AND EXISTS "${_atomic}" AND NOT TARGET atomic)
+        add_library(atomic STATIC IMPORTED)
+        set_target_properties(atomic PROPERTIES IMPORTED_LOCATION "${_atomic}")
+    endif()
     add_subdirectory("${THIRD_PARTY}/libc-shim" libc-shim EXCLUDE_FROM_ALL)
     add_subdirectory("${THIRD_PARTY}/mcpelauncher-linker" mcpelauncher-linker EXCLUDE_FROM_ALL)
     add_subdirectory("${THIRD_PARTY}/libjnivm" libjnivm EXCLUDE_FROM_ALL)
