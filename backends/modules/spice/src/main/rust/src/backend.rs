@@ -110,6 +110,18 @@ impl Backend for Spice {
         }
     }
 
+    /// By the heads' ids, which SPICE does have: the agent asks for a head
+    /// by its place in the list (see `client::heads_for`). The desktop's size
+    /// is the layout's bounding box, which the guest makes of it.
+    fn request_layout(&self, _width: u32, _height: u32, screens: &[Monitor]) {
+        let screens: Vec<(u32, i32, i32, u32, u32)> = screens
+            .iter()
+            .filter(|m| m.width > 0 && m.height > 0)
+            .map(|m| (m.id, m.x, m.y, m.width as u32, m.height as u32))
+            .collect();
+        self.session.client.request_layout(&screens);
+    }
+
     /// The image compression is live: one message, and the next image the
     /// server encodes uses it.
     fn set_option(&self, key: &str, value: &str) {
@@ -130,18 +142,22 @@ impl Backend for Spice {
         let (width, height) = self.mailbox.size();
         let connected = self.mailbox.connected();
         let client = &self.session.client;
+        let monitors = if connected {
+            Monitor::from_flat5(&client.screens())
+        } else {
+            Vec::new()
+        };
+        // A single size is one head, which over several would turn the rest
+        // off; a layout says each.
+        let takes = connected && client.can_resize();
         Facts {
             width,
             height,
-            monitors: if connected {
-                Monitor::from_flat(&client.monitors())
-            } else {
-                Vec::new()
-            },
+            can_resize: takes && monitors.len() <= 1,
+            can_layout: takes,
+            monitors,
             displays: Vec::new(),
             display: -1,
-            can_resize: connected && client.can_resize(),
-            can_layout: false,
             view_only: self.options.lock().unwrap().bool("ViewOnly"),
             pointer_relative: client.pointer_is_relative(),
         }
