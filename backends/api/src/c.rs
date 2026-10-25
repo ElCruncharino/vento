@@ -12,14 +12,13 @@
 //! crate fills in — the libvncclient, TigerVNC and FreeRDP crates beside
 //! their C sources, and the Linux client's RealVNC adapter.
 //!
-//! The callbacks are trampolined into the mailbox: `user` is an
-//! `Arc<Mailbox>` the session carries, recovered by each trampoline as a
-//! borrow and reclaimed in [`CBackend::destroy`], which the header promises
-//! runs only after the protocol thread has ended and no callback can still be
-//! in flight.
+//! The callbacks are trampolined into the mailbox: `user` is an `Arc<Mailbox>`
+//! the session carries, recovered by each trampoline as a borrow and reclaimed
+//! in [`CBackend::destroy`], which the header promises runs only after the
+//! protocol thread has ended and no callback can still be in flight.
 //!
 //! Nothing here names one backend's own symbols, so linking this needs none
-//! of their libraries: each crate that does brings its own.
+//! of their libraries: each crate that does brings its own ([`library`]).
 
 use crate::backend::{Backend, ConnectionFact, Credentials, Facts, Monitor, Picture, Traffic};
 use crate::events::{Encryption, Identity, Mailbox, Severity};
@@ -32,6 +31,7 @@ use std::thread::{self, ThreadId};
 
 pub mod audio;
 pub mod ffi;
+pub mod library;
 pub mod video;
 
 // The clipboard bound `vento/text.h` gives the C session files, which is the

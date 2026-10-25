@@ -29,11 +29,16 @@ name = "api"
 [features]
 # The adapter over `vento/backend.h`, for the C backends' crates, and the
 # declarations of the shared headers, generated rather than retyped.
-c = ["dep:bindgen"]
+c = ["dep:bindgen", "dep:libloading"]
 
 [dependencies]
 log.workspace = true
 remotedesktop-runtime.workspace = true
+
+# The C backends' libraries, which the Linux client opens at run time
+# (`c::library`); on the phone they are linked.
+[target.'cfg(target_os = "linux")'.dependencies]
+libloading = { version = "0.8", optional = true }
 
 [build-dependencies]
 # The declarations in `vento/backend.h`, `video.h` and `audio.h` (and the

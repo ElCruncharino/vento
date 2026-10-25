@@ -11,11 +11,11 @@
 //! rather than linked: the client's build makes it only where clang is on
 //! the path, and decides that after this crate is built, so the backend is
 //! always listed and says why it cannot start where the library is not
-//! there ([`library`]). It is found by name, as the other C backends'
-//! libraries are linked by name — through the binary's rpath, `$ORIGIN/lib`,
-//! the `lib/` directory beside the binary where the client's build puts every
-//! `libvento_*.so`, or `LD_LIBRARY_PATH` — and once open it stays open, since
-//! the core it hosts never lets go of a session.
+//! there ([`library`]). It is found by name, through the shared loader of
+//! the C backends' libraries ([`api::c::library`]) — through the binary's
+//! rpath, `$ORIGIN/lib`, the `lib/` directory beside the binary where the
+//! client's build puts every `libvento_*.so`, or `LD_LIBRARY_PATH` — and once
+//! open it stays open, since the core it hosts never lets go of a session.
 //!
 //! Nothing of RealVNC's is in the tree: the two libraries the session loads
 //! come from the viewer's APK under `library_dir`, hashes verified by the
@@ -29,12 +29,12 @@
 #![cfg(target_os = "linux")]
 
 use api::backend::{Backend, ConnectionFact, Field, Traffic};
+use api::c::library::{Library, Scope};
 use api::c::{Behaviour, CSession, Security, start};
 use api::kind::{Connect, Dirs, Kind};
 use api::options::Options;
 use std::ffi::CString;
 use std::os::raw::c_void;
-use std::sync::OnceLock;
 
 /// `vento/realvnc.h`, as `build.rs` generated it, over the shared
 /// declarations it is written against: its types, and its functions as the
@@ -45,35 +45,24 @@ mod ffi {
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 }
 
-/// The library's name, as the client's CMake build writes it.
-const LIBRARY: &str = "libvento_realvnc.so";
+/// The library, opened the first time anything asks. With `RTLD_GLOBAL`, as
+/// a library the binary was linked against would be, so that the hosting
+/// layer's lookups in the process's global scope see what they saw when it
+/// was.
+static LIBRARY: Library<ffi::Library> =
+    Library::new("libvento_realvnc.so", "vento/realvnc.h", Scope::Global, ffi::Library::from_library);
 
-/// The library, opened the first time anything asks: the error, kept as
-/// well, is what every later ask is told. With `RTLD_GLOBAL`, as a library
-/// the binary was linked against would be, so that the hosting layer's
-/// lookups in the process's global scope see what they saw when it was.
-fn library() -> Result<&'static ffi::Library, &'static str> {
-    static LOADED: OnceLock<Result<ffi::Library, String>> = OnceLock::new();
-    LOADED.get_or_init(|| open(LIBRARY)).as_ref().map_err(String::as_str)
-}
-
-fn open(name: &str) -> Result<ffi::Library, String> {
-    use libloading::os::unix::{Library, RTLD_GLOBAL, RTLD_NOW};
-    // Opening it runs its constructors, which are the hosting layer's and
-    // the C++ runtime's, and looking up the header's functions reads them:
-    // the library is one the client's own build made.
-    unsafe {
-        let library = Library::open(Some(name), RTLD_NOW | RTLD_GLOBAL)
-            .map_err(|e| format!("{e} (the Linux client's build makes it only with clang on the path)"))?;
-        ffi::Library::from_library(library)
-            .map_err(|e| format!("{name} is not the library vento/realvnc.h describes: {e}"))
-    }
+/// The library, or why it could not be opened.
+fn library() -> Result<&'static ffi::Library, String> {
+    LIBRARY
+        .get()
+        .map_err(|why| format!("{why} (the Linux client's build makes it only with clang on the path)"))
 }
 
 /// The library a session was started over. A [`CSession`] of this backend
 /// exists only once [`create`] has opened it, and it is never closed.
 fn loaded() -> &'static ffi::Library {
-    library().expect("a RealVNC session is started only over the opened library")
+    LIBRARY.loaded()
 }
 
 pub static KIND: Kind = Kind {
@@ -324,15 +313,5 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "other::5900/extra=0201\n");
         assert_eq!(forget(&dirs, "127.0.0.1:5901"), Ok(Vec::new()));
         let _ = std::fs::remove_dir_all(&root);
-    }
-
-    /// A library that is not there is a sentence about it, not a panic: what
-    /// `--list` prints and a session's start reports where the client was
-    /// built without clang.
-    #[test]
-    fn a_missing_library_says_so() {
-        let why = open("libvento_realvnc_not_here.so").err().expect("no such library");
-        assert!(why.contains("libvento_realvnc_not_here.so"), "{why}");
-        assert!(why.contains("clang"), "{why}");
     }
 }
