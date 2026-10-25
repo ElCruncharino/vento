@@ -9,11 +9,15 @@
 //!
 //! Declared here rather than taken from a crate, as `ffmpeg.rs` declares
 //! its C: nine functions of `libasound.so.2`, whose ABI has not changed
-//! in twenty years, linked by name. It is the one sound library the Linux
-//! client links (PipeWire's is loaded at run time, where there is one):
-//! TigerVNC's QEMU audio and FreeRDP's rdpsnd play through
-//! `runtime::media::audio` (handed to their sessions as `vento/audio.h`'s
-//! table), and neither `libvento_tigervnc.so`, whose own ALSA sink this
+//! in twenty years. **Loaded, not linked**, as PipeWire's library is: it is
+//! opened with `dlopen` when the first stream wants ALSA, and the functions
+//! looked up by name, so the binary starts where libasound is not installed
+//! (a container, a minimal system) and runs without sound there — a stream
+//! that cannot have ALSA is one whose sound is dropped, with the loader's
+//! reason in the log, and everything else works. So the Linux client links
+//! no sound library at all: TigerVNC's QEMU audio and FreeRDP's rdpsnd play
+//! through `runtime::media::audio` (handed to their sessions as
+//! `vento/audio.h`'s table), and neither `libvento_tigervnc.so`, whose own ALSA sink this
 //! replaced, nor `libvento_freerdp.so`, whose PulseAudio device it replaced,
 //! links a sound library at all.
 //!
@@ -40,11 +44,13 @@
 //! that is running.
 
 use std::ffi::{CStr, c_char, c_int, c_long, c_uint, c_ulong, c_void};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use runtime::media::audio::{Device, Format, Queue};
+
+use crate::dl::Library;
 
 #[repr(C)]
 struct SndPcm {
@@ -60,25 +66,49 @@ const SND_PCM_FORMAT_S16: c_int = 2;
 #[cfg(target_endian = "big")]
 const SND_PCM_FORMAT_S16: c_int = 3;
 
-#[link(name = "asound")]
-unsafe extern "C" {
-    fn snd_pcm_open(pcm: *mut *mut SndPcm, name: *const c_char, stream: c_int, mode: c_int) -> c_int;
-    fn snd_pcm_set_params(
-        pcm: *mut SndPcm,
-        format: c_int,
-        access: c_int,
-        channels: c_uint,
-        rate: c_uint,
-        soft_resample: c_int,
-        latency_us: c_uint,
-    ) -> c_int;
-    fn snd_pcm_get_params(pcm: *mut SndPcm, buffer_size: *mut c_ulong, period_size: *mut c_ulong) -> c_int;
-    fn snd_pcm_writei(pcm: *mut SndPcm, buffer: *const c_void, frames: c_ulong) -> c_long;
-    fn snd_pcm_recover(pcm: *mut SndPcm, err: c_int, silent: c_int) -> c_int;
-    fn snd_pcm_delay(pcm: *mut SndPcm, frames: *mut c_long) -> c_int;
-    fn snd_pcm_drop(pcm: *mut SndPcm) -> c_int;
-    fn snd_pcm_close(pcm: *mut SndPcm) -> c_int;
-    fn snd_strerror(err: c_int) -> *const c_char;
+/// libasound's functions this uses, looked up once.
+struct Api {
+    pcm_open: unsafe extern "C" fn(*mut *mut SndPcm, *const c_char, c_int, c_int) -> c_int,
+    pcm_set_params: unsafe extern "C" fn(*mut SndPcm, c_int, c_int, c_uint, c_uint, c_int, c_uint) -> c_int,
+    pcm_get_params: unsafe extern "C" fn(*mut SndPcm, *mut c_ulong, *mut c_ulong) -> c_int,
+    pcm_writei: unsafe extern "C" fn(*mut SndPcm, *const c_void, c_ulong) -> c_long,
+    pcm_recover: unsafe extern "C" fn(*mut SndPcm, c_int, c_int) -> c_int,
+    pcm_delay: unsafe extern "C" fn(*mut SndPcm, *mut c_long) -> c_int,
+    pcm_drop: unsafe extern "C" fn(*mut SndPcm) -> c_int,
+    pcm_close: unsafe extern "C" fn(*mut SndPcm) -> c_int,
+    strerror: unsafe extern "C" fn(c_int) -> *const c_char,
+}
+
+/// The library, or why there is none: looked for once, by the first stream
+/// that wants ALSA, and that answer kept for every stream after it.
+static API: OnceLock<Result<Api, String>> = OnceLock::new();
+
+fn api() -> Result<&'static Api, String> {
+    API.get_or_init(load).as_ref().map_err(Clone::clone)
+}
+
+fn load() -> Result<Api, String> {
+    let lib = Library::open(c"libasound.so.2")?;
+    macro_rules! sym {
+        ($name:literal) => {
+            // The types are the declarations above, which are alsa-lib's.
+            match unsafe { lib.function(concat!($name, "\0")) } {
+                Some(f) => f,
+                None => return Err(format!("libasound.so.2 has no {}", $name)),
+            }
+        };
+    }
+    Ok(Api {
+        pcm_open: sym!("snd_pcm_open"),
+        pcm_set_params: sym!("snd_pcm_set_params"),
+        pcm_get_params: sym!("snd_pcm_get_params"),
+        pcm_writei: sym!("snd_pcm_writei"),
+        pcm_recover: sym!("snd_pcm_recover"),
+        pcm_delay: sym!("snd_pcm_delay"),
+        pcm_drop: sym!("snd_pcm_drop"),
+        pcm_close: sym!("snd_pcm_close"),
+        strerror: sym!("snd_strerror"),
+    })
 }
 
 /// What ALSA calls the device the sound server stands behind, on every
@@ -97,8 +127,8 @@ const DEVICE_LATENCY: Duration = Duration::from_millis(50);
 /// it silent.
 const ATTEMPTS: u32 = 3;
 
-fn error(err: c_int) -> String {
-    unsafe { CStr::from_ptr(snd_strerror(err)) }.to_string_lossy().into_owned()
+fn error(api: &Api, err: c_int) -> String {
+    unsafe { CStr::from_ptr((api.strerror)(err)) }.to_string_lossy().into_owned()
 }
 
 /// What [`crate::audio::Audio`] calls this output, in the facts row and the
@@ -106,8 +136,12 @@ fn error(err: c_int) -> String {
 pub const NAME: &str = "ALSA";
 
 /// Starts draining `queue` into ALSA's default device, on a thread of the
-/// stream's own, and returns what keeps it draining.
+/// stream's own, and returns what keeps it draining; or, where libasound
+/// cannot be loaded, the loader's reason. Loading it is the one thing done
+/// on the caller's thread, once for the process: it reads the library and
+/// nothing else, where opening the device talks to a sound server.
 pub fn device(queue: Arc<Queue>) -> Result<Box<dyn Device>, String> {
+    let api = api()?;
     let shared = Arc::new(Shared {
         stop: AtomicBool::new(false),
         latency_us: AtomicU64::new(0),
@@ -115,7 +149,7 @@ pub fn device(queue: Arc<Queue>) -> Result<Box<dyn Device>, String> {
     let theirs = Arc::clone(&shared);
     std::thread::Builder::new()
         .name("vento-audio".into())
-        .spawn(move || run(&queue, &theirs))
+        .spawn(move || run(api, &queue, &theirs))
         .map_err(|e| e.to_string())?;
     Ok(Box::new(AlsaDevice { shared }))
 }
@@ -147,13 +181,14 @@ impl Drop for AlsaDevice {
 }
 
 /// An open PCM, closed when dropped.
-struct Pcm(*mut SndPcm);
+struct Pcm(&'static Api, *mut SndPcm);
 
 impl Drop for Pcm {
     fn drop(&mut self) {
+        let Pcm(api, pcm) = *self;
         unsafe {
-            snd_pcm_drop(self.0);
-            snd_pcm_close(self.0);
+            (api.pcm_drop)(pcm);
+            (api.pcm_close)(pcm);
         }
     }
 }
@@ -163,13 +198,13 @@ impl Drop for Pcm {
 /// No resampling of ALSA's own is allowed: the plug layer's would be a second
 /// resampler in front of the sound server's, where the queue's is only ever
 /// the one there is.
-fn open(format: Format) -> Result<(Pcm, Format), String> {
+fn open(api: &'static Api, format: Format) -> Result<(Pcm, Format), String> {
     let mut pcm = std::ptr::null_mut();
-    let err = unsafe { snd_pcm_open(&mut pcm, DEVICE.as_ptr(), SND_PCM_STREAM_PLAYBACK, 0) };
+    let err = unsafe { (api.pcm_open)(&mut pcm, DEVICE.as_ptr(), SND_PCM_STREAM_PLAYBACK, 0) };
     if err < 0 {
-        return Err(format!("could not open ALSA's default device: {}", error(err)));
+        return Err(format!("could not open ALSA's default device: {}", error(api, err)));
     }
-    let pcm = Pcm(pcm);
+    let pcm = Pcm(api, pcm);
     let mut tried = Vec::new();
     for channels in [format.channels, 2] {
         for rate in [format.rate, 48_000, 44_100] {
@@ -179,8 +214,8 @@ fn open(format: Format) -> Result<(Pcm, Format), String> {
             }
             tried.push(candidate);
             let err = unsafe {
-                snd_pcm_set_params(
-                    pcm.0,
+                (api.pcm_set_params)(
+                    pcm.1,
                     SND_PCM_FORMAT_S16,
                     SND_PCM_ACCESS_RW_INTERLEAVED,
                     channels as c_uint,
@@ -202,11 +237,11 @@ fn open(format: Format) -> Result<(Pcm, Format), String> {
 
 /// The stream's thread: open, play until told to stop, and open again where
 /// the device stops working.
-fn run(queue: &Queue, shared: &Shared) {
+fn run(api: &'static Api, queue: &Queue, shared: &Shared) {
     let mut attempts = 0;
     while !shared.stop.load(Ordering::Relaxed) {
         attempts += 1;
-        let why = match open(queue.format()) {
+        let why = match open(api, queue.format()) {
             Ok((pcm, device)) => match play(&pcm, device, queue, shared) {
                 Ok(()) => return,
                 Err((why, played)) => {
@@ -239,8 +274,9 @@ fn run(queue: &Queue, shared: &Shared) {
 /// says stop (`Ok`) or the device stops working (`Err`, with whether it had
 /// taken a period first).
 fn play(pcm: &Pcm, device: Format, queue: &Queue, shared: &Shared) -> Result<(), (String, bool)> {
+    let Pcm(api, pcm) = *pcm;
     let (mut buffer, mut period) = (0, 0);
-    let err = unsafe { snd_pcm_get_params(pcm.0, &mut buffer, &mut period) };
+    let err = unsafe { (api.pcm_get_params)(pcm, &mut buffer, &mut period) };
     if err < 0 || period == 0 {
         // A period of a hundredth of a second, if the device will not say.
         period = (device.rate / 100) as c_ulong;
@@ -266,14 +302,14 @@ fn play(pcm: &Pcm, device: Format, queue: &Queue, shared: &Shared) -> Result<(),
         let mut written = 0;
         while written < period {
             let rest = &samples[written * device.channels..];
-            let result = unsafe { snd_pcm_writei(pcm.0, rest.as_ptr().cast(), (period - written) as c_ulong) };
+            let result = unsafe { (api.pcm_writei)(pcm, rest.as_ptr().cast(), (period - written) as c_ulong) };
             if result < 0 {
                 // The device ran dry (this thread was held up), or the
                 // machine slept: recovered here, on the thread that may
                 // wait for it, and the period written again.
-                let err = unsafe { snd_pcm_recover(pcm.0, result as c_int, 1) };
+                let err = unsafe { (api.pcm_recover)(pcm, result as c_int, 1) };
                 if err < 0 {
-                    return Err((format!("the output device stopped working: {}", error(err)), played));
+                    return Err((format!("the output device stopped working: {}", error(api, err)), played));
                 }
                 continue;
             }
@@ -281,7 +317,7 @@ fn play(pcm: &Pcm, device: Format, queue: &Queue, shared: &Shared) -> Result<(),
         }
         played = true;
         let mut delay: c_long = 0;
-        if unsafe { snd_pcm_delay(pcm.0, &mut delay) } == 0 {
+        if unsafe { (api.pcm_delay)(pcm, &mut delay) } == 0 {
             let latency = device.duration(delay.max(0) as usize);
             shared.latency_us.store(latency.as_micros() as u64, Ordering::Relaxed);
         }

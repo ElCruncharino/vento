@@ -26,6 +26,7 @@
 
 pub mod alsa;
 pub mod audio;
+mod dl;
 pub mod ffmpeg;
 pub mod ffmpeg_audio;
 pub mod pipewire;

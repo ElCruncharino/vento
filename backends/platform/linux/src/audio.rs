@@ -6,7 +6,9 @@
 //! ([`pipewire`](crate::pipewire)), where a PipeWire daemon answers, and ALSA's
 //! `default` device ([`alsa`](crate::alsa)) where none does or libpipewire is
 //! not there — a PulseAudio desktop, a bare ALSA one, a Flatpak sandbox granted
-//! the pulse socket and not PipeWire's.
+//! the pulse socket and not PipeWire's. Both libraries are loaded at run time,
+//! and where neither is there the far end's sound is dropped, which the log
+//! says once.
 //!
 //! PipeWire's own stream rather than its ALSA plugin, which is where ALSA's
 //! `default` leads on a PipeWire desktop: the plugin keeps a ring of the
@@ -34,7 +36,7 @@ pub enum Output {
     /// rather than played through ALSA. For tests of this path.
     PipeWire,
     /// ALSA's `default` device, as before there was a PipeWire output;
-    /// libpipewire is not loaded.
+    /// libpipewire is not loaded. Without libasound, no sound.
     Alsa,
 }
 

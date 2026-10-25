@@ -6,8 +6,10 @@
 # which on a phone is AAudio and here is a PipeWire stream of its own
 # (`src/pipewire.rs`, libpipewire-0.3 declared by hand and loaded at run time,
 # never linked) or, without PipeWire, ALSA's default device (`src/alsa.rs`,
-# libasound declared by hand and linked by name, as libasound.so.2), with
-# libavcodec's AAC and Opus decoders for the sound that arrives compressed.
+# libasound declared by hand and loaded at run time the same way, as
+# libasound.so.2), with libavcodec's AAC and Opus decoders for the sound that
+# arrives compressed. Neither is needed to build or to start: without either,
+# the far end's sound is dropped and the log says why.
 #
 # The mirror of `remotedesktop-platform-android`, cfg for cfg: on Android the
 # crate is empty and has no dependencies, which is what keeps FFmpeg out of

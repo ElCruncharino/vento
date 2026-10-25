@@ -97,9 +97,9 @@ several times slower), a C/C++ compiler — **clang** for the RealVNC backend
 (libc-shim does not build under GCC; without clang that one backend's library
 is not built, with a build note, and the backend says it is not available) —
 and the development files for openssl, gnutls, nettle
-(hogweed, gmp), libjpeg-turbo, pixman, zlib, alsa-lib, plus libclang.
-Nothing of PipeWire: its library is loaded at run time where it is installed
-(**Sound**, below).
+(hogweed, gmp), libjpeg-turbo, pixman, zlib, plus libclang.
+Nothing of PipeWire or ALSA: their libraries are loaded at run time where
+they are installed (**Sound**, below).
 The window needs a Vulkan (or GLES) driver wgpu can use and a Wayland or X11
 session.
 
@@ -375,7 +375,7 @@ cp target/release/lib/libvento_*.so /opt/vento/lib/
 
 What the tree does not carry is the system's libraries, which a machine
 running it needs installed: glibc as new as the build machine's (it is
-linked against its symbol versions), zlib, libasound, and per backend — **libvnc**
+linked against its symbol versions), zlib, and per backend — **libvnc**
 GnuTLS and libjpeg (`libjpeg.so.62`, libjpeg-turbo's); **tigervnc** GnuTLS,
 Nettle (and hogweed, GMP), libjpeg, pixman and libstdc++; **freerdp**
 OpenSSL 3 (`libssl.so.3`, `libcrypto.so.3`), ICU (`libicuuc` and three
@@ -383,7 +383,7 @@ more, of the build machine's major version); **realvnc** libstdc++ and
 libatomic. A backend's library that cannot be loaded stops the binary from
 starting (RealVNC's excepted, which is opened at run time and says it is not
 available). Loaded at run time where they are there, and not needed
-otherwise: libpipewire-0.3 (sound), libva and libva-drm
+otherwise: libpipewire-0.3 and libasound (sound), libva and libva-drm
 (hardware decoding), and the display stack (Vulkan or GL, Wayland or X11).
 
 The probe answers the first credentials prompt with `--password` and a second
@@ -522,10 +522,12 @@ no commits) while suspended, live again when it was not.
 daemon answers (`backends/platform/linux/src/pipewire.rs`), and on ALSA's
 `default` device where none does (`alsa.rs`: PulseAudio's plugin on a
 PulseAudio desktop, PipeWire's from a sandbox that is granted only the pulse
-socket, a card on a desktop with no sound server). libpipewire-0.3 is
-**loaded at run time**, not linked: nothing of PipeWire is needed to build
-the client, the binary needs only libasound to start, and a machine without
-libpipewire plays through ALSA. Every session's streams are nodes of one
+socket, a card on a desktop with no sound server). libpipewire-0.3 and
+libasound are both **loaded at run time**, not linked: nothing of either is
+needed to build the client or to start it, a machine without libpipewire
+plays through ALSA, and one with neither runs without sound — the log says
+so once (`audio: no sound output: no PipeWire (…), and ALSA cannot be used
+either (…); the far end's sound is dropped`) and everything else works. Every session's streams are nodes of one
 connection to the daemon (the process's one client, `Vento`), each named for
 its session (`media.name`: the desktop's name, the address until the far end
 says one), `media.role` Movie; each is pulled by the graph a cycle at a time

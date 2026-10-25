@@ -8,9 +8,10 @@
 //! **Loaded, not linked.** libpipewire-0.3 is opened with `dlopen` when the
 //! first stream wants it (it needs nothing but libc, and loads its SPA
 //! plugins itself), and the twenty-two functions this uses are looked up by
-//! hand, as `alsa.rs` declares libasound's: no headers, no bindgen, no
+//! hand, as `alsa.rs` looks up libasound's: no headers, no bindgen, no
 //! link-time dependency, so the binary runs where PipeWire is not installed
-//! and plays through ALSA there. The ABI used is libpipewire's stable one
+//! and plays through ALSA there (or, with no libasound either, without
+//! sound). The ABI used is libpipewire's stable one
 //! (`pw_stream_events` version 2, `pw_buffer` with `requested`, `pw_time` by
 //! size), so any PipeWire from 0.3.50 on; a library without one of these
 //! functions is no PipeWire to this, and its streams are ALSA's.
@@ -73,13 +74,7 @@ use std::time::{Duration, Instant};
 
 use runtime::media::audio::{Device, Format, Queue};
 
-#[link(name = "dl")]
-unsafe extern "C" {
-    fn dlopen(file: *const c_char, mode: c_int) -> *mut c_void;
-    fn dlsym(handle: *mut c_void, name: *const c_char) -> *mut c_void;
-    fn dlerror() -> *const c_char;
-}
-const RTLD_NOW: c_int = 2;
+use crate::dl::Library;
 
 /// What [`crate::audio::Audio`] calls this output, in the facts row and the
 /// overlay.
@@ -271,59 +266,42 @@ fn api() -> Result<&'static Api, String> {
 }
 
 fn load() -> Result<Api, String> {
-    unsafe {
-        let lib = dlopen(c"libpipewire-0.3.so.0".as_ptr(), RTLD_NOW);
-        if lib.is_null() {
-            let why = dlerror();
-            return Err(if why.is_null() {
-                "libpipewire-0.3.so.0 did not load".into()
-            } else {
-                CStr::from_ptr(why).to_string_lossy().into_owned()
-            });
-        }
-        macro_rules! sym {
-            ($name:literal) => {{
-                let p = dlsym(lib, concat!($name, "\0").as_ptr().cast());
-                if p.is_null() {
-                    return Err(format!("libpipewire-0.3 has no {}", $name));
-                }
-                function(p)
-            }};
-        }
-        let init: unsafe extern "C" fn(*mut c_int, *mut c_void) = sym!("pw_init");
-        let api = Api {
-            version: sym!("pw_get_library_version"),
-            thread_loop_new: sym!("pw_thread_loop_new"),
-            thread_loop_get_loop: sym!("pw_thread_loop_get_loop"),
-            thread_loop_start: sym!("pw_thread_loop_start"),
-            thread_loop_lock: sym!("pw_thread_loop_lock"),
-            thread_loop_unlock: sym!("pw_thread_loop_unlock"),
-            context_new: sym!("pw_context_new"),
-            context_connect: sym!("pw_context_connect"),
-            core_disconnect: sym!("pw_core_disconnect"),
-            core_find_proxy: sym!("pw_core_find_proxy"),
-            proxy_add_listener: sym!("pw_proxy_add_listener"),
-            properties_new: sym!("pw_properties_new"),
-            properties_set: sym!("pw_properties_set"),
-            stream_new: sym!("pw_stream_new"),
-            stream_add_listener: sym!("pw_stream_add_listener"),
-            stream_connect: sym!("pw_stream_connect"),
-            stream_update_properties: sym!("pw_stream_update_properties"),
-            stream_dequeue_buffer: sym!("pw_stream_dequeue_buffer"),
-            stream_queue_buffer: sym!("pw_stream_queue_buffer"),
-            stream_get_time_n: sym!("pw_stream_get_time_n"),
-            stream_destroy: sym!("pw_stream_destroy"),
+    let lib = Library::open(c"libpipewire-0.3.so.0")?;
+    macro_rules! sym {
+        ($name:literal) => {
+            // The types are the declarations above, which are libpipewire's.
+            match unsafe { lib.function(concat!($name, "\0")) } {
+                Some(f) => f,
+                None => return Err(format!("libpipewire-0.3 has no {}", $name)),
+            }
         };
-        init(null_mut(), null_mut());
-        Ok(api)
     }
-}
-
-/// A symbol `dlsym` found, as the function pointer type it is declared as
-/// here.
-unsafe fn function<F: Copy>(p: *mut c_void) -> F {
-    const { assert!(size_of::<F>() == size_of::<*mut c_void>()) };
-    unsafe { std::mem::transmute_copy::<*mut c_void, F>(&p) }
+    let init: unsafe extern "C" fn(*mut c_int, *mut c_void) = sym!("pw_init");
+    let api = Api {
+        version: sym!("pw_get_library_version"),
+        thread_loop_new: sym!("pw_thread_loop_new"),
+        thread_loop_get_loop: sym!("pw_thread_loop_get_loop"),
+        thread_loop_start: sym!("pw_thread_loop_start"),
+        thread_loop_lock: sym!("pw_thread_loop_lock"),
+        thread_loop_unlock: sym!("pw_thread_loop_unlock"),
+        context_new: sym!("pw_context_new"),
+        context_connect: sym!("pw_context_connect"),
+        core_disconnect: sym!("pw_core_disconnect"),
+        core_find_proxy: sym!("pw_core_find_proxy"),
+        proxy_add_listener: sym!("pw_proxy_add_listener"),
+        properties_new: sym!("pw_properties_new"),
+        properties_set: sym!("pw_properties_set"),
+        stream_new: sym!("pw_stream_new"),
+        stream_add_listener: sym!("pw_stream_add_listener"),
+        stream_connect: sym!("pw_stream_connect"),
+        stream_update_properties: sym!("pw_stream_update_properties"),
+        stream_dequeue_buffer: sym!("pw_stream_dequeue_buffer"),
+        stream_queue_buffer: sym!("pw_stream_queue_buffer"),
+        stream_get_time_n: sym!("pw_stream_get_time_n"),
+        stream_destroy: sym!("pw_stream_destroy"),
+    };
+    unsafe { init(null_mut(), null_mut()) };
+    Ok(api)
 }
 
 /// What a session's streams are called, shared by the session's output and
@@ -898,17 +876,25 @@ impl Supervisor {
         unsafe { (pw.api.stream_destroy)(bound.stream) };
     }
 
-    /// What is left for a stream PipeWire cannot have: ALSA, or silence.
+    /// What is left for a stream PipeWire cannot have: ALSA, or silence —
+    /// which, where libasound cannot be loaded either, is said once as the
+    /// machine having no sound output, and every stream after it is
+    /// dropped as quietly as the first.
     fn give_up(&mut self, slot: &Arc<Slot>, why: &str) {
         let said = Said::Unavailable(why.to_string());
         let first = self.said != said;
         if slot.fallback {
-            if first {
-                log::info!("audio: {why}; the far end's sound plays through ALSA");
-            }
             match crate::alsa::device(Arc::clone(&slot.queue)) {
-                Ok(device) => *slot.alsa.lock().unwrap() = Some(device),
-                Err(why) => log::warn!("audio: could not start ALSA's output either ({why}); the sound is dropped"),
+                Ok(device) => {
+                    if first {
+                        log::info!("audio: {why}; the far end's sound plays through ALSA");
+                    }
+                    *slot.alsa.lock().unwrap() = Some(device);
+                }
+                Err(alsa) if first => log::warn!(
+                    "audio: no sound output: {why}, and ALSA cannot be used either ({alsa}); the far end's sound is dropped"
+                ),
+                Err(_) => {}
             }
         } else if first {
             log::warn!("audio: {why}; PipeWire was asked for, so the far end's sound is dropped");
