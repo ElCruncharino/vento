@@ -595,14 +595,14 @@ static int askIdentity(Session *s, void (*ask)(void *, const char *), const char
 }
 
 /* Reached for every certificate. One that fails to verify against the system's
-   authorities (the phone's own store) comes here as upstream always sent it,
-   which is nearly every one, since no authority signs a VNC server's own; one
-   that verifies comes here too, whether or not it is for the name dialled, by
-   the patches on the library's verify_certificate_callback, since an
-   authority's word is who the server says it is and not that it is the one
-   reached last time. Either way the identity is the fingerprint, and the answer
-   comes from the pin store or from a person — as for the TigerVNC backend,
-   whose library is patched the same way.
+   authorities (the phone's own store, or the host's) comes here as upstream
+   always sent it, which is nearly every one, since no authority signs a VNC
+   server's own; one that verifies comes here too, whether or not it is for the
+   name dialled, by the patches on the library's verify_certificate_callback,
+   since an authority's word is who the server says it is and not that it is
+   the one reached last time. Either way the identity is the fingerprint, and the
+   answer comes from the pin store or from a person — as for the TigerVNC
+   backend, whose library is patched the same way.
 
    Printed the way `openssl x509 -fingerprint -sha256` prints it, which is what
    the other two backends pin, so one host reached through two of them is one

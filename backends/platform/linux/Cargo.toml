@@ -21,8 +21,9 @@
 # nothing of a system FFmpeg.
 #
 # Beside the crate is the rest of the Linux platform: `cpp/`, the C the Rust
-# decoders call into and the stderr `vento_log` a C backend links and
-# `probe/`, the development tools: the two sound rigs.
+# decoders call into and the stderr `vento_log` a C backend links;
+# `cmake/vento_linux.cmake`, a C backend's host half; and `probe/`, the
+# development tools — the C probes' shared body and the two sound rigs.
 [package]
 name = "remotedesktop-platform-linux"
 version.workspace = true
@@ -48,9 +49,9 @@ remotedesktop-runtime.workspace = true
 
 # The two sound rigs in `probe/` (`scripts/testaudio/`), development tools
 # built only when asked for: `cargo build --features probe --example
-# audio_rig`. Examples by path, since they are in `probe/` rather than in
-# `examples/`. Without the feature `cargo test` and `clippy --all-targets`
-# leave them alone.
+# audio_rig`. Examples by path, since they are with the C probe's body rather
+# than in `examples/`. Without the feature `cargo test` and `clippy
+# --all-targets` leave them alone.
 [features]
 probe = []
 

@@ -41,12 +41,15 @@ Nothing runs in parallel: every step needs a clean tree to commit from.
 
 `third_party/ffmpeg` and `third_party/dav1d` are not a backend's and not in this
 round either: the static FFmpeg `backends/platform/linux/build.rs` builds for
-every desktop decoder, each pinned at a release tag. FFmpeg moves to a newer
+every desktop decoder (the Rust ones, which TigerVNC's and FreeRDP's H.264 and
+FreeRDP's AAC and Opus sound go through too, and FreeRDP's scaling, which links
+libswscale alone), each pinned at a release tag. FFmpeg moves to a newer
 release's tag with `patches/ffmpeg/` rebased onto it; the decoders it is
 configured with are `DECODERS` and `HWACCELS` in that build script, so a
 consumer that starts using another codec adds it there. Proven by the desktop
 crate's fixture tests (`tests/decode.rs` for the video, `tests/sound.rs` for AAC
-and Opus)and the RustDesk probe with each codec. Android builds neither.
+and Opus), the RustDesk probe with each codec, and the TigerVNC H.264 and
+FreeRDP AVC probes. Android builds neither.
 
 `third_party/libva` goes with FFmpeg: headers only, for its VAAPI decoders
 (`HWACCELS` in the same build script). Nothing of it is compiled or linked;
@@ -165,7 +168,11 @@ under the host locale (`export LC_ALL=C`).
   (`rustStaticLibrary` in `backends/build.gradle`,
   `backends/platform/android/cmake/vento_android.cmake`) with the one JNI layer
   in `backends/platform/android`. An upstream change reaches the session file;
-  the crate changes only when the config does.
+  the crate changes only when the config does, and so does `<name>_probe.c`, the
+  host probe's `main` beside them. The module's CMakeLists is one file for both
+  builds, `if(ANDROID)` and `else()` around a shared middle: a vendored tree's
+  new option goes in the middle, a new port or NDK library in the Android half,
+  a new system library in the host half (see `backends/CMakeLists.txt`).
 - A Rust backend's shim is its protocol crate, and its adapter is that
   crate's `src/backend.rs`: the `Kind`, the config read from the options, and
   the rows. An upstream change (IronRDP, hbb_common, ryll) reaches the
@@ -176,20 +183,21 @@ under the host locale (`export LC_ALL=C`).
   keeps is its provider and, for RDP and the two borrowed VNC clients, a
   `NativeBackend.Hooks`. An upgrade that keeps the adapter's `Kind` building
   has nothing to change on that side.
-- TigerVNC's H.264 decoder context is the shim's own
+- TigerVNC's H.264 decoder context is the shim's own on both platforms
   (`H264VentoDecoderContext`, selected by `H264_VENTO` in their factory; their
   libav one is not built, `HAVE_LIBAV` unset), and hands each rectangle to
   vento's video decoders through `vento/video.h`'s table. Its QEMU audio is
   played on vento's sound output through `vento/audio.h`'s table
-  (`VentoAudio.h`; AAudio on the phone, behind `runtime::media::audio`'s
-  queue), not their viewer's `AudioOutput`, which is not compiled. An upstream
-  change to `H264DecoderContext` or `H264Decoder` (the reset flags, the
-  64-context limit) or to the QEMU audio calls in `CConnection` reaches the
-  shim — in particular the session's sound switch leans on
-  `CConnection::framebufferUpdateEnd` asking for audio (format, then enable)
-  in the update that acknowledged it, which the shim's own
-  `framebufferUpdateEnd` follows with a disable for a session started without
-  sound, and on `writeQEMUAudioEnable` staying public in `CMsgWriter`.
+  (`VentoAudio.h`; AAudio on the phone, ALSA on the host, both behind
+  `runtime::media::audio`'s queue), not their viewer's `AudioOutput`, which is
+  not compiled. An upstream change to `H264DecoderContext`
+  or `H264Decoder` (the reset flags, the 64-context limit) or to the QEMU
+  audio calls in `CConnection` reaches both platforms — in particular the
+  session's sound switch leans on `CConnection::framebufferUpdateEnd`
+  asking for audio (format, then enable) in the update that acknowledged
+  it, which the shim's own `framebufferUpdateEnd` follows with a disable
+  for a session started without sound, and on `writeQEMUAudioEnable`
+  staying public in `CMsgWriter`.
 - Every comment of ours that names an upstream version or behaviour ("in
   3.19.1", "the assembly is GAS", "returns Some") is a claim to re-verify
   against the target and correct or remove. Grep for the old version string
@@ -247,10 +255,12 @@ line or one file somewhere that already has seven:
   hand on), or a C shim in `cpp/` over
   `vento/backend.h` with its config in its own header,
   `cpp/include/vento/<name>.h` (on the include path of the module's targets
-  through `vento_android_library`), and a small crate at the module's root
-  (`remotedesktop-api` with the `c` feature; `api::c::start` and a
-  `Behaviour` do the rest) whose `build.rs` reads the header with bindgen,
-  its own items only, over `api::c::ffi` — libvnc's, copied.
+  through `vento_backend_library` and `vento_android_library`), a host probe
+  `<name>_probe.c` (built with `-DVENTO_PROBES=ON`), and a small crate at the
+  module's root (`remotedesktop-api` with the `c` feature;
+  `api::c::start` and a `Behaviour` do the rest) whose `build.rs` reads
+  the header with bindgen, its own items only, over `api::c::ffi` —
+  libvnc's, copied.
 - **The catalog.** `modules/<name>/catalog.rs`: the backend's `About` (its
   pinning and whether its user name carries a domain are data there, which
   the shared rules read) and its `OPTIONS` table, with their tests; one
@@ -287,7 +297,8 @@ line or one file somewhere that already has seven:
   backends need none. `settings.gradle` includes the module, and the app
   takes it from `backendModules` in `app/build.gradle` — or an add-on under
   `plugins/` does, as RustDesk's.
-- **The checks.** A line in `scripts/check-jni-symbols.sh`'s `MODULES`.
+- **The checks.** A line in `scripts/check-jni-symbols.sh`'s `MODULES`, and
+  the probe (below) against a test desktop.
 
 ## Verification
 
@@ -295,6 +306,14 @@ Native modules:
 
     ./gradlew :backends:<module>:assembleRelease
     ./gradlew :backends:<module>:assembleRelease -PstrictWarnings
+
+The C backends again on the host, which is the one build that then runs — a
+probe per backend, against the test desktops under `scripts/` (README,
+Development). They build against the system libraries:
+
+    cmake -S backends -B build/scratch/host -G Ninja \
+        -DSTRICT_WARNINGS=ON -DVENTO_PROBES=ON
+    cmake --build build/scratch/host
 
 Rust modules:
 
@@ -315,9 +334,10 @@ any change to a native surface — `platform_android`'s `surface.rs`,
 
 Nothing in the Gradle or cargo steps runs on a device or against a real
 server. The probes are the exception: they run against the Docker desktops
-under `scripts/` (`testvnc`, `testrdp`, `testspice`, `testrustdesk`). Say in
-the report which were run and which were not, rather than implying otherwise;
-the other harnesses under `scripts/` need VMs.
+under `scripts/` (`testvnc`, `testrdp`, `testspice`, `testrustdesk`;
+`testh264` for TigerVNC's H.264, which needs a Wayland session and a GPU to
+nest in). Say in the report which were run and which were not, rather than
+implying otherwise; the other harnesses under `scripts/` need VMs.
 
 Build in the repository's own `target/` and `.cxx`. `/tmp` is a RAM-backed
 tmpfs: no cargo target directories, scratch workspaces, unpacks or clones
@@ -406,8 +426,13 @@ One commit per upstream, after review, by the lead:
   the Close PDU still does not reach the device (it closes its own stream
   when idle). No `WITH_PULSE`, `WITH_ALSA`, `WITH_OSS`, `WITH_SNDIO`,
   `WITH_OPENSLES` or `WITH_DSP_FFMPEG`; their "fake" device is still built
-  and is what Sound = off gets. `LegacyTls` row for TLS 1.0 at level 0;
-  `remotedesktop_vendored_warnings` silences their tree.
+  and is what Sound = off gets. On Linux `WITH_SWSCALE` is the one FFmpeg
+  switch on, and `WITH_FFMPEG` is off so that their swscale branch does not
+  link libavcodec for the camera channel's MJPEG; check that scaling still
+  needs only libswscale and libavutil, and that rdpgfx still offers 10.5
+  and 10.6 only with a scaler (the session is EGFX 10.4 without).
+  `LegacyTls` row for TLS 1.0 at level 0; `remotedesktop_vendored_warnings`
+  silences their tree.
 - **ironrdp** master 9b151c4c. No patches. A submodule rather than crates.io
   because the bitmap stride fix (80bb81b3) is still unreleased; revisit at
   the next ironrdp-session release. EGFX is deliberately off; the doc

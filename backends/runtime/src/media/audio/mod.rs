@@ -8,9 +8,10 @@
 //! [`video::Decoders`](crate::media::video::Decoders): what it holds is an
 //! [`Outputs`], handed to it by whoever started the session — AAudio in
 //! `platform_android`, PipeWire or ALSA in `platform_linux`, [`NoOutputs`]
-//! for a test with neither. Before this each backend that had sound had a sink
-//! of its own (TigerVNC's AAudio one, FreeRDP's OpenSL ES one), each with its
-//! own idea of how much to queue, and none that a window could mute.
+//! for a test with neither. Before this each backend that had sound had a sink of its
+//! own on each platform (TigerVNC's ALSA and AAudio ones, FreeRDP's
+//! PulseAudio and OpenSL ES ones), each with its own idea of how much to
+//! queue, and none that a window could mute.
 //!
 //! What every platform does alike is here, in [`Queue`]: a protocol thread
 //! writes into it and never waits, and the platform's device drains it on a

@@ -1902,7 +1902,8 @@ static void applySettings(Session *s, rdpSettings *settings) {
        what is left when a server has neither. */
     const char *g = s->graphics ? s->graphics : "gfx";
     const int gfx = strcmp(g, "gfx") == 0 || strcmp(g, "gfx-novideo") == 0;
-    /* No decoders, and nothing is offered that would need one. */
+    /* No decoders, which is the probe, and nothing is offered that would need
+       one. */
     const int h264 = strcmp(g, "gfx") == 0 && s->h264.available;
     const int rfx = gfx || strcmp(g, "rfx") == 0;
     freerdp_settings_set_bool(settings, FreeRDP_SupportGraphicsPipeline, gfx);

@@ -3,7 +3,7 @@
 
 //! The platform's sound output as `vento/audio.h`'s table, for a C backend
 //! whose far end sends sound: TigerVNC's QEMU audio and FreeRDP's rdpsnd,
-//! which until now each had a sink of their own.
+//! which until now each had a sink of their own on each platform.
 //!
 //! What that buys is the same thing [`video`](super::video) buys for
 //! pictures: one queue and one policy for every backend on both platforms —

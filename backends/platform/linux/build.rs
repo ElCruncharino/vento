@@ -7,14 +7,15 @@
 //! system FFmpeg is linked or needed.
 //!
 //! **One FFmpeg for every desktop consumer.** The Rust decoders here are one
-//! (the video's, and the sound's AAC and Opus); the `links` metadata
-//! (`DEP_VENTO_VIDEO_PREFIX`) says where this one put its libraries, so that a
-//! build of other consumers links the same configuration of the same source.
-//! FFmpeg is configured with `--disable-everything` and then exactly what
-//! those consumers use (`DECODERS`, `HWACCELS`, the two scaling libraries),
-//! with `--disable-autodetect` so that nothing the build machine happens to
-//! have installed is linked in, and without `--enable-gpl`: what is built is
-//! LGPL 2.1 or later, and dav1d is BSD-2-Clause.
+//! (the video's, and the sound's AAC and Opus); TigerVNC's libavcodec H.264
+//! context and FreeRDP's scaling are the others, built through CMake. That
+//! build is told where this one put its libraries through the `links` metadata
+//! (`DEP_VENTO_VIDEO_PREFIX`), so all of them link the same configuration of
+//! the same source. FFmpeg is configured with `--disable-everything` and then
+//! exactly what those consumers use (`DECODERS`, `HWACCELS`, the two scaling
+//! libraries), with `--disable-autodetect` so that nothing the build machine
+//! happens to have installed is linked in, and without `--enable-gpl`: what is
+//! built is LGPL 2.1 or later, and dav1d is BSD-2-Clause.
 //!
 //! **Built once.** The two builds take about a minute and a half together
 //! (dav1d with Meson and Ninja, FFmpeg with its configure and make), and are
@@ -258,7 +259,7 @@ fn main() {
         "cargo:rustc-link-search=native={}",
         prefix.join("lib").display()
     );
-    // For a build that links the same FFmpeg.
+    // For whatever hands it to the C backends' CMake build.
     println!("cargo:prefix={}", prefix.display());
 }
 

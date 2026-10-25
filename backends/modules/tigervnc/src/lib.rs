@@ -35,8 +35,9 @@ pub static KIND: Kind = Kind {
 };
 
 // The phone's library: this backend, registered on the module's generated
-// natives class. Android only. MediaCodec is what decodes its H.264 there (see
-// `create`), and AAudio is what plays its sound.
+// natives class. Android only — the host links the C as a library of its own.
+// MediaCodec is what decodes its H.264 there (see `create`), and AAudio is what
+// plays its sound.
 #[cfg(target_os = "android")]
 platform_android::natives!(
     class = c"net/pgaskin/remotedesktop/backend/tigervnc/TigerVncNatives",

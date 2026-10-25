@@ -925,11 +925,12 @@ private:
 
 // Audio is offered to every server wherever there is somewhere to play it, as
 // H.264 is offered only where there is something to decode it: a session
-// handed no sound output does not ask a server to send what would be dropped.
-// The Audio option is only whether the sound is asked for to begin with. The
-// library asks for it after the first update that says the server has it, and
-// the switch turns it off and on from then on with QEMU's enable and disable
-// messages (`setSound`), so a session that began without it can still have it.
+// handed no sound output (the C probe) does not ask a server to send what
+// would be dropped. The Audio option is only whether the sound is asked for to
+// begin with. The library asks for it after the first update that says the
+// server has it, and the switch turns it off and on from then on with QEMU's
+// enable and disable messages (`setSound`), so a session that began without
+// it can still have it.
 Conn::Conn(Session *session) : s(session), soundOn_(session->audio()) {
     supportsLocalCursor = true;
     supportsDesktopResize = true;

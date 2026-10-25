@@ -35,9 +35,9 @@ pub static KIND: Kind = Kind {
 };
 
 // The phone's library: this backend, registered on the module's generated
-// natives class. Android only. The session is handed AAudio as its sound
-// output, which the server's sound plays on through the module's rdpsnd
-// device.
+// natives class. Android only — the host links the C as a library of its own.
+// The session is handed AAudio as its sound output, which the server's sound
+// plays on through the module's rdpsnd device.
 //
 // WinPR has a `JNI_OnLoad` of its own, which keeps the `JavaVM` it reads the
 // time zone through, and a library has room for one: the module's CMake

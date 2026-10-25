@@ -28,7 +28,7 @@ pub static KIND: Kind = Kind {
 };
 
 // The phone's library: this backend, registered on the module's generated
-// natives class. Android only.
+// natives class. Android only — the host links the C as a library of its own.
 #[cfg(target_os = "android")]
 platform_android::natives!(
     class = c"net/pgaskin/remotedesktop/backend/libvnc/LibVncNatives",
