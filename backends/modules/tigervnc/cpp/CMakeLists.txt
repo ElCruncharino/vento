@@ -8,8 +8,8 @@
 # with the vendored libjpeg-turbo and pixman and the nettle and GnuTLS ports
 # linked in, since a phone has none of them. Under `backends/CMakeLists.txt`
 # it is a subdirectory on a Linux host and makes `vento_tigervnc`, the
-# session, with the same libjpeg-turbo and pixman and against the host's
-# nettle and GnuTLS, with a probe in front of it.
+# session, with the same libjpeg-turbo and pixman and the host root's nettle
+# and GnuTLS (built from the ports' tarballs), with a probe in front of it.
 # What is shared is the middle — how
 # TigerVNC's `common/` itself is configured — and the two halves around it
 # are `if(ANDROID)` and `else()`, so that the Android build is the same
@@ -128,18 +128,21 @@ if(ANDROID)
     set(PIXMAN_LIBRARIES pixman)
     set(PIXMAN_INCLUDE_DIRS "${THIRD_PARTY}/pixman/pixman" "${CMAKE_CURRENT_BINARY_DIR}/pixman-gen")
 else()
-    # Three of the five answers from the host, found the way their own root
-    # finds them: CMake's modules for GnuTLS and zlib, and theirs — on the
-    # module path for this directory and below — for nettle, which sets
-    # exactly the variables `common/` reads. The image libraries are the
-    # phone's: the host root's libjpeg-turbo, and pixman built by the same
-    # file as on the phone, so that a built tree carries both rather than
-    # needing a distribution's (whose libjpeg soname is not even the same
-    # from one to the next).
-    list(APPEND CMAKE_MODULE_PATH "${THIRD_PARTY}/tigervnc/cmake/Modules")
-    find_package(Nettle REQUIRED)
+    # zlib from the host, found by CMake's module as their own root finds it.
+    # The rest are the phone's libraries, so that a built tree carries them
+    # rather than needing a distribution's (whose libjpeg and nettle sonames
+    # differ from one to the next): nettle and GnuTLS as the host root builds
+    # them from the ports' tarballs, under the ports' target names, and so
+    # answered as the phone's branch answers them; the host root's
+    # libjpeg-turbo; and pixman built by the same file as on the phone.
+    set(NETTLE_FOUND TRUE)
+    set(NETTLE_LIBRARIES nettle)
+    set(HOGWEED_LIBRARIES hogweed)
+    set(NETTLE_INCLUDE_DIRS "")
     set(HAVE_NETTLE 1)
-    find_package(GnuTLS REQUIRED)
+    set(GNUTLS_FOUND TRUE)
+    set(GNUTLS_LIBRARIES gnutls)
+    set(GNUTLS_INCLUDE_DIR "")
     set(HAVE_GNUTLS 1)
     find_package(ZLIB REQUIRED)
     include(cmake/pixman.cmake)

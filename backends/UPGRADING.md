@@ -154,7 +154,11 @@ verify the hash against upstream's signature or announcement (not against
 the download), `rm -rf third_party/<name>`, `./gradlew
 :backends:fetchCryptoSources`, then the port's `gen.sh`. gnutls' gen builds
 nettle itself, so a nettle bump reruns gnutls' gen too and may change its
-`gen/`.
+`gen/`. The host build has no `gen/`: `platform/linux/cmake/gnutls.cmake`
+runs both tarballs' own configure and make at build time, in a directory
+named after both versions, so a bump is a fresh build there with nothing to
+regenerate; a configure option the new release renames or drops shows up
+in its configure log (under that directory's `src/*-stamp/`).
 
 A port's `gen.sh` rerun at the same pin must produce an empty diff. If it
 does not, fix the script first as its own commit, regenerated at the old
@@ -328,7 +332,9 @@ Native modules:
 
 The C backends again on the host, which is the one build that then runs — a
 probe per backend, against the test desktops under `scripts/` (README,
-Development). The three open ones build against the system libraries; the
+Development). The three open ones build against the system's OpenSSL and
+zlib, and the phone's other libraries (GnuTLS and nettle from the same
+tarballs, by their own build rather than the ports'); the
 RealVNC one builds under clang only and runs their pinned library out of
 the viewer APK, so a change to `realvnc/.../Library.java`'s pins, to
 `realvnc_traffic.h`'s walk or to the four host-only submodules is proven
@@ -408,7 +414,10 @@ One commit per upstream, after review, by the lead:
 - **nettle** 4.0, **gnutls** 3.8.13 (the release that added nettle-4
   support; newest in the 3.8 line). nettle 4.1 warns of further API changes.
   `MINI_GMP_ENABLE_FLOAT=0` is an answer configure puts in CFLAGS, so the
-  port sets it itself.
+  port sets it itself. The host build (`platform/linux/cmake/gnutls.cmake`)
+  configures the same tarballs with the port's options but for the
+  assembly, which it leaves on, a CA bundle path and a system priority
+  file path.
 - **libvncserver** at upstream master; eight patches. No releases since
   0.9.15. `0006` (as TigerVNC's `0006`) hands a certificate that verified
   against the system's authorities, and is for the name dialled, to

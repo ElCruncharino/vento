@@ -119,7 +119,9 @@ in `settings.gradle`): `rfb`, `libvnc`, `tigervnc`, `freerdp`, `ironrdp`,
   C those decoders call and the stderr logger a C backend links;
   `cmake/vento_linux.cmake`, a C backend's host half (`vento_backend_library`,
   `vento_backend_probe`, `VENTO_SHARED`, `VENTO_PROBES`,
-  `VENTO_FFMPEG_PREFIX`); `probe/`, the development tools — the C probes'
+  `VENTO_FFMPEG_PREFIX`); `cmake/gnutls.cmake`, GnuTLS and nettle for the
+  host, built at build time by their own autotools build from the tarballs
+  the Android ports use; `probe/`, the development tools — the C probes'
   shared body and the two sound rigs (`--features probe`); and `tests/`, the
   decoders' fixture tests.
 

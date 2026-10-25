@@ -6,8 +6,8 @@
 # module's Rust crate linked in as the JNI layer over it, and the vendored
 # libjpeg-turbo and the GnuTLS port, since a phone has neither. Under `backends/CMakeLists.txt`
 # it is a subdirectory on a Linux host and makes `vento_libvnc`, the session
-# alone, against the root's libjpeg-turbo and the GnuTLS the host has, with a
-# probe in front of it. What is shared is the middle — how LibVNCServer itself is
+# alone, against the root's libjpeg-turbo and GnuTLS, with a probe in front
+# of it. What is shared is the middle — how LibVNCServer itself is
 # configured — and the two halves around it are `if(ANDROID)` and `else()`,
 # so that the Android build is the same sequence of statements it was.
 
@@ -57,8 +57,8 @@ if(ANDROID)
 
     # Shims find_package(JPEG) and find_package(GnuTLS) onto the in-tree
     # libjpeg-turbo and the port below; prepended so they win over the copies
-    # CMake ships, which would probe the host. Android only: on the host those
-    # copies finding the system libraries is the point.
+    # CMake ships, which would probe the host. Android only: the host's
+    # answers are the root's, through `cmake/host/` below.
     list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
     # libjpeg-turbo, for Tight — the encoding this backend exists to have. The SIMD
@@ -84,11 +84,12 @@ if(ANDROID)
     # by both. `find_package(GnuTLS)` above finds the shim beside FindJPEG's.
     add_subdirectory("${VENTO_BACKENDS}/platform/android/ports/gnutls" gnutls)
 else()
-    # The host root's libjpeg-turbo (backends/CMakeLists.txt), the same
-    # submodule, answered through the same FindJPEG shim: `cmake/host/` holds
-    # that one alone, since GnuTLS on the host is still the system's, found
-    # by CMake's own module. jconfig.h is generated there, so both of its
-    # directories go on the path before libvncserver's sources are added.
+    # The host root's libjpeg-turbo and GnuTLS (backends/CMakeLists.txt),
+    # answered through shims of their own in `cmake/host/`: the same FindJPEG
+    # as the phone's, and a FindGnuTLS that names the root's GnuTLS, which is
+    # built from the phone's tarball by autotools rather than from the port.
+    # jconfig.h is generated there, so both of its directories go on the
+    # path before libvncserver's sources are added.
     include_directories(${VENTO_JPEG_INCLUDE_DIRS})
     list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/host")
 endif()

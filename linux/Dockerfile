@@ -7,7 +7,8 @@
 # `lib/` with the backends' `libvento_*.so` (the binary's rpath is
 # `$ORIGIN/lib`). The tree can be moved anywhere as a whole: /opt/vento, a
 # home directory, a USB stick. From the repository root, with the submodules
-# initialised (`git submodule update --init --recursive`):
+# initialised (`git submodule update --init --recursive`) and GnuTLS and
+# nettle unpacked (`./gradlew :backends:fetchCryptoSources`):
 #
 #   docker build -f linux/Dockerfile --output type=local,dest=build/dist/vento .
 #
@@ -27,31 +28,29 @@
 # At run time the tree needs:
 # - Linux on x86_64 with glibc 2.27 or later, libstdc++ (GLIBCXX_3.4.22) and
 #   zlib (libz.so.1);
-# - the backends' TLS libraries, by Ubuntu 18.04's sonames: GnuTLS
-#   (libgnutls.so.30) for libvnc and TigerVNC, Nettle 3.4 (libnettle.so.6,
-#   libhogweed.so.4, libgmp.so.10) for TigerVNC, and OpenSSL 1.1
-#   (libssl.so.1.1, libcrypto.so.1.1) for FreeRDP. Few current distributions
-#   ship Nettle 3.4 or OpenSSL 1.1, and the binary does not start without
-#   them until they are built in;
+# - OpenSSL 1.1 (libssl.so.1.1, libcrypto.so.1.1), Ubuntu 18.04's, for
+#   FreeRDP. Few current distributions ship it, and the binary does not
+#   start without it until it is built in;
 # - for the window, a Vulkan or GL driver and a Wayland or X11 session;
 # - for RealVNC, the two libraries from RealVNC's viewer (linux/claude-notes.md
 #   says how to extract them from its APK).
 # Sound (PipeWire, ALSA) and hardware decoding (libva) are loaded at run time
-# when installed. libjpeg-turbo, pixman, libatomic, FFmpeg and dav1d are
-# linked in.
+# when installed. libjpeg-turbo, pixman, GnuTLS, nettle, libatomic, FFmpeg
+# and dav1d are linked in.
 
 FROM ubuntu:18.04@sha256:152dc042452c496007f07ca9127571cb9c29697f42acbfad72324b2bb2e43c98 AS build
 SHELL ["/bin/bash", "-eo", "pipefail", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
 
 # From Ubuntu: GCC 8 for its libstdc++ headers (clang uses the newest GCC
-# installed), make, pkg-config, Python 3.8 for Meson, Ninja 1.8.2, git for
-# `git apply`, and the development files of the TLS libraries and zlib.
+# installed), make, m4 for nettle's assembly, pkg-config, Python 3.8 for
+# Meson, Ninja 1.8.2, git for `git apply`, and the development files of
+# OpenSSL and zlib.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates curl gnupg xz-utils binutils make g++-8 pkg-config \
+        ca-certificates curl gnupg xz-utils binutils make m4 g++-8 pkg-config \
         ninja-build python3.8 git \
-        zlib1g-dev libgnutls28-dev nettle-dev libgmp-dev libssl-dev \
+        zlib1g-dev libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # clang 18 and LLVM's binutils from apt.llvm.org, the key checked by its

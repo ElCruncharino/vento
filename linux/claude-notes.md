@@ -91,18 +91,30 @@ from this directory, or with `--manifest-path linux/Cargo.toml` from the root;
 its binary lands in `linux/target/`.
 
 Host packages (the same the C host build needs, plus a libclang for bindgen):
-cmake, ninja, make, meson, pkg-config, nasm (on x86, for the video decoders'
+cmake, ninja, make, m4, meson, pkg-config, nasm (on x86, for the video decoders'
 assembly; without it they are built in plain C, with a build note, and decode
 several times slower), a C/C++ compiler — **clang** for the RealVNC backend
 (libc-shim does not build under GCC; without clang that one backend's library
 is not built, with a build note, and the backend says it is not available) —
-and the development files for openssl, gnutls, nettle
-(hogweed, gmp), zlib, plus libclang. Not libjpeg-turbo or pixman: both are
-built from their submodules (`third_party/libjpeg-turbo`, `third_party/pixman`,
-as the phone's are) and linked into the backends that use them, so that a
-built tree does not need a distribution's (whose libjpeg is `libjpeg.so.62`
-on Fedora and Debian and `libjpeg.so.8` on Ubuntu). NASM gives libjpeg-turbo
-its SIMD too. RealVNC's hosting layer links the compiler's static
+and the development files for openssl and zlib, plus libclang. Not
+libjpeg-turbo or pixman: both are built from their submodules
+(`third_party/libjpeg-turbo`, `third_party/pixman`, as the phone's are) and
+linked into the backends that use them, so that a built tree does not need a
+distribution's (whose libjpeg is `libjpeg.so.62` on Fedora and Debian and
+`libjpeg.so.8` on Ubuntu). NASM gives libjpeg-turbo its SIMD too. Not GnuTLS
+or nettle either: the phone's release tarballs of both (GnuTLS 3.8, nettle 4.0
+with its mini-gmp) are configured and built by their own autotools build in
+the CMake tree, once (about a minute and a half), and linked into the libvnc
+and TigerVNC libraries, since nettle's soname changes with nearly every
+release. The tarballs are not submodules: `./gradlew
+:backends:fetchCryptoSources` unpacks them into `third_party/gnutls` and
+`third_party/nettle`, or by hand, from the URLs and SHA-256 hashes in
+`backends/build.gradle`'s `cryptoSources`, with `tar -x
+--strip-components=1`. Nettle's assembly needs m4; without it, nettle is
+built in C, with a build note. GnuTLS takes its CA certificates from
+`/etc/ssl/certs/ca-certificates.crt` (Debian, Ubuntu and Fedora all have
+it), which decides nothing here: every certificate goes to the known hosts
+(**Known hosts**, below). RealVNC's hosting layer links the compiler's static
 `libatomic.a` where there is one (on Fedora, `libatomic-static`), and the
 shared `libatomic.so.1` otherwise.
 Nothing of PipeWire or ALSA: their libraries are loaded at run time where
@@ -289,7 +301,14 @@ libva is not linked. libjpeg-turbo is linked statically into the libvnc and
 TigerVNC libraries (the IJG License, with the Modified BSD and zlib licences
 for parts of it: `third_party/libjpeg-turbo/LICENSE.md`; its TurboJPEG API,
 which is BSD-3-Clause alone, is not built), and pixman into TigerVNC's (MIT:
-`third_party/pixman/COPYING`). RealVNC's links GCC's libatomic where the
+`third_party/pixman/COPYING`). GnuTLS is linked statically into the libvnc
+and TigerVNC libraries, as released and configured without its tools and
+optional libraries (LGPL 2.1 or later: `third_party/gnutls/COPYING.LESSERv2`,
+the copies of libtasn1 and libunistring inside it included), and nettle
+with it, which TigerVNC also calls itself for its RSA-AES security types
+(LGPL 3 or later, or GPL 2 or later: `third_party/nettle/COPYING.LESSERv3`
+and `COPYINGv2`), with nettle's mini-gmp, from GMP and under the same two
+licences, in place of GMP. RealVNC's links GCC's libatomic where the
 compiler has a static one, under the GCC Runtime Library Exception, as
 every program GCC builds links libgcc. libpipewire-0.3 (MIT) is not linked either, nor
 compiled against: the sound output declares the functions and structures it
@@ -382,7 +401,8 @@ two can go anywhere together: `/opt/vento`, a home directory.
 in a container and outputs only that tree:
 
 ```sh
-# from the repository root, with the submodules initialised
+# from the repository root, with the submodules initialised and GnuTLS and
+# nettle unpacked (./gradlew :backends:fetchCryptoSources)
 docker build -f linux/Dockerfile --output type=local,dest=build/dist/vento .
 ```
 
@@ -395,9 +415,10 @@ limits what is sent), applies `patches/` to submodules still at their pinned
 commits, runs `cargo build --release --locked`, strips the libraries' debug
 information, and checks the tree with `readelf` and `ldd`: the relative
 rpath, no library missing, the backends resolved in the tree's own `lib/`.
-It writes nothing to the checkout. A build from scratch takes about
-eight minutes on eight cores (the toolchain about a minute and a half of it,
-cached after the first build).
+It writes nothing to the checkout. A build from scratch takes about nine
+and a half minutes on eight cores (the toolchain about a minute and a half
+of it, cached after the first build; GnuTLS and nettle about a minute and a
+half more).
 
 A build on the machine itself gives the same layout, tied to that machine's
 glibc and libraries:
@@ -411,14 +432,13 @@ cp target/release/lib/libvento_*.so /opt/vento/lib/
 
 The tree does not carry the system's libraries. A machine running it needs
 glibc (2.27 or later for the Dockerfile's tree), zlib, and per backend:
-**libvnc** GnuTLS; **tigervnc** GnuTLS, Nettle (and hogweed, GMP) and
-libstdc++; **freerdp** OpenSSL and nothing else (its UTF-16 conversion is
-WinPR's own, not ICU's); **realvnc** libstdc++ (and libatomic, where the
-build's compiler had no static one). The TLS libraries are needed at the
-sonames of the build machine: for the Dockerfile's tree, Ubuntu 18.04's
-(`libgnutls.so.30`, `libnettle.so.6`, `libhogweed.so.4`, `libgmp.so.10`,
-`libssl.so.1.1`, `libcrypto.so.1.1`), which most current distributions no
-longer ship. libjpeg-turbo and pixman are inside the libraries. A backend's library that cannot be loaded stops the binary from
+**libvnc** nothing more; **tigervnc** libstdc++; **freerdp** OpenSSL and
+nothing else (its UTF-16 conversion is WinPR's own, not ICU's); **realvnc**
+libstdc++ (and libatomic, where the build's compiler had no static one).
+OpenSSL is needed at the soname of the build machine: for the Dockerfile's
+tree, Ubuntu 18.04's (`libssl.so.1.1`, `libcrypto.so.1.1`), which most
+current distributions no longer ship. libjpeg-turbo, pixman, GnuTLS and
+nettle are inside the libraries. A backend's library that cannot be loaded stops the binary from
 starting (RealVNC's excepted, which is opened at run time and says it is not
 available). Loaded at run time where they are there, and not needed
 otherwise: libpipewire-0.3 and libasound (sound), libva and libva-drm

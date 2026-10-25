@@ -3,8 +3,9 @@
 #
 # The host build of the C backends: the session files under
 # `modules/*/cpp`, against the libraries a Linux desktop has instead
-# of the ports and vendored trees the phone needs (but for libjpeg-turbo and
-# pixman, which are the phone's submodules here too), and, with `-DVENTO_PROBES=ON`,
+# of the ports and vendored trees the phone needs (but for libjpeg-turbo,
+# pixman, GnuTLS and nettle, which are built from the phone's sources here
+# too), and, with `-DVENTO_PROBES=ON`,
 # a probe in front of each that connects, prints every callback and writes the
 # framebuffer out.
 # Three of them are open clients; the fourth, RealVNC, is their proprietary
@@ -40,14 +41,19 @@
 # gives it the one `backends/platform/linux/build.rs` made (see
 # platform/linux/cmake/vento_linux.cmake).
 #
-# Needs, as development packages: openssl, gnutls, nettle (with hogweed and
-# gmp), zlib, FFmpeg's libswscale and libavutil
+# Needs, as development packages: openssl, zlib, FFmpeg's libswscale and
+# libavutil
 # (unless VENTO_FFMPEG_PREFIX is given; FreeRDP links the host's libavcodec
 # too where there is one, for its camera channel's MJPEG, which nothing
 # loads), plus
-# pkg-config, nasm (libjpeg-turbo's x86 SIMD; it is C without), and a C and
+# pkg-config, make and m4 (GnuTLS and nettle are built by their own
+# autotools build; nettle's assembly needs m4, and is left out without it),
+# nasm (libjpeg-turbo's x86 SIMD; it is C without), and a C and
 # C++ compiler CMake can find — clang for RealVNC (`CC=clang CXX=clang++ cmake ...`), whose
-# four host-only submodules are initialised with `--recursive`.
+# four host-only submodules are initialised with `--recursive`. GnuTLS and
+# nettle are the release tarballs the phone's ports build, unpacked into
+# `third_party/gnutls` and `third_party/nettle` by
+# `./gradlew :backends:fetchCryptoSources`.
 
 cmake_minimum_required(VERSION 3.30)
 project(vento_backends C CXX)
@@ -135,6 +141,11 @@ endblock()
 set(VENTO_JPEG_INCLUDE_DIRS
         "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/libjpeg-turbo/src"
         "${CMAKE_CURRENT_BINARY_DIR}/libjpeg-turbo")
+
+# GnuTLS and nettle, from the tarballs the phone's ports build, configured
+# and built by their own autotools build at build time (the file says why).
+# libvncclient and TigerVNC link them in, as they do libjpeg-turbo.
+include(platform/linux/cmake/gnutls.cmake)
 
 # Four roots under Gradle, four subdirectories here; each branches on
 # `ANDROID` and takes its host half. The vendored trees under them share
