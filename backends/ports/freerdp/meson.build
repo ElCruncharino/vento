@@ -15,7 +15,9 @@
 # the slot patches/freerdp adds for an external subsystem (none of upstream's
 # subsystems is built), and sound goes to vento's output and decoders through
 # its rdpsnd_vento.c, which the channel finds by name at run time, so the only
-# sound device built in is the one that discards every sample. On Linux,
+# playback device built in is the one that discards every sample. The
+# microphone is the audin channel's capture side, and on Android its OpenSL ES
+# device is the only capture device built. On Linux,
 # libswscale scales a surface the server maps onto a scaled output, and with
 # it the library offers EGFX 10.5 and 10.6; Android has no scaler and is 10.4.
 
@@ -39,7 +41,9 @@ generate_py = find_program('generate.py')
 # options also decide config.h's CHANNEL_* lines (include/freerdp).
 freerdp_channels = {
   'ainput': {'entries': ['DVCPluginEntry'], 'sources': ['client/ainput_main.c']},
-  'audin': {'entries': ['DVCPluginEntry'], 'sources': ['client/audin_main.c']},
+  'audin': {'entries': ['DVCPluginEntry'], 'sources': ['client/audin_main.c'],
+    'subsystems': android ? {'opensles': ['client/opensles/audin_opensl_es.c',
+                                          'client/opensles/opensl_io.c']} : {}},
   'cliprdr': {'entries': ['VirtualChannelEntryEx'], 'include': 'none',
     'sources': ['client/cliprdr_format.c', 'client/cliprdr_main.c', 'cliprdr_common.c']},
   'disp': {'entries': ['DVCPluginEntry'], 'sources': ['client/disp_main.c', 'disp_common.c']},
@@ -388,12 +392,13 @@ freerdp_client_lib = static_library('freerdp_client', client_sources, tables_c, 
   dependencies: libfreerdp_dep)
 
 # What the FreeRDP module links: its headers as system ones, with OpenSSL's
-# for the TLS version constants.
+# for the TLS version constants, and OpenSL ES for the audin channel's
+# microphone on Android.
 freerdp_dep = declare_dependency(link_with: [freerdp_client_lib] + channel_libs,
   sources: freerdp_headers,
   include_directories: include_directories('include', freerdp_dir / 'winpr/include',
     freerdp_dir / 'include', is_system: true),
-  dependencies: libfreerdp_dep)
+  dependencies: [libfreerdp_dep] + (android ? [cc.find_library('OpenSLES')] : []))
 # The H.264 subsystem interface, which upstream keeps beside its subsystems
 # rather than in its public headers.
 freerdp_codec_inc = include_directories(codec_dir, is_system: true)

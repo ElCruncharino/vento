@@ -583,9 +583,10 @@ One commit per upstream, after review, by the lead:
   decoders take them, and decodes them through `vento/audio.h`), and that
   the Close PDU still does not reach the device (it closes its own stream
   when idle). No `WITH_PULSE`, `WITH_ALSA`, `WITH_OSS`, `WITH_SNDIO`,
-  `WITH_OPENSLES`, `WITH_AAUDIO` (3.32.1's, on by default on Android when
+  `WITH_AAUDIO` (3.32.1's, on by default on Android when
   the NDK has libaaudio) or `WITH_DSP_FFMPEG`; their "fake" device is still built
-  and is what Sound = off gets. On Linux `WITH_SWSCALE` is the one FFmpeg
+  and is what Sound = off gets. On Android `WITH_OPENSLES` is on, for the
+  audin channel's microphone only. On Linux `WITH_SWSCALE` is the one FFmpeg
   switch on, and `WITH_FFMPEG` is off so that their swscale branch does not
   link libavcodec for the camera channel's MJPEG; check that scaling still
   needs only libswscale and libavutil, and that rdpgfx still offers 10.5
