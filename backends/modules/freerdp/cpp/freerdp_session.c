@@ -372,12 +372,19 @@ static void splitAddress(char *address, int *port, char *why, size_t whyLen) {
    a pointer (its mask holds all the buttons), the focus, a size, a layout, a
    clipboard. A touch is never chosen: each one is a step of a contact, not a
    restatement. A release is never chosen, since losing one leaves the key held
-   at the far end until it is pressed again. If nothing in the ring can go,
-   the new command is dropped instead, unless it is a release, in which case
-   the oldest command is dropped. Returns whether `c` has room; under
+   at the far end until it is pressed again. A touch's up or cancel is never
+   chosen either, and is treated as a release: losing one leaves the contact
+   down at the far end. If nothing in the ring can go, the new command is
+   dropped instead, unless it is a release or a touch's up or cancel, in which
+   case the oldest command is dropped. Returns whether `c` has room; under
    `lock`. */
 static bool releases(int type) {
     return type == CMD_KEY_UP || type == CMD_RELEASE_KEYS;
+}
+
+/* Phase 2 is up and 3 is cancelled, by the phases of Backend.TOUCH_*. */
+static bool touchEnds(const Cmd *c) {
+    return c->type == CMD_TOUCH && (c->b == 2 || c->b == 3);
 }
 
 static bool makeRoom(Session *s, const Cmd *c) {
@@ -394,7 +401,7 @@ static bool makeRoom(Session *s, const Cmd *c) {
             break;
         }
     }
-    if (victim < 0 && !releases(c->type)) {
+    if (victim < 0 && !releases(c->type) && !touchEnds(c)) {
         return false;
     }
     victim = victim < 0 ? s->tail : victim;
@@ -444,7 +451,7 @@ static void post(Session *s, const Cmd *c) {
     }
     if (dropped == 1) {
         LOGW("input: the protocol thread is %d commands behind, so some are dropped (never a "
-             "release)", CMD_RING - 1);
+             "release or a touch's up)", CMD_RING - 1);
     }
     SetEvent(s->wake);
 }
