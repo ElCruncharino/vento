@@ -56,6 +56,15 @@ public interface BackendProvider {
     List<BackendOption> options();
 
     /**
+     * Whether this backend takes touch as contacts, so the app can offer
+     * direct touch for it. False by default, which hides the option for a
+     * backend that has not said otherwise.
+     */
+    default boolean supportsTouch() {
+        return false;
+    }
+
+    /**
      * A session for one connection, not yet started.
      *
      * <p>The address is as the user typed it, and every backend reads it the

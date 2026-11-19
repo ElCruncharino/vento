@@ -571,6 +571,12 @@ public final class Backends {
         return p == null ? List.of() : p.options();
     }
 
+    /** False for a backend this build does not have. */
+    public static boolean supportsTouch(String id) {
+        final BackendProvider p = provider(id);
+        return p != null && p.supportsTouch();
+    }
+
     /** Null where the app's own wording is what the field should say. */
     public static String addressLabel(String id, Map<String, String> options) {
         final BackendProvider p = provider(id);

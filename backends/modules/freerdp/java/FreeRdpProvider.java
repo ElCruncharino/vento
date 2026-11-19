@@ -69,6 +69,11 @@ public final class FreeRdpProvider implements BackendProvider {
     }
 
     @Override
+    public boolean supportsTouch() {
+        return true;
+    }
+
+    @Override
     public Backend create(Context context, String address, String userName, String password,
                           Map<String, String> options) {
         return new NativeBackend(context, TAG, FreeRdpCatalog.OPTIONS, new FreeRdpNatives(),

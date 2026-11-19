@@ -216,6 +216,13 @@ final class ConnectionEditorPanel {
     // window supplies the layout parameters and the ones in the file are not read.
     @SuppressWarnings("deprecation")
     @SuppressLint("InflateParams")
+    /** The app's own options, without direct touch for a backend that takes no touch. */
+    private List<BackendOption> appOptions(String backendId) {
+        return AppOptions.options(activity).stream()
+                .filter(o -> !o.key().equals(AppOptions.DIRECT_TOUCH) || Backends.supportsTouch(backendId))
+                .collect(Collectors.toList());
+    }
+
     private ConnectionEditorPanel(Activity activity, String id, Runnable onChanged) {
         this.activity = activity;
         this.onChanged = onChanged;
@@ -436,7 +443,7 @@ final class ConnectionEditorPanel {
                         .collect(Collectors.toList()));
         // Last, after the backend's own: the app's per-connection options are
         // fewer and less central than the protocol's.
-        connectionOptions.addAll(AppOptions.options(activity));
+        connectionOptions.addAll(appOptions(backendId));
         optionRows = new PanelOptions(options, connectionOptions, optionValues(defaults));
         final int vis = optionRows.isEmpty() ? View.GONE : View.VISIBLE;
         options.setVisibility(vis);
@@ -685,7 +692,7 @@ final class ConnectionEditorPanel {
         // The app's own per-connection options are stored in the same map, so
         // the same loop writes them; their default is the schema's, since no
         // backend provides one.
-        saveable.addAll(AppOptions.options(activity));
+        saveable.addAll(appOptions(backendId));
         for (BackendOption o : saveable) {
             if (o.scope() == BackendOption.Scope.GLOBAL) {
                 continue;
